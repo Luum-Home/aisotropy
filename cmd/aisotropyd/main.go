@@ -54,6 +54,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// OTel tracing for the streaming chat path (ADR-0010: the streaming
+	// path calls llm.Client.StreamChat directly, so it gets its own
+	// provider-agnostic WithOTel(Client) decorator rather than Gollem's
+	// ext/otel, which only instruments the Agent[T] reflection path). Defaults
+	// to a no-op provider (no collector required); set
+	// OTEL_EXPORTER_OTLP_ENDPOINT to export via OTLP/HTTP instead.
+	shutdownTracing, tracer := llm.NewTracerProvider(context.Background())
+	streamClient := llm.WithOTel(llmClient, tracer)
+
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
 	router.Use(middleware.Recoverer)
@@ -68,7 +77,7 @@ func main() {
 	// 3.1 schema and validates input from the same types (docs/vision/thesis.md).
 	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy", "0.1.0"))
 	api.Register(humaAPI)
-	api.RegisterStream(humaAPI, llmClient, wm)
+	api.RegisterStream(humaAPI, streamClient, wm)
 
 	server := &http.Server{
 		Addr:    addr,
@@ -100,6 +109,7 @@ func main() {
 		if err != nil {
 			slog.Error("server stopped", "err", err)
 			_ = wm.Close()
+			_ = shutdownTracing(context.Background())
 			os.Exit(1)
 		}
 	}
@@ -112,6 +122,10 @@ func main() {
 
 	if err := wm.Close(); err != nil {
 		slog.Error("working memory close failed", "err", err)
+	}
+
+	if err := shutdownTracing(shutdownCtx); err != nil {
+		slog.Error("otel tracer shutdown failed", "err", err)
 	}
 
 	slog.Info("aisotropyd stopped")
