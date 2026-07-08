@@ -22,6 +22,7 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0006](0006-reranker-cohere-vs-bge-local.md) | Reranker: Cohere SaaS vs local BGE-reranker | **✅ accepted → local BGE** |
 | [0007](0007-multitenancy-fisico-db-unica-vs-por-tenant.md) | Physical multi-tenancy: single filtered DB vs DB-per-tenant | **✅ accepted → hybrid/tiered** |
 | [0008](0008-reflection-loop-gollem-deferral.md) | Phase 1 reflection loop: in-house loop vs Gollem | **✅ accepted → in-house loop now, Gollem in Phase 2** |
+| [0009](0009-provider-agnostic-llm-layer.md) | Provider-agnostic, multi-connection LLM layer | **✅ accepted → Registry of named Client connections** |
 
 ## Decisions already made in the source conversations
 
@@ -64,6 +65,13 @@ These were closed in the original design and are documented as retroactive "acce
   requires wrapping `llm.Client` in `core.Model` and can't be exercised without an API key; the
   walking skeleton prioritizes the verifiable SSE flow. Tracked as debt with an explicit
   integration plan for Phase 2.
+
+- **[ADR-0009 — Provider-agnostic LLM layer](0009-provider-agnostic-llm-layer.md):** ✅ **accepted →
+  `Registry` of named `Client` connections**. `internal/llm` no longer locks the runtime into a
+  single provider chosen once by precedence; `RegistryFromEnv()` registers every provider with
+  configured credentials (`openrouter`/`openai`/`anthropic`, always `stub`) simultaneously, and
+  `FromEnv()` is now `RegistryFromEnv().Default()` for backward compatibility. `Client` is
+  unchanged. Unblocks per-request routing for [bet-04](../research/bet-04-compressibility-routing.md).
 
 ## Next ADRs to write
 

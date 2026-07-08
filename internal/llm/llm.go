@@ -1,4 +1,4 @@
-// Package llm defines Aisotropy's LLM client abstraction (Phase 1).
+// Package llm defines Aisotropy's LLM client abstraction (Phase 1+).
 //
 // The Client interface is intentionally narrow: a single streaming method.
 // Every chat endpoint consumes incremental tokens — never a full response
@@ -6,18 +6,23 @@
 // to cut token spend as soon as ctx is cancelled (see
 // docs/architecture/request-lifecycle.md, step 6).
 //
-// There are two implementations:
+// The package is provider-agnostic and supports multiple simultaneous
+// provider connections (see ADR-0009). Implementations of Client:
 //   - AnthropicClient (anthropic.go): real streaming via the official SDK
 //     github.com/anthropics/anthropic-sdk-go against the Messages API.
+//   - OpenAICompatClient (openai_compat.go): any provider that speaks the
+//     OpenAI /chat/completions protocol with SSE streaming — covers
+//     OpenRouter, OpenAI, and OpenAI-compatible gateways in general.
 //   - StubClient (stub.go): emits a canned word-by-word stream, no
 //     credentials needed, to verify the SSE path end-to-end in dev/CI.
 //
-// FromEnv picks the implementation based on whether ANTHROPIC_API_KEY is set.
+// Registry (registry.go) holds several named Client connections at once.
+// FromEnv keeps returning a single Client for backward compatibility, built
+// from RegistryFromEnv().Default().
 package llm
 
 import (
 	"context"
-	"os"
 )
 
 // DefaultAnthropicModel is the default model: cheap, suitable for the Phase 1
@@ -48,32 +53,6 @@ type Client interface {
 
 	// Name identifies the implementation (for logs/observability).
 	Name() string
-}
-
-// FromEnv builds the Client to use based on the environment, by precedence:
-//
-//  1. OPENROUTER_API_KEY  -> OpenRouter (OpenAI-compatible). Preferred path:
-//     a single integration covers OpenRouter, OpenAI, and —via model ids
-//     like "google/gemini-..."— Google/Gemini too. Model: OPENROUTER_MODEL /
-//     AISOTROPY_MODEL / DefaultOpenRouterModel.
-//  2. OPENAI_API_KEY (+ optional OPENAI_BASE_URL) -> direct OpenAI-compatible.
-//  3. ANTHROPIC_API_KEY -> AnthropicClient (official SDK).
-//  4. no credentials -> StubClient (allows exercising the SSE path
-//     end-to-end in dev/CI without a key).
-func FromEnv() Client {
-	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
-		return NewOpenRouterClient(key, firstNonEmpty(
-			os.Getenv("OPENROUTER_MODEL"), os.Getenv("AISOTROPY_MODEL")))
-	}
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-		return NewOpenAICompatClient(key,
-			firstNonEmpty(os.Getenv("OPENAI_MODEL"), os.Getenv("AISOTROPY_MODEL")),
-			os.Getenv("OPENAI_BASE_URL"), "openai")
-	}
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		return NewAnthropicClient(key, firstNonEmpty(os.Getenv("ANTHROPIC_MODEL"), DefaultAnthropicModel))
-	}
-	return NewStubClient()
 }
 
 // firstNonEmpty returns the first non-empty string (or "" if all are empty).
