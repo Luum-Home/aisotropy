@@ -74,21 +74,38 @@ go build ./...
 
 # Run (keyless stub — no credentials needed, streams a canned response)
 go run ./cmd/aisotropyd
-# → serves :8080  ·  GET /healthz  ·  GET /openapi.json  ·  POST /v1/tenant/{tenant_id}/chat[/stream]
+# → serves :8080  ·  GET /healthz  ·  GET /openapi.json  ·  POST /v1/tenant/{tenant_id}/user/{user_id}/chat[/stream]
 
 # Run with a real model via OpenRouter (OpenAI-compatible; also reaches Google/OpenAI model ids)
 export OPENROUTER_API_KEY=sk-or-...
 export OPENROUTER_MODEL=qwen/qwen3.7-plus   # optional; this is the default
 go run ./cmd/aisotropyd
 
-# Stream a chat (SSE)
-curl -N -X POST localhost:8080/v1/tenant/acme/chat/stream \
+# Stream a chat (SSE) — tenant + user in the path, session in the body
+curl -N -X POST localhost:8080/v1/tenant/acme/user/alice/chat/stream \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"hello","product_id":"analytics-v1"}'
+  -d '{"prompt":"hello","product_id":"analytics-v1","session_id":"s1"}'
 ```
 
 Provider selection is by environment precedence: `OPENROUTER_API_KEY` → `OPENAI_API_KEY`
 (+ optional `OPENAI_BASE_URL`) → `ANTHROPIC_API_KEY` → keyless stub.
+
+Other environment variables:
+- `AISOTROPY_DATA_DIR` — directory for the working-memory store (BadgerDB). Unset → in-memory
+  (state is lost on restart; fine for the walking skeleton). Set it to persist chat + summary
+  state across restarts.
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — enable OpenTelemetry trace export (OTLP/HTTP). Unset → a no-op
+  tracer, so no collector is required.
+
+## Developer console
+
+```bash
+go run ./cmd/x          # interactive TUI: fmt / vet / lint / test / build / bench / run / check
+go run ./cmd/x check    # non-interactive: run the quality gates (build + fmt + vet + test); CI-friendly
+go run ./cmd/x list     # list all tasks
+```
+`lint` uses `golangci-lint` (config in `.golangci.yml`); install it with
+`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`.
 
 ## Documentation
 
