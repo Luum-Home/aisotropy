@@ -23,6 +23,7 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0007](0007-multitenancy-fisico-db-unica-vs-por-tenant.md) | Physical multi-tenancy: single filtered DB vs DB-per-tenant | **✅ accepted → hybrid/tiered** |
 | [0008](0008-reflection-loop-gollem-deferral.md) | Phase 1 reflection loop: in-house loop vs Gollem | **✅ accepted → in-house loop now, Gollem in Phase 2** |
 | [0009](0009-provider-agnostic-llm-layer.md) | Provider-agnostic, multi-connection LLM layer | **✅ accepted → Registry of named Client connections** |
+| [0010](0010-gollem-adoption-scope-and-observability.md) | Gollem adoption scope, and the two-path observability decision | **✅ accepted → selective adopt/adopt-later/do-not-adopt matrix** |
 
 ## Decisions already made in the source conversations
 
@@ -72,6 +73,20 @@ These were closed in the original design and are documented as retroactive "acce
   configured credentials (`openrouter`/`openai`/`anthropic`, always `stub`) simultaneously, and
   `FromEnv()` is now `RegistryFromEnv().Default()` for backward compatibility. `Client` is
   unchanged. Unblocks per-request routing for [bet-04](../research/bet-04-compressibility-routing.md).
+
+- **[ADR-0010 — Gollem adoption scope and observability](0010-gollem-adoption-scope-and-observability.md):**
+  ✅ **accepted → selective adopt/adopt-later/do-not-adopt matrix**. Grounded in a full
+  reverse-engineering pass over Gollem v0.5.1 (`external/GOLLEM-ANALYSIS.md`): adopt now (OTel
+  `gen_ai.*` attributes, `CostTracker`, guardrails/`RedactPII`/`AuditLog`) as `AgentOption`s on the
+  existing `GollemReflect` agent; adopt the *pattern* but not the code from `ext/orchestrator`
+  (its SQLite substrate conflicts with the BadgerDB Outbox + rqlite Raft-ACK design, ADR-0004); do
+  **not** adopt `autocontext`, `ext/memory` SQLite stores, or auto-`Retrieve` `KnowledgeBase`
+  (conflict with the tiered-memory design and the "Gollem consumes already-hydrated memory"
+  boundary); build the per-tenant pre-provider token-bucket circuit breaker in-house rather than via
+  `core.UsageQuota` (run-scoped/post-hoc, not a pre-provider breaker). Also resolves the two-path
+  observability split: the streaming chat path (`chat_stream.go` → `Client.StreamChat` directly)
+  gets its own provider-agnostic `WithOTel(Client)` decorator, while Gollem's `ext/otel` covers only
+  the reflection/`Agent[T]` path.
 
 ## Next ADRs to write
 
