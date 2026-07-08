@@ -70,9 +70,28 @@ sequencing decision, not a rejection of Gollem: **Gollem remains the target orch
 
 1. Wrap `llm.Client` in a `core.Model` adapter (`Request`/`RequestStream`/`ModelName`).
 2. Replace `Reflect[T]` with Gollem's `core.RunWithReflection[T]` + `Agent[T]`.
-3. Validate **with a real `ANTHROPIC_API_KEY`** that Gollem's output repair behaves like the
-   in-house one (parity) and measures the same or better in retries.
+3. Validate **with a real API key** that Gollem's output repair behaves like the in-house one
+   (parity) and measures the same or better in retries.
 4. Demote `Reflect[T]` to a fallback (or remove it) and update the component's docs.
+
+## Phase 2 outcome (2026-07-08)
+
+The plan is executed. `internal/llm/gollem.go` wraps `llm.Client` as a `core.Model`
+(`NewGollemModel`) and `GollemReflect[T]` drives `core.Agent[T]` + `core.RunWithReflection[T]`;
+`ReflectAuto[T]` (`internal/llm/reflect_auto.go`) makes Gollem the default backend and demotes
+`Reflect[T]` to an automatic fallback (kept, not removed), selectable via
+`AISOTROPY_REFLECTION_BACKEND`.
+
+Step 3 is validated **live**. Because the Client abstraction is provider-agnostic, the real-key
+requirement is satisfied by any provider — validated against OpenRouter (`qwen/qwen3.7-plus`),
+not Anthropic. `GollemReflect[T]` converged on a schema-valid, business-valid `T` in a single
+iteration. The check lives at `internal/llm/gollem_live_test.go` behind the `manual` build tag,
+so it is excluded from `go test ./...` and CI (it makes a paid call); run it deliberately with a
+key exported:
+
+```bash
+go test -tags manual -run TestGollemReflectLive -v ./internal/llm
+```
 
 ## References
 
