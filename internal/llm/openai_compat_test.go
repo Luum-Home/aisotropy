@@ -49,9 +49,9 @@ func TestOpenAICompat_TruncatedStreamPropagatesError(t *testing.T) {
 	}
 
 	var (
-		gotText  string
-		lastErr  error
-		sawDone  bool
+		gotText string
+		lastErr error
+		sawDone bool
 	)
 	for tok := range ch {
 		switch {

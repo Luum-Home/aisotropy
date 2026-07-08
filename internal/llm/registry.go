@@ -24,6 +24,7 @@ import (
 //  2. Call Register(name, client) on a Registry (or add detection logic to
 //     RegistryFromEnv if the provider should be auto-discovered from env
 //     vars).
+//
 // No other package needs to change: Client is the stable contract every
 // caller (internal/api, internal/memory) already depends on.
 type Registry struct {
