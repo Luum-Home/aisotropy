@@ -55,6 +55,19 @@ const (
 	attrTTFTMillis     = "aisotropy.ttft_ms"
 	attrDurationMillis = "aisotropy.duration_ms"
 
+	// attrTenantID / attrUserID are the identity-and-isolation attributes
+	// docs/architecture/observability.md specifies. They are populated only
+	// when the ctx passed into StreamChat carries them (see context.go,
+	// TenantFromContext/UserFromContext) — set by internal/api/chat_stream.go
+	// via llm.WithTenant/llm.WithUser alongside its own ctx injection.
+	//
+	// aisotropy.bpt (Bet 6, bits-per-token-per-tenant) is a future
+	// enrichment on this same span once logprobs are available from the
+	// provider response — not added here (see
+	// docs/research/bet-06-bits-per-token-metric.md).
+	attrTenantID = "tenant_id"
+	attrUserID   = "user_id"
+
 	genAIOperationChat = "chat"
 	spanNameChat       = "chat"
 
@@ -73,18 +86,19 @@ type otelClient struct {
 }
 
 // WithOTel wraps c so every StreamChat call emits one gen_ai span carrying
-// provider/model identity, time-to-first-token, total duration, and output
-// token count.
+// provider/model identity, time-to-first-token, total duration, output
+// token count, and — when present on ctx — tenant_id/user_id identity
+// attributes (docs/architecture/observability.md's "Identity and isolation"
+// section).
 //
-// Tenant/user/product identity attributes
-// (docs/architecture/observability.md's "Identity and isolation" section)
-// are intentionally NOT attached here: internal/llm must not import
-// internal/api (see docs/architecture/architecture layering), and tenant_id
-// only exists on the ctx once the Huma handler injects it. Enriching this
-// span with tenant_id/user_id/product_id (and the derived aisotropy.bpt
-// attribute from Bet 6) is an api-layer follow-up: either read those values
-// back out of ctx here (if a shared ctx-key package is introduced) or wrap
-// the span from internal/api instead of internal/llm.
+// internal/llm must not import internal/api (see docs/architecture/
+// architecture layering), so tenant/user are read back out of ctx via this
+// package's own context.go (TenantFromContext/UserFromContext) instead of
+// internal/api's own tenantCtxKey/userCtxKey: internal/api/chat_stream.go
+// sets both — its own ctx injection (withIdentity) and this package's (via
+// llm.WithTenant/llm.WithUser) — on the same ctx before calling StreamChat.
+// product_id is not yet threaded through this seam (no per-request ctx
+// carrier exists for it today); that remains a follow-up.
 func WithOTel(c Client, tracer trace.Tracer) Client {
 	if tracer == nil {
 		tracer = noop.NewTracerProvider().Tracer(tracerName)
@@ -110,6 +124,12 @@ func (o *otelClient) StreamChat(ctx context.Context, system, prompt string) (<-c
 	}
 	if genAIModel != "" {
 		attrs = append(attrs, attribute.String(attrGenAIRequestModel, genAIModel))
+	}
+	if tenant, ok := TenantFromContext(ctx); ok {
+		attrs = append(attrs, attribute.String(attrTenantID, tenant))
+	}
+	if user, ok := UserFromContext(ctx); ok {
+		attrs = append(attrs, attribute.String(attrUserID, user))
 	}
 
 	spanCtx, span := o.tracer.Start(ctx, spanNameChat, trace.WithAttributes(attrs...))

@@ -83,6 +83,15 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory) {
 			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("invalid tenant/user/session identity: %v", err)})
 			return
 		}
+		// In addition to the api-layer ctx injection above (withIdentity,
+		// consumed via TenantFromContext/UserFromContext in this package),
+		// set the same identity through internal/llm's own ctx carrier so
+		// the WithOTel decorator (internal/llm/otel.go) can attribute its
+		// gen_ai span with tenant_id/user_id without internal/llm importing
+		// internal/api (see ADR-0010's "Observability decision" and
+		// internal/llm/context.go).
+		ctx = llm.WithTenant(ctx, in.TenantID)
+		ctx = llm.WithUser(ctx, in.UserID)
 		key := memory.Key{Tenant: in.TenantID, User: in.UserID, Session: in.Body.SessionID}
 
 		slog.InfoContext(ctx, "chat stream request",
