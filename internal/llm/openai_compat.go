@@ -126,20 +126,23 @@ func (c *OpenAICompatClient) StreamChat(ctx context.Context, system, prompt stri
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
+	//nolint:bodyclose // Body is closed on every path: the non-200 branch below
+	// closes it explicitly, and the success path hands it to the streaming
+	// goroutine, which closes it via defer. bodyclose can't track the latter.
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("openai-compat: request: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("openai-compat: status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 
 	ch := make(chan Token)
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		sc := bufio.NewScanner(resp.Body)
 		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)

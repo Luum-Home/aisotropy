@@ -30,12 +30,12 @@ func NewAnthropicClient(apiKey, model string) *AnthropicClient {
 	}
 	return &AnthropicClient{
 		client:    anthropic.NewClient(option.WithAPIKey(apiKey)),
-		model:     anthropic.Model(model),
+		model:     model,
 		maxTokens: 1024,
 	}
 }
 
-func (a *AnthropicClient) Name() string { return "anthropic:" + string(a.model) }
+func (a *AnthropicClient) Name() string { return "anthropic:" + a.model }
 
 // StreamChat opens a real stream via MessageService.NewStreaming and
 // translates each text-type "content_block_delta" event into a Token.

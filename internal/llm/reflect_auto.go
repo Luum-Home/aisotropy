@@ -75,7 +75,6 @@ func ReflectAuto[T any](
 
 		slog.WarnContext(ctx, "gollem reflection failed, falling back to homegrown Reflect[T] (ADR-0008 fallback)",
 			"err", gerr, "model", client.Name())
-		backend = ReflectionBackendOwn
 	}
 
 	gen := func(ctx context.Context, p, feedback string) (string, error) {

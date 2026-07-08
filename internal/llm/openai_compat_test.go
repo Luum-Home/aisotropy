@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,7 +29,7 @@ func TestOpenAICompat_TruncatedStreamPropagatesError(t *testing.T) {
 			t.Errorf("hijack: %v", err)
 			return
 		}
-		defer func() { _ = conn.(net.Conn).Close() }()
+		defer func() { _ = conn.Close() }()
 		_, _ = bufrw.WriteString("HTTP/1.1 200 OK\r\n" +
 			"Content-Type: text/event-stream\r\n" +
 			"Transfer-Encoding: chunked\r\n\r\n")

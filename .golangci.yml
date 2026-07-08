@@ -1,0 +1,35 @@
+# golangci-lint v2 configuration for Aisotropy.
+# Run via the dev console: `go run ./cmd/x lint` (or `golangci-lint run ./...`).
+# The vendored external/ Gollem clone is a separate Go module and is not part
+# of `./...`, so it is excluded automatically.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # "standard" = errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    - misspell   # common English typos in comments/strings
+    - unconvert  # redundant type conversions
+    - bodyclose  # HTTP response bodies must be closed (relevant to the LLM SSE clients)
+  settings:
+    errcheck:
+      # Writes to stdout/stderr in the CLI console are best-effort; a failed
+      # terminal write is not actionable, so we do not check their errors.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+  exclusions:
+    generated: lax
+    rules:
+      # Test files may leave some errcheck/bodyclose noise from fixtures.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
