@@ -126,6 +126,10 @@ func (s *gollemStream) Next() (core.ModelResponseStreamEvent, error) {
 		return core.PartStartEvent{Index: 0, Part: core.TextPart{Content: ""}}, nil
 	case gollemStreamRunning:
 		tok, ok := <-s.tokens
+		if tok.Err != nil {
+			s.state = gollemStreamDone
+			return nil, tok.Err
+		}
 		if !ok || tok.Done {
 			s.state = gollemStreamDone
 			return core.PartEndEvent{Index: 0}, nil
@@ -161,6 +165,9 @@ func generateFull(ctx context.Context, client Client, system, prompt string) (st
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case tok, ok := <-tokens:
+			if tok.Err != nil {
+				return "", tok.Err
+			}
 			if !ok || tok.Done {
 				return b.String(), nil
 			}

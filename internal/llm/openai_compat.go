@@ -172,7 +172,14 @@ func (c *OpenAICompatClient) StreamChat(ctx context.Context, system, prompt stri
 				}
 			}
 		}
-		// Stream closed without an explicit [DONE]: signal normal end anyway.
+		// A scanner stop can mean EOF (clean) OR a read error: check sc.Err().
+		if err := sc.Err(); err != nil && ctx.Err() == nil {
+			// Mid-stream read failure is NOT a clean end — propagate it so the
+			// consumer surfaces a truncated response as an error, not success.
+			sendToken(ctx, ch, Token{Err: fmt.Errorf("openai-compat: stream read: %w", err)})
+			return
+		}
+		// Stream closed cleanly without an explicit [DONE]: signal normal end.
 		sendToken(ctx, ch, Token{Done: true})
 	}()
 	return ch, nil

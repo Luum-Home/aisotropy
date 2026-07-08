@@ -83,7 +83,13 @@ func (a *AnthropicClient) StreamChat(ctx context.Context, system, prompt string)
 		}
 
 		if err := stream.Err(); err != nil && ctx.Err() == nil {
+			// Propagate the mid-stream error instead of masking it as a clean Done.
 			slog.ErrorContext(ctx, "anthropic stream error", "err", err)
+			select {
+			case <-ctx.Done():
+			case out <- Token{Err: err}:
+			}
+			return
 		}
 
 		select {

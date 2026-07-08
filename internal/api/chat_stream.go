@@ -87,6 +87,12 @@ func RegisterStream(api huma.API, client llm.Client) {
 				if !ok {
 					return
 				}
+				if tok.Err != nil {
+					// Mid-stream failure: surface it as an SSE error event and stop,
+					// so the client never mistakes a truncated stream for success.
+					_ = send.Data(StreamErrorEvent{Message: tok.Err.Error()})
+					return
+				}
 				if tok.Done {
 					_ = send.Data(StreamDoneEvent{TenantID: in.TenantID})
 					return

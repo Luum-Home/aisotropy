@@ -35,13 +35,19 @@ type Token struct {
 	Text string
 	// Done indicates the stream finished normally (no more tokens).
 	Done bool
+	// Err, when non-nil, signals a mid-stream failure (e.g. a read error on the
+	// provider's SSE body). It is delivered as the final Token before the
+	// channel closes; consumers must surface it and stop, never treat a failed
+	// stream as a clean finish.
+	Err error
 }
 
 // Client is the interface any LLM provider must implement.
 //
 // StreamChat must:
-//   - return a channel that closes when the stream ends (success, error sent
-//     as the last Token with Done=true, or ctx cancellation);
+//   - return a channel that closes when the stream ends (success signalled by
+//     a Token with Done=true, a mid-stream failure by a Token with non-nil Err,
+//     or ctx cancellation);
 //   - respect ctx.Done() and stop emitting/consuming tokens as soon as it is
 //     cancelled — this is the only spend-cutoff mechanism (see
 //     docs/vision/principles.md -> isolation via ctx).
