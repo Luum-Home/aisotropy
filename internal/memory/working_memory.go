@@ -41,7 +41,8 @@ type WorkingMemory struct {
 	// mu guards inFlight and closed below. It is never held across a
 	// BadgerDB transaction or a Summarizer.Condense call.
 	mu       sync.Mutex
-	inFlight map[string]struct{} // set of session prefixes currently being condensed in the background
+	inFlight map[string]struct{} // session prefixes with a condensation goroutine currently running
+	pending  map[string]struct{} // session prefixes that got an Append while their condensation was in flight — coalesced into one more pass so the window can't exceed the max (see triggerCondensation)
 	closed   bool
 
 	// wg tracks every background condensation goroutine spawned by Append.
@@ -80,6 +81,7 @@ func NewWorkingMemory(db *badger.DB, maxActiveMessages int, summarizer Summarize
 		maxActiveMessages: maxActiveMessages,
 		summarizer:        summarizer,
 		inFlight:          make(map[string]struct{}),
+		pending:           make(map[string]struct{}),
 		shutdownCtx:       shutdownCtx,
 		shutdownCancel:    cancel,
 	}
@@ -260,6 +262,11 @@ func (w *WorkingMemory) triggerCondensation(key Key) {
 		return
 	}
 	if _, busy := w.inFlight[sessionKey]; busy {
+		// A condensation is already running for this session. Record that more
+		// messages arrived so that goroutine runs one more pass after it
+		// finishes; otherwise appends landing between its final check and its
+		// cleanup would go un-condensed and the window could exceed the max.
+		w.pending[sessionKey] = struct{}{}
 		return
 	}
 	w.inFlight[sessionKey] = struct{}{}
@@ -277,12 +284,38 @@ func (w *WorkingMemory) triggerCondensation(key Key) {
 // Append call that spawned it has already returned.
 func (w *WorkingMemory) condenseInBackground(key Key, sessionKey string) {
 	defer w.wg.Done()
-	defer func() {
+
+	for {
+		w.condensePass(key)
+
+		// Decide whether to run again. If an Append coalesced work while the
+		// pass above was running, do one more pass; otherwise clear the
+		// in-flight flag and stop. Both this check and triggerCondensation's
+		// pending-set are done under mu, so no Append is lost: it either sets
+		// pending (we re-loop and catch it) or, once we clear inFlight, spawns
+		// a fresh goroutine. This closes the window where an Append landing
+		// between a pass's final check and its cleanup would leave the buffer
+		// over the max with no goroutine left to condense it.
 		w.mu.Lock()
+		if _, more := w.pending[sessionKey]; more {
+			delete(w.pending, sessionKey)
+			w.mu.Unlock()
+			continue
+		}
 		delete(w.inFlight, sessionKey)
 		w.mu.Unlock()
-	}()
+		return
+	}
+}
 
+// condensePass prunes key's active buffer back within maxActiveMessages,
+// recomputing the excess fresh on every iteration via a read-only transaction
+// so it never works from a stale snapshot even though more messages may keep
+// arriving. It always uses w.shutdownCtx (not a caller context), since it must
+// keep running after the Append that triggered it has returned. Best-effort: a
+// read error just ends the pass — the coalescing re-check in
+// condenseInBackground (or a later Append) will re-trigger.
+func (w *WorkingMemory) condensePass(key Key) {
 	chatPrefix := key.chatPrefix()
 	for {
 		if w.shutdownCtx.Err() != nil {
@@ -301,9 +334,6 @@ func (w *WorkingMemory) condenseInBackground(key Key, sessionKey string) {
 			return nil
 		})
 		if err != nil || len(excessKeys) == 0 {
-			// A read error here is best-effort: this is a background task,
-			// and the next Append that finds the window still over budget
-			// will trigger another attempt.
 			return
 		}
 
@@ -312,6 +342,13 @@ func (w *WorkingMemory) condenseInBackground(key Key, sessionKey string) {
 		}
 	}
 }
+
+// Sync blocks until every background condensation triggered so far has
+// finished — a quiescence point for callers (and tests) that need the active
+// window to have converged after a burst of Appends. It does NOT close the
+// store, and it is not a barrier against Appends made concurrently from other
+// goroutines after Sync is entered.
+func (w *WorkingMemory) Sync() { w.wg.Wait() }
 
 // condenseAndPrune folds the messages under excessKeys (the oldest ones
 // that no longer fit in the active window) into the summary buffer and

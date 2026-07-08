@@ -192,10 +192,12 @@ func TestSummaryBufferBoundsWindow(t *testing.T) {
 		}
 	}
 
-	// Condensation now runs in a background goroutine (see
-	// TestAsyncCondensationDoesNotBlockAppend); wait for any in-flight
-	// condensation to finish before asserting on the bounded window.
-	wm.wg.Wait()
+	// Condensation runs in a background goroutine (see
+	// TestAsyncCondensationDoesNotBlockAppend); Sync waits for it to converge
+	// before asserting on the bounded window. Coalescing (the pending set)
+	// guarantees the window ends within the max even for appends that land
+	// while a condensation pass is already running.
+	wm.Sync()
 
 	got, err := wm.Recent(ctx, key, totalMessages)
 	if err != nil {
