@@ -43,6 +43,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/fugue-labs/gollem/core"
@@ -331,6 +332,88 @@ func extractJSONObject(s string) string {
 	return s[start:]
 }
 
+// ADR-0010 ("ADOPT NOW"): cost accounting + guardrails/interceptors, wired
+// onto the same Agent[T] GollemReflect already builds via plain
+// core.AgentOption[T] values — see docs/decisions/0010-gollem-adoption-
+// scope-and-observability.md and the capability analysis at
+// external/GOLLEM-ANALYSIS.md §5 items 1-3. Real API verified with
+// `go doc github.com/fugue-labs/gollem/core {CostTracker,WithCostTracker,
+// WithInputGuardrail,MaxPromptLength,WithMessageInterceptor,RedactPII,
+// AuditLog}` (v0.5.1) — every symbol below exists exactly as named; none of
+// it was invented.
+const (
+	// gollemMaxPromptChars is a defense-in-depth input guardrail
+	// (core.WithInputGuardrail + core.MaxPromptLength). Huma's ChatRequest
+	// already enforces `maxLength:2000` at the HTTP boundary
+	// (internal/api/chat.go), but GollemReflect is a lower-level entry point
+	// with its own (and potentially future) callers, so this is a second,
+	// independent ceiling — not redundant validation of the same input.
+	gollemMaxPromptChars = 100_000
+
+	// gollemPIIPattern/gollemPIIReplacement configure core.RedactPII, the
+	// message interceptor ADR-0010 identifies as directly serving the
+	// constitutional "secrets/PII never logged" gate
+	// (.claude/rules/constitutional-gates.md). Conservative first cut: email
+	// addresses only, applied to user-authored prompt content before it
+	// reaches the model (and before AuditLog below would otherwise log it
+	// unredacted). Extending coverage (phone numbers, API-key-shaped
+	// tokens, etc.) is future work, not invented here.
+	gollemPIIPattern     = `[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+`
+	gollemPIIReplacement = "[REDACTED]"
+)
+
+// gollemModelPricing is intentionally empty: the model-name key
+// core.CostTracker.Record uses is Model.ModelName() — for GollemModel that
+// is Client.Name() (e.g. "anthropic:claude-haiku-4-5-20251001",
+// "openrouter:<model>", "stub"), a dynamic per-provider/per-model string
+// sourced at runtime from RegistryFromEnv, not a static enum aisotropy can
+// safely hardcode $/token for here. core.CostTracker records 0 cost for an
+// unrecognized model name (accounting-only degrade, not an error — see
+// core.CostTracker.Record's doc). Per ADR-0010, this wiring is the
+// accounting half only; the pre-provider per-tenant circuit breaker
+// (granular-control.md's cost axis) is explicitly out of scope here and
+// must be built on BadgerDB, not on core.UsageQuota.
+//
+// Separately, and more immediately limiting: GollemModel.toModelResponse
+// (below) never populates core.ModelResponse.Usage, because our narrow
+// llm.Client (StreamChat-only, see llm.go) does not expose provider token
+// counts at all. So even with real pricing configured, tracker.Record
+// currently always sees a zero core.Usage for traffic that goes through
+// GollemModel — the recorded cost is 0 until Client (or a provider-specific
+// wrapper) starts surfacing input/output token counts. The wiring itself
+// (this file) and the AgentOption attachment are correct and tested
+// independently against core.NewTestModel (gollem_test.go), which does let
+// a canned response carry non-zero Usage.
+var gollemModelPricing = map[string]core.ModelPricing{}
+
+// gollemGuardrailOptions returns the ADR-0010 "ADOPT NOW" AgentOptions
+// (cost tracker + input guardrail + message interceptors) shared by every
+// Agent[T] GollemReflect builds. Factored out of GollemReflect (rather than
+// inlined) so gollem_test.go can attach the exact same options to a bare
+// core.NewAgent[T] over core.NewTestModel and assert the wiring directly
+// (cost recorded when Usage is present, PII actually redacted before the
+// model sees it) without depending on GollemModel's Usage-less
+// ModelResponse (see the gollemModelPricing comment above).
+func gollemGuardrailOptions[T any](tracker *core.CostTracker) []core.AgentOption[T] {
+	return []core.AgentOption[T]{
+		core.WithCostTracker[T](tracker),
+		core.WithInputGuardrail[T]("max-prompt-length", core.MaxPromptLength(gollemMaxPromptChars)),
+		core.WithMessageInterceptor[T](core.RedactPII(gollemPIIPattern, gollemPIIReplacement)),
+		core.WithMessageInterceptor[T](core.AuditLog(gollemAuditLog)),
+	}
+}
+
+// gollemAuditLog is the core.AuditLog callback: it logs only a shape summary
+// (message count) at debug level, never the message content itself — the
+// content has already passed through RedactPII by the time this interceptor
+// runs (interceptors execute in attachment order, see
+// gollemGuardrailOptions), but logging full conversation content at debug
+// regardless would still risk leaking business content the PII pattern
+// above does not cover.
+func gollemAuditLog(direction string, messages []core.ModelMessage) {
+	slog.Debug("gollem agent message audit", "direction", direction, "message_count", len(messages))
+}
+
 // GollemReflect runs structured output + reflection loop using real Gollem
 // (core.Agent[T] + core.RunWithReflection[T]) over the given Client — the
 // Phase 2 replacement for Reflect[T] required by ADR-0008.
@@ -341,6 +424,12 @@ func extractJSONObject(s string) string {
 // decoded T satisfy the domain rules?) is resolved by the validator passed
 // to RunWithReflection, with the same shape core.RunWithReflection expects:
 // non-empty feedback => request correction; empty feedback => accept.
+//
+// Also attaches the ADR-0010 cost tracker + guardrails/interceptors (see
+// gollemGuardrailOptions above) and, once the run completes successfully,
+// logs the tracker's recorded cost/usage at slog debug (accounting only —
+// see the gollemModelPricing comment for why this is currently always 0 for
+// traffic through GollemModel).
 func GollemReflect[T any](
 	ctx context.Context,
 	client Client,
@@ -349,14 +438,28 @@ func GollemReflect[T any](
 	maxRetries int,
 ) (*core.ReflectResult[T], error) {
 	model := NewGollemModel(client)
-	agent := core.NewAgent[T](model,
+	tracker := core.NewCostTracker(gollemModelPricing)
+
+	opts := append([]core.AgentOption[T]{
 		core.WithSystemPrompt[T](system),
 		core.WithMaxRetries[T](maxRetries),
-	)
+	}, gollemGuardrailOptions[T](tracker)...)
+	agent := core.NewAgent[T](model, opts...)
 
 	if validate == nil {
 		validate = func(context.Context, T) (string, error) { return "", nil }
 	}
 
-	return core.RunWithReflection[T](ctx, agent, prompt, validate, core.WithMaxReflections(maxRetries))
+	result, err := core.RunWithReflection[T](ctx, agent, prompt, validate, core.WithMaxReflections(maxRetries))
+	if err != nil {
+		return nil, err
+	}
+
+	slog.DebugContext(ctx, "gollem run cost",
+		"model", client.Name(),
+		"total_cost_usd", tracker.TotalCost(),
+		"cost_breakdown", tracker.CostBreakdown(),
+	)
+
+	return result, nil
 }

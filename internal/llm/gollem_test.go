@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/fugue-labs/gollem/core"
@@ -191,6 +192,115 @@ func TestReflectAutoFallsBackToOwnOnGollemFailure(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Fatalf("attempts = %d, expected 1", attempts)
+	}
+}
+
+// TestGollemReflectStillProducesValidOutputWithGuardrailsAttached verifies
+// that attaching the ADR-0010 "ADOPT NOW" cost tracker + guardrail +
+// interceptor AgentOptions (gollemGuardrailOptions) to the Agent[T]
+// GollemReflect builds does not interfere with the existing schema-repair /
+// business-validation pipeline — the behavior-level check called for when
+// asserting an individual option in isolation is impractical through the
+// real GollemModel adapter (see the gollemModelPricing comment in
+// gollem.go).
+func TestGollemReflectStillProducesValidOutputWithGuardrailsAttached(t *testing.T) {
+	client := &fakeClient{responses: []string{`{"reply":"ok"}`}}
+	noopValidate := func(context.Context, gollemTestOutput) (string, error) { return "", nil }
+
+	result, err := GollemReflect[gollemTestOutput](context.Background(), client, "system prompt", "hello", noopValidate, 3)
+	if err != nil {
+		t.Fatalf("GollemReflect returned unexpected error: %v", err)
+	}
+	if !result.Accepted {
+		t.Fatal("expected Accepted=true")
+	}
+	if result.Output.Reply != "ok" {
+		t.Fatalf("Reply = %q, expected %q", result.Output.Reply, "ok")
+	}
+}
+
+// TestGollemCostTrackerRecordsUsageWhenPresent proves the real
+// core.WithCostTracker wiring — via gollemGuardrailOptions, the exact
+// options GollemReflect attaches — records cost once a response carries
+// token usage, mirroring Gollem's own core.TestCostTracker_AgentIntegration
+// pattern (cost_test.go). This builds the agent directly over
+// core.NewTestModel (not through GollemReflect/fakeClient) because
+// GollemModel does not yet populate ModelResponse.Usage — a separate,
+// pre-existing gap documented on gollemModelPricing — and this test's job is
+// to isolate and prove the AgentOption wiring itself, not that gap.
+func TestGollemCostTrackerRecordsUsageWhenPresent(t *testing.T) {
+	resp := core.ToolCallResponse(core.DefaultOutputToolName, `{"reply":"ok"}`)
+	resp.Usage = core.Usage{InputTokens: 100, OutputTokens: 50}
+	model := core.NewTestModel(resp)
+
+	pricing := map[string]core.ModelPricing{
+		model.ModelName(): {InputTokenCost: 0.000003, OutputTokenCost: 0.000015},
+	}
+	tracker := core.NewCostTracker(pricing)
+
+	opts := append([]core.AgentOption[gollemTestOutput]{
+		core.WithMaxRetries[gollemTestOutput](3),
+	}, gollemGuardrailOptions[gollemTestOutput](tracker)...)
+	agent := core.NewAgent[gollemTestOutput](model, opts...)
+
+	result, err := agent.Run(context.Background(), "hello")
+	if err != nil {
+		t.Fatalf("agent.Run returned unexpected error: %v", err)
+	}
+	if result.Output.Reply != "ok" {
+		t.Fatalf("Reply = %q, expected %q", result.Output.Reply, "ok")
+	}
+	if tracker.TotalCost() <= 0 {
+		t.Fatalf("expected positive TotalCost after a run with usage set, got %f", tracker.TotalCost())
+	}
+	if result.Cost == nil || result.Cost.TotalCost <= 0 {
+		t.Fatalf("expected RunResult.Cost to be populated by the attached tracker, got %+v", result.Cost)
+	}
+}
+
+// TestGollemRedactPIIInterceptorScrubsEmailBeforeModelSeesIt verifies that
+// the core.RedactPII message interceptor (ADR-0010's PII-redaction wiring)
+// actually runs on the message pipeline of an Agent[T] built with
+// gollemGuardrailOptions, checked against core.TestModel.Calls() — which
+// records the exact messages the model received, i.e. after interceptors
+// ran.
+func TestGollemRedactPIIInterceptorScrubsEmailBeforeModelSeesIt(t *testing.T) {
+	model := core.NewTestModel(core.ToolCallResponse(core.DefaultOutputToolName, `{"reply":"ok"}`))
+	tracker := core.NewCostTracker(nil)
+
+	agent := core.NewAgent[gollemTestOutput](model, gollemGuardrailOptions[gollemTestOutput](tracker)...)
+
+	_, err := agent.Run(context.Background(), "contact me at user@example.com please")
+	if err != nil {
+		t.Fatalf("agent.Run returned unexpected error: %v", err)
+	}
+
+	calls := model.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least one recorded model call")
+	}
+
+	var sawRedactionMarker bool
+	for _, msg := range calls[0].Messages {
+		req, ok := msg.(core.ModelRequest)
+		if !ok {
+			continue
+		}
+		for _, part := range req.Parts {
+			up, ok := part.(core.UserPromptPart)
+			if !ok {
+				continue
+			}
+			if strings.Contains(up.Content, "user@example.com") {
+				t.Fatalf("expected the email to be redacted before reaching the model, got raw content: %q", up.Content)
+			}
+			if strings.Contains(up.Content, "[REDACTED]") {
+				sawRedactionMarker = true
+			}
+		}
+	}
+	if !sawRedactionMarker {
+		t.Fatal("expected to find a [REDACTED] marker in the user prompt the model received")
 	}
 }
 
