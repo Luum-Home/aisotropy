@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -222,16 +223,25 @@ func TestSummaryBufferBoundsWindow(t *testing.T) {
 	}
 }
 
-// delayedSummarizer wraps NoopSummarizer with an artificial delay, standing
-// in for a real (LLM-backed) Summarizer's network latency. It exists so
-// tests can prove Append does not block on Summarizer.Condense.
-type delayedSummarizer struct {
-	delay time.Duration
+// gatedSummarizer is a test-only Summarizer whose Condense call parks on a
+// channel the test controls (release) instead of returning immediately. It
+// signals started (closed exactly once, via sync.Once) the first time
+// Condense is entered, so a test can deterministically observe "condensation
+// has begun and is currently blocked" without measuring any elapsed time.
+// Once the test closes release, every current and future call to Condense
+// (condensePass can invoke it more than once per session — see
+// condenseInBackground) unblocks immediately, since a receive on a closed
+// channel never blocks.
+type gatedSummarizer struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
 }
 
-func (s delayedSummarizer) Condense(ctx context.Context, existingSummary string, oldest []Message) (string, error) {
+func (s *gatedSummarizer) Condense(ctx context.Context, existingSummary string, oldest []Message) (string, error) {
+	s.once.Do(func() { close(s.started) })
 	select {
-	case <-time.After(s.delay):
+	case <-s.release:
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
@@ -241,17 +251,35 @@ func (s delayedSummarizer) Condense(ctx context.Context, existingSummary string,
 // TestAsyncCondensationDoesNotBlockAppend verifies the core Phase 2
 // follow-up requirement (see docs/architecture/memory-tiers.md -> "Token
 // optimization — Summary Buffer": "an asynchronous goroutine condenses the
-// oldest ones"): Append must return quickly even when the configured
-// Summarizer is slow, because condensation is handed off to a background
-// goroutine rather than run inline. Close (or, as here, waiting on the
-// internal WaitGroup) must still observe a fully condensed, bounded active
-// buffer once every background condensation has drained.
+// oldest ones"): Append must return without waiting on Summarizer.Condense,
+// because condensation is handed off to a background goroutine rather than
+// run inline.
+//
+// This is proven deterministically via channel synchronization, not a
+// wall-clock bound: gatedSummarizer.Condense parks on a release channel that
+// only this test controls, so it cannot possibly complete until the test
+// closes it. The append loop below runs to completion — in program order,
+// before this test ever touches gate.release — while gate.release is still
+// open. If Append blocked on Condense, that loop could never return (the
+// very first Append past the window would deadlock waiting on a Condense
+// call that waits on a channel nothing has closed yet), so the loop
+// finishing at all is already the proof. The explicit assertions below only
+// add: (a) a bounded deadlock guard in case condensation was never triggered
+// at all (which would otherwise make the test pass vacuously), and (b) an
+// ordering check that Condense had in fact started — and is therefore
+// necessarily still parked on the still-open release channel — strictly
+// after the append loop's last call already returned.
 func TestAsyncCondensationDoesNotBlockAppend(t *testing.T) {
 	ctx := context.Background()
 	const maxActive = 5
-	const delay = 15 * time.Millisecond
+	const safetyTimeout = 5 * time.Second // deadlock guard only, never the assertion itself
 
-	wm, err := OpenInMemory(maxActive, delayedSummarizer{delay: delay})
+	gate := &gatedSummarizer{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+
+	wm, err := OpenInMemory(maxActive, gate)
 	if err != nil {
 		t.Fatalf("OpenInMemory: %v", err)
 	}
@@ -264,30 +292,40 @@ func TestAsyncCondensationDoesNotBlockAppend(t *testing.T) {
 	key := Key{Tenant: "acme", User: "dave", Session: "s1"}
 	const totalMessages = 40
 
-	// A synchronous implementation would spend at least
-	// (totalMessages-maxActive) * delay inside this loop, since every
-	// append past the window triggers one condensation. The asynchronous
-	// implementation triggers at most one background goroutine per session
-	// at a time and never waits on it from Append, so the whole loop should
-	// finish in a small fraction of that.
-	start := time.Now()
+	// This loop must complete on its own: gate.release is not closed until
+	// after it returns, so if Append waited on Condense this call would
+	// never come back (and the test would fail on Go's own test timeout,
+	// not on a duration comparison here).
 	for i := 0; i < totalMessages; i++ {
 		msg := Message{Role: "user", Content: fmt.Sprintf("turn %d", i)}
 		if err := wm.Append(ctx, key, msg); err != nil {
 			t.Fatalf("Append(%d): %v", i, err)
 		}
 	}
-	elapsed := time.Since(start)
 
-	syncLowerBound := (totalMessages - maxActive) * delay
-	if maxWait := syncLowerBound / 3; elapsed > maxWait {
-		t.Fatalf("Append loop took %v across %d messages with a %v summarizer delay, want well under %v — "+
-			"condensation must run in a background goroutine, not block Append", elapsed, totalMessages, delay, maxWait)
+	// The append loop above has already returned by program order. Now
+	// confirm condensation was in fact triggered (otherwise the loop
+	// finishing would prove nothing): wait for gate.started to be closed,
+	// with safetyTimeout only guarding against a genuine deadlock/regression
+	// — it is not what makes the test pass or fail under normal operation.
+	select {
+	case <-gate.started:
+	case <-time.After(safetyTimeout):
+		t.Fatal("Condense was never invoked (deadlock guard tripped) — background condensation did not start")
 	}
+
+	// gate.release is only ever closed by this test, and that has not
+	// happened yet, so the Condense call we just confirmed started is
+	// necessarily still parked inside its `case <-s.release` — it cannot
+	// have returned. Since the append loop already completed before this
+	// point, this is the deterministic proof that Append returned while
+	// Condense was still blocked, i.e. Append does not wait on the
+	// summarizer.
+	close(gate.release)
 
 	// Drain every in-flight background condensation before asserting on the
 	// final, converged state.
-	wm.wg.Wait()
+	wm.Sync()
 
 	got, err := wm.Recent(ctx, key, totalMessages)
 	if err != nil {
