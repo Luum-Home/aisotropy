@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -36,6 +37,25 @@ type WorkingMemory struct {
 	db                *badger.DB
 	maxActiveMessages int
 	summarizer        Summarizer
+
+	// mu guards inFlight and closed below. It is never held across a
+	// BadgerDB transaction or a Summarizer.Condense call.
+	mu       sync.Mutex
+	inFlight map[string]struct{} // set of session prefixes currently being condensed in the background
+	closed   bool
+
+	// wg tracks every background condensation goroutine spawned by Append.
+	// Close waits on it so shutdown is deterministic and leak-free.
+	wg sync.WaitGroup
+
+	// shutdownCtx/shutdownCancel give background condensation goroutines a
+	// lifetime tied to the WorkingMemory itself rather than to whichever
+	// request's context happened to trigger them — a request's context is
+	// typically cancelled the moment its HTTP handler returns, long before a
+	// background condensation has a chance to run. Close cancels this
+	// context so any in-flight Summarizer.Condense call can abort promptly.
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 // NewWorkingMemory builds a WorkingMemory over an already-open BadgerDB
@@ -54,16 +74,78 @@ func NewWorkingMemory(db *badger.DB, maxActiveMessages int, summarizer Summarize
 	if summarizer == nil {
 		summarizer = NoopSummarizer{}
 	}
-	return &WorkingMemory{db: db, maxActiveMessages: maxActiveMessages, summarizer: summarizer}
+	shutdownCtx, cancel := context.WithCancel(context.Background())
+	return &WorkingMemory{
+		db:                db,
+		maxActiveMessages: maxActiveMessages,
+		summarizer:        summarizer,
+		inFlight:          make(map[string]struct{}),
+		shutdownCtx:       shutdownCtx,
+		shutdownCancel:    cancel,
+	}
+}
+
+// tuneForWorkingMemory adjusts BadgerDB's defaults — which are sized for
+// large, high-throughput datasets — down to the footprint appropriate for
+// this package's actual workload: a handful of small (sub-KB) JSON messages
+// per session, capped at maxActiveMessages, per tenant/user/session. Left at
+// their defaults, BadgerDB's LSM buffers and caches are tens to hundreds of
+// megabytes each, dwarfing the few kilobytes of chat data actually being
+// stored (see the benchmarks in working_memory_bench_test.go, which measured
+// ~5-6MB allocated per Append before this tuning).
+//
+// DetectConflicts is turned off deliberately, not just for memory: Append's
+// background condensation goroutine (see triggerCondensation) now runs its
+// own read/write transactions concurrently with new Append calls on the same
+// session prefix. BadgerDB's optimistic SSI conflict detection tracks entire
+// iterated key ranges, so a condensation transaction that deletes old
+// messages under a session's chat prefix races, at the detector level, with
+// an Append transaction concurrently iterating that same prefix to count the
+// active window — even though the two transactions never touch the same
+// individual key. Without disabling detection, that manifests as spurious
+// "Transaction Conflict" errors under load. This is safe here because
+// WorkingMemory's own correctness never depends on BadgerDB's conflict
+// detection: each session key has at most one writer goroutine invariant to
+// preserve on the application side — Append callers are expected to append
+// to a given tenant/user/session key sequentially (a chat session has one
+// active turn at a time), and only one background condensation goroutine is
+// ever in flight per session key (see the inFlight single-flight guard in
+// triggerCondensation).
+//
+// ValueThreshold cannot simply be left at BadgerDB's 1MB default once
+// BaseTableSize/MemTableSize are reduced below it — BadgerDB requires
+// ValueThreshold to stay under the max batch size it derives from those, and
+// refuses to open otherwise ("Valuethreshold ... greater than max batch
+// size"). It also cannot be tuned too low: in InMemory mode (used by
+// OpenInMemory, tests, and benchmarks) any value larger than ValueThreshold
+// is rejected outright — there is no on-disk value log for it to spill into
+// — and a condensed summary paragraph legitimately grows past a few hundred
+// bytes after enough rounds of condensation. 64KB comfortably covers any
+// realistic chat message or condensed summary for this workload while
+// staying well under the smaller max batch size implied by BaseTableSize
+// below.
+func tuneForWorkingMemory(opts badger.Options) badger.Options {
+	return opts.
+		WithLogger(nil).                // BadgerDB's default logger is noisy on stdout; the
+		WithNumVersionsToKeep(1).       // caller's slog-based logging is the source of truth for this service.
+		WithValueLogFileSize(16 << 20). // 16MB vlog segments, not the 1GB default — this store never approaches that scale.
+		WithValueThreshold(64 << 10).   // see the doc comment above: must stay below the reduced max batch size, but comfortably above realistic message/summary sizes.
+		WithMemTableSize(4 << 20).      // 4MB memtables instead of 64MB — this is an MB-scale, in-process buffer, not a large dataset.
+		WithNumMemtables(2).            // fewer resident memtables (default 5) since each is now much smaller anyway.
+		WithNumLevelZeroTables(2).      // flush/compact sooner given the smaller memtables (default 5).
+		WithNumLevelZeroTablesStall(4). // scale the stall threshold down alongside NumLevelZeroTables (default 15).
+		WithBaseTableSize(1 << 20).     // 1MB SSTables instead of 2MB.
+		WithBlockCacheSize(8 << 20).    // 8MB block cache instead of the 256MB default.
+		WithIndexCacheSize(8 << 20).    // 8MB index cache instead of keeping all indexes permanently resident.
+		WithDetectConflicts(false).     // see the doc comment above: required for the async condensation goroutine, safe under our single-writer-per-key usage.
+		WithCompactL0OnClose(false)     // this process's data footprint is small enough that compaction on close buys nothing.
 }
 
 // Open opens (creating if necessary) a production, on-disk BadgerDB instance
 // rooted at path and wraps it in a WorkingMemory. This is the persistent
 // path referenced in docs/components/badgerdb-working-memory.md.
 func Open(path string, maxActiveMessages int, summarizer Summarizer) (*WorkingMemory, error) {
-	opts := badger.DefaultOptions(path)
-	opts.Logger = nil // BadgerDB's default logger is noisy on stdout; the
-	// caller's slog-based logging is the source of truth for this service.
+	opts := tuneForWorkingMemory(badger.DefaultOptions(path))
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("memory: open badger at %q: %w", path, err)
@@ -75,8 +157,7 @@ func Open(path string, maxActiveMessages int, summarizer Summarizer) (*WorkingMe
 // intended for tests and benchmarks (see the component doc's
 // "in-memory mode" note). Data does not survive process restart.
 func OpenInMemory(maxActiveMessages int, summarizer Summarizer) (*WorkingMemory, error) {
-	opts := badger.DefaultOptions("").WithInMemory(true)
-	opts.Logger = nil
+	opts := tuneForWorkingMemory(badger.DefaultOptions("").WithInMemory(true))
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("memory: open in-memory badger: %w", err)
@@ -84,18 +165,35 @@ func OpenInMemory(maxActiveMessages int, summarizer Summarizer) (*WorkingMemory,
 	return NewWorkingMemory(db, maxActiveMessages, summarizer), nil
 }
 
-// Close closes the underlying BadgerDB instance.
+// Close stops accepting new background condensations, cancels
+// shutdownCtx (so any Summarizer.Condense call currently in flight can abort
+// promptly), waits for every in-flight background condensation goroutine to
+// finish, and only then closes the underlying BadgerDB instance. This makes
+// shutdown deterministic: no goroutine started by Append can still be
+// running — or leaked — once Close returns.
 func (w *WorkingMemory) Close() error {
+	w.mu.Lock()
+	if !w.closed {
+		w.closed = true
+		w.shutdownCancel()
+	}
+	w.mu.Unlock()
+
+	w.wg.Wait()
 	return w.db.Close()
 }
 
-// Append records msg as the newest entry in key's active buffer. If msg.
-// Timestamp is zero, it is set to time.Now().UTC(). If the active buffer
-// now exceeds the configured maxActiveMessages, the oldest excess messages
-// are condensed into the summary buffer (via the configured Summarizer) and
-// removed from the active buffer, keeping the window bounded — see
+// Append records msg as the newest entry in key's active buffer and returns
+// as soon as that write is durably persisted — it never blocks on
+// summarization. If msg.Timestamp is zero, it is set to time.Now().UTC(). If
+// the active buffer now exceeds the configured maxActiveMessages, a
+// background goroutine condenses the oldest excess messages into the summary
+// buffer (via the configured Summarizer) and removes them from the active
+// buffer, keeping the window bounded — see
 // docs/architecture/memory-tiers.md -> "Token optimization — Summary
-// Buffer".
+// Buffer": "an asynchronous goroutine condenses the oldest ones". At most
+// one such goroutine runs per session at a time (see triggerCondensation);
+// Close waits for all of them to finish.
 func (w *WorkingMemory) Append(ctx context.Context, key Key, msg Message) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -110,7 +208,7 @@ func (w *WorkingMemory) Append(ctx context.Context, key Key, msg Message) error 
 	chatPrefix := key.chatPrefix()
 	seqKey := key.seqKey()
 
-	var excessKeys [][]byte
+	over := false
 	err := w.db.Update(func(txn *badger.Txn) error {
 		seq, err := nextSeq(txn, seqKey)
 		if err != nil {
@@ -132,29 +230,97 @@ func (w *WorkingMemory) Append(ctx context.Context, key Key, msg Message) error 
 		if err != nil {
 			return err
 		}
-		if over := len(keys) - w.maxActiveMessages; over > 0 {
-			excessKeys = keys[:over]
-		}
+		over = len(keys) > w.maxActiveMessages
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("memory: append message: %w", err)
 	}
 
-	if len(excessKeys) == 0 {
-		return nil
+	if over {
+		// Condensation (and, for LLMSummarizer, a real LLM call) is handed
+		// off to a background goroutine so Append never blocks the caller
+		// on it — see triggerCondensation.
+		w.triggerCondensation(key)
 	}
-	// Condensation (and, for LLMSummarizer, a real LLM call) runs after the
-	// append transaction has already committed, so it never holds a
-	// BadgerDB transaction open for the duration of a network call.
-	return w.condenseAndPrune(ctx, key, excessKeys)
+	return nil
+}
+
+// triggerCondensation starts a background goroutine that condenses key's
+// active buffer down to maxActiveMessages, unless one is already running for
+// this key (single-flight per session) or the WorkingMemory has been
+// closed. It is safe to call on every Append: it is a cheap, mutex-guarded
+// no-op whenever a condensation for this key is already in flight.
+func (w *WorkingMemory) triggerCondensation(key Key) {
+	sessionKey := string(key.chatPrefix())
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return
+	}
+	if _, busy := w.inFlight[sessionKey]; busy {
+		return
+	}
+	w.inFlight[sessionKey] = struct{}{}
+	w.wg.Add(1)
+	go w.condenseInBackground(key, sessionKey)
+}
+
+// condenseInBackground is the body of the single background goroutine
+// allowed to run per session key at a time. It loops — recomputing the
+// excess keys fresh on every iteration via a read-only transaction — until
+// the active buffer is back within maxActiveMessages, so it never works from
+// a stale snapshot even though more messages may keep arriving from
+// concurrent Append calls while it runs. It always uses w.shutdownCtx
+// instead of a caller-supplied context, since it must keep running after the
+// Append call that spawned it has already returned.
+func (w *WorkingMemory) condenseInBackground(key Key, sessionKey string) {
+	defer w.wg.Done()
+	defer func() {
+		w.mu.Lock()
+		delete(w.inFlight, sessionKey)
+		w.mu.Unlock()
+	}()
+
+	chatPrefix := key.chatPrefix()
+	for {
+		if w.shutdownCtx.Err() != nil {
+			return
+		}
+
+		var excessKeys [][]byte
+		err := w.db.View(func(txn *badger.Txn) error {
+			keys, err := activeKeys(txn, chatPrefix)
+			if err != nil {
+				return err
+			}
+			if over := len(keys) - w.maxActiveMessages; over > 0 {
+				excessKeys = keys[:over]
+			}
+			return nil
+		})
+		if err != nil || len(excessKeys) == 0 {
+			// A read error here is best-effort: this is a background task,
+			// and the next Append that finds the window still over budget
+			// will trigger another attempt.
+			return
+		}
+
+		if err := w.condenseAndPrune(w.shutdownCtx, key, excessKeys); err != nil {
+			return
+		}
+	}
 }
 
 // condenseAndPrune folds the messages under excessKeys (the oldest ones
 // that no longer fit in the active window) into the summary buffer and
 // deletes them from the active buffer. Only these — never the whole active
 // buffer — are decoded from JSON, so the cost of pruning is proportional to
-// how many messages fell out of the window, not to the window's size.
+// how many messages fell out of the window, not to the window's size. It is
+// only ever invoked from the single per-key background goroutine started by
+// triggerCondensation, never directly from Append, and never while a
+// BadgerDB transaction is open.
 func (w *WorkingMemory) condenseAndPrune(ctx context.Context, key Key, excessKeys [][]byte) error {
 	existing, err := w.Summary(ctx, key)
 	if err != nil {

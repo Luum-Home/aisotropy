@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 )
 
 func newTestStore(t *testing.T, maxActive int) *WorkingMemory {
@@ -126,6 +127,11 @@ func TestTenantIsolation(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 
+	// Condensation now runs in a background goroutine (see
+	// TestAsyncCondensationDoesNotBlockAppend); wait for any in-flight
+	// condensation to finish before asserting on the summary buffer.
+	wmSmall.wg.Wait()
+
 	summaryA, err := wmSmall.Summary(ctx, keyA)
 	if err != nil {
 		t.Fatalf("Summary tenant A: %v", err)
@@ -186,6 +192,11 @@ func TestSummaryBufferBoundsWindow(t *testing.T) {
 		}
 	}
 
+	// Condensation now runs in a background goroutine (see
+	// TestAsyncCondensationDoesNotBlockAppend); wait for any in-flight
+	// condensation to finish before asserting on the bounded window.
+	wm.wg.Wait()
+
 	got, err := wm.Recent(ctx, key, totalMessages)
 	if err != nil {
 		t.Fatalf("Recent: %v", err)
@@ -206,6 +217,94 @@ func TestSummaryBufferBoundsWindow(t *testing.T) {
 	}
 	if summary == "" {
 		t.Fatal("Summary is empty after exceeding the active window, want a condensed paragraph")
+	}
+}
+
+// delayedSummarizer wraps NoopSummarizer with an artificial delay, standing
+// in for a real (LLM-backed) Summarizer's network latency. It exists so
+// tests can prove Append does not block on Summarizer.Condense.
+type delayedSummarizer struct {
+	delay time.Duration
+}
+
+func (s delayedSummarizer) Condense(ctx context.Context, existingSummary string, oldest []Message) (string, error) {
+	select {
+	case <-time.After(s.delay):
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	return NoopSummarizer{}.Condense(ctx, existingSummary, oldest)
+}
+
+// TestAsyncCondensationDoesNotBlockAppend verifies the core Phase 2
+// follow-up requirement (see docs/architecture/memory-tiers.md -> "Token
+// optimization — Summary Buffer": "an asynchronous goroutine condenses the
+// oldest ones"): Append must return quickly even when the configured
+// Summarizer is slow, because condensation is handed off to a background
+// goroutine rather than run inline. Close (or, as here, waiting on the
+// internal WaitGroup) must still observe a fully condensed, bounded active
+// buffer once every background condensation has drained.
+func TestAsyncCondensationDoesNotBlockAppend(t *testing.T) {
+	ctx := context.Background()
+	const maxActive = 5
+	const delay = 15 * time.Millisecond
+
+	wm, err := OpenInMemory(maxActive, delayedSummarizer{delay: delay})
+	if err != nil {
+		t.Fatalf("OpenInMemory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := wm.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+
+	key := Key{Tenant: "acme", User: "dave", Session: "s1"}
+	const totalMessages = 40
+
+	// A synchronous implementation would spend at least
+	// (totalMessages-maxActive) * delay inside this loop, since every
+	// append past the window triggers one condensation. The asynchronous
+	// implementation triggers at most one background goroutine per session
+	// at a time and never waits on it from Append, so the whole loop should
+	// finish in a small fraction of that.
+	start := time.Now()
+	for i := 0; i < totalMessages; i++ {
+		msg := Message{Role: "user", Content: fmt.Sprintf("turn %d", i)}
+		if err := wm.Append(ctx, key, msg); err != nil {
+			t.Fatalf("Append(%d): %v", i, err)
+		}
+	}
+	elapsed := time.Since(start)
+
+	syncLowerBound := (totalMessages - maxActive) * delay
+	if maxWait := syncLowerBound / 3; elapsed > maxWait {
+		t.Fatalf("Append loop took %v across %d messages with a %v summarizer delay, want well under %v — "+
+			"condensation must run in a background goroutine, not block Append", elapsed, totalMessages, delay, maxWait)
+	}
+
+	// Drain every in-flight background condensation before asserting on the
+	// final, converged state.
+	wm.wg.Wait()
+
+	got, err := wm.Recent(ctx, key, totalMessages)
+	if err != nil {
+		t.Fatalf("Recent: %v", err)
+	}
+	if len(got) > maxActive {
+		t.Fatalf("active buffer holds %d messages after background condensation drained, want <= %d (window must be bounded once drained)",
+			len(got), maxActive)
+	}
+	if got[len(got)-1].Content != fmt.Sprintf("turn %d", totalMessages-1) {
+		t.Errorf("last retained message = %q, want the most recent turn", got[len(got)-1].Content)
+	}
+
+	summary, err := wm.Summary(ctx, key)
+	if err != nil {
+		t.Fatalf("Summary: %v", err)
+	}
+	if summary == "" {
+		t.Fatal("Summary is empty after background condensation drained, want a condensed paragraph")
 	}
 }
 
