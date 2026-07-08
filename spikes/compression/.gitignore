@@ -1,0 +1,19 @@
+# Entorno virtual y artefactos pesados del spike de compresión.
+# Todo esto es reproducible via README.md — no se versiona.
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Cache de modelos HuggingFace / torch descargados localmente por este spike.
+.hf_cache/
+hf_cache/
+models/
+*.bin
+*.safetensors
+*.pt
+
+# Salidas de ejecución (se regeneran corriendo los scripts).
+output/
+*.log
