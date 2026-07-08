@@ -24,8 +24,10 @@ import (
 )
 
 const (
-	// DefaultOpenRouterModel: cheap default model for the walking skeleton.
-	DefaultOpenRouterModel   = "openai/gpt-4o-mini"
+	// DefaultOpenRouterModel: capable, low-cost agentic default (strong at tool
+	// use and structured output, which the reflection loop depends on). Override
+	// with OPENROUTER_MODEL / AISOTROPY_MODEL.
+	DefaultOpenRouterModel   = "qwen/qwen3.7-plus"
 	openRouterBaseURL        = "https://openrouter.ai/api/v1"
 	openAIBaseURL            = "https://api.openai.com/v1"
 	defaultOpenAICompatModel = "gpt-4o-mini"

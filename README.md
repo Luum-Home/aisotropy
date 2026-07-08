@@ -78,7 +78,7 @@ go run ./cmd/aisotropyd
 
 # Run with a real model via OpenRouter (OpenAI-compatible; also reaches Google/OpenAI model ids)
 export OPENROUTER_API_KEY=sk-or-...
-export OPENROUTER_MODEL=openai/gpt-4o-mini   # optional
+export OPENROUTER_MODEL=qwen/qwen3.7-plus   # optional; this is the default
 go run ./cmd/aisotropyd
 
 # Stream a chat (SSE)
