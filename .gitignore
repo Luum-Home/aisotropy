@@ -31,3 +31,6 @@ coverage.out
 
 # Raw brainstorm transcripts (source material, kept local, not published)
 raw-notes/
+
+# Third-party source cloned locally for study (not published)
+external/
