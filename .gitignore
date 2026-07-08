@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────────────────────────────────────
+# the agent tooling — tooling dev-time (FSL-1.1-MIT), NO forma parte del producto.
+# Aisotropy es un producto soberano MIT/Apache-2.0: mantenemos el tooling FSL
+# fuera de la historia de git. COS sigue funcionando localmente (los hooks se
+# leen del disco); solo no se trackea. Cada dev lo instala con install.sh.
+# ─────────────────────────────────────────────────────────────────────────
+.agent-tooling/
+.claude/
+agent-tooling.yaml
+
+# ── Go (producto) ──
+# Binarios compilados y artefactos de build.
+/aisotropyd
+/bin/
+*.exe
+*.out
+*.test
+# Cobertura
+*.cover
+coverage.out
+
+# ── Entorno / secretos ──
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ── SO / editor ──
+.DS_Store
+
+# Raw brainstorm transcripts (source material, kept local, not published)
+raw-notes/
