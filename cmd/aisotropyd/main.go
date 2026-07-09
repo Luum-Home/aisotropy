@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -27,6 +28,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/Luum-Home/aisotropy/internal/agentloop"
 	"github.com/Luum-Home/aisotropy/internal/api"
 	"github.com/Luum-Home/aisotropy/internal/consolidation"
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
@@ -213,6 +215,17 @@ func main() {
 	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry)
 	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient)
 
+	// Agentic tool-use endpoint (Phase 7 behavior axis): the structured-output
+	// loop over the scope-permitted tools. The demo executor echoes calls; real
+	// tool implementations replace it.
+	agentLoop := &agentloop.Loop{
+		Client:   protectedClient,
+		Registry: toolRegistry,
+		Executor: demoToolExecutor{},
+		MaxSteps: 3,
+	}
+	api.RegisterAgent(humaAPI, agentLoop)
+
 	server := &http.Server{
 		Addr:    addr,
 		Handler: router,
@@ -278,6 +291,15 @@ func main() {
 	}
 
 	slog.Info("aisotropyd stopped")
+}
+
+// demoToolExecutor is a placeholder ToolExecutor for the agent endpoint: it
+// echoes the invocation. Real tool implementations (which may fail and thereby
+// feed friction into internal/primitives) replace it.
+type demoToolExecutor struct{}
+
+func (demoToolExecutor) Execute(_ context.Context, name string, args map[string]string) (string, error) {
+	return fmt.Sprintf("executed %q with args %v", name, args), nil
 }
 
 // envFloat reads a positive float from the named env var, or returns def.
