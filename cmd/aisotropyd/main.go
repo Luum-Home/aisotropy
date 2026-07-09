@@ -18,7 +18,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,6 +36,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/primitives"
+	"github.com/Luum-Home/aisotropy/internal/routing"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
 	"github.com/Luum-Home/aisotropy/internal/sleepcycle"
 	"github.com/Luum-Home/aisotropy/internal/tools"
@@ -85,23 +88,33 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Facts memory (internal/facts, Phase 3 "Facts memory" tier): SQLite+FTS5
-	// by default (embedded, zero-config), or rqlite when RQLITE_URL is set
-	// (ADR-0004). HeuristicExtractor is the deterministic, cheap Phase 3
-	// extractor — richer LLM/DataFusion-driven distillation is Phase 6.
-	factsStore, err := facts.OpenFromEnv()
+	// Physical multi-tenancy (ADR-0007 hybrid/tiered): tenants listed in
+	// AISOTROPY_DEDICATED_TENANTS get their own physical facts/semantic resource
+	// (a dedicated SQLite file / Qdrant collection), provisioned by the routing
+	// layer; everyone else shares the pool. Empty (the default) = no routing.
+	dedicatedTenants := splitCSV(os.Getenv("AISOTROPY_DEDICATED_TENANTS"))
+	tierRouter := routing.NewRouter(routing.NewStaticPolicy(dedicatedTenants...))
+	if len(dedicatedTenants) > 0 {
+		slog.Info("dedicated-tenant routing enabled", "tenants", dedicatedTenants)
+	}
+
+	// Facts memory (internal/facts, Phase 3): SQLite+FTS5 by default, rqlite when
+	// RQLITE_URL is set (ADR-0004). With dedicated tenants on the SQLite backend
+	// each gets its own .db (facts.RoutingStore); rqlite dedicated tenants would
+	// need a per-tenant cluster (infra), so routing there falls back to shared.
+	factsStore, err := openFactsStore(tierRouter, dedicatedTenants)
 	if err != nil {
 		slog.Error("failed to initialize facts memory", "err", err)
 		os.Exit(1)
 	}
 	factsExtractor := facts.HeuristicExtractor{}
 
-	// Semantic memory (internal/semantic, Phase 4): in-memory vector store by
-	// default, or Qdrant when QDRANT_HOST is set (ADR-0001). The embedder is
-	// the deterministic HashEmbedder placeholder — a real embedding model is a
-	// drop-in behind the Embedder interface.
+	// Semantic memory (internal/semantic, Phase 4): in-memory by default, Qdrant
+	// when QDRANT_HOST is set (ADR-0001). With dedicated tenants each gets its
+	// own collection/index (semantic.RoutingStore). The embedder is the
+	// deterministic HashEmbedder placeholder — a real model is a drop-in.
 	embedder := semantic.NewHashEmbedder(0)
-	semanticStore, err := semantic.OpenFromEnv(context.Background(), embedder.Dimension())
+	semanticStore, err := openSemanticStore(context.Background(), tierRouter, dedicatedTenants, embedder.Dimension())
 	if err != nil {
 		slog.Error("failed to initialize semantic memory", "err", err)
 		os.Exit(1)
@@ -320,6 +333,77 @@ func runPrimitiveConsolidation(ctx context.Context, store *primitives.Store) {
 			}
 		}
 	}
+}
+
+// splitCSV parses a comma-separated env value into a trimmed, non-empty list.
+func splitCSV(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// openFactsStore builds the facts store, applying ADR-0007 tenant-tier routing
+// on the SQLite backend (each dedicated tenant → its own .db file / in-memory
+// DB). rqlite dedicated tenants would need a per-tenant cluster (infra), so
+// routing is not applied there.
+func openFactsStore(router routing.Router, dedicated []string) (facts.Store, error) {
+	if os.Getenv("RQLITE_URL") != "" {
+		if len(dedicated) > 0 {
+			slog.Warn("facts routing not applied on the rqlite backend (dedicated tenant = separate cluster, infra); using the shared pool", "dedicated", dedicated)
+		}
+		return facts.OpenFromEnv()
+	}
+	dataDir := os.Getenv("AISOTROPY_DATA_DIR")
+	factory := func(resource string) (facts.Store, error) {
+		if dataDir == "" {
+			return facts.OpenSQLite(":memory:")
+		}
+		return facts.OpenSQLite(filepath.Join(dataDir, resource+".db"))
+	}
+	if len(dedicated) == 0 {
+		return factory("facts")
+	}
+	return facts.NewRoutingStore(router, "facts", dedicated, factory)
+}
+
+// openSemanticStore builds the semantic store, applying ADR-0007 routing so each
+// dedicated tenant gets its own Qdrant collection / in-memory index.
+func openSemanticStore(ctx context.Context, router routing.Router, dedicated []string, dim int) (semantic.Store, error) {
+	base := os.Getenv("QDRANT_COLLECTION")
+	if base == "" {
+		base = "aisotropy_knowledge"
+	}
+	factory := func(resource string) (semantic.Store, error) {
+		if os.Getenv("QDRANT_HOST") == "" {
+			return semantic.NewInMemoryStore(dim), nil
+		}
+		port := 6334
+		if p := os.Getenv("QDRANT_PORT"); p != "" {
+			if n, perr := strconv.Atoi(p); perr == nil && n > 0 {
+				port = n
+			}
+		}
+		return semantic.OpenQdrant(ctx, semantic.QdrantConfig{
+			Host:       os.Getenv("QDRANT_HOST"),
+			Port:       port,
+			APIKey:     os.Getenv("QDRANT_API_KEY"),
+			UseTLS:     os.Getenv("QDRANT_USE_TLS") == "true",
+			Collection: resource,
+			Dim:        dim,
+		})
+	}
+	if len(dedicated) == 0 {
+		return factory(base)
+	}
+	return semantic.NewRoutingStore(router, base, dedicated, factory)
 }
 
 // envFloat reads a positive float from the named env var, or returns def.
