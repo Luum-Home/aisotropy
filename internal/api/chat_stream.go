@@ -76,7 +76,7 @@ type StreamErrorEvent struct {
 // governs the contract both in the stub endpoint (Phase 0) and in real
 // streaming (Phase 1+) — see "the struct as the single source of truth"
 // (docs/vision/thesis.md).
-func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store) {
+func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
 		Method:      "POST",
@@ -118,6 +118,22 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 		if err != nil {
 			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("invalid tenant/user identity: %v", err)})
 			return
+		}
+
+		// Quota gate (Phase 7 / constitutional gate): reject BEFORE any LLM call
+		// so a tenant over its rate limit never spends tokens. Per-tenant token
+		// bucket in BadgerDB (internal/memory.Limiter).
+		if limiter != nil {
+			allowed, err := limiter.Allow(ctx, in.TenantID)
+			if err != nil {
+				_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("quota check failed: %v", err)})
+				return
+			}
+			if !allowed {
+				slog.WarnContext(ctx, "chat stream rate-limited", "tenant_id", in.TenantID)
+				_ = send.Data(StreamErrorEvent{Message: "rate limit exceeded for tenant " + in.TenantID})
+				return
+			}
 		}
 
 		slog.InfoContext(ctx, "chat stream request",

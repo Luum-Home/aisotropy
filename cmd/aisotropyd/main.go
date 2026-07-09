@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -162,8 +163,12 @@ func main() {
 	// instrumentation strategies", the reflection path's own instrumentation
 	// is Gollem's ext/otel (not yet adopted — tracked as debt in the ADR),
 	// not the streaming path's WithOTel(Client) decorator.
-	api.Register(humaAPI, llmClient, wm, factsStore)
-	api.RegisterStream(humaAPI, streamClient, wm, factsStore)
+	// Per-tenant rate limiting (Phase 7 / constitutional gate): a token bucket
+	// in the working-memory BadgerDB, checked before any LLM call so a tenant
+	// over its limit is rejected (429) before spending tokens.
+	rateLimiter := wm.NewLimiter(envFloat("AISOTROPY_RATE_PER_SEC", 10), envFloat("AISOTROPY_BURST", 30))
+	api.Register(humaAPI, llmClient, wm, factsStore, rateLimiter)
+	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter)
 
 	server := &http.Server{
 		Addr:    addr,
@@ -230,6 +235,16 @@ func main() {
 	}
 
 	slog.Info("aisotropyd stopped")
+}
+
+// envFloat reads a positive float from the named env var, or returns def.
+func envFloat(name string, def float64) float64 {
+	if v := os.Getenv(name); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			return f
+		}
+	}
+	return def
 }
 
 // newWorkingMemory opens the on-disk BadgerDB-backed working memory when

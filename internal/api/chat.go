@@ -126,7 +126,7 @@ func withIdentity(ctx context.Context, tenant, user, session string) (context.Co
 // receives the already-built llm.Client (llm.FromEnv() in main.go) and the
 // shared *memory.WorkingMemory instead of creating them here — no global
 // state, consistent with isolation via ctx (see docs/vision/principles.md).
-func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store) {
+func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat",
 		Method:      "POST",
@@ -154,6 +154,18 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 		scope, err := facts.NewScope(in.TenantID, in.UserID)
 		if err != nil {
 			return nil, huma.Error422UnprocessableEntity("invalid tenant/user identity", err)
+		}
+
+		// Quota gate (Phase 7 / constitutional gate): reject BEFORE the LLM call
+		// with a clean 429 so a rate-limited tenant never spends tokens.
+		if limiter != nil {
+			allowed, err := limiter.Allow(ctx, in.TenantID)
+			if err != nil {
+				return nil, huma.Error500InternalServerError("quota check failed", err)
+			}
+			if !allowed {
+				return nil, huma.Error429TooManyRequests("rate limit exceeded for tenant " + in.TenantID)
+			}
 		}
 
 		slog.InfoContext(ctx, "chat request",
