@@ -56,3 +56,9 @@ lexical rarity instead of using raw bits — not just a bigger or better-fit mod
 - Rationale: [compression manifesto](../vision/compression-thesis.md) and [principles](../vision/principles.md).
 - Execution substrate: [tiered memory](../architecture/memory-tiers.md) and the [sleep cycle](../components/datafusion-sleep-cycle.md).
 - Metric: the [OKRs](../roadmap/okrs.md) (objective O8).
+
+## Related research
+
+- [Competitive landscape](competitive-landscape.md) — where aisotropy sits vs. LangChain/LangGraph,
+  Mastra, Letta, and the Go-native contenders (Eino, ADK Go, Genkit Go), with the memory-window
+  time-to-threat judgment (mid-2026 snapshot).
