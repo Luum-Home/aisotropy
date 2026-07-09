@@ -10,11 +10,37 @@ timestamp: 2026-07-09T00:00:00Z
 
 ## Status
 
-**🟡 Proposed (2026-07-09).** Awaiting operator approval. This ADR exists because
+**✅ Accepted (2026-07-09).** Operator-approved. This ADR exists because
 [ADR-0010](0010-gollem-adoption-scope-and-observability.md)'s "Guardrail on deeper adoption"
 explicitly requires a **dedicated ADR revisiting [ADR-0009](0009-provider-agnostic-llm-layer.md)**
 before any Gollem adoption that would widen the `llm.Client` seam toward native tool-calling. This
-is that ADR. No code changes until it is Accepted.
+is that ADR.
+
+### Implementation status
+
+**Delivered (this change):** the load-bearing, fully-tested core of Option C.
+
+- `internal/llm/tools.go` — the optional `ToolCaller` capability interface (`Client` +
+  `CallTools`) plus `ToolSpec` / `ToolCall` / `ToolCallResult`, in Aisotropy's own vocabulary. The
+  base `llm.Client` interface is **unchanged** (ADR-0009 preserved).
+- `internal/api/chat_agent.go` — the agent endpoint capability-detects `client.(llm.ToolCaller)`
+  and drives a native tool loop (`runNativeToolLoop`) when present, falling back to the homegrown
+  `agentloop.Loop` otherwise. Both branches enforce the identical double scope-gate (only
+  `Registry.Permitted(scopes)` tools offered, chosen name re-validated before execution) and run
+  tools through the same scope-/friction-wrapped executor.
+- Tests (`internal/api/chat_agent_test.go`): a scripted fake `ToolCaller` proves the native path
+  executes a permitted tool and — the security invariant — rejects a non-permitted tool *before*
+  execution; a compile/runtime check asserts `StubClient` stays a plain `Client` (so the default
+  runtime keeps the agentloop fallback).
+
+**Remaining (tracked follow-up, needs live validation against a real tool-calling model):**
+
+1. A real provider implements `ToolCaller` (e.g. `AnthropicClient` parsing native `tool_use`
+   blocks). Until then no shipped client implements it, so the runtime uses the agentloop path.
+2. Optionally routing the native path through Gollem's `core.Agent[T]` + `core.FuncTool` (bridging
+   in `internal/llm/gollem.go`) to inherit ADR-0010's "ADOPT NOW" `Agent[T]` guardrails /
+   `CostTracker` / OTel span tree. The current native loop calls `ToolCaller.CallTools` directly, so
+   it does not yet inherit those — a deliberate, documented scope split, not a silent gap.
 
 ## Context
 

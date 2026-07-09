@@ -102,9 +102,21 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 		if detector != nil {
 			exec = frictionExecutor{inner: executor, detector: detector, tenant: in.TenantID, user: in.UserID}
 		}
-		loop := &agentloop.Loop{Client: client, Registry: registry, Executor: exec, MaxSteps: maxSteps}
 
-		steps, err := loop.Run(ctx, in.Body.Scopes, in.Body.Prompt)
+		// ADR-0012: prefer the provider's NATIVE tool-calling when the client
+		// implements the optional llm.ToolCaller capability; otherwise drive the
+		// homegrown structured-output loop over the plain streaming Client. Both
+		// branches enforce the identical double scope-gate (only scope-permitted
+		// tools are offered, and the chosen tool name is re-validated before
+		// execution) and run tools through the same scope-/friction-wrapped
+		// executor — so switching paths never changes the isolation guarantee.
+		var steps []agentloop.StepResult
+		if tc, ok := client.(llm.ToolCaller); ok {
+			steps, err = runNativeToolLoop(ctx, tc, registry, exec, in.Body.Scopes, in.Body.Prompt, maxSteps)
+		} else {
+			loop := &agentloop.Loop{Client: client, Registry: registry, Executor: exec, MaxSteps: maxSteps}
+			steps, err = loop.Run(ctx, in.Body.Scopes, in.Body.Prompt)
+		}
 		if err != nil {
 			return nil, huma.Error500InternalServerError("agent loop failed", err)
 		}
@@ -120,4 +132,66 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 		}
 		return out, nil
 	})
+}
+
+// nativeToolSystemPrompt is the base instruction handed to a ToolCaller. Unlike
+// the agentloop path, the tools are conveyed structurally (as []llm.ToolSpec via
+// the provider's native tool-calling API), not embedded in the prompt, so this
+// only frames the task.
+const nativeToolSystemPrompt = "You are an assistant that may call the provided tools to help answer the user. " +
+	"Call a tool only when it helps; otherwise answer directly."
+
+// runNativeToolLoop drives up to maxSteps turns of provider-native tool calling
+// against tc, restricting the model to the tools the caller's scopes permit. It
+// mirrors agentloop.Loop.Run's contract and returns the same StepResult shape,
+// but uses the provider's native tool-calling API (ADR-0012) instead of the
+// prompt-emulated JSON Decision the agentloop path scrapes from free text.
+//
+// The double scope-gate is preserved exactly as in agentloop: only
+// Registry.Permitted(scopes) tools are ever offered to the model, AND the tool
+// name the model returns is re-validated against that permitted set before it is
+// executed — a name outside the set (hallucinated, injected, or adversarial) is
+// treated as "no tool", never executed. There is no path from "not offered" to
+// "executed".
+func runNativeToolLoop(ctx context.Context, tc llm.ToolCaller, registry *tools.Registry, executor agentloop.ToolExecutor, scopes []string, prompt string, maxSteps int) ([]agentloop.StepResult, error) {
+	permitted := registry.Permitted(scopes)
+	permittedSet := make(map[string]struct{}, len(permitted))
+	specs := make([]llm.ToolSpec, 0, len(permitted))
+	for _, t := range permitted {
+		permittedSet[t.Name] = struct{}{}
+		specs = append(specs, llm.ToolSpec{Name: t.Name, Description: t.Description})
+	}
+
+	var steps []agentloop.StepResult
+	current := prompt
+	for i := 0; i < maxSteps; i++ {
+		res, err := tc.CallTools(ctx, nativeToolSystemPrompt, current, specs)
+		if err != nil {
+			return steps, err
+		}
+
+		// No tool chosen (or the model answered directly): terminal step.
+		if len(res.Calls) == 0 {
+			steps = append(steps, agentloop.StepResult{Decision: agentloop.Decision{Tool: ""}})
+			return steps, nil
+		}
+		call := res.Calls[0]
+
+		// SECURITY INVARIANT: re-validate the chosen tool against the permitted
+		// set. A tool the caller's scopes did not grant is never executed, even
+		// if the provider returned it — treat it exactly like "no tool".
+		if _, ok := permittedSet[call.Name]; !ok {
+			steps = append(steps, agentloop.StepResult{Decision: agentloop.Decision{Tool: ""}})
+			return steps, nil
+		}
+
+		result, err := executor.Execute(ctx, call.Name, call.Args)
+		if err != nil {
+			steps = append(steps, agentloop.StepResult{Decision: agentloop.Decision{Tool: call.Name, Args: call.Args}})
+			return steps, fmt.Errorf("agent: executing tool %q: %w", call.Name, err)
+		}
+		steps = append(steps, agentloop.StepResult{Decision: agentloop.Decision{Tool: call.Name, Args: call.Args}, Result: result})
+		current = fmt.Sprintf("%s\n\nTool %q returned:\n%s\n\nContinue.", current, call.Name, result)
+	}
+	return steps, nil
 }
