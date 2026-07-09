@@ -37,6 +37,7 @@ relative markdown links. See [principles](vision/principles.md).
 | [Architecture](architecture/index.md) | The "LLM OS" model, request lifecycle, tiered memory, consistency, multi-tenancy, granular control, observability. |
 | [Components](components/index.md) | Deep dive per piece of the stack: Huma, Gollem, BadgerDB, Qdrant, rqlite/LiteFS, DataFusion. |
 | [Decisions (ADRs)](decisions/index.md) | Record of architectural decisions with trade-offs. |
+| [Guides](guides/index.md) | Task-oriented how-tos, starting with **building your own agent** on the public extension surface. |
 | [Roadmap](roadmap/index.md) | Executable MVP-first plan with OKRs and milestones. |
 
 ## Primary sources

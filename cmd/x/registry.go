@@ -159,6 +159,31 @@ var registry = []Task{
 		},
 	},
 	{
+		Key:         "example-build",
+		Title:       "example-build",
+		Description: "go -C examples/weatherbot build ./... — compiles the public-surface example bot (a separate module)",
+		Category:    "example",
+		NewCmd: func(ctx context.Context) *exec.Cmd {
+			return exec.CommandContext(ctx, "go", "-C", "examples/weatherbot", "build", "./...")
+		},
+	},
+	{
+		Key:         "example-vet",
+		Title:       "example-vet",
+		Description: "go -C examples/weatherbot vet ./... — vets the public-surface example bot",
+		Category:    "example",
+		NewCmd: func(ctx context.Context) *exec.Cmd {
+			return exec.CommandContext(ctx, "go", "-C", "examples/weatherbot", "vet", "./...")
+		},
+	},
+	{
+		Key:         "example",
+		Title:       "example",
+		Description: "build + vet examples/weatherbot — proves the Phase 8 public adoption surface compiles against the façade only",
+		Category:    "example",
+		Steps:       []string{"example-build", "example-vet"},
+	},
+	{
 		Key:         "run",
 		Title:       "run",
 		Description: "go run ./cmd/aisotropyd — starts the server; long-running, streams until cancelled",
@@ -170,9 +195,9 @@ var registry = []Task{
 	{
 		Key:         "check",
 		Title:       "check",
-		Description: "build, fmt, vet, test in sequence — the quality gates from agent-tooling.yaml",
+		Description: "build, fmt, vet, test, example in sequence — the quality gates from agent-tooling.yaml plus the adoption-surface example",
 		Category:    "quality-gate",
-		Steps:       []string{"build", "fmt", "vet", "test"},
+		Steps:       []string{"build", "fmt", "vet", "test", "example"},
 	},
 }
 

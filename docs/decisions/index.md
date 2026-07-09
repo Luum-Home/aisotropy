@@ -25,6 +25,8 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0009](0009-provider-agnostic-llm-layer.md) | Provider-agnostic, multi-connection LLM layer | **✅ accepted → Registry of named Client connections** |
 | [0010](0010-gollem-adoption-scope-and-observability.md) | Gollem adoption scope, and the two-path observability decision | **✅ accepted → selective adopt/adopt-later/do-not-adopt matrix** |
 | [0011](0011-tenant-scoped-statement-builder.md) | Tenant-scoped statement builder: isolation by construction for the pooled facts tier | **✅ accepted → `internal/tenancy`; an unscoped statement is a construction-time error** |
+| [0012](0012-gollem-native-tool-calling-vs-homegrown-agentloop.md) | Gollem native tool-calling vs. homegrown agentloop | 🟡 **proposed** |
+| [0013](0013-public-extension-surface-facade-vs-promote.md) | Public extension surface: façade package + builder vs. promoting `internal/` | 🟡 **proposed** |
 
 ## Decisions already made in the source conversations
 
@@ -122,6 +124,19 @@ These were closed in the original design and are documented as retroactive "acce
   provider-agnostic `Registry`/routing to Gollem's provider layer. Rejects widening `Client` itself
   (breaks every implementer) and Gollem-native provider ownership (ADR-0010 Option A/guardrail). No
   code until Accepted.
+
+- **[ADR-0013 — Public extension surface: façade + builder](0013-public-extension-surface-facade-vs-promote.md):**
+  🟡 **proposed → pending approval**. The Phase 8 (adoption surface) decision: let a third party build
+  their bot on Aisotropy **without forking**. Chooses **B + C** — a thin importable façade package
+  `aisotropy/` that re-exports only the extension types via **type aliases** (`Tool`, `ToolExecutor`,
+  `LLMClient`, `Persona`, …) plus a functional-options **builder** (`aisotropy.New(...).Run(ctx)`) that
+  internalizes everything `cmd/aisotropyd/main.go` does today — over **promoting the `internal/`
+  packages wholesale** (Option A, rejected: freezes ~10 churning packages and regresses isolation by
+  making `facts.Scope`/`ExportAll` public). Fixes two real internal gaps on the way (executor-injection
+  in `RegisterAgent`, a `PersonaProvider` seam). Preserves anti-magic (ADR-0002), isolation-by-construction
+  (ADR-0011), and reconstruction-phase churn freedom (compat scoped to one 0.x package). Must sit *above*
+  ADR-0012's native tool-calling. Front-loaded open question: keep `ToolExecutor` args as
+  `map[string]string` for 0.x (provisionally yes), revisit with ADR-0012.
 
 ## Next ADRs to write
 

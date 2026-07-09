@@ -38,7 +38,7 @@ func TestFrictionExecutorRecordsOnFailure(t *testing.T) {
 func TestFrictionExecutorNoFrictionOnSuccess(t *testing.T) {
 	store := primitives.NewStore()
 	fe := frictionExecutor{
-		inner:    echoExecutor{},
+		inner:    DemoExecutor{},
 		detector: primitives.NewFrictionDetector(store),
 		tenant:   "acme",
 		user:     "alice",

@@ -139,7 +139,9 @@ func withIdentity(ctx context.Context, tenant, user, session string) (context.Co
 // receives the already-built llm.Client (llm.FromEnv() in main.go) and the
 // shared *memory.WorkingMemory instead of creating them here — no global
 // state, consistent with isolation via ctx (see docs/vision/principles.md).
-func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry) {
+// persona supplies the base system prompt per product_id (Phase 8 adoption
+// seam); nil selects the built-in default persona.
+func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, persona PersonaProvider) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat",
 		Method:      "POST",
@@ -193,7 +195,7 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 		// The non-streaming endpoint hydrates working memory + facts; semantic
 		// RAG (semStore/embedder) is wired on the streaming path, so nil is
 		// passed for those two here.
-		system, err := hydrateSystemPrompt(ctx, wm, store, nil, nil, key, scope, in.Body.ProductID, in.Body.Prompt)
+		system, err := hydrateSystemPrompt(ctx, wm, store, nil, nil, persona, key, scope, in.Body.ProductID, in.Body.Prompt)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to hydrate working memory", err)
 		}

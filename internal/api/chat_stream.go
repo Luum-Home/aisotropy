@@ -92,7 +92,12 @@ type StreamErrorEvent struct {
 // governs the contract both in the stub endpoint (Phase 0) and in real
 // streaming (Phase 1+) — see "the struct as the single source of truth"
 // (docs/vision/thesis.md).
-func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client, semStore semantic.Store, embedder semantic.Embedder) {
+//
+// persona supplies the base system prompt per product_id (Phase 8 adoption
+// seam); nil selects the built-in default persona. inPricePer1M/outPricePer1M
+// are the USD prices per 1M tokens used for the /costs estimate; a value <= 0
+// falls back to the package default (costInputPricePer1M/costOutputPricePer1M).
+func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, inPricePer1M, outPricePer1M float64) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
 		Method:      "POST",
@@ -161,7 +166,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			"llm", client.Name(),
 		)
 
-		system, err := hydrateSystemPrompt(ctx, wm, store, semStore, embedder, key, scope, in.Body.ProductID, in.Body.Prompt)
+		system, err := hydrateSystemPrompt(ctx, wm, store, semStore, embedder, persona, key, scope, in.Body.ProductID, in.Body.Prompt)
 		if err != nil {
 			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("failed to hydrate working memory: %v", err)})
 			return
@@ -246,7 +251,14 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 					// real provider token usage carried on the terminal token, so
 					// the /costs view can show cost per token per tenant.
 					if meter != nil && tok.Usage != nil {
-						cost := costmeter.EstimateCostUSD(tok.Usage.InputTokens, tok.Usage.OutputTokens, costInputPricePer1M, costOutputPricePer1M)
+						inP, outP := costInputPricePer1M, costOutputPricePer1M
+						if inPricePer1M > 0 {
+							inP = inPricePer1M
+						}
+						if outPricePer1M > 0 {
+							outP = outPricePer1M
+						}
+						cost := costmeter.EstimateCostUSD(tok.Usage.InputTokens, tok.Usage.OutputTokens, inP, outP)
 						meter.Record(in.TenantID, tok.Usage.InputTokens, tok.Usage.OutputTokens, cost)
 					}
 					_ = send.Data(StreamDoneEvent{TenantID: in.TenantID})
@@ -268,8 +280,14 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 // its most recent active-buffer messages), so the model sees prior turns of
 // the conversation instead of starting fresh on every request (see
 // docs/architecture/memory-tiers.md).
-func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, semStore semantic.Store, embedder semantic.Embedder, key memory.Key, scope facts.Scope, productID, prompt string) (string, error) {
-	base := systemPromptFor(productID)
+func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, key memory.Key, scope facts.Scope, productID, prompt string) (string, error) {
+	if persona == nil {
+		persona = defaultPersonaProvider{}
+	}
+	base, err := persona.BasePrompt(ctx, productID)
+	if err != nil {
+		return "", fmt.Errorf("persona base prompt: %w", err)
+	}
 
 	summary, err := wm.Summary(ctx, key)
 	if err != nil {
@@ -339,12 +357,4 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 		}
 	}
 	return sb.String(), nil
-}
-
-// systemPromptFor builds the minimal system prompt for the given product_id.
-func systemPromptFor(productID string) string {
-	if productID == "" {
-		return "You are the Aisotropy agent. Respond briefly and directly."
-	}
-	return fmt.Sprintf("You are the Aisotropy agent for product %q. Respond briefly and directly.", productID)
 }

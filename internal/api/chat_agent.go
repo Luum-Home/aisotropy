@@ -29,11 +29,15 @@ type AgentOutput struct {
 	}
 }
 
-// echoExecutor is the placeholder tool implementation: it echoes the call and
-// never fails. Real tools replace it.
-type echoExecutor struct{}
+// DemoExecutor is the placeholder tool implementation: it echoes the call and
+// never fails. It is the zero-configuration default the runtime falls back to
+// (and what cmd/aisotropyd wires explicitly) so the agent endpoint works out of
+// the box; a real consumer replaces it with its own ToolExecutor via the
+// builder's WithToolExecutor option (see the aisotropy façade package).
+type DemoExecutor struct{}
 
-func (echoExecutor) Execute(_ context.Context, name string, args map[string]string) (string, error) {
+// Execute echoes the tool name and args back as its result and never fails.
+func (DemoExecutor) Execute(_ context.Context, name string, args map[string]string) (string, error) {
 	return fmt.Sprintf("executed %q with args %v", name, args), nil
 }
 
@@ -64,7 +68,14 @@ func (f frictionExecutor) Execute(ctx context.Context, name string, args map[str
 // tool outside the caller's scopes is never offered to the model nor executable
 // (the loop enforces that invariant post-parse). A failing tool feeds friction
 // into detector (nil disables friction tracking).
-func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, detector *primitives.FrictionDetector, maxSteps int) {
+//
+// executor is the host-supplied ToolExecutor that actually runs a selected tool
+// (Phase 8 adoption seam): the runtime injects it rather than hard-wiring a demo
+// implementation, so a consumer can plug in real tool logic without editing this
+// package. When detector is non-nil, the injected executor is wrapped per request
+// in a frictionExecutor so a failing tool accrues friction for that (tenant, user)
+// primitive. A nil executor disables the endpoint (503), same as a nil client.
+func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, detector *primitives.FrictionDetector, maxSteps int) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat-agent",
 		Method:      "POST",
@@ -80,14 +91,16 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, de
 		if err != nil {
 			return nil, huma.Error422UnprocessableEntity("invalid tenant/user identity", err)
 		}
-		if client == nil || registry == nil {
+		if client == nil || registry == nil || executor == nil {
 			return nil, huma.Error503ServiceUnavailable("agent mode is not configured")
 		}
 
-		// Per-request executor so friction is scoped to this (tenant, user).
-		var exec agentloop.ToolExecutor = echoExecutor{}
+		// Per-request executor so friction is scoped to this (tenant, user): the
+		// injected host executor runs the tool, wrapped in a friction recorder
+		// when a detector is configured.
+		var exec agentloop.ToolExecutor = executor
 		if detector != nil {
-			exec = frictionExecutor{inner: echoExecutor{}, detector: detector, tenant: in.TenantID, user: in.UserID}
+			exec = frictionExecutor{inner: executor, detector: detector, tenant: in.TenantID, user: in.UserID}
 		}
 		loop := &agentloop.Loop{Client: client, Registry: registry, Executor: exec, MaxSteps: maxSteps}
 
