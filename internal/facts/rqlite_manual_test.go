@@ -4,12 +4,18 @@
 // so it is EXCLUDED from `go test ./...` and CI: it needs a running rqlite
 // node. Start one and point RQLITE_URL at it, then:
 //
-//	rqlited -http-addr localhost:4001 /tmp/rqlite-data &   # from the rqlite release
+//	# The node MUST advertise an address the client can reach: gorqlite does
+//	# cluster discovery and follows the node's advertised HTTP address, so a
+//	# containerized node must advertise localhost, not its container hostname.
+//	docker run -d -p 4001:4001 rqlite/rqlite \
+//	    rqlited -http-addr 0.0.0.0:4001 -http-adv-addr localhost:4001 /rqlite/file/data
 //	RQLITE_URL=http://localhost:4001 go test -tags manual -run TestRqliteLive -v ./internal/facts
 //
+// (A local binary works too: rqlited -http-addr localhost:4001 /tmp/rqlite-data.)
 // It exercises the full Store contract (schema migrate, Save, FTS5 Search with
 // scoping, and transactional Supersede) against the real HTTP+Raft path, using
 // a unique tenant per run so it is safe to run repeatedly against a shared node.
+// Verified passing against rqlite/rqlite v8 and Qdrant 1.18 (2026-07-09).
 package facts
 
 import (
