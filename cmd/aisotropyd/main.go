@@ -47,6 +47,13 @@ const outboxPollInterval = 1 * time.Second
 // a worker binary is configured (Phase 6). Batch/offline, so a coarse cadence.
 const sleepCycleInterval = 1 * time.Hour
 
+// Circuit breaker (Phase 7): after this many consecutive LLM start failures the
+// breaker opens and calls fail fast until the cooldown elapses.
+const (
+	circuitFailureThreshold = 5
+	circuitCooldown         = 30 * time.Second
+)
+
 func main() {
 	addr := os.Getenv("AISOTROPY_ADDR")
 	if addr == "" {
@@ -120,7 +127,11 @@ func main() {
 	// to a no-op provider (no collector required); set
 	// OTEL_EXPORTER_OTLP_ENDPOINT to export via OTLP/HTTP instead.
 	shutdownTracing, tracer := llm.NewTracerProvider(context.Background())
-	streamClient := llm.WithOTel(llmClient, tracer)
+	// Circuit breaker (Phase 7): protect the runtime from a failing provider —
+	// repeated StreamChat failures open the breaker and calls fail fast until a
+	// cooldown elapses. Shared by both the streaming and reflection paths.
+	protectedClient := llm.WithCircuitBreaker(llmClient, circuitFailureThreshold, circuitCooldown)
+	streamClient := llm.WithOTel(protectedClient, tracer)
 
 	// Sleep cycle (Phase 6): when the DataFusion worker binary is available
 	// (AISOTROPY_SLEEPCYCLE_BIN), run periodic offline consolidation — export
@@ -167,7 +178,7 @@ func main() {
 	// in the working-memory BadgerDB, checked before any LLM call so a tenant
 	// over its limit is rejected (429) before spending tokens.
 	rateLimiter := wm.NewLimiter(envFloat("AISOTROPY_RATE_PER_SEC", 10), envFloat("AISOTROPY_BURST", 30))
-	api.Register(humaAPI, llmClient, wm, factsStore, rateLimiter)
+	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter)
 	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter)
 
 	server := &http.Server{
