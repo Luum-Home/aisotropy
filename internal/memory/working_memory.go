@@ -26,13 +26,12 @@ const defaultMaxActiveMessages = 12
 // session's prefix, so two tenants' buffers can never be mixed in the same
 // iteration even though they share one physical BadgerDB instance.
 //
-// Wiring into the chat flow is the next step: internal/api/chat_stream.go's
-// ChatInput contract currently carries only TenantID (no user_id/session_id
-// — see internal/api/chat.go), so persisting messages here and prepending
-// Recent() to the system prompt would require extending that Huma contract
-// first. Per the constitutional gates on backward-compatible API contracts,
-// that is a deliberate, separate change, not bundled into this standalone
-// store.
+// Working memory is wired into both chat endpoints (internal/api): each turn is
+// persisted and the condensed Summary() plus Recent() are folded into the
+// system prompt during hydration. The ChatInput contract carries
+// tenant_id/user_id (path params) and session_id (body), which together key
+// every entry (see memory.Key). On the streaming path the write goes through
+// AppendWithOutbox so the same transaction also queues the consolidation event.
 type WorkingMemory struct {
 	db                *badger.DB
 	maxActiveMessages int

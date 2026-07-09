@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -189,12 +190,9 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 			"llm", client.Name(),
 		)
 
-		// The non-streaming endpoint hydrates from working memory only; facts
-		// memory (store) is injected on the streaming path (RegisterStream).
-		// Passing a nil store skips facts retrieval here (hydrateSystemPrompt
-		// guards on store != nil).
-		// Non-streaming path hydrates working memory + facts only; semantic RAG
-		// (semStore/embedder) is wired on the streaming path.
+		// The non-streaming endpoint hydrates working memory + facts; semantic
+		// RAG (semStore/embedder) is wired on the streaming path, so nil is
+		// passed for those two here.
 		system, err := hydrateSystemPrompt(ctx, wm, store, nil, nil, key, scope, in.Body.ProductID, in.Body.Prompt)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to hydrate working memory", err)
@@ -207,12 +205,14 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 			}
 		}
 
-		// Persist the user's turn before calling the LLM: even if the
-		// reflection loop later fails closed, the user's message is real
-		// input that already happened and should not be lost — mirrors
-		// chat_stream.go's ordering.
-		if err := wm.Append(ctx, key, memory.Message{Role: "user", Content: in.Body.Prompt}); err != nil {
-			slog.ErrorContext(ctx, "failed to append user message to working memory", "err", err)
+		// Persist the user's turn AND its consolidation intent in one BadgerDB
+		// transaction (Transactional Outbox), mirroring the streaming path — so
+		// the non-streaming endpoint also feeds the facts + semantic tiers via
+		// the outbox worker, not only the streaming one. Done before the LLM
+		// call because the user's message is real input that already happened.
+		event := memory.NewOutboxEvent(key, outboxRef(key, in.Body.Prompt), in.Body.Prompt, time.Now().UTC())
+		if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: "user", Content: in.Body.Prompt}, event); err != nil {
+			slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
 		}
 
 		reply, attempts, backend, err := llm.ReflectAuto[chatStructuredReply](

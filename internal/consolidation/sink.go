@@ -13,6 +13,7 @@ package consolidation
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/memory"
@@ -34,13 +35,24 @@ type Sink struct {
 // outbox leaves the event pending and retries — hence the mandatory
 // idempotency of both writes.
 func (s Sink) Consolidate(ctx context.Context, e memory.OutboxEvent) error {
-	if err := s.consolidateFacts(ctx, e); err != nil {
-		return err
+	// Sync the two sinks IN PARALLEL (docs/architecture/consistency.md): they
+	// are independent stores, so facts (FTS5) and semantic (vectors) proceed
+	// concurrently. The event is only considered done when BOTH succeed — any
+	// error leaves it pending for an idempotent retry — so we return the first
+	// error observed.
+	var (
+		wg               sync.WaitGroup
+		factsErr, semErr error
+	)
+	wg.Add(2)
+	go func() { defer wg.Done(); factsErr = s.consolidateFacts(ctx, e) }()
+	go func() { defer wg.Done(); semErr = s.consolidateSemantic(ctx, e) }()
+	wg.Wait()
+
+	if factsErr != nil {
+		return factsErr
 	}
-	if err := s.consolidateSemantic(ctx, e); err != nil {
-		return err
-	}
-	return nil
+	return semErr
 }
 
 func (s Sink) consolidateFacts(ctx context.Context, e memory.OutboxEvent) error {
