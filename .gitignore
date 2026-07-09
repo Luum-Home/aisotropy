@@ -37,3 +37,7 @@ external/
 
 # stray benchmark binary if built without -o (use `go run ./bench/token-economy`)
 /token-economy
+
+# Rust build artifacts (sleep-cycle worker, ADR-0005)
+/crates/**/target/
+crates/*/target/

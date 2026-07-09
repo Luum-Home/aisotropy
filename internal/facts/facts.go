@@ -22,6 +22,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/Luum-Home/aisotropy/internal/tenancy"
 )
 
 // ErrScopeMismatch is returned when a Fact's TenantID/UserID does not match the
@@ -37,9 +39,42 @@ var ErrFactNotFound = errors.New("facts: fact not found in scope")
 // operation is scoped; it is derived once at the Huma handler boundary from
 // the validated path params (mirroring memory.Key), so tenant identity still
 // originates from ctx and never from an untrusted body/header.
+//
+// Obtain a Scope through NewScope or ScopeFromContext, never a bare
+// facts.Scope{...} literal: those constructors route identity through
+// internal/tenancy (ADR-0011), so tenant/user are validated by the single
+// shared rule (memory.ValidateIdentityComponent) that the working-memory and
+// tenancy tiers also use, and the two tiers can never drift on what a valid
+// identity is. The scope_isolation_test guards the other half — that every SQL
+// statement carries the tenant+user predicate — since the tenancy statement
+// builder cannot express this tier's FTS5 MATCH / bm25 / ON CONFLICT SQL (see
+// ADR-0011's "Reconciliation with the facts tier").
 type Scope struct {
 	TenantID string
 	UserID   string
+}
+
+// NewScope validates tenant/user through internal/tenancy and returns a facts
+// Scope, or an error if either component is empty or malformed. It is the
+// blessed constructor for production call sites: identity is validated by the
+// same path internal/tenancy and internal/memory use, satisfying ADR-0011's
+// "facts accesses identity through internal/tenancy" without duplicating the
+// validation rule here.
+func NewScope(tenant, user string) (Scope, error) {
+	ctx := tenancy.WithUser(tenancy.WithTenant(context.Background(), tenant), user)
+	return ScopeFromContext(ctx)
+}
+
+// ScopeFromContext derives a facts Scope from identity already wired into ctx
+// via tenancy.WithTenant/WithUser, validating through internal/tenancy. Use it
+// when a validated identity is already carried on the request ctx.
+func ScopeFromContext(ctx context.Context) (Scope, error) {
+	ts, err := tenancy.FromContext(ctx)
+	if err != nil {
+		return Scope{}, err
+	}
+	user, _ := ts.User()
+	return Scope{TenantID: ts.Tenant(), UserID: user}, nil
 }
 
 // Fact is one Engram-style memory. Content is distilled text (never raw chat)

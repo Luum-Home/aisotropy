@@ -47,7 +47,10 @@ func (s Sink) consolidateFacts(ctx context.Context, e memory.OutboxEvent) error 
 	if s.Facts == nil || s.Extractor == nil {
 		return nil
 	}
-	scope := facts.Scope{TenantID: e.Tenant, UserID: e.User}
+	scope, err := facts.NewScope(e.Tenant, e.User)
+	if err != nil {
+		return fmt.Errorf("consolidation: invalid facts scope: %w", err)
+	}
 	for _, f := range s.Extractor.Extract(scope, facts.Turn{UserMessage: e.Content}) {
 		if err := s.Facts.Save(ctx, scope, f); err != nil {
 			return fmt.Errorf("consolidation: save fact: %w", err)

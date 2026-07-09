@@ -151,7 +151,10 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 		ctx = llm.WithTenant(ctx, in.TenantID)
 		ctx = llm.WithUser(ctx, in.UserID)
 		key := memory.Key{Tenant: in.TenantID, User: in.UserID, Session: in.Body.SessionID}
-		scope := facts.Scope{TenantID: in.TenantID, UserID: in.UserID}
+		scope, err := facts.NewScope(in.TenantID, in.UserID)
+		if err != nil {
+			return nil, huma.Error422UnprocessableEntity("invalid tenant/user identity", err)
+		}
 
 		slog.InfoContext(ctx, "chat request",
 			"tenant_id", in.TenantID,

@@ -113,7 +113,12 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 		key := memory.Key{Tenant: in.TenantID, User: in.UserID, Session: in.Body.SessionID}
 		// Facts memory (Phase 3) is scoped per (tenant, user) — not per
 		// session: an Engram journal persists across a user's sessions.
-		scope := facts.Scope{TenantID: in.TenantID, UserID: in.UserID}
+		// NewScope validates identity through internal/tenancy (ADR-0011).
+		scope, err := facts.NewScope(in.TenantID, in.UserID)
+		if err != nil {
+			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("invalid tenant/user identity: %v", err)})
+			return
+		}
 
 		slog.InfoContext(ctx, "chat stream request",
 			"tenant_id", in.TenantID,

@@ -182,13 +182,49 @@ isolation gap is the common case this ADR must close, not an edge case that shri
 
 **Mandatory going forward**
 
-- Phase 3 **MUST** access rqlite exclusively through `internal/tenancy` — no direct
-  `database/sql`-style raw query construction against the facts tier, pooled or siloed.
-- **Dedicated-tier tenants (ADR-0007's silo) use the same API with a degenerate scope**: a silo's
-  connection is still reached through `Scope.Query(...)`, so the `WHERE tenant_id`/`WHERE user_id`
-  predicates remain present (redundant-but-harmless, exactly as ADR-0007 already calls out) even
-  though the silo's physical isolation makes them non-load-bearing there. This keeps one access
-  path for both topologies instead of a pooled-only enforcement layer with a siloed escape hatch.
+- Facts-tier **identity** is obtained exclusively through `internal/tenancy` — via
+  `facts.NewScope` / `facts.ScopeFromContext`, which delegate to `tenancy.FromContext`. A bare
+  `facts.Scope{...}` literal in production code is prohibited (see the reconciliation note below).
+- Facts-tier **SQL scoping** is guarded by `TestEverySQLStatementIsTenantScoped`
+  (`internal/facts/scope_isolation_test.go`): every statement must carry `tenant_id`/`user_id`
+  predicates. This is the compensating control for the statements the builder cannot express.
+- **Dedicated-tier tenants (ADR-0007's silo) use the same scoped API with a degenerate scope**: the
+  `WHERE tenant_id`/`WHERE user_id` predicates remain present (redundant-but-harmless, exactly as
+  ADR-0007 already calls out) even though the silo's physical isolation makes them non-load-bearing
+  there. One access path for both topologies, no siloed escape hatch.
+
+## Reconciliation with the facts tier (2026-07-09)
+
+The facts tier (`internal/facts`) shipped alongside this ADR built its own hand-written SQL rather
+than routing through the builder, which contradicted the original "Phase 3 MUST access rqlite
+exclusively through `internal/tenancy`" mandate. Investigating the contradiction surfaced a real
+design limit this ADR had only half-anticipated: **the builder cannot express the facts tier's
+core queries.** `searchSQL` is an FTS5 `MATCH` + `bm25()` relevance query with a `JOIN`, `ORDER
+BY`, and `LIMIT`; `upsertSQL` is an `INSERT … ON CONFLICT(id) DO UPDATE`. The builder models only
+equality-predicate SELECT/INSERT/UPDATE/DELETE. Extending it to cover FTS5/`bm25`/`ON CONFLICT`
+would (a) turn the deliberately-minimal foundation into an ORM (Alternative B, already rejected as
+disproportionate under [ADR-0002](0002-anti-framework-magic-struct-as-contract.md)) and (b) break
+its **driver-agnostic** goal, since `MATCH`/`bm25` are SQLite-specific and meaningless to the
+semantic tier's vector store.
+
+**Resolution (a two-part enforcement, not "all SQL through the builder"):**
+
+1. **Identity by construction, through `internal/tenancy`.** `facts.NewScope` / `ScopeFromContext`
+   validate tenant/user via `tenancy.FromContext` (the same `memory.ValidateIdentityComponent`
+   rule), so the facts tier can no longer drift on what a valid identity is, and every production
+   call site (`chat.go`, `chat_stream.go`, `consolidation/sink.go`) funnels identity through the
+   tenancy package. This is the concrete "facts uses `internal/tenancy`" the mandate wanted.
+2. **SQL scoping by test.** Because the builder cannot own the FTS5 SQL, an isolation test
+   (`TestEverySQLStatementIsTenantScoped`) is the compensating control: it fails the build if any
+   facts statement stops carrying the `tenant_id`/`user_id` predicate — catching the exact "silent
+   isolation leak" the builder would prevent by construction elsewhere.
+
+**Known residual gap (candidate follow-up):** `facts.Scope`'s fields are still exported, so a
+bare `facts.Scope{...}` literal remains *compilable* (the constructor is a convention backed by the
+mandate above, not a compile-time barrier). Hardening it to `tenancy.Scope`'s unexported-fields
+model would make the bypass impossible, at the cost of churning ~20 in-package test call sites; it
+is deferred, not silently dropped. The semantic tier (`internal/semantic.Scope`) has the identical
+shape and warrants the same reconciliation when it is wired in.
 
 ## Open questions
 
