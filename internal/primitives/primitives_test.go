@@ -374,3 +374,44 @@ func TestConsolidateRespectsContextCancellation(t *testing.T) {
 		t.Fatalf("Consolidate with a cancelled context returned nil error, want context.Canceled")
 	}
 }
+
+// TestStoreExamplesNotAliased proves a Primitive returned from the Store owns
+// its Examples slice: mutating it (or the slice a caller passed to Put) does
+// not corrupt the stored primitive. Primitive is held by value in the map, so
+// without a defensive copy the Examples backing array would be shared.
+func TestStoreExamplesNotAliased(t *testing.T) {
+	s := NewStore()
+	orig := []string{"example-0"}
+	s.Put(Primitive{Name: "search", TenantID: "t1", UserID: "u1", Examples: orig})
+
+	// Mutating the caller's original slice must not reach into the store.
+	orig[0] = "mutated-by-caller"
+
+	got, ok := s.Get("t1", "u1", "search")
+	if !ok {
+		t.Fatalf("Get: primitive not found")
+	}
+	if got.Examples[0] != "example-0" {
+		t.Fatalf("stored Examples aliased the caller's slice: got %q", got.Examples[0])
+	}
+
+	// Mutating a returned copy must not reach into the store either.
+	got.Examples[0] = "mutated-by-reader"
+	again, _ := s.Get("t1", "u1", "search")
+	if again.Examples[0] != "example-0" {
+		t.Fatalf("returned Examples aliased the stored slice: got %q", again.Examples[0])
+	}
+}
+
+// TestZeroValueStoreWritable proves a zero-value Store (no NewStore) is safe to
+// write to: the map is lazily initialized under the lock rather than panicking.
+func TestZeroValueStoreWritable(t *testing.T) {
+	var s Store
+	s.Put(Primitive{Name: "search", TenantID: "t1", UserID: "u1"})
+	if _, ok := s.Get("t1", "u1", "search"); !ok {
+		t.Fatalf("zero-value Store did not retain the Put primitive")
+	}
+	if _, err := s.RecordFriction("t1", "u1", "other", 1.0); err != nil {
+		t.Fatalf("RecordFriction on zero-value Store: %v", err)
+	}
+}

@@ -96,36 +96,64 @@ func NewStore() *Store {
 	return &Store{items: make(map[key]Primitive)}
 }
 
+// cloneExamples returns p with an independent copy of its Examples slice, so a
+// stored Primitive never shares its backing array with a caller's slice in
+// either direction. Primitive is held by value in the map, but its Examples
+// slice header is copied by assignment — leaving the backing array shared. A
+// shared array would let a mutation (or an in-cap append) on one side silently
+// corrupt the other; cloning on every read and write closes that aliasing
+// hazard. A nil slice stays nil.
+func cloneExamples(p Primitive) Primitive {
+	if p.Examples != nil {
+		p.Examples = append([]string(nil), p.Examples...)
+	}
+	return p
+}
+
+// itemsLocked lazily initializes the map so a zero-value Store is safe to write
+// to. Callers MUST hold s.mu.
+func (s *Store) itemsLocked() map[key]Primitive {
+	if s.items == nil {
+		s.items = make(map[key]Primitive)
+	}
+	return s.items
+}
+
 // Get returns the primitive registered at (tenant, user, name), or
-// (Primitive{}, false) if none exists.
+// (Primitive{}, false) if none exists. The returned Primitive owns its
+// Examples slice; mutating it does not affect the stored primitive.
 func (s *Store) Get(tenant, user, name string) (Primitive, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.items[newKey(tenant, user, name)]
-	return p, ok
+	if !ok {
+		return Primitive{}, false
+	}
+	return cloneExamples(p), true
 }
 
 // Put upserts p, keyed by (p.TenantID, p.UserID, p.Name), overwriting any
 // existing primitive at that key. If p.UpdatedAt is the zero time, Put fills
-// it in with the current time.
+// it in with the current time. The stored primitive keeps an independent copy
+// of p.Examples, so the caller may reuse or mutate its slice afterward.
 func (s *Store) Put(p Primitive) {
 	if p.UpdatedAt.IsZero() {
 		p.UpdatedAt = time.Now().UTC()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.items[newKey(p.TenantID, p.UserID, p.Name)] = p
+	s.itemsLocked()[newKey(p.TenantID, p.UserID, p.Name)] = cloneExamples(p)
 }
 
 // ListForUser returns every primitive registered for (tenant, user). Order is
-// unspecified.
+// unspecified. Each returned Primitive owns its Examples slice.
 func (s *Store) ListForUser(tenant, user string) []Primitive {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []Primitive
 	for k, p := range s.items {
 		if k.tenant == tenant && k.user == user {
-			out = append(out, p)
+			out = append(out, cloneExamples(p))
 		}
 	}
 	return out
@@ -140,7 +168,7 @@ func (s *Store) Snapshot() []Primitive {
 	defer s.mu.Unlock()
 	out := make([]Primitive, 0, len(s.items))
 	for _, p := range s.items {
-		out = append(out, p)
+		out = append(out, cloneExamples(p))
 	}
 	return out
 }
@@ -165,8 +193,9 @@ func (s *Store) RecordFriction(tenant, user, name string, delta float64) (Primit
 	}
 	p.FrictionScore += delta
 	p.UpdatedAt = time.Now().UTC()
-	s.items[k] = p
-	return p, nil
+	s.itemsLocked()[k] = p
+	// Return a copy that does not share the stored Examples backing array.
+	return cloneExamples(p), nil
 }
 
 // ResetFriction zeroes the FrictionScore of (tenant, user, name), leaving all

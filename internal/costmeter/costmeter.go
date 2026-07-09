@@ -16,7 +16,10 @@
 // (e.g. the planned rqlite facts memory), per docs/architecture/overview.md.
 package costmeter
 
-import "sync"
+import (
+	"sort"
+	"sync"
+)
 
 // TenantStats holds the accumulated usage totals for a single tenant.
 type TenantStats struct {
@@ -105,27 +108,17 @@ func (m *Meter) Stats(tenant string) (TenantStats, bool) {
 // endpoint exposing the per-tenant cost view.
 func (m *Meter) Snapshot() []TenantStats {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	out := make([]TenantStats, 0, len(m.tenants))
 	for _, stats := range m.tenants {
 		out = append(out, *stats)
 	}
-	sortTenantStats(out)
-	return out
-}
+	m.mu.RUnlock()
 
-// sortTenantStats sorts stats by TenantID ascending in place using a simple
-// insertion sort. The slice returned by Snapshot is expected to be small
-// (bounded by the number of active tenants), so this avoids importing sort
-// for a handful of comparisons; correctness, not asymptotic performance, is
-// the goal here.
-func sortTenantStats(stats []TenantStats) {
-	for i := 1; i < len(stats); i++ {
-		for j := i; j > 0 && stats[j-1].TenantID > stats[j].TenantID; j-- {
-			stats[j-1], stats[j] = stats[j], stats[j-1]
-		}
-	}
+	// out already holds independent copies, so sort it OUTSIDE the read lock:
+	// the sort must not hold mu.RLock, which would block concurrent Record
+	// calls (writers) for the duration of the sort.
+	sort.Slice(out, func(i, j int) bool { return out[i].TenantID < out[j].TenantID })
+	return out
 }
 
 // EstimateCostUSD computes the estimated cost in US dollars for a single LLM
