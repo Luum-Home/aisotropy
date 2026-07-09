@@ -34,3 +34,6 @@ raw-notes/
 
 # Third-party source cloned locally for study (not published)
 external/
+
+# stray benchmark binary if built without -o (use `go run ./bench/token-economy`)
+/token-economy

@@ -77,7 +77,7 @@ over time*. "The agent got smarter about Juan" stops being marketing and becomes
 Ordered from "already proven by Bellard" to "research bet." Actionable detail, with success
 criteria measured in bits, in [research/](../research/index.md).
 
-1. 🟢 [Surprisal-gated memory](../research/bet-01-surprisal-gated-memory.md) — store bits, not text.
+1. 🟠 [Surprisal-gated memory](../research/bet-01-surprisal-gated-memory.md) — store bits, not text. **Spiked twice, inconclusive** — see [bet status](../research/index.md#the-ledger).
 2. 🟡 [Working memory as codec](../research/bet-02-working-memory-codec.md) — nncp/ts_zip for the history.
 3. 🟡 [Context as rate-distortion](../research/bet-03-rate-distortion-context.md) — optimization, not heuristics.
 4. 🟡 [Compressibility-based routing](../research/bet-04-compressibility-routing.md) — bits as a difficulty signal.
@@ -90,4 +90,9 @@ criteria measured in bits, in [research/](../research/index.md).
 - **Zero dependencies in the cognitive hot path.** The ultimate goal is for Aisotropy to think without going out to the network ([Bet 5](../research/bet-05-sovereign-nn-core.md)).
 - **Determinism.** Compressing with a model requires the *same* model to decompress → versioning and reproducible builds (a constraint, not a detail).
 - **Trade storage/tokens for compute when compute is local and cheap.** That's the trade that enables everything.
-- **The minimum that works.** Start with the green ones (1 and 6) on top of the [already-decided Rust worker](../decisions/0005-datafusion-go-rust-boundary.md); don't build the red one first.
+- **The minimum that works.** Start with what the [spike](../../spikes/compression/README.md)
+  actually supports — Bet 6, spiked and positive with two models — on top of the
+  [already-decided Rust worker](../decisions/0005-datafusion-go-rust-boundary.md). Bet 1
+  is spiked but inconclusive (🟠, see [bet status](../research/index.md#the-ledger)) and needs
+  a re-run before it earns the same "start now" treatment; don't build the red one first
+  either.

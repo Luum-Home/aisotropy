@@ -13,10 +13,10 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 
 | ADR | Title | Status |
 |---|---|---|
-| 0000 | Framework name | **accepted** — "Aisotropy" (AI + isotropy) |
-| 0001 | Go+Rust stack, in-process-first | accepted (implicit in the source conversations) |
-| 0002 | Anti-framework-magic (discard LangChain; struct as single contract) | accepted |
-| 0003 | Specialized hybrid stack vs. multi-model SurrealDB | accepted (hybrid) |
+| [0000](0000-framework-name-aisotropy.md) | Framework name | **✅ accepted → "Aisotropy" (AI + isotropy)** |
+| [0001](0001-go-rust-in-process-first-stack.md) | Go+Rust stack, in-process-first | **✅ accepted → in-process Go / dedicated Rust services** |
+| [0002](0002-anti-framework-magic-struct-as-contract.md) | Anti-framework-magic (discard LangChain; struct as single contract) | **✅ accepted** |
+| [0003](0003-specialized-hybrid-stack-vs-surrealdb.md) | Specialized hybrid stack vs. multi-model SurrealDB | **✅ accepted → hybrid** |
 | [0004](0004-facts-memory-rqlite-vs-litefs.md) | rqlite vs LiteFS for facts memory | **✅ accepted → rqlite** |
 | [0005](0005-datafusion-go-rust-boundary.md) | Rust↔Go boundary for DataFusion (FFI vs worker vs WASM) | **✅ accepted → separate Rust worker** |
 | [0006](0006-reranker-cohere-vs-bge-local.md) | Reranker: Cohere SaaS vs local BGE-reranker | **✅ accepted → local BGE** |
@@ -24,6 +24,7 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0008](0008-reflection-loop-gollem-deferral.md) | Phase 1 reflection loop: in-house loop vs Gollem | **✅ accepted → in-house loop now, Gollem in Phase 2** |
 | [0009](0009-provider-agnostic-llm-layer.md) | Provider-agnostic, multi-connection LLM layer | **✅ accepted → Registry of named Client connections** |
 | [0010](0010-gollem-adoption-scope-and-observability.md) | Gollem adoption scope, and the two-path observability decision | **✅ accepted → selective adopt/adopt-later/do-not-adopt matrix** |
+| [0011](0011-tenant-scoped-statement-builder.md) | Tenant-scoped statement builder: isolation by construction for the pooled facts tier | **✅ accepted → `internal/tenancy`; an unscoped statement is a construction-time error** |
 
 ## Decisions already made in the source conversations
 
@@ -38,6 +39,19 @@ These were closed in the original design and are documented as retroactive "acce
 
 ## ADRs written
 
+- **[ADR-0000 — Framework name](0000-framework-name-aisotropy.md):** ✅ **accepted → "Aisotropy"**
+  (AI + isotropy). Retroactive formalization of the naming decision closed in the original design
+  conversations.
+- **[ADR-0001 — Go+Rust, in-process-first](0001-go-rust-in-process-first-stack.md):** ✅ **accepted →
+  in-process Go where latency matters, dedicated Rust services where scale matters** (the stack's
+  golden rule). Retroactive formalization.
+- **[ADR-0002 — Anti-framework-magic](0002-anti-framework-magic-struct-as-contract.md):** ✅
+  **accepted → discard LangChain-style magic; the Go struct is the single contract** (HTTP
+  validation + OpenAPI 3.1 + JSON Schema enforced on the LLM). Retroactive formalization.
+- **[ADR-0003 — Specialized hybrid stack](0003-specialized-hybrid-stack-vs-surrealdb.md):** ✅
+  **accepted → hybrid specialized stack over a single multi-model DB** (SurrealDB discarded:
+  working memory loses latency out of process; Qdrant matures better at scale). Retroactive
+  formalization.
 - **[ADR-0004 — rqlite vs LiteFS](0004-facts-memory-rqlite-vs-litefs.md):** ✅ **accepted → rqlite**.
   Decisive finding: LiteFS is in **maintenance mode** (Fly.io: "limited updates, no significant
   development plan, no support"; last release April 2025) — the same pattern that sank
@@ -88,7 +102,13 @@ These were closed in the original design and are documented as retroactive "acce
   gets its own provider-agnostic `WithOTel(Client)` decorator, while Gollem's `ext/otel` covers only
   the reflection/`Agent[T]` path.
 
+- **[ADR-0011 — Tenant-scoped statement builder](0011-tenant-scoped-statement-builder.md):** ✅
+  **accepted → `internal/tenancy`**. Replaces the "always remember `WHERE tenant_id`" discipline
+  for the pooled rqlite facts tier (ADR-0007) with an API where a tenant-unscoped statement is a
+  construction-time error, not a code-review catch — built before any Phase 3 rqlite SQL exists so
+  the facts tier cannot be written unsafely. Closes the "silent isolation leak" admission in
+  `request-lifecycle.md`.
+
 ## Next ADRs to write
 
-- The retroactive "accepted" ones (0001/0002/0003) can be written as formal ADRs when convenient.
 - New ones arising from the research phase (e.g., the codec format for [Bet 2](../research/bet-02-working-memory-codec.md), deterministic model versioning).

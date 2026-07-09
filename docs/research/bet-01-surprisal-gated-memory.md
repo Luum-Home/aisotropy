@@ -8,7 +8,9 @@ timestamp: 2026-07-08T00:00:00Z
 
 # Bet 1 — Surprisal-gated memory
 
-> **Maturity:** 🟢 solid — the easiest to prototype, the pragmatic entry point.
+> **Maturity:** 🟠 inconclusive — spiked twice, no clean separation found; needs a re-run
+> with a changed method before this can move to 🟢. See "Risk and maturity" below and the
+> [spike results](../../spikes/compression/README.md).
 > **One line:** store bits, not text. An engram enters memory only if the model didn't already know it.
 
 ## Hypothesis
@@ -59,8 +61,32 @@ score** (more surprisal = more informative) and subsumes [contradiction detectio
 
 ## Risk and maturity
 
-🟢 Low. The theory is proven (arithmetic coding). Single risk: cost of one forward pass per
-candidate — **mitigated** because it's batch/offline and over an already-distilled volume (not raw chat).
+🟠 **Inconclusive, not low.** The underlying theory (arithmetic coding, surprisal as an
+information measure) is sound, but the [compression spike](../../spikes/compression/README.md)
+found the *specific* setup this bet proposes — sentence-level `surprisal(x)` with
+`context=""` — does **not** cleanly separate redundant facts from surprising ones in practice.
+
+Two runs, two models:
+
+- `distilgpt2` (English-centric): binary classification against the naive midpoint threshold τ
+  scored 2/7 redundant + 6/8 surprising correct — an overlapping middle band, not a clean gap.
+- `DeepESP/gpt2-spanish` (the spike's definitive, Spanish-fluent model): 1/10 redundant + 3/10
+  surprising correct — **worse** binary accuracy than the English model, even though it
+  predicts Spanish text better overall.
+
+Moving to a language-appropriate model ruled out "the model doesn't understand Spanish" as the
+cause, but the overlap persisted and got worse. The spike's diagnosis: sentence-level
+bits/token with no prior context measures **syntactic/lexical predictability** (how
+grammatically ordinary the sentence is), not the **semantic novelty** of the fact relative to
+what the system already knows about the user — which is what this bet actually needs to gate
+memory correctly. The extremes still rank sensibly (specific named entities like "aisotropy",
+"Fitzgerald", "AWS São Paulo" get the highest surprisal in both runs), but the wide middle band
+is where redundant and surprising facts mix.
+
+Real risk for a re-run: **cost of one forward pass per candidate** — mitigated because it's
+batch/offline, over an already-distilled volume (not raw chat) — is still valid and unchanged.
+That was never the blocking risk; the blocking risk is that the naive `context=""` setup
+doesn't produce a usable threshold, which the "Next experiment" below addresses directly.
 
 ## Dependencies
 
@@ -68,11 +94,31 @@ A model that returns log-probs (or embeddings + a density proxy). Nothing else f
 
 ## Next experiment (the minimum that validates/refutes)
 
-Take a corpus of real sessions, extract candidate engrams, compute `surprisal` with a small
-LLM, and plot *recall quality* vs *τ*. If the plateau appears (discarding engrams without losing recall),
-the bet is validated.
+**Superseded by the spike's diagnosis** (see "Risk and maturity" above and the
+[spike results](../../spikes/compression/README.md)): the original plan below — compute
+`surprisal` with `context=""` and plot recall quality vs. τ — is exactly the setup that came
+back inconclusive twice. Before spending a full corpus-scale run on it, the re-spike needs to
+change the *method*, not just the *scale*:
+
+1. **Condition on real context.** Compute `surprisal(x | context)` with `context` = the user's
+   actual stored profile + facts already retained, instead of `context=""` ("surprisal in a
+   vacuum"). This is what the bet's own formula (`surprisal(x) = − log₂ P(x | user_profile,
+   facts_already_stored)`) specified from the start — the spike tested the `context=""`
+   degenerate case first because it's cheaper, and that's the case that didn't separate cleanly.
+2. **And/or normalize for lexical rarity**, not raw bits — the spike's diagnosis is that raw
+   sentence-level bits/token conflates "unusual phrasing" with "informative content"; a
+   normalization that discounts for common grammar patterns may recover the semantic-novelty
+   signal the raw metric currently misses.
+3. Only after (1) and/or (2) show a clean gap on a small corpus should this scale to a full
+   corpus of real sessions with a *recall quality* vs. *τ* plateau, as originally planned.
+
+If a clean gap still doesn't appear after conditioning on real context, that's a genuine
+refutation of the bet as specified — not just a model or scale problem, and worth documenting
+as such.
 
 ## References
 
 - nncp / Large Text Compression Benchmark — <https://bellard.org/nncp/>
 - [Manifesto: the compression thesis](../vision/compression-thesis.md)
+- [Compression spike — Bet 1 + Bet 6 results](../../spikes/compression/README.md) (real,
+  reproducible numbers behind the 🟠 inconclusive rating above)

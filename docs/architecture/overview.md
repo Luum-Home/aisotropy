@@ -87,8 +87,12 @@ Details of each step in [request lifecycle](request-lifecycle.md) and
 
 - **Absolute isolation:** the `ctx` carries `tenant_id`/`user_id` from Huma down to every query.
   Zero context leaks between concurrent requests. See [multi-tenancy](multi-tenancy.md).
-- **Brutal token efficiency:** each layer delivers only what's relevant. ~70% fewer input tokens
-  vs. a classic LangChain flow.
+- **Token efficiency by design:** each layer delivers only what's relevant, instead of dumping
+  full history/raw RAG into the prompt. **Design target: ~70% fewer input tokens than a default
+  LangChain-style full-history flow — unmeasured today.** To be validated by the reproducible
+  harness in [`bench/token-economy/`](../../bench/token-economy/); per
+  [principles](../vision/principles.md#derived-operating-principles), an unmeasured efficiency
+  claim is treated as a design bug, not a fact, until that harness reports a number.
 - **Standard observability:** everything in-process in Go → one OTel Span per interaction with
   cost per token attributable per tenant. See [observability](observability.md).
 - **Minimal infra cost:** Huma+Gollem+BadgerDB+rqlite compile into a native binary
