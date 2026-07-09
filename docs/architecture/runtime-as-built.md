@@ -182,11 +182,12 @@ All five knobs are constructed in `main.go` and threaded through the handlers:
 
 ## 6. Honest "not yet wired / limitations"
 
-- **Semantic (Qdrant) RAG is write-only on the request path.** The consolidation sink *writes*
-  vectors, but `hydrateSystemPrompt` reads only working-memory + facts (FTS5). No semantic search
-  runs during a request. The aspirational [request lifecycle](request-lifecycle.md) "parallel memory
-  hydration → Qdrant RAG" is not the code's behavior; hydration is also **sequential**, not
-  goroutine-parallel.
+- **Semantic (Qdrant) RAG on the streaming path: now read AND written.** The consolidation sink
+  writes vectors, and `hydrateSystemPrompt` now embeds the prompt and runs a scoped semantic
+  search (top `semanticWindow`), injecting the results — closing the earlier write-only gap. It
+  is wired on the **streaming** path only (the non-streaming `chat` passes a nil semantic store).
+  Hydration is still **sequential** (working memory → facts → semantic), not the goroutine-parallel
+  hydration the aspirational [request lifecycle](request-lifecycle.md) describes.
 - **Non-streaming chat never consolidates.** It uses `wm.Append`, not `AppendWithOutbox`, so its
   turns never produce facts or vectors. Only the `chat/stream` path feeds long-term memory. (It can
   still *read* facts — `main.go` passes the real facts store to `Register`, despite a stale comment

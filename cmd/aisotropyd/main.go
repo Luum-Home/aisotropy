@@ -219,7 +219,7 @@ func main() {
 	})
 
 	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry)
-	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient)
+	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient, semanticStore, embedder)
 
 	// Per-user primitives (Phase 6 behavioral memory): failed tool invocations
 	// on the agent endpoint accrue friction here; the sleep cycle rewrites a

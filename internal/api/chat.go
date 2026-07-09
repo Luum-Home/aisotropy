@@ -193,7 +193,9 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 		// memory (store) is injected on the streaming path (RegisterStream).
 		// Passing a nil store skips facts retrieval here (hydrateSystemPrompt
 		// guards on store != nil).
-		system, err := hydrateSystemPrompt(ctx, wm, store, key, scope, in.Body.ProductID, in.Body.Prompt)
+		// Non-streaming path hydrates working memory + facts only; semantic RAG
+		// (semStore/embedder) is wired on the streaming path.
+		system, err := hydrateSystemPrompt(ctx, wm, store, nil, nil, key, scope, in.Body.ProductID, in.Body.Prompt)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to hydrate working memory", err)
 		}

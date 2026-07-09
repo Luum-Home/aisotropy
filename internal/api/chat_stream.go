@@ -30,6 +30,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
+	"github.com/Luum-Home/aisotropy/internal/semantic"
 	"github.com/Luum-Home/aisotropy/internal/tools"
 )
 
@@ -40,6 +41,11 @@ const recentMessagesWindow = 12
 // factsWindow bounds how many facts-memory engrams are injected into the
 // system prompt (docs say the top 3-4 by score; see rqlite-facts-memory.md).
 const factsWindow = 4
+
+// semanticWindow bounds how many semantic-memory fragments are injected into
+// the system prompt (the vector tier's RAG contribution; see
+// qdrant-semantic-memory.md).
+const semanticWindow = 4
 
 // costInputPricePer1M / costOutputPricePer1M are the default USD prices per
 // 1M tokens used to estimate per-tenant cost for the /costs view. Rough
@@ -86,7 +92,7 @@ type StreamErrorEvent struct {
 // governs the contract both in the stub endpoint (Phase 0) and in real
 // streaming (Phase 1+) — see "the struct as the single source of truth"
 // (docs/vision/thesis.md).
-func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client) {
+func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client, semStore semantic.Store, embedder semantic.Embedder) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
 		Method:      "POST",
@@ -155,7 +161,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			"llm", client.Name(),
 		)
 
-		system, err := hydrateSystemPrompt(ctx, wm, store, key, scope, in.Body.ProductID, in.Body.Prompt)
+		system, err := hydrateSystemPrompt(ctx, wm, store, semStore, embedder, key, scope, in.Body.ProductID, in.Body.Prompt)
 		if err != nil {
 			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("failed to hydrate working memory: %v", err)})
 			return
@@ -262,7 +268,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 // its most recent active-buffer messages), so the model sees prior turns of
 // the conversation instead of starting fresh on every request (see
 // docs/architecture/memory-tiers.md).
-func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, key memory.Key, scope facts.Scope, productID, prompt string) (string, error) {
+func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, semStore semantic.Store, embedder semantic.Embedder, key memory.Key, scope facts.Scope, productID, prompt string) (string, error) {
 	base := systemPromptFor(productID)
 
 	summary, err := wm.Summary(ctx, key)
@@ -288,7 +294,23 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 		}
 	}
 
-	if summary == "" && len(recent) == 0 && len(relevant) == 0 {
+	// Semantic memory (Phase 4): vectors semantically similar to the prompt for
+	// this user (RAG over what the consolidation sink embedded). Also non-fatal
+	// enrichment — an embed/search failure degrades to "no semantic context"
+	// rather than failing the request.
+	var semantics []semantic.ScoredPoint
+	if semStore != nil && embedder != nil {
+		if vecs, eerr := embedder.Embed(ctx, []string{prompt}); eerr == nil && len(vecs) > 0 {
+			semScope := semantic.Scope{TenantID: scope.TenantID, UserID: scope.UserID}
+			if pts, serr := semStore.Search(ctx, semScope, vecs[0], semanticWindow); serr == nil {
+				semantics = pts
+			} else {
+				slog.ErrorContext(ctx, "semantic search failed; proceeding without it", "err", serr)
+			}
+		}
+	}
+
+	if summary == "" && len(recent) == 0 && len(relevant) == 0 && len(semantics) == 0 {
 		return base, nil
 	}
 
@@ -298,6 +320,12 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 		sb.WriteString("\n\nKnown facts about this user (long-term memory):\n")
 		for _, f := range relevant {
 			fmt.Fprintf(&sb, "- %s\n", f.Content)
+		}
+	}
+	if len(semantics) > 0 {
+		sb.WriteString("\n\nRelevant prior context (semantic memory):\n")
+		for _, p := range semantics {
+			fmt.Fprintf(&sb, "- %s\n", p.Content)
 		}
 	}
 	if summary != "" {
