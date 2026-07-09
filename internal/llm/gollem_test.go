@@ -258,6 +258,46 @@ func TestGollemCostTrackerRecordsUsageWhenPresent(t *testing.T) {
 	}
 }
 
+// TestGollemModelStubProducesRealUsageAndCost closes the end-to-end gap the
+// manual-injection test above leaves open. Instead of a TestModel with a
+// hand-set Usage, it drives the REAL GollemModel over the StubClient and proves
+// the provider usage captured from the stub's terminal Token flows all the way
+// into a priced CostTracker as non-zero cost — the full
+// stub -> generateFull -> toModelResponse -> ModelResponse.Usage -> CostTracker
+// chain. Since pricing is fixed and positive, TotalCost > 0 holds if and only if
+// non-zero token counts reached the tracker: this is the logical proof that the
+// "usage is always 0" defect is fixed on the real adapter path.
+//
+// gollemModelPricing is intentionally empty in production (an accounting degrade
+// documented on that var: real usage counts flow, but dollar cost stays 0 until
+// a per-model price table is wired), so this test supplies its own pricing for
+// the stub model name to exercise the wiring end to end.
+func TestGollemModelStubProducesRealUsageAndCost(t *testing.T) {
+	model := NewGollemModel(NewStubClient())
+
+	pricing := map[string]core.ModelPricing{
+		model.ModelName(): {InputTokenCost: 0.000003, OutputTokenCost: 0.000015},
+	}
+	tracker := core.NewCostTracker(pricing)
+
+	opts := append([]core.AgentOption[gollemTestOutput]{
+		core.WithMaxRetries[gollemTestOutput](3),
+	}, gollemGuardrailOptions[gollemTestOutput](tracker)...)
+	agent := core.NewAgent[gollemTestOutput](model, opts...)
+
+	result, err := agent.Run(context.Background(), "hello")
+	if err != nil {
+		t.Fatalf("agent.Run over GollemModel(stub): %v", err)
+	}
+	if result.Output.Reply == "" {
+		t.Fatalf("expected a non-empty structured reply from the stub, got empty")
+	}
+	if tracker.TotalCost() <= 0 {
+		t.Fatalf("expected positive TotalCost from real GollemModel(stub) usage, got %f "+
+			"(non-zero token counts did not reach the tracker — usage plumbing broken)", tracker.TotalCost())
+	}
+}
+
 // TestGollemRedactPIIInterceptorScrubsEmailBeforeModelSeesIt verifies that
 // the core.RedactPII message interceptor (ADR-0010's PII-redaction wiring)
 // actually runs on the message pipeline of an Agent[T] built with

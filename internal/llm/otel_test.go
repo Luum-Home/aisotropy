@@ -90,6 +90,58 @@ func TestWithOTel_RecordsOneSpanWithGenAIAttributes(t *testing.T) {
 	}
 }
 
+// TestWithOTel_GenAIUsageIsRealNotDeltaCount proves the original defect is
+// fixed: gen_ai.usage.* must carry the provider's REAL token counts (from
+// Token.Usage), never the number of streamed SSE deltas. The stub deliberately
+// makes output_tokens (reply character count) differ from the delta count
+// (reply word count), so asserting the two attributes differ — and that both
+// usage attrs equal the stub's deterministic Usage — proves they are no longer
+// conflated. Expected values come from the same helpers the stub uses, so the
+// test tracks stub behavior instead of hardcoding brittle numbers.
+func TestWithOTel_GenAIUsageIsRealNotDeltaCount(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	tracer := tp.Tracer("test")
+
+	stub := &StubClient{Delay: time.Millisecond}
+	wrapped := WithOTel(stub, tracer)
+
+	const system, prompt = "sys alpha beta", "hello there general"
+	tokens, err := wrapped.StreamChat(context.Background(), system, prompt)
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+	drainTokens(tokens)
+
+	words := stubWordsFor(system, prompt)
+	want := stubUsageFor(system, prompt, words)
+	wantDeltas := len(words)
+
+	span := recorder.Ended()[0]
+	attrs := span.Attributes()
+
+	inTok, ok := attrValue(attrs, attrGenAIInputTokens)
+	if !ok || inTok.AsInt64() != int64(want.InputTokens) {
+		t.Errorf("gen_ai.usage.input_tokens = %v (ok=%v), want %d", inTok, ok, want.InputTokens)
+	}
+	outTok, ok := attrValue(attrs, attrGenAIOutputTokens)
+	if !ok || outTok.AsInt64() != int64(want.OutputTokens) {
+		t.Errorf("gen_ai.usage.output_tokens = %v (ok=%v), want %d", outTok, ok, want.OutputTokens)
+	}
+	delta, ok := attrValue(attrs, attrStreamDeltaCount)
+	if !ok || delta.AsInt64() != int64(wantDeltas) {
+		t.Errorf("%s = %v (ok=%v), want %d", attrStreamDeltaCount, delta, ok, wantDeltas)
+	}
+
+	// The crux of the fix: real output tokens (reply characters) must NOT equal
+	// the delta count (reply words). If they matched, a real count would be
+	// indistinguishable from the delta proxy the fix removed.
+	if outTok.AsInt64() == delta.AsInt64() {
+		t.Fatalf("output_tokens (%d) must differ from delta_count (%d): distinguishing them is the whole point",
+			outTok.AsInt64(), delta.AsInt64())
+	}
+}
+
 func TestWithOTel_ForwardsErrTokenAndMarksSpanError(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
