@@ -26,14 +26,20 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/Luum-Home/aisotropy/internal/api"
+	"github.com/Luum-Home/aisotropy/internal/consolidation"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
+	"github.com/Luum-Home/aisotropy/internal/semantic"
 )
 
 // shutdownTimeout bounds how long graceful shutdown waits for in-flight HTTP
 // requests (mainly open SSE streams) to finish before giving up.
 const shutdownTimeout = 10 * time.Second
+
+// outboxPollInterval is how often the consolidation worker checks for pending
+// outbox events when the queue is empty (it drains back-to-back when it isn't).
+const outboxPollInterval = 1 * time.Second
 
 func main() {
 	addr := os.Getenv("AISOTROPY_ADDR")
@@ -66,6 +72,41 @@ func main() {
 	}
 	factsExtractor := facts.HeuristicExtractor{}
 
+	// Semantic memory (internal/semantic, Phase 4): in-memory vector store by
+	// default, or Qdrant when QDRANT_HOST is set (ADR-0001). The embedder is
+	// the deterministic HashEmbedder placeholder — a real embedding model is a
+	// drop-in behind the Embedder interface.
+	embedder := semantic.NewHashEmbedder(0)
+	semanticStore, err := semantic.OpenFromEnv(context.Background(), embedder.Dimension())
+	if err != nil {
+		slog.Error("failed to initialize semantic memory", "err", err)
+		os.Exit(1)
+	}
+
+	// Consolidation sink (internal/consolidation): Phase 2 of the Transactional
+	// Outbox. The async worker distils each drained event into the facts +
+	// semantic tiers, idempotently (facts UPSERT, semantic UUIDv5). Wiring the
+	// sink here — above the tiers — keeps the memory package free of
+	// facts/semantic imports (see docs/architecture/consistency.md).
+	sink := consolidation.Sink{
+		Facts:     factsStore,
+		Extractor: factsExtractor,
+		Semantic:  semanticStore,
+		Embedder:  embedder,
+	}
+
+	// Cold-boot reconciliation: drain any events orphaned by a previous
+	// shutdown before serving, then run the worker for steady state. Both use
+	// the same drain path (no special recovery mode).
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	defer stopWorker()
+	if n, err := wm.RecoverOutbox(context.Background(), sink); err != nil {
+		slog.Error("cold-boot outbox reconciliation failed", "err", err)
+	} else if n > 0 {
+		slog.Info("cold-boot outbox reconciliation drained orphaned events", "count", n)
+	}
+	go wm.RunOutboxWorker(workerCtx, sink, outboxPollInterval)
+
 	// OTel tracing for the streaming chat path (ADR-0010: the streaming
 	// path calls llm.Client.StreamChat directly, so it gets its own
 	// provider-agnostic WithOTel(Client) decorator rather than Gollem's
@@ -94,7 +135,7 @@ func main() {
 	// is Gollem's ext/otel (not yet adopted — tracked as debt in the ADR),
 	// not the streaming path's WithOTel(Client) decorator.
 	api.Register(humaAPI, llmClient, wm, factsStore)
-	api.RegisterStream(humaAPI, streamClient, wm, factsStore, factsExtractor)
+	api.RegisterStream(humaAPI, streamClient, wm, factsStore)
 
 	server := &http.Server{
 		Addr:    addr,
@@ -125,8 +166,10 @@ func main() {
 	case err := <-serverErrCh:
 		if err != nil {
 			slog.Error("server stopped", "err", err)
+			stopWorker()
 			_ = wm.Close()
 			_ = factsStore.Close()
+			_ = semanticStore.Close()
 			_ = shutdownTracing(context.Background())
 			os.Exit(1)
 		}
@@ -138,12 +181,20 @@ func main() {
 		slog.Error("server shutdown did not complete cleanly", "err", err)
 	}
 
+	// Stop the consolidation worker before closing the stores it writes to, so
+	// no drain is in flight against a closing BadgerDB / facts / semantic store.
+	stopWorker()
+
 	if err := wm.Close(); err != nil {
 		slog.Error("working memory close failed", "err", err)
 	}
 
 	if err := factsStore.Close(); err != nil {
 		slog.Error("facts memory close failed", "err", err)
+	}
+
+	if err := semanticStore.Close(); err != nil {
+		slog.Error("semantic memory close failed", "err", err)
 	}
 
 	if err := shutdownTracing(shutdownCtx); err != nil {

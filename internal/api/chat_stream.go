@@ -16,6 +16,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -37,9 +39,14 @@ const recentMessagesWindow = 12
 // system prompt (docs say the top 3-4 by score; see rqlite-facts-memory.md).
 const factsWindow = 4
 
-// factExtractionTimeout bounds the detached post-response extraction write, so
-// a stalled facts store can't leak a goroutine indefinitely.
-const factExtractionTimeout = 10 * time.Second
+// outboxRef derives a stable per-turn reference from the session and prompt.
+// It is the outbox event id (and, downstream, the seed of the semantic point's
+// UUIDv5), so re-sending the identical prompt in a session consolidates onto
+// the same fact/vector rather than duplicating.
+func outboxRef(key memory.Key, prompt string) string {
+	h := sha256.Sum256([]byte(key.Tenant + "\x00" + key.User + "\x00" + key.Session + "\x00" + prompt))
+	return hex.EncodeToString(h[:12])
+}
 
 // StreamTokenEvent is the payload of each "token" SSE event: an incremental
 // fragment (delta) of the LLM response.
@@ -69,7 +76,7 @@ type StreamErrorEvent struct {
 // governs the contract both in the stub endpoint (Phase 0) and in real
 // streaming (Phase 1+) — see "the struct as the single source of truth"
 // (docs/vision/thesis.md).
-func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, extractor facts.Extractor) {
+func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
 		Method:      "POST",
@@ -123,11 +130,16 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			return
 		}
 
-		// Persist the user's turn before calling the LLM: even if the
-		// stream itself later fails, the user's message is real input that
-		// already happened and should not be lost.
-		if err := wm.Append(ctx, key, memory.Message{Role: "user", Content: in.Body.Prompt}); err != nil {
-			slog.ErrorContext(ctx, "failed to append user message to working memory", "err", err)
+		// Persist the user's turn AND its consolidation intent in a single
+		// BadgerDB transaction (Transactional Outbox, Phase 5): the message
+		// lands in working memory and a pending event is queued for the async
+		// worker to distil into the facts + semantic tiers
+		// (internal/consolidation). The two writes are atomic — a crash cannot
+		// keep one without the other — and this happens before the LLM call
+		// because the user's message is real input that already happened.
+		event := memory.NewOutboxEvent(key, outboxRef(key, in.Body.Prompt), in.Body.Prompt, time.Now().UTC())
+		if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: "user", Content: in.Body.Prompt}, event); err != nil {
+			slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
 		}
 
 		tokens, err := client.StreamChat(ctx, system, in.Body.Prompt)
@@ -168,7 +180,6 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 							slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
 						}
 					}
-					extractFacts(store, extractor, scope, in.Body.Prompt, assistantReply.String())
 					_ = send.Data(StreamDoneEvent{TenantID: in.TenantID})
 					return
 				}
@@ -237,31 +248,6 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 		}
 	}
 	return sb.String(), nil
-}
-
-// extractFacts runs the Phase 3 online extractor over a completed turn and
-// persists any resulting facts off the request's hot path. The extraction
-// itself is cheap and runs inline; only the store write is deferred to a
-// goroutine, on a bounded, DETACHED context (the request ctx is cancelled the
-// moment this handler returns). It is fire-and-forget: a missed fact is logged,
-// never surfaced to the client, and must not break an otherwise successful chat.
-func extractFacts(store facts.Store, extractor facts.Extractor, scope facts.Scope, userMsg, assistantMsg string) {
-	if store == nil || extractor == nil {
-		return
-	}
-	candidates := extractor.Extract(scope, facts.Turn{UserMessage: userMsg, AssistantMessage: assistantMsg})
-	if len(candidates) == 0 {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), factExtractionTimeout)
-		defer cancel()
-		for _, f := range candidates {
-			if err := store.Save(ctx, scope, f); err != nil {
-				slog.ErrorContext(ctx, "failed to persist extracted fact", "err", err, "fact_id", f.ID)
-			}
-		}
-	}()
 }
 
 // systemPromptFor builds the minimal system prompt for the given product_id.

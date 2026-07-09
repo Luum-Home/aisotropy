@@ -38,7 +38,7 @@ func newTestRouter(t *testing.T, client llm.Client, wm *memory.WorkingMemory) ht
 	router := chi.NewRouter()
 	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy-test", "0.1.0"))
 	Register(humaAPI, client, wm, factsStore)
-	RegisterStream(humaAPI, client, wm, factsStore, facts.HeuristicExtractor{})
+	RegisterStream(humaAPI, client, wm, factsStore)
 	return router
 }
 
