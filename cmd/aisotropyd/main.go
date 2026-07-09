@@ -14,7 +14,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -28,13 +27,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/Luum-Home/aisotropy/internal/agentloop"
 	"github.com/Luum-Home/aisotropy/internal/api"
 	"github.com/Luum-Home/aisotropy/internal/consolidation"
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
+	"github.com/Luum-Home/aisotropy/internal/primitives"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
 	"github.com/Luum-Home/aisotropy/internal/sleepcycle"
 	"github.com/Luum-Home/aisotropy/internal/tools"
@@ -47,6 +46,13 @@ const shutdownTimeout = 10 * time.Second
 // outboxPollInterval is how often the consolidation worker checks for pending
 // outbox events when the queue is empty (it drains back-to-back when it isn't).
 const outboxPollInterval = 1 * time.Second
+
+// agentMaxSteps bounds the tool-use loop on the agent endpoint.
+const agentMaxSteps = 3
+
+// primitiveFrictionThreshold is the accrued friction at which the sleep cycle
+// rewrites a user's primitive.
+const primitiveFrictionThreshold = 3.0
 
 // sleepCycleInterval is how often the offline DataFusion consolidation runs when
 // a worker binary is configured (Phase 6). Batch/offline, so a coarse cadence.
@@ -215,16 +221,16 @@ func main() {
 	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry)
 	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient)
 
+	// Per-user primitives (Phase 6 behavioral memory): failed tool invocations
+	// on the agent endpoint accrue friction here; the sleep cycle rewrites a
+	// primitive once its friction crosses the threshold.
+	primStore := primitives.NewStore()
+	frictionDetector := primitives.NewFrictionDetector(primStore)
+	go runPrimitiveConsolidation(workerCtx, primStore)
+
 	// Agentic tool-use endpoint (Phase 7 behavior axis): the structured-output
-	// loop over the scope-permitted tools. The demo executor echoes calls; real
-	// tool implementations replace it.
-	agentLoop := &agentloop.Loop{
-		Client:   protectedClient,
-		Registry: toolRegistry,
-		Executor: demoToolExecutor{},
-		MaxSteps: 3,
-	}
-	api.RegisterAgent(humaAPI, agentLoop)
+	// loop over the scope-permitted tools, with a friction-recording executor.
+	api.RegisterAgent(humaAPI, protectedClient, toolRegistry, frictionDetector, agentMaxSteps)
 
 	server := &http.Server{
 		Addr:    addr,
@@ -293,13 +299,27 @@ func main() {
 	slog.Info("aisotropyd stopped")
 }
 
-// demoToolExecutor is a placeholder ToolExecutor for the agent endpoint: it
-// echoes the invocation. Real tool implementations (which may fail and thereby
-// feed friction into internal/primitives) replace it.
-type demoToolExecutor struct{}
-
-func (demoToolExecutor) Execute(_ context.Context, name string, args map[string]string) (string, error) {
-	return fmt.Sprintf("executed %q with args %v", name, args), nil
+// runPrimitiveConsolidation periodically rewrites per-user primitives whose
+// accrued friction crossed the threshold (Phase 6 sleep cycle, behavioral
+// memory). It is a no-op until real friction accrues (the demo tool executor
+// never fails), but the mechanism runs so a deployment with failing tools
+// improves them over time.
+func runPrimitiveConsolidation(ctx context.Context, store *primitives.Store) {
+	ticker := time.NewTicker(sleepCycleInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := primitives.Consolidate(ctx, store, primitives.HeuristicRewriter{}, primitiveFrictionThreshold)
+			if err != nil {
+				slog.Error("primitive consolidation failed", "err", err)
+			} else if n > 0 {
+				slog.Info("primitives rewritten under friction", "count", n)
+			}
+		}
+	}
 }
 
 // envFloat reads a positive float from the named env var, or returns def.
