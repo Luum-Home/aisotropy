@@ -1,0 +1,17 @@
+[package]
+name = "sleep-cycle"
+version = "0.1.0"
+edition = "2021"
+description = "Aisotropy sleep-cycle worker: offline batch consolidation (dedup) over memory tiers with Apache DataFusion. Invoked as a subprocess by the Go core (ADR-0005)."
+license = "Apache-2.0"
+
+[[bin]]
+name = "sleep-cycle"
+path = "src/main.rs"
+
+[dependencies]
+datafusion = "43"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[profile.release]
+opt-level = 2
