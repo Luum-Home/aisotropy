@@ -209,6 +209,11 @@ func main() {
 			}
 		})
 		slog.Info("sleep-cycle worker scheduled", "bin", bin, "interval", sleepCycleInterval)
+	} else {
+		// Make the disabled state observable instead of silently off: the offline
+		// DataFusion consolidation only runs when the operator points this at the
+		// built Rust binary (crates/sleep-cycle/target/release/sleep-cycle).
+		slog.Info("sleep-cycle worker disabled", "reason", "AISOTROPY_SLEEPCYCLE_BIN unset")
 	}
 
 	router := chi.NewRouter()

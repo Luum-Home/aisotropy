@@ -6,7 +6,9 @@
 //!
 //! Contract (kept explicit and tested on the Go side, internal/sleepcycle):
 //!   argv:   --input <facts.ndjson> --output <deduped.parquet>
-//!   stdout: {"rows_in":N,"rows_out":M,"dropped":D}   (only on success)
+//!   stdout: {"rows_in":N,"rows_out":M,"dropped":D,"dropped_ids":[...]}
+//!           (only on success; dropped_ids lists the ids removed as duplicates,
+//!           which Go deletes from the live store)
 //!   exit:   0 = success, non-zero = failure (stderr carries the reason)
 
 use datafusion::arrow::array::{Array, StringArray};
