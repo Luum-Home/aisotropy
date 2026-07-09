@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -352,6 +353,80 @@ func TestRoutingStore_ExportAllGloballySorted(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("ExportAll order = %v, want %v", got, want)
 		}
+	}
+}
+
+// countingStore wraps a Store to count how many times Close is called, so a
+// test can assert every physical store that was opened was also closed.
+type countingStore struct {
+	Store
+	closed *int32
+}
+
+func (c countingStore) Close() error {
+	atomic.AddInt32(c.closed, 1)
+	return c.Store.Close()
+}
+
+// TestRoutingStore_ConcurrentCloseNoLeak forces the Close-vs-provision race the
+// holder mutex is designed to resolve: many goroutines each provision a NEW
+// dedicated resource (a fresh factory call, hence a fresh open) while Close runs
+// concurrently. It must run clean under -race, and the invariant that closes the
+// hazard is opened == closed: no physical store is ever opened after Close in a
+// way that leaks it unclosed.
+func TestRoutingStore_ConcurrentCloseNoLeak(t *testing.T) {
+	const n = 64
+	dedicated := make(map[string]bool, n)
+	for i := 0; i < n; i++ {
+		dedicated["t"+strconv.Itoa(i)] = true
+	}
+	router := fakeRouter{dedicated: dedicated}
+
+	var opened, closed int32
+	factory := func(resource string) (Store, error) {
+		atomic.AddInt32(&opened, 1)
+		s, err := OpenSQLite(":memory:")
+		if err != nil {
+			return nil, err
+		}
+		return countingStore{Store: s, closed: &closed}, nil
+	}
+
+	// No pre-provisioned dedicated tenants: every Save below is a first open.
+	rs, err := NewRoutingStore(router, "facts", nil, factory)
+	if err != nil {
+		t.Fatalf("NewRoutingStore: %v", err)
+	}
+
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sc := mustScopeNoFatal("t"+strconv.Itoa(i), "user-x")
+			// Either succeeds (opened before Close) or fails closed (after Close);
+			// both are correct. We only require no race and no leak.
+			_ = rs.Save(ctx, sc, fact(sc, "f"+strconv.Itoa(i), "concurrent open"))
+		}(i)
+	}
+	// Close concurrently with the in-flight provisions.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := rs.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+	wg.Wait()
+
+	// A second Close must be a no-op that closes nothing new.
+	if err := rs.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+
+	if got, want := atomic.LoadInt32(&closed), atomic.LoadInt32(&opened); got != want {
+		t.Fatalf("store leak: opened %d, closed %d (every opened store must be closed)", want, got)
 	}
 }
 

@@ -2,7 +2,10 @@ package semantic
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -184,5 +187,90 @@ func TestRoutingStore_ConcurrentUpsertAcrossTenants(t *testing.T) {
 		if len(results) != perTenant {
 			t.Fatalf("tenant %s: expected %d points, got %d", tenant, perTenant, len(results))
 		}
+	}
+}
+
+// countingStore wraps a Store to count Close calls, so a test can assert every
+// physical store opened was also closed.
+type countingStore struct {
+	Store
+	closed *int32
+}
+
+func (c countingStore) Close() error {
+	atomic.AddInt32(c.closed, 1)
+	return c.Store.Close()
+}
+
+// TestRoutingStore_ConcurrentCloseNoLeak forces the Close-vs-provision race the
+// holder mutex resolves: many goroutines each provision a NEW dedicated
+// collection (a fresh factory call) while Close runs concurrently. Must be clean
+// under -race, and opened == closed: no collection opened after Close leaks.
+func TestRoutingStore_ConcurrentCloseNoLeak(t *testing.T) {
+	const n = 64
+	tenants := make([]string, n)
+	for i := 0; i < n; i++ {
+		tenants[i] = "t" + strconv.Itoa(i)
+	}
+	router := newFakeRouter(tenants...)
+
+	var opened, closed int32
+	factory := func(_ string) (Store, error) {
+		atomic.AddInt32(&opened, 1)
+		return countingStore{Store: NewInMemoryStore(4), closed: &closed}, nil
+	}
+
+	// No pre-provisioned dedicated tenants: every Upsert below is a first open.
+	rs, err := NewRoutingStore(router, "knowledge", nil, factory)
+	if err != nil {
+		t.Fatalf("NewRoutingStore: %v", err)
+	}
+
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sc := Scope{TenantID: "t" + strconv.Itoa(i), UserID: "u"}
+			p := Point{ID: "p" + strconv.Itoa(i), TenantID: sc.TenantID, UserID: sc.UserID, Vector: []float32{1, 0, 0, 0}}
+			_ = rs.Upsert(ctx, sc, []Point{p})
+		}(i)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := rs.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+	wg.Wait()
+
+	if err := rs.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if got, want := atomic.LoadInt32(&closed), atomic.LoadInt32(&opened); got != want {
+		t.Fatalf("store leak: opened %d, closed %d", want, got)
+	}
+}
+
+// TestRoutingStore_UseAfterClose proves post-Close dispatch fails closed.
+func TestRoutingStore_UseAfterClose(t *testing.T) {
+	router := newFakeRouter("dedicated-a")
+	rs, err := NewRoutingStore(router, "knowledge", []string{"dedicated-a"}, inMemoryFactory(4))
+	if err != nil {
+		t.Fatalf("NewRoutingStore: %v", err)
+	}
+	if err := rs.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	ctx := context.Background()
+	sc := Scope{TenantID: "tenant-shared", UserID: "u"}
+	p := Point{ID: "p1", TenantID: sc.TenantID, UserID: sc.UserID, Vector: []float32{1, 0, 0, 0}}
+	if err := rs.Upsert(ctx, sc, []Point{p}); !errors.Is(err, ErrRoutingStoreClosed) {
+		t.Fatalf("Upsert after Close = %v, want ErrRoutingStoreClosed", err)
+	}
+	if _, err := rs.Search(ctx, sc, []float32{1, 0, 0, 0}, 5); !errors.Is(err, ErrRoutingStoreClosed) {
+		t.Fatalf("Search after Close = %v, want ErrRoutingStoreClosed", err)
 	}
 }

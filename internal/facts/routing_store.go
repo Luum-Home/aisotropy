@@ -25,15 +25,53 @@ type resourceRouter interface {
 // distinct resource name.
 type StoreFactory func(resource string) (Store, error)
 
-// provisioned lazily opens exactly one physical Store for a resource. The
-// sync.Once serializes concurrent first-provisions of the SAME resource WITHOUT
-// holding the RoutingStore's map lock, so a slow (networked) open for one
-// tenant never blocks another tenant's dispatch — the map lock is held only for
-// the O(1) holder lookup.
+// provisioned lazily opens exactly one physical Store for a resource. It
+// serializes concurrent first-opens of the SAME resource on its OWN mutex —
+// never the RoutingStore map lock — so a slow (networked) open for one tenant
+// never blocks another tenant's dispatch (the map lock is held only for the
+// O(1) holder lookup), and it synchronizes that open against Close so a
+// concurrent shutdown can neither race the store field nor leak a store opened
+// after Close.
 type provisioned struct {
-	once  sync.Once
-	store Store
-	err   error
+	mu     sync.Mutex
+	done   bool // factory has run (store/err are set)
+	closed bool // shut() ran; open() must fail closed
+	store  Store
+	err    error
+}
+
+// open returns the holder's Store, running factory exactly once. Concurrent
+// callers for the same resource block on p.mu (not the map lock); the loser
+// observes done and returns the cached result. Returns ErrRoutingStoreClosed if
+// the holder was already shut, so a provision racing Close never opens a store
+// that Close will not close.
+func (p *provisioned) open(resource string, factory StoreFactory) (Store, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return nil, ErrRoutingStoreClosed
+	}
+	if !p.done {
+		p.store, p.err = factory(resource)
+		p.done = true
+	}
+	return p.store, p.err
+}
+
+// shut marks the holder closed and closes its Store if one was opened. It is
+// serialized against open on p.mu: whichever of open/shut acquires p.mu first
+// wins deterministically — if open ran first, shut closes the opened store; if
+// shut ran first, open returns ErrRoutingStoreClosed and never opens. Idempotent.
+func (p *provisioned) shut() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closed = true
+	if p.done && p.store != nil {
+		s := p.store
+		p.store = nil // prevent a double Close on a repeated shut
+		return s.Close()
+	}
+	return nil
 }
 
 // RoutingStore implements Store by dispatching every scoped operation to the
@@ -106,17 +144,13 @@ func (rs *RoutingStore) entryFor(resource string) (*provisioned, error) {
 }
 
 // storeForResource returns the Store for resource, opening it exactly once
-// (outside the map lock, via the holder's sync.Once).
+// (outside the map lock, via the holder).
 func (rs *RoutingStore) storeForResource(resource string) (Store, error) {
 	p, err := rs.entryFor(resource)
 	if err != nil {
 		return nil, err
 	}
-	p.once.Do(func() { p.store, p.err = rs.factory(resource) })
-	if p.err != nil {
-		return nil, p.err
-	}
-	return p.store, nil
+	return p.open(resource, rs.factory)
 }
 
 // storeFor resolves tenant's physical resource and returns its Store.
@@ -196,21 +230,27 @@ func (rs *RoutingStore) ExportAll(ctx context.Context) ([]Fact, error) {
 
 // Close closes every physical Store provisioned so far and marks the store
 // closed, so later dispatches fail with ErrRoutingStoreClosed instead of
-// reaching a shut-down backend. It assumes no operation is concurrently in
-// flight (the standard io.Closer contract). Returns the first close error.
+// reaching a shut-down backend. It is safe to call concurrently with in-flight
+// dispatches: each holder's shut() is serialized against its open() on the
+// holder mutex, so a provision racing Close either completes and is then closed,
+// or observes the closed holder and never opens. The map lock is released before
+// closing the physical stores, so a slow backend Close never blocks dispatch
+// resolution. Returns the first close error encountered.
 func (rs *RoutingStore) Close() error {
 	rs.mu.Lock()
-	defer rs.mu.Unlock()
-
 	rs.closed = true
-	var first error
+	holders := make([]*provisioned, 0, len(rs.stores))
 	for resource, p := range rs.stores {
-		if p.store != nil {
-			if err := p.store.Close(); err != nil && first == nil {
-				first = err
-			}
-		}
+		holders = append(holders, p)
 		delete(rs.stores, resource)
+	}
+	rs.mu.Unlock()
+
+	var first error
+	for _, p := range holders {
+		if err := p.shut(); err != nil && first == nil {
+			first = err
+		}
 	}
 	return first
 }
