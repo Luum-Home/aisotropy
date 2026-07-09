@@ -44,6 +44,16 @@ func NewRouter(policy Policy) Router {
 //
 // base is returned unchanged if it is empty — there is no meaningful
 // resource name to derive from an empty base regardless of tier.
+//
+// Injectivity constraint (see the ADR-0007 adversarial review): the
+// "base_tenant" encoding is only collision-free when, within a single physical
+// namespace (all Qdrant collections, or all rqlite tables), the set of base
+// names contains no base that equals another base plus the separator plus a
+// valid tenant. In practice each namespace uses ONE fixed base (e.g. the
+// "aisotropy_knowledge" collection, the "facts" table), so this holds. Callers
+// introducing multiple bases per namespace must keep them free of that prefix
+// relationship, and tenant ids are charset-validated at the API boundary
+// (ChatInput) so they cannot smuggle the separator or identifier metacharacters.
 func (r Router) Resource(base, tenant string) string {
 	if base == "" || tenant == "" {
 		return base

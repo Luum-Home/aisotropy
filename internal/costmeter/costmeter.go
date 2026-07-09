@@ -58,6 +58,17 @@ func New() *Meter {
 // docs/architecture/multi-tenancy.md; costmeter itself does not validate or
 // interpret it beyond using it as a map key.
 func (m *Meter) Record(tenant string, inputTokens, outputTokens int, costUSD float64) {
+	// A buggy upstream usage report must never decrement a tenant's running
+	// totals: clamp negative values to zero.
+	if inputTokens < 0 {
+		inputTokens = 0
+	}
+	if outputTokens < 0 {
+		outputTokens = 0
+	}
+	if costUSD < 0 {
+		costUSD = 0
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

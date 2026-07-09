@@ -60,8 +60,14 @@ type ChatRequest struct {
 // body. TenantID and UserID travel natively through the handler signature
 // and are injected into ctx.
 type ChatInput struct {
-	TenantID string `path:"tenant_id" doc:"Unique customer/tenant ID" example:"acme"`
-	UserID   string `path:"user_id" doc:"Unique user ID within the tenant" example:"alice"`
+	// TenantID/UserID are constrained to a safe identifier charset at the
+	// contract level (Huma rejects a violation with 422 before the handler
+	// runs). This is defense-in-depth for the multi-tenancy gate: the tenant
+	// id can flow into physical resource names (routing.Router) and store
+	// keys, so an injection/oversize surface is closed here, not only in
+	// withIdentity's downstream check.
+	TenantID string `path:"tenant_id" pattern:"^[a-zA-Z0-9_-]{1,64}$" doc:"Unique customer/tenant ID" example:"acme"`
+	UserID   string `path:"user_id" pattern:"^[a-zA-Z0-9_-]{1,64}$" doc:"Unique user ID within the tenant" example:"alice"`
 	Body     ChatRequest
 }
 

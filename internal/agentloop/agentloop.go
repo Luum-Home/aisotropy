@@ -206,23 +206,75 @@ func collectText(ctx context.Context, client llm.Client, system, prompt string) 
 	}
 }
 
-// parseDecision extracts and decodes a Decision JSON object from the
-// model's raw text, tolerating surrounding prose/markdown code fences by
-// taking the substring between the first '{' and the last '}'.
+// parseDecision extracts and decodes a Decision from the model's raw text,
+// tolerating surrounding prose and markdown code fences. It scans every
+// brace-balanced JSON object in the text and returns the first that decodes
+// into a Decision with a concrete tool; failing that, the first that decodes
+// at all (a valid "no tool" reply). A naive first-'{'/last-'}' slice would
+// instead mis-capture stray braces in prose (e.g. "use {the tool}: {json}")
+// and drop a legitimate tool call — a denial-of-tool.
 func parseDecision(raw string) (Decision, error) {
 	text := stripCodeFences(strings.TrimSpace(raw))
-
-	start := strings.IndexByte(text, '{')
-	end := strings.LastIndexByte(text, '}')
-	if start == -1 || end == -1 || end < start {
-		return Decision{}, fmt.Errorf("no JSON object found in model output: %q", truncate(text, 200))
+	var fallback *Decision
+	for _, obj := range balancedJSONObjects(text) {
+		var dec Decision
+		if err := json.Unmarshal([]byte(obj), &dec); err != nil {
+			continue // not JSON (prose braces) — try the next candidate
+		}
+		if strings.TrimSpace(dec.Tool) != "" {
+			return dec, nil // a concrete tool choice wins immediately
+		}
+		if fallback == nil {
+			d := dec
+			fallback = &d // remember the first valid "no tool" object
+		}
 	}
-
-	var dec Decision
-	if err := json.Unmarshal([]byte(text[start:end+1]), &dec); err != nil {
-		return Decision{}, fmt.Errorf("invalid JSON: %w", err)
+	if fallback != nil {
+		return *fallback, nil
 	}
-	return dec, nil
+	return Decision{}, fmt.Errorf("no valid Decision JSON object in model output: %q", truncate(text, 200))
+}
+
+// balancedJSONObjects returns each top-level brace-balanced {...} substring in
+// s, honoring string literals and escapes so braces inside strings do not
+// count. This is what lets parseDecision tolerate prose or stray braces around
+// the real object instead of mis-slicing on the first '{' and last '}'.
+func balancedJSONObjects(s string) []string {
+	var objs []string
+	depth, start := 0, -1
+	inStr, esc := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+				if depth == 0 && start >= 0 {
+					objs = append(objs, s[start:i+1])
+					start = -1
+				}
+			}
+		}
+	}
+	return objs
 }
 
 // stripCodeFences removes a single leading/trailing ``` or ```json fence, if
