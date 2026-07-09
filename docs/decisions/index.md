@@ -123,9 +123,10 @@ These were closed in the original design and are documented as retroactive "acce
   changing the `Client` contract or subordinating ADR-0009's provider-agnostic `Registry`/routing to
   Gollem's provider layer. Both dispatch branches enforce the identical double scope-gate. Rejects
   widening `Client` itself (breaks every implementer) and Gollem-native provider ownership (ADR-0010
-  guardrail). Delivered: the seam + native dispatch + fallback + scope-gate tests. Tracked follow-up:
-  a real provider implementing `ToolCaller`, and optionally routing the native path through Gollem
-  `Agent[T]` to inherit its guardrails/`CostTracker`/OTel.
+  guardrail). Delivered: the seam + native dispatch + fallback + scope-gate tests, plus
+  `OpenAICompatClient` (OpenRouter/OpenAI) implementing `ToolCaller` — **live-validated end to end**
+  against `openrouter:qwen/qwen3.7-plus`. Tracked follow-up: optionally an Anthropic-SDK `ToolCaller`
+  and routing the native path through Gollem `Agent[T]` for its guardrails/`CostTracker`/OTel.
 
 - **[ADR-0013 — Public extension surface: façade + builder](0013-public-extension-surface-facade-vs-promote.md):**
   🟡 **proposed → pending approval**. The Phase 8 (adoption surface) decision: let a third party build

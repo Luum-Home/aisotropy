@@ -28,15 +28,29 @@ is that ADR.
   `agentloop.Loop` otherwise. Both branches enforce the identical double scope-gate (only
   `Registry.Permitted(scopes)` tools offered, chosen name re-validated before execution) and run
   tools through the same scope-/friction-wrapped executor.
+- `internal/llm/openai_compat.go` — `OpenAICompatClient` (OpenRouter, OpenAI, and any
+  OpenAI-`/chat/completions`-compatible gateway) implements `ToolCaller`: `CallTools` makes a single
+  non-streaming request advertising the offered tools as OpenAI "function" tools and parses the
+  returned `tool_calls`. Since `NewOpenRouterClient` returns an `*OpenAICompatClient`, the default
+  runtime provider (OpenRouter, by `FromEnv` precedence) now takes the native path automatically.
 - Tests (`internal/api/chat_agent_test.go`): a scripted fake `ToolCaller` proves the native path
   executes a permitted tool and — the security invariant — rejects a non-permitted tool *before*
-  execution; a compile/runtime check asserts `StubClient` stays a plain `Client` (so the default
+  execution; a compile/runtime check asserts `StubClient` stays a plain `Client` (so a keyless
   runtime keeps the agentloop fallback).
+- **Live-validated end to end (2026-07-09)** against a real tool-calling model
+  (`openrouter:qwen/qwen3.7-plus`), behind the `manual` build tag
+  (`internal/llm/toolcaller_manual_test.go`): `CallTools` round-tripped a real tool call
+  (`get_weather{city:Paris}`), and the full agent endpoint drove the native path
+  (`chat_agent` → `runNativeToolLoop` → `CallTools` → scope-gate → executor), the model choosing
+  `search_docs` and the demo executor running it (HTTP 200).
 
-**Remaining (tracked follow-up, needs live validation against a real tool-calling model):**
+**Remaining (tracked follow-up):**
 
-1. A real provider implements `ToolCaller` (e.g. `AnthropicClient` parsing native `tool_use`
-   blocks). Until then no shipped client implements it, so the runtime uses the agentloop path.
+1. Optionally `AnthropicClient` (Messages API `tool_use` blocks via the SDK) also implements
+   `ToolCaller` — the OpenAI-compat provider already closes the "a real provider implements it"
+   requirement, so this is additive breadth, not a blocker. Deferred here because no
+   `ANTHROPIC_API_KEY` is available to live-validate the SDK tool wiring, and shipping an
+   unexercised tool bridge would violate the project's "no unverified paths as done" gate.
 2. Optionally routing the native path through Gollem's `core.Agent[T]` + `core.FuncTool` (bridging
    in `internal/llm/gollem.go`) to inherit ADR-0010's "ADOPT NOW" `Agent[T]` guardrails /
    `CostTracker` / OTel span tree. The current native loop calls `ToolCaller.CallTools` directly, so
