@@ -131,6 +131,32 @@ breaker, scope-based tools, dynamic prompt; physical multi-tenancy ([ADR-0007](.
 
 ---
 
+## Phase 8 — Adoption surface (public API and SDK)
+**Objective:** let a third party build *their* bot on top of Aisotropy **without forking** — close
+the gap between "functional runtime" and "adoptable framework" (see
+[what Aisotropy is](../architecture/what-aisotropy-is.md)).
+**Context:** Phases 0–7 make Aisotropy a working multi-tenant agent *runtime*, but its only
+extension surface today is **wiring-level**: tools, the `ToolExecutor`, and per-`product_id`
+personas are hand-wired in [`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go), and the
+reusable packages live under `internal/` (not importable by another module). The demo tools
+(`search_docs`, `read_financials`, `write_tasks`) + `echoExecutor` are placeholders, not a product.
+**Built (proposed):** a stable public extension surface — either promote the extension packages out
+of `internal/` (or expose a versioned façade module), plus a way to register tools / executors /
+personas **declaratively** (config or a builder) instead of editing `main.go`; a documented
+"add a tool" / "define an agent" path; a worked example consumer bot built *against the public
+surface only*.
+**Definition of done:**
+- [ ] A consumer can register a tool + real `ToolExecutor` and a per-product persona without editing `cmd/aisotropyd/main.go`.
+- [ ] The extension packages a consumer needs are reachable from another Go module (out of `internal/`, or via a published façade) with a stated backwards-compatibility contract.
+- [ ] An example bot lives in the repo, built only against the public surface, and its build/test is green in CI.
+- [ ] `docs/` has a "build your own agent on Aisotropy" guide that does not reference internal wiring.
+
+**Touches:** `cmd/aisotropyd`, `internal/tools`, `internal/agentloop`, `internal/api`, packaging.
+**Depends on:** Phase 7 (the runtime it exposes). **Note:** this is an *adoption* phase, not a new
+runtime capability — it changes who can build on Aisotropy, not what Aisotropy can do.
+
+---
+
 ## Cross-cutting — O8: compression (Bellard)
 Not a sequential phase: the green bets get instrumented as soon as their substrate exists.
 - **[Bet 6](../research/bet-06-bits-per-token-metric.md)** (bits/token/tenant) → from Phase 2.

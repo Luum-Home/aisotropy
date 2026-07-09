@@ -10,6 +10,7 @@ timestamp: 2026-07-08T00:00:00Z
 
 ## Documents
 
+- [What Aisotropy is (and is not)](what-aisotropy-is.md) — Taxonomy: a multi-tenant agent **runtime**, not an import-me library and not a single bot. **Read this first if you're unsure what category of thing this repo is.**
 - [Overview](overview.md) — The full stack, the "LLM OS" model, and the responsibility map.
 - [Request lifecycle](request-lifecycle.md) — What happens from HTTP to SSE and the sleep cycle.
 - [Tiered memory](memory-tiers.md) — The three-tier memory system + batch. **The heart of the design.**

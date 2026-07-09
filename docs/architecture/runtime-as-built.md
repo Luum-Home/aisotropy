@@ -138,8 +138,9 @@ Each pass ([`internal/sleepcycle/coordinator.go`](../../internal/sleepcycle/coor
 as a subprocess (`--input`/`--output`, ADR-0005) → parse the JSON `Summary` from stdout → `Delete`
 each dropped duplicate id **within its own (tenant,user) scope**. A Rust panic surfaces as a
 non-zero exit, retried with backoff up to 3 attempts; a failure is logged, never fatal, and never on
-the request path. There is **no `Cargo.toml`/`crates/` in the repo yet**, so this path is dormant by
-default.
+the request path. The Rust worker now **exists** at [`crates/sleep-cycle`](../../crates/sleep-cycle)
+(DataFusion dedup over exported facts, ADR-0005), but this path is still **dormant by default**: it
+runs only when the binary is built and `AISOTROPY_SLEEPCYCLE_BIN` points at it.
 
 ## 4. The memory tiers as built
 

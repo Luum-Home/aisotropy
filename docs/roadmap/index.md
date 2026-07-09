@@ -29,5 +29,6 @@ then thicken each layer.
 | 5 | Consistency | Transactional Outbox + workers + reconciliation | The system doesn't desync if it crashes. |
 | 6 | Sleep cycle | + DataFusion (dedup, contradictions, noise) | Offline self-improvement. |
 | 7 | Granular control | Quotas, circuit breaker, scope-based tools, OTel | Ready for multi-tenant enterprise. |
+| 8 | Adoption surface | Public API / SDK: register tools/executors/personas without editing `main.go` | A third party can build their bot on top **without forking**. |
 
 Detail and metrics in [OKRs](okrs.md).
