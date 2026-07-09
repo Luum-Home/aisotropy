@@ -109,6 +109,20 @@ These were closed in the original design and are documented as retroactive "acce
   the facts tier cannot be written unsafely. Closes the "silent isolation leak" admission in
   `request-lifecycle.md`.
 
+- **[ADR-0012 — Gollem as the agent-loop engine: native tool-calling vs. the homegrown agentloop](0012-gollem-native-tool-calling-vs-homegrown-agentloop.md):**
+  🟡 **proposed → pending approval**. The dedicated ADR that ADR-0010's guardrail requires before any
+  Gollem adoption that would widen the `llm.Client` seam toward native tool-calling. Records that
+  Gollem is already the reflection engine (`chat.go`) but the agent endpoint (`chat_agent.go`) still
+  hand-rolls tool dispatch via the structured-output `agentloop` because `Client` exposes no
+  function-calling primitive (`gollem.go:55-60`). Proposes **Option C**: an *optional, additive*
+  `ToolCaller` capability interface (discovered by type assertion), with the Gollem `core.FuncTool`
+  bridge attached in the adapter and the `agentloop` retained as the fallback for providers/stub that
+  do not implement it — unlocking native tool-calling (and Gollem's guardrails/`CostTracker`/OTel span
+  tree) on the agent endpoint **without** changing the `Client` contract or subordinating ADR-0009's
+  provider-agnostic `Registry`/routing to Gollem's provider layer. Rejects widening `Client` itself
+  (breaks every implementer) and Gollem-native provider ownership (ADR-0010 Option A/guardrail). No
+  code until Accepted.
+
 ## Next ADRs to write
 
 - New ones arising from the research phase (e.g., the codec format for [Bet 2](../research/bet-02-working-memory-codec.md), deterministic model versioning).
