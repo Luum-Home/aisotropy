@@ -2,9 +2,13 @@ package semantic
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 )
+
+// ErrRoutingStoreClosed is returned by a RoutingStore operation issued after Close.
+var ErrRoutingStoreClosed = errors.New("semantic: routing store is closed")
 
 // resourceRouter is the seam onto internal/routing.Router that RoutingStore
 // depends on. It resolves the physical resource (a Qdrant collection name,
@@ -22,6 +26,17 @@ type resourceRouter interface {
 // once per Dedicated tenant's own resource — and the result is cached for
 // the RoutingStore's lifetime.
 type StoreFactory func(resource string) (Store, error)
+
+// provisioned lazily opens exactly one physical Store for a resource. The
+// sync.Once serializes concurrent first-provisions of the SAME resource WITHOUT
+// holding the RoutingStore's map lock, so a slow (networked) open for one
+// Dedicated tenant's collection never blocks another tenant's dispatch — the
+// map lock is held only for the O(1) holder lookup.
+type provisioned struct {
+	once  sync.Once
+	store Store
+	err   error
+}
 
 // RoutingStore implements Store by dispatching every scoped operation to the
 // physical Store for that operation's tenant, per ADR-0007's hybrid/tiered
@@ -50,7 +65,8 @@ type RoutingStore struct {
 	factory StoreFactory
 
 	mu     sync.Mutex
-	stores map[string]Store // keyed by physical resource name
+	stores map[string]*provisioned // keyed by physical resource name
+	closed bool
 }
 
 // NewRoutingStore builds a RoutingStore and eagerly provisions the pooled
@@ -68,14 +84,11 @@ func NewRoutingStore(router resourceRouter, base string, dedicated []string, fac
 		router:  router,
 		base:    base,
 		factory: factory,
-		stores:  make(map[string]Store),
+		stores:  make(map[string]*provisioned),
 	}
 
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-
-	if _, err := rs.provision(base); err != nil {
-		_ = rs.closeAllLocked()
+	if _, err := rs.storeForResource(base); err != nil {
+		_ = rs.Close()
 		return nil, fmt.Errorf("semantic: provisioning shared resource %q: %w", base, err)
 	}
 	for _, tenant := range dedicated {
@@ -83,47 +96,43 @@ func NewRoutingStore(router resourceRouter, base string, dedicated []string, fac
 			continue
 		}
 		resource := router.Resource(base, tenant)
-		if _, err := rs.provision(resource); err != nil {
-			_ = rs.closeAllLocked()
+		if _, err := rs.storeForResource(resource); err != nil {
+			_ = rs.Close()
 			return nil, fmt.Errorf("semantic: provisioning dedicated resource %q for tenant %q: %w", resource, tenant, err)
 		}
 	}
 	return rs, nil
 }
 
-// provision returns the cached Store for resource, creating and caching it
-// via factory on first use.
-//
-// Locking assumption: callers MUST hold rs.mu; provision never locks itself.
-// Keeping locking out of provision lets NewRoutingStore (which provisions
-// several resources under one held lock) and storeFor (which locks once per
-// call) both use it without provision re-entering the mutex — a self-lock
-// inside provision would deadlock the moment either caller already holds
-// rs.mu.
-func (rs *RoutingStore) provision(resource string) (Store, error) {
-	if st, ok := rs.stores[resource]; ok {
-		return st, nil
+// entryFor returns (creating if needed) the holder for resource. The map lock is
+// held only for this O(1) lookup — never across the factory call. Returns
+// ErrRoutingStoreClosed after Close.
+func (rs *RoutingStore) entryFor(resource string) (*provisioned, error) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.closed {
+		return nil, ErrRoutingStoreClosed
 	}
-	st, err := rs.factory(resource)
+	p, ok := rs.stores[resource]
+	if !ok {
+		p = &provisioned{}
+		rs.stores[resource] = p
+	}
+	return p, nil
+}
+
+// storeForResource returns the cached Store for resource, opening it exactly
+// once (outside the map lock, via the holder's sync.Once).
+func (rs *RoutingStore) storeForResource(resource string) (Store, error) {
+	p, err := rs.entryFor(resource)
 	if err != nil {
 		return nil, err
 	}
-	rs.stores[resource] = st
-	return st, nil
-}
-
-// closeAllLocked closes every store provisioned so far and clears the cache.
-// Callers MUST hold rs.mu. Used both to unwind partial provisioning in
-// NewRoutingStore on failure, and by Close.
-func (rs *RoutingStore) closeAllLocked() error {
-	var firstErr error
-	for resource, st := range rs.stores {
-		if err := st.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		delete(rs.stores, resource)
+	p.once.Do(func() { p.store, p.err = rs.factory(resource) })
+	if p.err != nil {
+		return nil, p.err
 	}
-	return firstErr
+	return p.store, nil
 }
 
 // storeFor resolves the physical Store the given tenant's operations must
@@ -132,11 +141,11 @@ func (rs *RoutingStore) closeAllLocked() error {
 // NewRoutingStore ran, without requiring a restart.
 func (rs *RoutingStore) storeFor(tenant string) (Store, error) {
 	resource := rs.router.Resource(rs.base, tenant)
-
-	rs.mu.Lock()
-	st, err := rs.provision(resource)
-	rs.mu.Unlock()
+	st, err := rs.storeForResource(resource)
 	if err != nil {
+		if errors.Is(err, ErrRoutingStoreClosed) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("semantic: provisioning resource %q for tenant %q: %w", resource, tenant, err)
 	}
 	return st, nil
@@ -165,10 +174,24 @@ func (rs *RoutingStore) Search(ctx context.Context, sc Scope, query []float32, l
 }
 
 // Close closes every provisioned physical Store (the shared pool plus every
-// Dedicated tenant's own store) and returns the first error encountered, if
-// any, after attempting to close all of them.
+// Dedicated tenant's own store) and marks the store closed, so later
+// dispatches fail with ErrRoutingStoreClosed instead of reaching a shut-down
+// backend. It assumes no operation is concurrently in flight (the standard
+// io.Closer contract). Returns the first close error encountered, if any,
+// after attempting to close all of them.
 func (rs *RoutingStore) Close() error {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	return rs.closeAllLocked()
+
+	rs.closed = true
+	var first error
+	for resource, p := range rs.stores {
+		if p.store != nil {
+			if err := p.store.Close(); err != nil && first == nil {
+				first = err
+			}
+		}
+		delete(rs.stores, resource)
+	}
+	return first
 }

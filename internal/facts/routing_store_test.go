@@ -2,6 +2,7 @@ package facts
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strconv"
 	"sync"
@@ -103,12 +104,12 @@ func TestRoutingStore_DedicatedTenantPhysicallyIsolated(t *testing.T) {
 	// inspecting ExportAll's partitioning directly against the underlying
 	// stores that rs itself provisioned.
 	rs.mu.Lock()
-	sharedStore, ok := rs.stores["facts"]
+	sharedHolder, ok := rs.stores["facts"]
 	rs.mu.Unlock()
-	if !ok {
+	if !ok || sharedHolder.store == nil {
 		t.Fatalf("expected shared store %q to be provisioned", "facts")
 	}
-	sharedExport, err := sharedStore.ExportAll(ctx)
+	sharedExport, err := sharedHolder.store.ExportAll(ctx)
 	if err != nil {
 		t.Fatalf("ExportAll shared store: %v", err)
 	}
@@ -119,12 +120,12 @@ func TestRoutingStore_DedicatedTenantPhysicallyIsolated(t *testing.T) {
 	}
 
 	rs.mu.Lock()
-	dedicatedStore, ok := rs.stores["facts_dedicated-a"]
+	dedicatedHolder, ok := rs.stores["facts_dedicated-a"]
 	rs.mu.Unlock()
-	if !ok {
+	if !ok || dedicatedHolder.store == nil {
 		t.Fatalf("expected dedicated store %q to be provisioned", "facts_dedicated-a")
 	}
-	dedicatedExport, err := dedicatedStore.ExportAll(ctx)
+	dedicatedExport, err := dedicatedHolder.store.ExportAll(ctx)
 	if err != nil {
 		t.Fatalf("ExportAll dedicated store: %v", err)
 	}
@@ -300,4 +301,81 @@ func mustScopeNoFatal(tenant, user string) Scope {
 		panic(err)
 	}
 	return sc
+}
+
+// TestRoutingStore_ExportAllGloballySorted proves ExportAll restores the
+// "ordered by id" contract ACROSS the union of physical stores, not just
+// within each one: the shared pool and a dedicated tenant each return their
+// own facts id-sorted, and a naive concatenation would interleave incorrectly.
+func TestRoutingStore_ExportAllGloballySorted(t *testing.T) {
+	router := fakeRouter{dedicated: map[string]bool{"dedicated-a": true}}
+	rs, err := NewRoutingStore(router, "facts", []string{"dedicated-a"}, memoryFactory)
+	if err != nil {
+		t.Fatalf("NewRoutingStore: %v", err)
+	}
+	defer rs.Close()
+
+	ctx := context.Background()
+	// IDs chosen so the globally-sorted order (a,b,c,d) interleaves between the
+	// two physical stores: shared holds b,d and dedicated holds a,c.
+	shared := mustScope(t, "shared-a", "user-1")
+	dedicated := mustScope(t, "dedicated-a", "user-1")
+	if err := rs.Save(ctx, shared, fact(shared, "b", "shared b")); err != nil {
+		t.Fatalf("Save b: %v", err)
+	}
+	if err := rs.Save(ctx, shared, fact(shared, "d", "shared d")); err != nil {
+		t.Fatalf("Save d: %v", err)
+	}
+	if err := rs.Save(ctx, dedicated, fact(dedicated, "a", "dedicated a")); err != nil {
+		t.Fatalf("Save a: %v", err)
+	}
+	if err := rs.Save(ctx, dedicated, fact(dedicated, "c", "dedicated c")); err != nil {
+		t.Fatalf("Save c: %v", err)
+	}
+
+	all, err := rs.ExportAll(ctx)
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+	got := make([]string, len(all))
+	for i, f := range all {
+		got[i] = f.ID
+	}
+	want := []string{"a", "b", "c", "d"}
+	if !sort.SliceIsSorted(all, func(i, j int) bool { return all[i].ID < all[j].ID }) {
+		t.Fatalf("ExportAll not globally sorted by id: %v", got)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ExportAll returned %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ExportAll order = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestRoutingStore_UseAfterClose proves that after Close, every dispatch fails
+// closed with ErrRoutingStoreClosed instead of reaching a shut-down backend.
+func TestRoutingStore_UseAfterClose(t *testing.T) {
+	router := fakeRouter{dedicated: map[string]bool{"dedicated-a": true}}
+	rs, err := NewRoutingStore(router, "facts", []string{"dedicated-a"}, memoryFactory)
+	if err != nil {
+		t.Fatalf("NewRoutingStore: %v", err)
+	}
+	if err := rs.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	ctx := context.Background()
+	sc := mustScope(t, "shared-a", "user-1")
+	if err := rs.Save(ctx, sc, fact(sc, "x", "after close")); !errors.Is(err, ErrRoutingStoreClosed) {
+		t.Fatalf("Save after Close = %v, want ErrRoutingStoreClosed", err)
+	}
+	if _, err := rs.Search(ctx, sc, "after", 5); !errors.Is(err, ErrRoutingStoreClosed) {
+		t.Fatalf("Search after Close = %v, want ErrRoutingStoreClosed", err)
+	}
+	if _, err := rs.ExportAll(ctx); !errors.Is(err, ErrRoutingStoreClosed) {
+		t.Fatalf("ExportAll after Close = %v, want ErrRoutingStoreClosed", err)
+	}
 }
