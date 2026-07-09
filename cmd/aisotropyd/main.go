@@ -33,6 +33,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/consolidation"
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
+	"github.com/Luum-Home/aisotropy/internal/health"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/primitives"
@@ -60,6 +61,26 @@ const primitiveFrictionThreshold = 3.0
 // sleepCycleInterval is how often the offline DataFusion consolidation runs when
 // a worker binary is configured (Phase 6). Batch/offline, so a coarse cadence.
 const sleepCycleInterval = 1 * time.Hour
+
+// readinessProbeTimeout bounds each dependency probe on the GET /health
+// readiness endpoint, so one hung backend cannot make readiness itself hang.
+const readinessProbeTimeout = 2 * time.Second
+
+// healthProbeTenant is the reserved tenant/user identity the readiness probes
+// scope their read-only checks to, so a probe never touches real tenant data.
+// The underscore prefix marks it internal; it contains no reserved key char.
+const healthProbeTenant = "_health"
+
+// healthProbeVector returns a cheap, valid unit query vector of the embedder's
+// dimension for the semantic readiness probe (a zero vector can be rejected as
+// zero-norm by some vector backends).
+func healthProbeVector(dim int) []float32 {
+	v := make([]float32, dim)
+	if dim > 0 {
+		v[0] = 1
+	}
+	return v
+}
 
 // Circuit breaker (Phase 7): after this many consecutive LLM start failures the
 // breaker opens and calls fail fast until the cooldown elapses.
@@ -230,6 +251,28 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(costMeter.Snapshot())
 	})
+
+	// Readiness (distinct from /healthz liveness): exercise the networked memory
+	// tiers with a cheap, read-only, health-tenant-scoped probe so a load
+	// balancer can tell "process up" apart from "dependencies reachable". No
+	// probe spends LLM tokens — actively calling the model on every poll would
+	// violate the "reject/degrade before spending tokens" gate — so LLM health
+	// is not probed here (see internal/health). Responds 200 ready / 503 degraded.
+	router.Get("/health", health.New(readinessProbeTimeout,
+		health.Probe{Name: "facts", Check: func(ctx context.Context) error {
+			sc, err := facts.NewScope(healthProbeTenant, healthProbeTenant)
+			if err != nil {
+				return err
+			}
+			_, err = factsStore.Search(ctx, sc, "health", 1)
+			return err
+		}},
+		health.Probe{Name: "semantic", Check: func(ctx context.Context) error {
+			sc := semantic.Scope{TenantID: healthProbeTenant, UserID: healthProbeTenant}
+			_, err := semanticStore.Search(ctx, sc, healthProbeVector(embedder.Dimension()), 1)
+			return err
+		}},
+	).Handler())
 
 	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry)
 	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient, semanticStore, embedder)
