@@ -84,6 +84,9 @@ const (
 
 	genAIOperationChat = "chat"
 	spanNameChat       = "chat"
+	// spanNameChatTools is the span for a native tool-calling provider call
+	// (ToolCaller.CallTools), distinct from the streaming "chat" span.
+	spanNameChatTools = "chat.tools"
 
 	tracerName = "github.com/Luum-Home/aisotropy/internal/llm"
 )
@@ -118,7 +121,57 @@ func WithOTel(c Client, tracer trace.Tracer) Client {
 	if tracer == nil {
 		tracer = noop.NewTracerProvider().Tracer(tracerName)
 	}
-	return &otelClient{next: c, tracer: tracer}
+	o := &otelClient{next: c, tracer: tracer}
+	// Preserve an inner ToolCaller's native tool-calling (ADR-0012): a decorator
+	// that dropped CallTools would make client.(ToolCaller) fail downstream and
+	// silently disable the native tool-calling path.
+	if tc, ok := c.(ToolCaller); ok {
+		return &otelToolCaller{otelClient: o, tc: tc}
+	}
+	return o
+}
+
+// otelToolCaller preserves an inner ToolCaller through the OTel decorator,
+// emitting one gen_ai span per CallTools invocation (a native tool-call is a
+// provider call too), consistent with the per-StreamChat span above.
+type otelToolCaller struct {
+	*otelClient
+	tc ToolCaller
+}
+
+var _ ToolCaller = (*otelToolCaller)(nil)
+
+// CallTools starts one "chat.tools" span, delegates to the inner ToolCaller, and
+// records provider/model + tenant/user identity attributes (same vocabulary as
+// StreamChat). The span ends when the call returns.
+func (o *otelToolCaller) CallTools(ctx context.Context, system, prompt string, tools []ToolSpec) (ToolCallResult, error) {
+	genAISystem, genAIModel := splitClientName(o.next.Name())
+
+	attrs := []attribute.KeyValue{
+		attribute.String(attrGenAISystem, genAISystem),
+		attribute.String(attrGenAIOperationName, genAIOperationChat),
+	}
+	if genAIModel != "" {
+		attrs = append(attrs, attribute.String(attrGenAIRequestModel, genAIModel))
+	}
+	if tenant, ok := TenantFromContext(ctx); ok {
+		attrs = append(attrs, attribute.String(attrTenantID, tenant))
+	}
+	if user, ok := UserFromContext(ctx); ok {
+		attrs = append(attrs, attribute.String(attrUserID, user))
+	}
+
+	spanCtx, span := o.tracer.Start(ctx, spanNameChatTools, trace.WithAttributes(attrs...))
+	defer span.End()
+
+	res, err := o.tc.CallTools(spanCtx, system, prompt, tools)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
+	return res, err
 }
 
 // Name identifies the underlying provider, unchanged — the decorator does
@@ -270,7 +323,11 @@ func splitClientName(name string) (system, model string) {
 // The returned shutdown func flushes and closes the exporter (a no-op when
 // the no-op provider was selected) and must be called by the caller as part
 // of its own graceful-shutdown sequence.
-func NewTracerProvider(ctx context.Context) (shutdown func(context.Context) error, tracer trace.Tracer) {
+// The returned provider is the same one that produced tracer; callers that
+// need to hand a full trace.TracerProvider to another instrumentation (e.g.
+// the ext/otel agent tracing hooks in RunToolAgent) pass it directly, instead
+// of re-deriving one. It is a no-op provider when tracing is not configured.
+func NewTracerProvider(ctx context.Context) (shutdown func(context.Context) error, tracer trace.Tracer, provider trace.TracerProvider) {
 	noopShutdown := func(context.Context) error { return nil }
 
 	endpoint := firstNonEmpty(
@@ -278,7 +335,8 @@ func NewTracerProvider(ctx context.Context) (shutdown func(context.Context) erro
 		os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 	)
 	if endpoint == "" {
-		return noopShutdown, noop.NewTracerProvider().Tracer(tracerName)
+		tp := noop.NewTracerProvider()
+		return noopShutdown, tp.Tracer(tracerName), tp
 	}
 
 	exporter, err := otlptracehttp.New(ctx)
@@ -287,9 +345,10 @@ func NewTracerProvider(ctx context.Context) (shutdown func(context.Context) erro
 		// — a misconfigured collector must never block the LLM OS from
 		// serving chat traffic (docs/vision/principles.md's reliability
 		// posture). Fall back to no-op instrumentation.
-		return noopShutdown, noop.NewTracerProvider().Tracer(tracerName)
+		tp := noop.NewTracerProvider()
+		return noopShutdown, tp.Tracer(tracerName), tp
 	}
 
 	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))
-	return tp.Shutdown, tp.Tracer(tracerName)
+	return tp.Shutdown, tp.Tracer(tracerName), tp
 }

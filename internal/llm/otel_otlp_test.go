@@ -75,7 +75,7 @@ func TestOTLPHTTPExportPathSendsSpansToConfiguredEndpoint(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", srv.URL)
 
 	ctx := context.Background()
-	shutdown, tracer := NewTracerProvider(ctx)
+	shutdown, tracer, _ := NewTracerProvider(ctx)
 
 	client := WithOTel(&StubClient{}, tracer)
 	tokens, err := client.StreamChat(ctx, "sys", "prompt")

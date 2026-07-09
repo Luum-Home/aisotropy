@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/danielgtaylor/huma/v2"
+	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/Luum-Home/aisotropy/internal/agentloop"
 	"github.com/Luum-Home/aisotropy/internal/llm"
@@ -75,7 +76,11 @@ func (f frictionExecutor) Execute(ctx context.Context, name string, args map[str
 // package. When detector is non-nil, the injected executor is wrapped per request
 // in a frictionExecutor so a failing tool accrues friction for that (tenant, user)
 // primitive. A nil executor disables the endpoint (503), same as a nil client.
-func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, detector *primitives.FrictionDetector, maxSteps int) {
+//
+// tracer instruments the native-tool Gollem agent (ADR-0012 follow-up) with
+// hierarchical OTel spans; it may be nil (the tracing hook then falls back to
+// the global OTel provider, a no-op unless one is configured).
+func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, detector *primitives.FrictionDetector, tracer oteltrace.TracerProvider, maxSteps int) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat-agent",
 		Method:      "POST",
@@ -107,15 +112,17 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 		// implements the optional llm.ToolCaller capability; otherwise drive the
 		// homegrown structured-output loop over the plain streaming Client. Both
 		// branches enforce the identical double scope-gate (only scope-permitted
-		// tools are offered, and the chosen tool name is re-validated before
-		// execution) and run tools through the same scope-/friction-wrapped
+		// tools are offered, and an unregistered/hallucinated tool name can never
+		// execute) and run tools through the same scope-/friction-wrapped
 		// executor — so switching paths never changes the isolation guarantee.
-		var steps []agentloop.StepResult
+		var steps []AgentStep
 		if tc, ok := client.(llm.ToolCaller); ok {
-			steps, err = runNativeToolLoop(ctx, tc, registry, exec, in.Body.Scopes, in.Body.Prompt, maxSteps)
+			steps, err = runNativeToolAgent(ctx, tc, tracer, registry, exec, in.Body.Scopes, in.Body.Prompt, maxSteps)
 		} else {
 			loop := &agentloop.Loop{Client: client, Registry: registry, Executor: exec, MaxSteps: maxSteps}
-			steps, err = loop.Run(ctx, in.Body.Scopes, in.Body.Prompt)
+			var loopSteps []agentloop.StepResult
+			loopSteps, err = loop.Run(ctx, in.Body.Scopes, in.Body.Prompt)
+			steps = agentStepsFromLoop(loopSteps)
 		}
 		if err != nil {
 			return nil, huma.Error500InternalServerError("agent loop failed", err)
@@ -123,15 +130,23 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 
 		out := &AgentOutput{}
 		out.Body.TenantID = in.TenantID
-		for _, s := range steps {
-			out.Body.Steps = append(out.Body.Steps, AgentStep{
-				Tool:   s.Decision.Tool,
-				Args:   s.Decision.Args,
-				Result: s.Result,
-			})
-		}
+		out.Body.Steps = steps
 		return out, nil
 	})
+}
+
+// agentStepsFromLoop maps the homegrown agentloop's StepResult shape into the
+// endpoint's AgentStep output contract.
+func agentStepsFromLoop(loopSteps []agentloop.StepResult) []AgentStep {
+	steps := make([]AgentStep, 0, len(loopSteps))
+	for _, s := range loopSteps {
+		steps = append(steps, AgentStep{
+			Tool:   s.Decision.Tool,
+			Args:   s.Decision.Args,
+			Result: s.Result,
+		})
+	}
+	return steps
 }
 
 // nativeToolSystemPrompt is the base instruction handed to a ToolCaller. Unlike
@@ -141,57 +156,34 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 const nativeToolSystemPrompt = "You are an assistant that may call the provided tools to help answer the user. " +
 	"Call a tool only when it helps; otherwise answer directly."
 
-// runNativeToolLoop drives up to maxSteps turns of provider-native tool calling
-// against tc, restricting the model to the tools the caller's scopes permit. It
-// mirrors agentloop.Loop.Run's contract and returns the same StepResult shape,
-// but uses the provider's native tool-calling API (ADR-0012) instead of the
-// prompt-emulated JSON Decision the agentloop path scrapes from free text.
+// runNativeToolAgent drives the provider's native tool-calling through a Gollem
+// agent (ADR-0012 follow-up), restricting the model to the tools the caller's
+// scopes permit. It offers only Registry.Permitted(scopes) tools as Gollem
+// function tools and delegates the run to llm.RunToolAgent (which keeps all
+// gollem-core usage inside internal/llm), then maps the recorded llm.ToolSteps
+// into the endpoint's AgentStep contract.
 //
-// The double scope-gate is preserved exactly as in agentloop: only
-// Registry.Permitted(scopes) tools are ever offered to the model, AND the tool
-// name the model returns is re-validated against that permitted set before it is
-// executed — a name outside the set (hallucinated, injected, or adversarial) is
-// treated as "no tool", never executed. There is no path from "not offered" to
-// "executed".
-func runNativeToolLoop(ctx context.Context, tc llm.ToolCaller, registry *tools.Registry, executor agentloop.ToolExecutor, scopes []string, prompt string, maxSteps int) ([]agentloop.StepResult, error) {
+// The double scope-gate is preserved: only Permitted(scopes) tools become
+// ToolSpecs/function-tools (offer-only-permitted), and because only those
+// permitted tools are registered on the agent, an unregistered/hallucinated
+// tool name lands in the agent's unknownCalls (a retry) and can never reach the
+// executor — the re-check half is structural, not a runtime re-validation. There
+// is no path from "not offered" to "executed".
+func runNativeToolAgent(ctx context.Context, tc llm.ToolCaller, tracer oteltrace.TracerProvider, registry *tools.Registry, executor agentloop.ToolExecutor, scopes []string, prompt string, maxSteps int) ([]AgentStep, error) {
 	permitted := registry.Permitted(scopes)
-	permittedSet := make(map[string]struct{}, len(permitted))
 	specs := make([]llm.ToolSpec, 0, len(permitted))
 	for _, t := range permitted {
-		permittedSet[t.Name] = struct{}{}
 		specs = append(specs, llm.ToolSpec{Name: t.Name, Description: t.Description})
 	}
 
-	var steps []agentloop.StepResult
-	current := prompt
-	for i := 0; i < maxSteps; i++ {
-		res, err := tc.CallTools(ctx, nativeToolSystemPrompt, current, specs)
-		if err != nil {
-			return steps, err
-		}
+	toolSteps, err := llm.RunToolAgent(ctx, tc, tracer, nativeToolSystemPrompt, prompt, specs, executor.Execute, maxSteps)
+	if err != nil {
+		return nil, err
+	}
 
-		// No tool chosen (or the model answered directly): terminal step.
-		if len(res.Calls) == 0 {
-			steps = append(steps, agentloop.StepResult{Decision: agentloop.Decision{Tool: ""}})
-			return steps, nil
-		}
-		call := res.Calls[0]
-
-		// SECURITY INVARIANT: re-validate the chosen tool against the permitted
-		// set. A tool the caller's scopes did not grant is never executed, even
-		// if the provider returned it — treat it exactly like "no tool".
-		if _, ok := permittedSet[call.Name]; !ok {
-			steps = append(steps, agentloop.StepResult{Decision: agentloop.Decision{Tool: ""}})
-			return steps, nil
-		}
-
-		result, err := executor.Execute(ctx, call.Name, call.Args)
-		if err != nil {
-			steps = append(steps, agentloop.StepResult{Decision: agentloop.Decision{Tool: call.Name, Args: call.Args}})
-			return steps, fmt.Errorf("agent: executing tool %q: %w", call.Name, err)
-		}
-		steps = append(steps, agentloop.StepResult{Decision: agentloop.Decision{Tool: call.Name, Args: call.Args}, Result: result})
-		current = fmt.Sprintf("%s\n\nTool %q returned:\n%s\n\nContinue.", current, call.Name, result)
+	steps := make([]AgentStep, 0, len(toolSteps))
+	for _, ts := range toolSteps {
+		steps = append(steps, AgentStep{Tool: ts.Tool, Args: ts.Args, Result: ts.Result})
 	}
 	return steps, nil
 }

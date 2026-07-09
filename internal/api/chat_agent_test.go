@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"go.opentelemetry.io/otel/trace/noop"
+
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/primitives"
 	"github.com/Luum-Home/aisotropy/internal/tools"
@@ -92,25 +94,27 @@ func TestFrictionExecutorNoFrictionOnSuccess(t *testing.T) {
 	}
 }
 
-// TestNativeToolLoop_ExecutesPermittedTool: when a ToolCaller selects a
-// scope-permitted tool, the native loop (ADR-0012) executes it and records the
-// result, then terminates when the model stops calling tools.
-func TestNativeToolLoop_ExecutesPermittedTool(t *testing.T) {
+// TestNativeToolAgent_ExecutesPermittedTool: when a ToolCaller selects a
+// scope-permitted tool, the native Gollem agent (ADR-0012 follow-up) executes
+// it and records the result, then terminates when the model stops calling
+// tools.
+func TestNativeToolAgent_ExecutesPermittedTool(t *testing.T) {
 	reg := tools.NewRegistry(tools.Tool{Name: "search_docs", Description: "search the kb"})
 	tc := &fakeToolCaller{
 		Client: llm.NewStubClient(),
 		script: []llm.ToolCallResult{
 			{Calls: []llm.ToolCall{{Name: "search_docs", Args: map[string]string{"q": "billing"}}}},
+			{Message: "here are the billing docs"}, // terminal free-text answer
 		},
 	}
 
-	steps, err := runNativeToolLoop(context.Background(), tc, reg, DemoExecutor{}, nil, "find billing docs", 3)
+	steps, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, DemoExecutor{}, nil, "find billing docs", 3)
 	if err != nil {
-		t.Fatalf("runNativeToolLoop: %v", err)
+		t.Fatalf("runNativeToolAgent: %v", err)
 	}
 	var ran bool
 	for _, s := range steps {
-		if s.Decision.Tool == "search_docs" && s.Result != "" {
+		if s.Tool == "search_docs" && s.Result != "" {
 			ran = true
 		}
 	}
@@ -119,28 +123,33 @@ func TestNativeToolLoop_ExecutesPermittedTool(t *testing.T) {
 	}
 }
 
-// TestNativeToolLoop_RejectsNonPermittedTool: the double scope-gate — if the
-// ToolCaller returns a tool the caller's scopes did NOT grant, the native loop
-// must treat it as "no tool" and NEVER execute it (mustNotRunExecutor asserts
-// Execute is never reached).
-func TestNativeToolLoop_RejectsNonPermittedTool(t *testing.T) {
-	// read_financials requires a scope the caller does not hold, so it is not in
-	// Permitted(nil) and must never be offered nor executed.
-	reg := tools.NewRegistry(tools.Tool{Name: "read_financials", RequiredScope: "read:financial-data"})
+// TestNativeToolAgent_RejectsNonPermittedTool: the double scope-gate — if the
+// ToolCaller returns a tool the caller's scopes did NOT grant, that tool is
+// never registered as a function tool on the agent, so it can NEVER execute
+// (mustNotRunExecutor asserts Execute is never reached).
+func TestNativeToolAgent_RejectsNonPermittedTool(t *testing.T) {
+	// search_docs is granted (no required scope); read_financials requires a
+	// scope the caller does not hold, so it is not in Permitted(nil) and is
+	// never offered as a function tool. The model tries read_financials anyway.
+	reg := tools.NewRegistry(
+		tools.Tool{Name: "search_docs", Description: "search the kb"},
+		tools.Tool{Name: "read_financials", RequiredScope: "read:financial-data"},
+	)
 	tc := &fakeToolCaller{
 		Client: llm.NewStubClient(),
 		script: []llm.ToolCallResult{
-			{Calls: []llm.ToolCall{{Name: "read_financials"}}}, // model tries anyway
+			{Calls: []llm.ToolCall{{Name: "read_financials"}}}, // model tries anyway -> unknown -> retry
+			{Message: "I cannot access that"},                  // terminal answer on the retry turn
 		},
 	}
 
-	steps, err := runNativeToolLoop(context.Background(), tc, reg, mustNotRunExecutor{t: t}, nil, "read the financials", 3)
+	steps, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, mustNotRunExecutor{t: t}, nil, "read the financials", 3)
 	if err != nil {
-		t.Fatalf("runNativeToolLoop: %v", err)
+		t.Fatalf("runNativeToolAgent: %v", err)
 	}
 	for _, s := range steps {
-		if s.Decision.Tool != "" {
-			t.Fatalf("a non-permitted tool leaked into the steps: %+v", s.Decision)
+		if s.Tool == "read_financials" {
+			t.Fatalf("a non-permitted tool leaked into the steps: %+v", s)
 		}
 	}
 }

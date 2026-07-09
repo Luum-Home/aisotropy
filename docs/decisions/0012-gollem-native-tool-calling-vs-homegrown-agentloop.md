@@ -44,17 +44,45 @@ is that ADR.
   (`chat_agent` → `runNativeToolLoop` → `CallTools` → scope-gate → executor), the model choosing
   `search_docs` and the demo executor running it (HTTP 200).
 
-**Remaining (tracked follow-up):**
+**Delivered — follow-up (2): the native path now routes through Gollem `Agent[string]` + function
+tools (2026-07-09).** The agent endpoint's native path (when the client is a `ToolCaller`) runs a
+`core.Agent[string]` (`internal/llm/toolagent.go`, `RunToolAgent`) with one Gollem function tool per
+scope-permitted tool, so it inherits ADR-0010's "ADOPT NOW" `Agent[T]` `CostTracker`, guardrails,
+and — via `ext/otel` `TracingHooks` — the hierarchical OTel span tree.
 
-1. Optionally `AnthropicClient` (Messages API `tool_use` blocks via the SDK) also implements
-   `ToolCaller` — the OpenAI-compat provider already closes the "a real provider implements it"
-   requirement, so this is additive breadth, not a blocker. Deferred here because no
-   `ANTHROPIC_API_KEY` is available to live-validate the SDK tool wiring, and shipping an
-   unexercised tool bridge would violate the project's "no unverified paths as done" gate.
-2. Optionally routing the native path through Gollem's `core.Agent[T]` + `core.FuncTool` (bridging
-   in `internal/llm/gollem.go`) to inherit ADR-0010's "ADOPT NOW" `Agent[T]` guardrails /
-   `CostTracker` / OTel span tree. The current native loop calls `ToolCaller.CallTools` directly, so
-   it does not yet inherit those — a deliberate, documented scope split, not a silent gap.
+- `GollemModel.Request` now bridges `llm.ToolCaller` to native tool calls: when
+  `params.FunctionTools` is non-empty and the wrapped client is a `ToolCaller`, it translates the
+  offered tools, calls `CallTools`, and returns a `ModelResponse` with `ToolCallPart`s (or a text
+  response on the terminal turn). The non-tool reflection/`/chat` path is unchanged.
+- **Scope-gate preserved (structurally):** only `Registry.Permitted(scopes)` tools are registered as
+  function tools, so a tool name the model returns that was never offered lands in the agent's
+  *unknownCalls* (a retry prompt), never in the executor. Verified against the Gollem v0.5.1 source
+  and by tests (`TestNativeToolAgent_RejectsNonPermittedTool`, `TestRunToolAgent_UnofferedToolNeverExecutes`,
+  each with a fail-on-call executor).
+- **Decorator capability preservation:** `WithCircuitBreaker` / `WithOTel` now also implement
+  `ToolCaller` when their inner client does (gating `CallTools` on the same breaker / emitting a
+  `chat.tools` span) — otherwise the decorators erased the capability and the wired runtime silently
+  fell back to the agentloop path. Regression-guarded by `TestDecoratorsPreserveToolCaller`.
+- **Graceful non-convergence:** a `max-tool-steps` turn-guardrail abort returns the steps taken so
+  far with a nil error (HTTP 200 with partial steps), matching the pre-Gollem loop — not a 500.
+- **0.x caveat (accepted, documented):** because `ToolCaller.CallTools` is single-prompt, multi-turn
+  tool RESULTS are flattened into prompt text by `buildGollemPrompt` rather than fed back as native
+  `role:tool` messages. Fine for a single tool-call-then-answer run (the common case at `maxSteps`);
+  richer multi-step fidelity would require enriching the `ToolCaller` seam (a future, additive change
+  to the *optional* interface — it does not reopen ADR-0009's base `Client` seam).
+
+**Verification:** unit tests drive the native path end to end through a REAL `core.Agent` with a
+scripted fake provider; `go build ./...`, `go test ./...`, `-race` on `internal/llm` + `internal/api`,
+`gofmt`, `go vet` all clean. Live (OpenRouter): the fix was confirmed to route through the native
+Gollem tool-calling bridge in the real runtime (the provider error surfaced from
+`GollemModel …(tool calling)`, not the agentloop fallback); a full 200 through the native path could
+not be completed live only because the OpenRouter key's credits were exhausted during testing
+(external), not for any code reason.
+
+**Remaining (optional):** `AnthropicClient` (Messages API `tool_use` via the SDK) also implementing
+`ToolCaller` — additive breadth, deferred because no `ANTHROPIC_API_KEY` is available to
+live-validate the SDK tool wiring (shipping an unexercised tool bridge would violate the "no
+unverified paths as done" gate).
 
 ## Context
 

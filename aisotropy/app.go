@@ -239,7 +239,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	// OTel tracing (ADR-0010, no-op by default), circuit breaker, and the OTel
 	// decorator shared by the streaming and reflection paths.
-	shutdownTracing, tracer := llm.NewTracerProvider(context.Background())
+	shutdownTracing, tracer, tracerProvider := llm.NewTracerProvider(context.Background())
 	protectedClient := llm.WithCircuitBreaker(llmClient, circuitFailureThreshold, circuitCooldown)
 	streamClient := llm.WithOTel(protectedClient, tracer)
 
@@ -335,7 +335,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Agentic tool-use endpoint (Phase 7): the injected executor drives real tool
 	// logic, wrapped per-request in a friction recorder.
-	api.RegisterAgent(humaAPI, protectedClient, toolRegistry, executor, frictionDetector, agentMaxSteps)
+	api.RegisterAgent(humaAPI, protectedClient, toolRegistry, executor, frictionDetector, tracerProvider, agentMaxSteps)
 
 	server := &http.Server{
 		Addr:    addr,

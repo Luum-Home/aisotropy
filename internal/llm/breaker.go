@@ -39,6 +39,12 @@ type circuitClient struct {
 
 // WithCircuitBreaker wraps c so repeated StreamChat start failures trip a
 // breaker. threshold < 1 defaults to 5; cooldown <= 0 defaults to 30s.
+//
+// If c also implements ToolCaller (native tool-calling, ADR-0012), the returned
+// value ALSO implements ToolCaller, gating CallTools on the SAME breaker — so
+// the decorator never erases the capability (a decorator that dropped CallTools
+// would make client.(ToolCaller) fail at the call site and silently disable the
+// native tool-calling path). A non-ToolCaller c yields a plain breaker.
 func WithCircuitBreaker(c Client, threshold int, cooldown time.Duration) Client {
 	if threshold < 1 {
 		threshold = 5
@@ -46,7 +52,35 @@ func WithCircuitBreaker(c Client, threshold int, cooldown time.Duration) Client 
 	if cooldown <= 0 {
 		cooldown = 30 * time.Second
 	}
-	return &circuitClient{inner: c, threshold: threshold, cooldown: cooldown, now: time.Now, state: circuitClosed}
+	b := &circuitClient{inner: c, threshold: threshold, cooldown: cooldown, now: time.Now, state: circuitClosed}
+	if tc, ok := c.(ToolCaller); ok {
+		return &circuitToolCaller{circuitClient: b, tc: tc}
+	}
+	return b
+}
+
+// circuitToolCaller preserves an inner ToolCaller's native tool-calling through
+// the breaker. It embeds *circuitClient (so Name/StreamChat and the breaker
+// state are shared) and gates CallTools on that same breaker: a native
+// tool-call is an upstream provider call too, so a failing provider trips the
+// breaker no matter which call path reached it.
+type circuitToolCaller struct {
+	*circuitClient
+	tc ToolCaller
+}
+
+var _ ToolCaller = (*circuitToolCaller)(nil)
+
+// CallTools fails fast with ErrCircuitOpen while the breaker is open; otherwise
+// it delegates to the inner ToolCaller and records the outcome on the shared
+// breaker (like StreamChat).
+func (b *circuitToolCaller) CallTools(ctx context.Context, system, prompt string, tools []ToolSpec) (ToolCallResult, error) {
+	if err := b.admit(); err != nil {
+		return ToolCallResult{}, err
+	}
+	res, err := b.tc.CallTools(ctx, system, prompt, tools)
+	b.record(err == nil)
+	return res, err
 }
 
 // Name reports the wrapped client's identity unchanged.

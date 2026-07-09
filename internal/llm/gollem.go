@@ -45,6 +45,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -53,11 +54,23 @@ import (
 // Gollem's core.Model interface, so a core.Agent[T] can be mounted on top
 // without re-implementing the provider's HTTP client.
 //
-// Known limitation (documented, not hidden): this adapter only covers the
-// "structured output via prompting" path (OutputModeTool/Native via text).
-// It does not support Gollem's native function-tool calling (core.FuncTool)
-// because our Client does not expose that primitive — out of scope for
-// Phase 2 (which only asks to replace the Phase 1 reflection loop).
+// Native function-tool calling (ADR-0012 follow-up): this adapter now DOES
+// bridge Gollem's native function-tool calling — but only when the wrapped
+// Client additionally implements the optional llm.ToolCaller capability (its
+// provider supports native tool-calling). In that case Request detects the
+// Agent's offered params.FunctionTools and routes to the provider's native
+// tool-calling API via ToolCaller.CallTools (see requestWithTools). A plain
+// Client (StreamChat-only) is entirely unaffected and still resolves output
+// exclusively through the "structured output via prompting" path
+// (OutputModeTool/Native via text) below.
+//
+// Accepted 0.x caveat (option a, not hidden): ToolCaller.CallTools is
+// single-prompt — it takes only (system, prompt), no ModelMessage history. So
+// tool RESULTS from a prior turn reach the model FLATTENED inside `prompt`
+// (buildGollemPrompt's core.ToolReturnPart arm), not as native role:"tool"
+// messages. This is correct for a single tool-call-then-answer run and is the
+// documented 0.x limitation; widening the llm.ToolCaller signature to carry
+// history is explicitly out of scope.
 type GollemModel struct {
 	client Client
 }
@@ -78,12 +91,85 @@ func (m *GollemModel) ModelName() string { return m.client.Name() }
 func (m *GollemModel) Request(ctx context.Context, messages []core.ModelMessage, _ *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
 	system, prompt := buildGollemPrompt(messages, params)
 
+	// Native tool-calling path (ADR-0012 Option C): engaged ONLY when the
+	// request actually offers function tools AND the wrapped Client can call
+	// them natively (implements llm.ToolCaller). Otherwise fall through to the
+	// unchanged structured-output/text path below. The nil-params check comes
+	// first: params can be nil per the core.Model contract.
+	if params != nil && len(params.FunctionTools) > 0 {
+		if tc, ok := m.client.(ToolCaller); ok {
+			return m.requestWithTools(ctx, tc, system, prompt, params)
+		}
+	}
+
 	raw, usage, err := generateFull(ctx, m.client, system, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("gollem model %q: %w", m.ModelName(), err)
 	}
 
 	return toModelResponse(raw, usage, params), nil
+}
+
+// requestWithTools translates a native function-tool request into a
+// ToolCaller.CallTools invocation and maps its result back into the
+// core.ModelResponse shape the Agent expects.
+//
+// Only Name/Description cross the llm seam (ToolSpec); the Agent's own
+// registered function tools populated params.FunctionTools, so the ToolName the
+// model returns round-trips exactly and lands in the Agent's functionCalls
+// (agent.go's outputCalls/functionCalls/unknownCalls split). A name the Agent
+// never registered is routed to unknownCalls (a retry), never executed.
+//
+// Usage is left zero-valued: llm.ToolCallResult carries no token counts (a
+// deliberate contract limit — see the gollemModelPricing comment), so the cost
+// tracker records 0 for native tool-calling turns. The unchanged
+// generateFull/toModelResponse path still populates Usage.
+func (m *GollemModel) requestWithTools(
+	ctx context.Context,
+	tc ToolCaller,
+	system, prompt string,
+	params *core.ModelRequestParameters,
+) (*core.ModelResponse, error) {
+	specs := make([]ToolSpec, len(params.FunctionTools))
+	for i, td := range params.FunctionTools {
+		specs[i] = ToolSpec{Name: td.Name, Description: td.Description}
+	}
+
+	res, err := tc.CallTools(ctx, system, prompt, specs)
+	if err != nil {
+		return nil, fmt.Errorf("gollem model %q (tool calling): %w", m.ModelName(), err)
+	}
+
+	// Zero calls => terminal free-text answer.
+	if len(res.Calls) == 0 {
+		return core.TextResponse(res.Message), nil
+	}
+
+	// One core.ToolCallPart (a value, not a pointer — ModelResponse.ToolCalls()
+	// type-asserts by value) per chosen call.
+	parts := make([]core.ModelResponsePart, 0, len(res.Calls))
+	for i, call := range res.Calls {
+		argsJSON := []byte("{}")
+		if call.Args != nil { // json.Marshal(nil map) yields "null", not "{}"
+			b, merr := json.Marshal(call.Args)
+			if merr != nil {
+				return nil, fmt.Errorf("gollem model %q: marshal args for tool %q: %w", m.ModelName(), call.Name, merr)
+			}
+			argsJSON = b
+		}
+		parts = append(parts, core.ToolCallPart{
+			ToolName:   call.Name,
+			ArgsJSON:   string(argsJSON),
+			ToolCallID: fmt.Sprintf("call_%s_%d", call.Name, i), // synthesized, unique per call
+		})
+	}
+
+	return &core.ModelResponse{
+		Parts:        parts,
+		ModelName:    m.ModelName(), // real provider name (NOT "test-model")
+		FinishReason: core.FinishReasonToolCall,
+		Timestamp:    time.Now(),
+	}, nil
 }
 
 // RequestStream implements core.Model in streaming mode: re-exposes the
