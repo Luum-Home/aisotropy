@@ -34,6 +34,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
+	"github.com/Luum-Home/aisotropy/internal/tools"
 )
 
 // chatMaxReflectionRetries bounds the reflection loop's retries (ADR-0008 /
@@ -48,6 +49,11 @@ type ChatRequest struct {
 	Prompt    string `json:"prompt" maxLength:"2000" doc:"User message or instruction"`
 	ProductID string `json:"product_id" doc:"Product or module ID" example:"analytics-v1"`
 	SessionID string `json:"session_id" doc:"Client-chosen conversation identifier (working-memory session key)" example:"session-42"`
+	// Scopes are the caller's granted permissions (JWT-derived in production;
+	// a request field in the walking skeleton). They gate which tools are
+	// injected into the LLM payload — a tool the scopes don't cover never
+	// exists for the model (see internal/tools, docs/architecture/granular-control.md).
+	Scopes []string `json:"scopes,omitempty" doc:"Granted permission scopes gating tool access, e.g. [\"write:tasks\"]"`
 }
 
 // ChatInput combines the tenant/user-scoped path params with the validated
@@ -126,7 +132,7 @@ func withIdentity(ctx context.Context, tenant, user, session string) (context.Co
 // receives the already-built llm.Client (llm.FromEnv() in main.go) and the
 // shared *memory.WorkingMemory instead of creating them here — no global
 // state, consistent with isolation via ctx (see docs/vision/principles.md).
-func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter) {
+func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat",
 		Method:      "POST",
@@ -184,6 +190,13 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 		system, err := hydrateSystemPrompt(ctx, wm, store, key, scope, in.Body.ProductID, in.Body.Prompt)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to hydrate working memory", err)
+		}
+		// Scope-gated tools (Phase 7): inject only the scope-permitted tools —
+		// a forbidden tool never enters the payload (granular-control.md).
+		if toolReg != nil {
+			if frag := toolReg.PromptFragment(in.Body.Scopes); frag != "" {
+				system += "\n\n" + frag
+			}
 		}
 
 		// Persist the user's turn before calling the LLM: even if the

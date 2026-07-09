@@ -29,6 +29,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
+	"github.com/Luum-Home/aisotropy/internal/tools"
 )
 
 // recentMessagesWindow bounds how many recent active-buffer messages are
@@ -76,7 +77,7 @@ type StreamErrorEvent struct {
 // governs the contract both in the stub endpoint (Phase 0) and in real
 // streaming (Phase 1+) — see "the struct as the single source of truth"
 // (docs/vision/thesis.md).
-func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter) {
+func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
 		Method:      "POST",
@@ -149,6 +150,15 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 		if err != nil {
 			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("failed to hydrate working memory: %v", err)})
 			return
+		}
+
+		// Scope-gated tools (Phase 7): inject only the tools the caller's scopes
+		// permit. A forbidden tool never appears in the payload, so the model
+		// cannot know it exists (docs/architecture/granular-control.md).
+		if toolReg != nil {
+			if frag := toolReg.PromptFragment(in.Body.Scopes); frag != "" {
+				system += "\n\n" + frag
+			}
 		}
 
 		// Persist the user's turn AND its consolidation intent in a single

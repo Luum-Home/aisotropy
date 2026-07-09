@@ -33,6 +33,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
 	"github.com/Luum-Home/aisotropy/internal/sleepcycle"
+	"github.com/Luum-Home/aisotropy/internal/tools"
 )
 
 // shutdownTimeout bounds how long graceful shutdown waits for in-flight HTTP
@@ -178,8 +179,18 @@ func main() {
 	// in the working-memory BadgerDB, checked before any LLM call so a tenant
 	// over its limit is rejected (429) before spending tokens.
 	rateLimiter := wm.NewLimiter(envFloat("AISOTROPY_RATE_PER_SEC", 10), envFloat("AISOTROPY_BURST", 30))
-	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter)
-	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter)
+
+	// Scope-gated tool registry (Phase 7, behavior axis): a tool is injected
+	// into the LLM payload only when the request's scopes permit it — otherwise
+	// it does not exist for the model (docs/architecture/granular-control.md).
+	toolRegistry := tools.NewRegistry(
+		tools.Tool{Name: "search_docs", Description: "search the tenant knowledge base"},
+		tools.Tool{Name: "read_financials", Description: "read financial records", RequiredScope: "read:financial-data"},
+		tools.Tool{Name: "write_tasks", Description: "create and update tasks", RequiredScope: "write:tasks"},
+	)
+
+	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry)
+	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry)
 
 	server := &http.Server{
 		Addr:    addr,
