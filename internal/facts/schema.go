@@ -68,4 +68,14 @@ LIMIT ?;`
 	// means the fact was absent, already superseded, or out of scope.
 	markSupersededSQL = `UPDATE facts SET superseded_by = ?, updated_at = ?
 WHERE id = ? AND tenant_id = ? AND user_id = ? AND superseded_by = '';`
+
+	// exportAllSQL dumps every current fact across all tenants for the offline
+	// sleep-cycle batch (the one reviewed cross-tenant read; it re-partitions by
+	// tenant_id downstream).
+	exportAllSQL = `SELECT id, tenant_id, user_id, content, importance, created_at, updated_at, superseded_by
+FROM facts WHERE superseded_by = '' ORDER BY id;`
+
+	// deleteSQL removes one fact by id within scope (isolation gate on the
+	// cleanup write). Unknown ids no-op.
+	deleteSQL = `DELETE FROM facts WHERE tenant_id = ? AND user_id = ? AND id = ?;`
 )

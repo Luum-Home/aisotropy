@@ -29,7 +29,7 @@ func TestRunSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if got != (Summary{RowsIn: 5, RowsOut: 3, Dropped: 2}) {
+	if got.RowsIn != 5 || got.RowsOut != 3 || got.Dropped != 2 {
 		t.Fatalf("summary = %+v", got)
 	}
 	if _, err := os.Stat(out); err != nil {
@@ -84,7 +84,7 @@ func TestParseSummaryIgnoresLeadingLogLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != (Summary{9, 7, 2}) {
+	if got.RowsIn != 9 || got.RowsOut != 7 || got.Dropped != 2 {
 		t.Fatalf("got %+v", got)
 	}
 }

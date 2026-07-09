@@ -195,6 +195,56 @@ func (s *SQLiteStore) Supersede(ctx context.Context, sc Scope, oldID string, new
 	return nil
 }
 
+// ExportAll dumps every current fact across all tenants. See Store.ExportAll.
+func (s *SQLiteStore) ExportAll(ctx context.Context) ([]Fact, error) {
+	rows, err := s.db.QueryContext(ctx, exportAllSQL)
+	if err != nil {
+		return nil, fmt.Errorf("facts: export: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []Fact
+	for rows.Next() {
+		var (
+			f         Fact
+			createdMS int64
+			updatedMS int64
+		)
+		if err := rows.Scan(&f.ID, &f.TenantID, &f.UserID, &f.Content, &f.Importance,
+			&createdMS, &updatedMS, &f.SupersededBy); err != nil {
+			return nil, fmt.Errorf("facts: export scan: %w", err)
+		}
+		f.CreatedAt = time.UnixMilli(createdMS)
+		f.UpdatedAt = time.UnixMilli(updatedMS)
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("facts: export rows: %w", err)
+	}
+	return out, nil
+}
+
+// Delete removes the given ids within sc, in one transaction. See Store.Delete.
+func (s *SQLiteStore) Delete(ctx context.Context, sc Scope, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("facts: begin delete tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, deleteSQL, sc.TenantID, sc.UserID, id); err != nil {
+			return fmt.Errorf("facts: delete %q: %w", id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("facts: commit delete: %w", err)
+	}
+	return nil
+}
+
 // Close closes the underlying database.
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 

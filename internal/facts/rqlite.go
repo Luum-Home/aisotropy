@@ -168,6 +168,57 @@ func (s *RqliteStore) Supersede(ctx context.Context, sc Scope, oldID string, new
 	return nil
 }
 
+// ExportAll dumps every current fact across all tenants. See Store.ExportAll.
+func (s *RqliteStore) ExportAll(ctx context.Context) ([]Fact, error) {
+	qr, err := s.conn.QueryOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{Query: exportAllSQL})
+	if err != nil {
+		return nil, fmt.Errorf("facts: rqlite export: %w", err)
+	}
+	var out []Fact
+	for qr.Next() {
+		var (
+			f          Fact
+			createdMS  int64
+			updatedMS  int64
+			importance float64
+		)
+		if err := qr.Scan(&f.ID, &f.TenantID, &f.UserID, &f.Content, &importance,
+			&createdMS, &updatedMS, &f.SupersededBy); err != nil {
+			return nil, fmt.Errorf("facts: rqlite export scan: %w", err)
+		}
+		f.Importance = importance
+		f.CreatedAt = time.UnixMilli(createdMS)
+		f.UpdatedAt = time.UnixMilli(updatedMS)
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+// Delete removes the given ids within sc in one rqlite request (transaction).
+// See Store.Delete.
+func (s *RqliteStore) Delete(ctx context.Context, sc Scope, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	stmts := make([]gorqlite.ParameterizedStatement, 0, len(ids))
+	for _, id := range ids {
+		stmts = append(stmts, gorqlite.ParameterizedStatement{
+			Query:     deleteSQL,
+			Arguments: []any{sc.TenantID, sc.UserID, id},
+		})
+	}
+	results, err := s.conn.WriteParameterizedContext(ctx, stmts)
+	if err != nil {
+		return fmt.Errorf("facts: rqlite delete: %w", err)
+	}
+	for _, r := range results {
+		if r.Err != nil {
+			return fmt.Errorf("facts: rqlite delete statement: %w", r.Err)
+		}
+	}
+	return nil
+}
+
 // Close closes the HTTP connection to rqlite.
 func (s *RqliteStore) Close() error {
 	s.conn.Close()

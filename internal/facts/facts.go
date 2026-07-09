@@ -128,6 +128,18 @@ type Store interface {
 	// fact in sc. The old fact remains for audit but is excluded from Search.
 	Supersede(ctx context.Context, sc Scope, oldID string, newFact Fact) error
 
+	// ExportAll returns every current (non-superseded) fact across all tenants,
+	// ordered by id. This is a deliberate CROSS-TENANT read — the one reviewed
+	// exception to the per-statement isolation gate — used only by the offline
+	// sleep-cycle batch consolidator (internal/sleepcycle), which re-partitions
+	// by tenant_id before doing any work. It is never on a request path.
+	ExportAll(ctx context.Context) ([]Fact, error)
+
+	// Delete removes the facts with the given ids within sc (scoped, so the
+	// isolation gate holds for the cleanup write too). Unknown ids are ignored.
+	// Used by the sleep cycle to drop rows its dedup pass superseded.
+	Delete(ctx context.Context, sc Scope, ids []string) error
+
 	// Close releases the underlying handle (DB / HTTP client).
 	Close() error
 }

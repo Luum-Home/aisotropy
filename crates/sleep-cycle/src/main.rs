@@ -9,6 +9,7 @@
 //!   stdout: {"rows_in":N,"rows_out":M,"dropped":D}   (only on success)
 //!   exit:   0 = success, non-zero = failure (stderr carries the reason)
 
+use datafusion::arrow::array::{Array, StringArray};
 use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::error::DataFusionError;
 use datafusion::prelude::*;
@@ -78,10 +79,41 @@ async fn run() -> Result<String, DataFusionError> {
         .write_parquet(&output, DataFrameWriteOptions::new(), None)
         .await?;
 
+    // The ids the dedup dropped (the non-canonical duplicates, rn > 1). Emitted
+    // in the summary so the Go coordinator can delete exactly those rows from
+    // the live facts store — the reinjection/cleanup half of the sleep cycle.
+    let dropped_df = ctx
+        .sql(
+            "SELECT id FROM (SELECT id, ROW_NUMBER() OVER ( \
+                     PARTITION BY tenant_id, user_id, lower(content) \
+                     ORDER BY importance DESC, updated_at DESC) AS rn \
+                   FROM facts) \
+             WHERE rn > 1",
+        )
+        .await?;
+    let mut dropped_ids: Vec<String> = Vec::new();
+    for batch in dropped_df.collect().await? {
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| DataFusionError::Execution("id column is not a string".into()))?;
+        for i in 0..col.len() {
+            dropped_ids.push(col.value(i).to_string());
+        }
+    }
+
+    let ids_json = dropped_ids
+        .iter()
+        .map(|s| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")))
+        .collect::<Vec<_>>()
+        .join(",");
+
     Ok(format!(
-        "{{\"rows_in\":{},\"rows_out\":{},\"dropped\":{}}}",
+        "{{\"rows_in\":{},\"rows_out\":{},\"dropped\":{},\"dropped_ids\":[{}]}}",
         rows_in,
         rows_out,
-        rows_in - rows_out
+        dropped_ids.len(),
+        ids_json
     ))
 }

@@ -20,6 +20,9 @@ type Summary struct {
 	RowsIn  int `json:"rows_in"`
 	RowsOut int `json:"rows_out"`
 	Dropped int `json:"dropped"`
+	// DroppedIDs are the ids of the non-canonical duplicate rows the dedup
+	// removed, so the coordinator can delete exactly those from the live store.
+	DroppedIDs []string `json:"dropped_ids"`
 }
 
 // Worker invokes the Rust sleep-cycle binary as a subprocess (ADR-0005). It is

@@ -31,6 +31,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
+	"github.com/Luum-Home/aisotropy/internal/sleepcycle"
 )
 
 // shutdownTimeout bounds how long graceful shutdown waits for in-flight HTTP
@@ -40,6 +41,10 @@ const shutdownTimeout = 10 * time.Second
 // outboxPollInterval is how often the consolidation worker checks for pending
 // outbox events when the queue is empty (it drains back-to-back when it isn't).
 const outboxPollInterval = 1 * time.Second
+
+// sleepCycleInterval is how often the offline DataFusion consolidation runs when
+// a worker binary is configured (Phase 6). Batch/offline, so a coarse cadence.
+const sleepCycleInterval = 1 * time.Hour
 
 func main() {
 	addr := os.Getenv("AISOTROPY_ADDR")
@@ -115,6 +120,29 @@ func main() {
 	// OTEL_EXPORTER_OTLP_ENDPOINT to export via OTLP/HTTP instead.
 	shutdownTracing, tracer := llm.NewTracerProvider(context.Background())
 	streamClient := llm.WithOTel(llmClient, tracer)
+
+	// Sleep cycle (Phase 6): when the DataFusion worker binary is available
+	// (AISOTROPY_SLEEPCYCLE_BIN), run periodic offline consolidation — export
+	// facts, deduplicate in the Rust worker (ADR-0005), and delete the dropped
+	// duplicates from the live store. It is off the request path, so a failure
+	// is logged, never fatal, and the worker's own panic is isolated as a
+	// non-zero exit retried with backoff (internal/sleepcycle).
+	if bin := os.Getenv("AISOTROPY_SLEEPCYCLE_BIN"); bin != "" {
+		coordinator := sleepcycle.Coordinator{
+			Store:  factsStore,
+			Runner: sleepcycle.Worker{BinaryPath: bin, Tracer: tracer},
+		}
+		go coordinator.RunScheduler(workerCtx, sleepCycleInterval, func(s sleepcycle.Summary, err error) {
+			if err != nil {
+				slog.Error("sleep cycle failed", "err", err)
+				return
+			}
+			if s.Dropped > 0 {
+				slog.Info("sleep cycle consolidated facts", "rows_in", s.RowsIn, "dropped", s.Dropped)
+			}
+		})
+		slog.Info("sleep-cycle worker scheduled", "bin", bin, "interval", sleepCycleInterval)
+	}
 
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
