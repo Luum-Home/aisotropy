@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/Luum-Home/aisotropy/internal/api"
 	"github.com/Luum-Home/aisotropy/internal/consolidation"
+	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
@@ -189,8 +191,17 @@ func main() {
 		tools.Tool{Name: "write_tasks", Description: "create and update tasks", RequiredScope: "write:tasks"},
 	)
 
+	// Per-tenant cost meter (Phase 7 observability): aggregates the real token
+	// usage recorded on each streamed turn. Exposed at GET /costs (outside the
+	// OpenAPI contract, like /healthz) as a per-tenant cost snapshot.
+	costMeter := costmeter.New()
+	router.Get("/costs", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(costMeter.Snapshot())
+	})
+
 	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry)
-	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry)
+	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter)
 
 	server := &http.Server{
 		Addr:    addr,

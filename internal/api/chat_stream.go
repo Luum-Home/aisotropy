@@ -26,6 +26,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
 
+	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
@@ -39,6 +40,14 @@ const recentMessagesWindow = 12
 // factsWindow bounds how many facts-memory engrams are injected into the
 // system prompt (docs say the top 3-4 by score; see rqlite-facts-memory.md).
 const factsWindow = 4
+
+// costInputPricePer1M / costOutputPricePer1M are the default USD prices per
+// 1M tokens used to estimate per-tenant cost for the /costs view. Rough
+// defaults; a real deployment sets a per-model price table.
+const (
+	costInputPricePer1M  = 0.15
+	costOutputPricePer1M = 0.60
+)
 
 // outboxRef derives a stable per-turn reference from the session and prompt.
 // It is the outbox event id (and, downstream, the seed of the semantic point's
@@ -77,7 +86,7 @@ type StreamErrorEvent struct {
 // governs the contract both in the stub endpoint (Phase 0) and in real
 // streaming (Phase 1+) — see "the struct as the single source of truth"
 // (docs/vision/thesis.md).
-func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry) {
+func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
 		Method:      "POST",
@@ -210,6 +219,13 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 						if err := wm.Append(ctx, key, memory.Message{Role: "assistant", Content: assistantReply.String()}); err != nil {
 							slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
 						}
+					}
+					// Per-tenant cost accounting (Phase 7 observability): record the
+					// real provider token usage carried on the terminal token, so
+					// the /costs view can show cost per token per tenant.
+					if meter != nil && tok.Usage != nil {
+						cost := costmeter.EstimateCostUSD(tok.Usage.InputTokens, tok.Usage.OutputTokens, costInputPricePer1M, costOutputPricePer1M)
+						meter.Record(in.TenantID, tok.Usage.InputTokens, tok.Usage.OutputTokens, cost)
 					}
 					_ = send.Data(StreamDoneEvent{TenantID: in.TenantID})
 					return
