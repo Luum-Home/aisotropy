@@ -92,7 +92,7 @@ func RunStrategyA(ctx context.Context, conv []Turn) ([]RequestCost, error) {
 	if err != nil {
 		return nil, fmt.Errorf("strategy A: open working memory: %w", err)
 	}
-	defer wm.Close()
+	defer func() { _ = wm.Close() }()
 
 	results := make([]RequestCost, len(conv))
 	var cumulative TokenEstimate

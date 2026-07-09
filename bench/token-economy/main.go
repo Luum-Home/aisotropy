@@ -71,7 +71,7 @@ func printTable(w io.Writer, a, b []RequestCost) {
 			reductionBytes, reductionWords,
 		)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 // printDepthSummary prints the headline numbers this harness's acceptance
