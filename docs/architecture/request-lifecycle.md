@@ -113,9 +113,14 @@ from the first millisecond to the last, with no global state (see
 - **What can fail:** any of the four queries can be slow or fail independently — the design must
   decide whether a partial failure (e.g. Qdrant down) degrades to responding with only
   BadgerDB+rqlite or aborts the whole request (to be verified/still pending explicit definition).
-  A badly built filter in Qdrant (missing `tenant_id`) is a silent isolation leak — see
-  [Qdrant gotchas](../components/qdrant-semantic-memory.md#gotchas-and-risks). `weak` consistency
-  in rqlite can return slightly stale facts if the sleep cycle wrote recently
+  A badly built filter in Qdrant (missing `tenant_id`) is still a silent isolation leak — see
+  [Qdrant gotchas](../components/qdrant-semantic-memory.md#gotchas-and-risks); for rqlite, the
+  equivalent gap is now prevented **by construction**, not by review, via
+  [`internal/tenancy`](../decisions/0011-tenant-scoped-statement-builder.md) — every facts-tier
+  statement carries `WHERE tenant_id=?` (and `user_id=?` where applicable) because there is no
+  code path that can render one without it (see
+  [ADR-0011](../decisions/0011-tenant-scoped-statement-builder.md)). `weak` consistency in rqlite
+  can still return slightly stale facts if the sleep cycle wrote recently
   (see [consistency](consistency.md)).
 
 ## Step 4 — Gollem assembles context and injects tools by scope
@@ -211,3 +216,5 @@ from the first millisecond to the last, with no global state (see
   step 7 (Outbox, write).
 - [rqlite — Facts Memory](../components/rqlite-facts-memory.md) · [Qdrant — Semantic Memory](../components/qdrant-semantic-memory.md) — step 3 (read) and step 7 (consolidation target).
 - [Design principles](../vision/principles.md) — isolation via ctx, context engineering.
+- [ADR-0011](../decisions/0011-tenant-scoped-statement-builder.md) — the tenant-scoped statement
+  builder (`internal/tenancy`) that prevents step 3's rqlite queries from ever being unscoped.
