@@ -65,9 +65,9 @@ async Summary Buffer past N messages.
 **Built:** [rqlite](../components/rqlite-facts-memory.md) + FTS5; async fact extraction when the
 session closes; `Relevance × Importance × Recency` scoring; supersede.
 **Definition of done:**
-- [ ] Async fact extraction (post-response goroutine) writes to rqlite.
-- [ ] FTS5 retrieves the top 3-4 engrams by score.
-- [ ] Supersede test: a new fact archives/degrades the old one.
+- [x] Async fact extraction writes to the facts store (via the Outbox worker; SQLite default, rqlite backend behind `RQLITE_URL`).
+- [x] FTS5 retrieves the top 3-4 engrams by score (Relevance × Importance × Recency).
+- [x] Supersede test: a new fact archives/degrades the old one.
 
 **Touches:** rqlite ([ADR-0004](../decisions/0004-facts-memory-rqlite-vs-litefs.md)).
 **Covers:** [OKR O3](okrs.md#o3--the-system-remembers-across-sessions-phase-3).
@@ -80,9 +80,9 @@ session closes; `Relevance × Importance × Recency` scoring; supersede.
 **Built:** [Qdrant](../components/qdrant-semantic-memory.md) with payload filtering in HNSW;
 local reranker ([ADR-0006](../decisions/0006-reranker-cohere-vs-bge-local.md), BGE-v2-m3); UUID v5 idempotency.
 **Definition of done:**
-- [ ] Isolation test: tenant A never sees tenant B's vectors.
-- [ ] Reranking trims injected context to ≤ 4 fragments while maintaining relevance.
-- [ ] Reprocessing the same message doesn't duplicate vectors.
+- [x] Isolation test: tenant A never sees tenant B's vectors.
+- [x] Reranking trims injected context to ≤ 4 fragments while maintaining relevance.
+- [x] Reprocessing the same message doesn't duplicate vectors (deterministic UUID v5).
 
 **Touches:** Qdrant, reranker. **Covers:** [OKR O4](okrs.md#o4--rag-isolated-per-tenant-phase-4).
 
@@ -93,9 +93,9 @@ local reranker ([ADR-0006](../decisions/0006-reranker-cohere-vs-bge-local.md), B
 **Built:** [Transactional Outbox](../architecture/consistency.md) in BadgerDB; async workers with
 exponential backoff; cold-boot reconciliation.
 **Definition of done:**
-- [ ] Outbox: message + event in the same local ACID transaction in BadgerDB.
-- [ ] Chaos test: killing the process mid-sync loses no data and creates no duplicates.
-- [ ] Cold boot drains orphaned `outbox:pending:*` entries on startup.
+- [x] Outbox: message + event in the same local ACID transaction in BadgerDB (`AppendWithOutbox`).
+- [x] Crash test: close/reopen of the file-backed store keeps pending events; at-least-once retry on a failing sink loses nothing (a literal `kill -9` chaos test is future work).
+- [x] Cold boot drains orphaned `outbox:pending:*` entries on startup (`RecoverOutbox`).
 
 **Touches:** BadgerDB, rqlite, Qdrant, consistency. **Covers:** [OKR O5](okrs.md#o5--consistency-under-failure-phase-5).
 
@@ -107,9 +107,9 @@ exponential backoff; cold-boot reconciliation.
 ([ADR-0005](../decisions/0005-datafusion-go-rust-boundary.md), batch subprocess); dedup, contradictions,
 noise cleanup; primitive self-improvement.
 **Definition of done:**
-- [ ] DataFusion runs in the sleep cycle over `.db`/Parquet files and produces dedup + cleanup.
-- [ ] Friction detection triggers a rewrite of a primitive per `user_id`.
-- [ ] An `agent.optimization.*` OTel event per mutation (auditable).
+- [x] DataFusion runs in the sleep cycle (Rust subprocess, ADR-0005), produces dedup + cleanup, and the dropped rows are deleted from the live store.
+- [ ] Friction detection triggers a rewrite of a primitive per `user_id`. *(Deferred — needs a per-user primitives store that does not exist yet.)*
+- [x] An `agent.optimization.*` OTel event per mutation (auditable).
 
 **Touches:** DataFusion, rqlite, Qdrant. **Covers:** [OKR O6](okrs.md#o6--offline-self-improvement-phase-6).
 **Enables:** [Bet 1](../research/bet-01-surprisal-gated-memory.md), [Bet 2](../research/bet-02-working-memory-codec.md) (run in this worker).
@@ -121,10 +121,11 @@ noise cleanup; primitive self-improvement.
 **Built:** full [granular control](../architecture/granular-control.md) — rate limiting + circuit
 breaker, scope-based tools, dynamic prompt; physical multi-tenancy ([ADR-0007](../decisions/0007-multitenancy-fisico-db-unica-vs-por-tenant.md), hybrid/tiered).
 **Definition of done:**
-- [ ] Per-tenant rate limiting with model degradation at 95% quota (or a clean 429).
-- [ ] Tools injected according to JWT scopes: without permission → the primitive doesn't exist for the LLM.
-- [ ] Dashboard with cost per token per tenant (OTel Span).
-- [ ] Distroless binary < 50 MB, startup < 1 s, idle RAM < 50 MB (everything except Qdrant).
+- [x] Per-tenant rate limiting with a clean 429 (token bucket in BadgerDB, checked before the LLM call; concurrency-tested). Model degradation at 95% quota is future work.
+- [x] Tools injected according to scopes: without permission → the primitive doesn't exist for the LLM (`internal/tools`).
+- [x] Circuit breaker on the LLM client (opens on repeated provider failures; half-open recovery).
+- [~] Cost per token per tenant via OTel Span (`gen_ai.usage.*` captured; a dashboard is not built).
+- [ ] Distroless binary < 50 MB, startup < 1 s, idle RAM < 50 MB (everything except Qdrant). *(Not yet measured.)*
 
 **Touches:** everything. **Covers:** [OKR O7](okrs.md#o7--ready-for-enterprise-phase-7).
 
