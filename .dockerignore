@@ -1,0 +1,27 @@
+# Version control
+.git/
+.gitignore
+
+# Not needed to build the Go binary: reference-only source dumps and the
+# separate Rust sleep-cycle worker (invoked as a subprocess per ADR-0005,
+# not compiled into aisotropyd).
+external/
+crates/*/target/
+
+# Docs, notes, and non-build metadata
+docs/
+raw-notes/
+spikes/
+bench/
+*.md
+
+# Editor/OS cruft and local tooling config
+.claude/
+.agent-tooling/
+.vscode/
+.idea/
+.DS_Store
+
+# Container/build artifacts that should never be baked into the context
+Dockerfile
+.dockerignore
