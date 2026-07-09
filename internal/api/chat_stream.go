@@ -86,7 +86,7 @@ type StreamErrorEvent struct {
 // governs the contract both in the stub endpoint (Phase 0) and in real
 // streaming (Phase 1+) — see "the struct as the single source of truth"
 // (docs/vision/thesis.md).
-func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter) {
+func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
 		Method:      "POST",
@@ -182,7 +182,23 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
 		}
 
-		tokens, err := client.StreamChat(ctx, system, in.Body.Prompt)
+		// Quota-pressure degradation (Phase 7): when this tenant is near its
+		// limit, route to the cheaper model instead of the primary — graceful
+		// degradation rather than a hard 429. Requires a configured cheap model
+		// (AISOTROPY_CHEAP_MODEL); otherwise cheapClient is nil and the primary
+		// is always used.
+		active := client
+		if cheapClient != nil && limiter != nil {
+			if pressure, perr := limiter.Pressure(ctx, in.TenantID); perr == nil {
+				if choice := llm.DegradeAt(pressure, llm.DefaultDegradeThreshold, client.Name(), cheapClient.Name()); choice.Degraded {
+					active = cheapClient
+					slog.WarnContext(ctx, "degrading to cheap model under quota pressure",
+						"tenant_id", in.TenantID, "pressure", pressure, "model", cheapClient.Name())
+				}
+			}
+		}
+
+		tokens, err := active.StreamChat(ctx, system, in.Body.Prompt)
 		if err != nil {
 			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("failed to start stream: %v", err)})
 			return

@@ -136,6 +136,16 @@ func main() {
 	protectedClient := llm.WithCircuitBreaker(llmClient, circuitFailureThreshold, circuitCooldown)
 	streamClient := llm.WithOTel(protectedClient, tracer)
 
+	// Optional cheap-model client for quota-pressure degradation (Phase 7): when
+	// AISOTROPY_CHEAP_MODEL is set, a near-quota tenant is routed to it instead
+	// of a hard 429. Wrapped with the same breaker + OTel as the primary; nil
+	// (no degradation) when unconfigured.
+	var cheapStreamClient llm.Client
+	if raw := llm.CheapClientFromEnv(); raw != nil {
+		cheapStreamClient = llm.WithOTel(llm.WithCircuitBreaker(raw, circuitFailureThreshold, circuitCooldown), tracer)
+		slog.Info("cheap model configured for quota-pressure degradation", "model", raw.Name())
+	}
+
 	// Sleep cycle (Phase 6): when the DataFusion worker binary is available
 	// (AISOTROPY_SLEEPCYCLE_BIN), run periodic offline consolidation — export
 	// facts, deduplicate in the Rust worker (ADR-0005), and delete the dropped
@@ -201,7 +211,7 @@ func main() {
 	})
 
 	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry)
-	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter)
+	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient)
 
 	server := &http.Server{
 		Addr:    addr,

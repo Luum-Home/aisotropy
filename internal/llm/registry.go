@@ -162,3 +162,26 @@ func RegistryFromEnv() *Registry {
 func FromEnv() Client {
 	return RegistryFromEnv().Default()
 }
+
+// CheapClientFromEnv builds a lower-cost variant of the default provider using
+// the model in AISOTROPY_CHEAP_MODEL, for quota-pressure degradation (DegradeAt,
+// degrade.go). It uses the SAME provider and credentials as the default — only
+// a cheaper model id. It returns nil when AISOTROPY_CHEAP_MODEL is unset (no
+// degradation target configured) or when only the keyless stub is available
+// (nothing to degrade to). The caller wraps/instruments it like any Client.
+func CheapClientFromEnv() Client {
+	cheap := os.Getenv("AISOTROPY_CHEAP_MODEL")
+	if cheap == "" {
+		return nil
+	}
+	switch {
+	case os.Getenv("OPENROUTER_API_KEY") != "":
+		return NewOpenRouterClient(os.Getenv("OPENROUTER_API_KEY"), cheap)
+	case os.Getenv("OPENAI_API_KEY") != "":
+		return NewOpenAICompatClient(os.Getenv("OPENAI_API_KEY"), cheap, os.Getenv("OPENAI_BASE_URL"), "openai-cheap")
+	case os.Getenv("ANTHROPIC_API_KEY") != "":
+		return NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"), cheap)
+	default:
+		return nil
+	}
+}
