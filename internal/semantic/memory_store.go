@@ -1,0 +1,93 @@
+package semantic
+
+import (
+	"context"
+	"math"
+	"sort"
+	"sync"
+)
+
+// InMemoryStore is a brute-force cosine vector index held in process. It is the
+// zero-config, local-first default and the substrate the tests exercise;
+// QdrantStore runs the same contract over Qdrant's gRPC API. Brute force is
+// fine for the walking skeleton and small collections — the whole point of the
+// Store interface is that swapping in Qdrant's HNSW is invisible to callers.
+type InMemoryStore struct {
+	mu     sync.RWMutex
+	dim    int
+	points map[string]Point // keyed by ID (UUIDv5) so upsert is idempotent
+}
+
+// NewInMemoryStore creates an empty index for vectors of the given dimension
+// (match your Embedder.Dimension()).
+func NewInMemoryStore(dim int) *InMemoryStore {
+	return &InMemoryStore{dim: dim, points: make(map[string]Point)}
+}
+
+// Upsert stores points, replacing any with the same ID. See Store.Upsert.
+func (s *InMemoryStore) Upsert(_ context.Context, sc Scope, points []Point) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range points {
+		if p.TenantID != sc.TenantID || p.UserID != sc.UserID {
+			return ErrScopeMismatch
+		}
+		if len(p.Vector) != s.dim {
+			return ErrDimensionMismatch
+		}
+		s.points[p.ID] = p // idempotent by ID: a retried event is a no-op
+	}
+	return nil
+}
+
+// Search returns the limit most cosine-similar points within sc. The
+// (tenant,user) filter is applied inside the scan loop, so another tenant's
+// vectors are never even scored. See Store.Search.
+func (s *InMemoryStore) Search(_ context.Context, sc Scope, query []float32, limit int) ([]ScoredPoint, error) {
+	if len(query) != s.dim {
+		return nil, ErrDimensionMismatch
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var out []ScoredPoint
+	for _, p := range s.points {
+		if p.TenantID != sc.TenantID || p.UserID != sc.UserID {
+			continue // isolation filter during the scan, not after
+		}
+		out = append(out, ScoredPoint{Point: p, Score: cosine(query, p.Vector)})
+	}
+	// Highest similarity first; break ties by ID for a deterministic order
+	// (map iteration is randomized).
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		return out[i].ID < out[j].ID
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// Close is a no-op for the in-memory index.
+func (s *InMemoryStore) Close() error { return nil }
+
+// cosine returns the cosine similarity of two equal-length vectors in [-1,1],
+// or 0 if either is a zero vector. Accumulates in float64 for stability.
+func cosine(a, b []float32) float32 {
+	var dot, na, nb float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		na += float64(a[i]) * float64(a[i])
+		nb += float64(b[i]) * float64(b[i])
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return float32(dot / (math.Sqrt(na) * math.Sqrt(nb)))
+}
