@@ -195,19 +195,17 @@ func BenchmarkGenerateConversation(b *testing.B) {
 	}
 }
 
-// TestNoopSummarizerSummaryGrowsUnbounded documents (via t.Logf, inspected
-// manually while writing README.md's "Limitations" section) an important,
-// non-obvious property of NoopSummarizer that materially affects this
-// benchmark's headline numbers: it APPENDS a new condensed snippet onto the
-// existing summary on every condensation round rather than re-condensing
-// down to a compact, fixed-size paragraph. So Strategy A's system prompt
-// does NOT stay flat-sized as the conversation grows — its summary block
-// grows roughly linearly with turn count too, just with a smaller slope
-// than Strategy B's full-history resend. A real LLM-backed summarizer
-// (memory.LLMSummarizer) would be expected to keep re-compressing to a
-// roughly constant size instead; this benchmark cannot exercise that path
-// without an API key. See README.md "Limitations".
-func TestNoopSummarizerSummaryGrowsUnbounded(t *testing.T) {
+// TestNoopSummarizerSummaryStaysBounded pins the property that produces this
+// benchmark's headline numbers: NoopSummarizer now re-condenses to a bounded
+// size (memory.maxNoopSummaryLen) instead of appending a new snippet onto an
+// ever-growing summary every round. So Strategy A's system prompt reaches a
+// roughly constant summary-block size as the conversation grows, while Strategy
+// B's full-history resend keeps growing linearly — which is what lifts the A-vs-B
+// reduction to the ~70%+ range at depth. This test was the reverse assertion
+// (unbounded growth) before the bound landed; it now guards against a
+// regression back to the leak. A real memory.LLMSummarizer would re-compress
+// similarly; this benchmark stays credential-free with the deterministic one.
+func TestNoopSummarizerSummaryStaysBounded(t *testing.T) {
 	ctx := context.Background()
 	conv := GenerateConversation(DefaultConfig())
 	wm, err := memory.OpenInMemory(0, memory.NoopSummarizer{})
@@ -216,8 +214,12 @@ func TestNoopSummarizerSummaryGrowsUnbounded(t *testing.T) {
 	}
 	defer wm.Close()
 
-	var prevLen int
-	var checkpoints int
+	// A generous ceiling well above the summarizer's internal cap: the point is
+	// that the summary plateaus rather than growing with turn count. The old
+	// unbounded behavior blew past this within ~30 turns.
+	const boundedCeilingChars = 4096
+
+	var checkpoints, maxLen int
 	for i, turn := range conv {
 		if err := wm.Append(ctx, benchKey, memory.Message{Role: "user", Content: turn.User}); err != nil {
 			t.Fatal(err)
@@ -233,14 +235,17 @@ func TestNoopSummarizerSummaryGrowsUnbounded(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Logf("after turn %d: summary length = %d chars, summary tokens(bytes/4) = %d", i+1, len(summary), EstimateTokensByBytes(summary))
-			if len(summary) <= prevLen {
-				t.Errorf("after turn %d: summary length (%d) did not grow past the previous checkpoint (%d) — NoopSummarizer's unbounded-append behavior may have changed; update README.md's Limitations section if so", i+1, len(summary), prevLen)
+			if len(summary) > boundedCeilingChars {
+				t.Errorf("after turn %d: summary length (%d) exceeded the bounded ceiling (%d) — the unbounded-growth leak may have regressed", i+1, len(summary), boundedCeilingChars)
 			}
-			prevLen = len(summary)
+			if len(summary) > maxLen {
+				maxLen = len(summary)
+			}
 			checkpoints++
 		}
 	}
 	if checkpoints == 0 {
 		t.Fatal("no checkpoints were reached — DefaultConfig().Turns is too small for this test")
 	}
+	t.Logf("summary plateaued at max %d chars across %d checkpoints", maxLen, checkpoints)
 }

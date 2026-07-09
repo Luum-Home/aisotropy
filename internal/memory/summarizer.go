@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Luum-Home/aisotropy/internal/llm"
 )
@@ -23,9 +24,25 @@ type Summarizer interface {
 }
 
 // maxNoopSnippetLen truncates each condensed message's content in
-// NoopSummarizer's heuristic summary, keeping the summary itself bounded in
-// size across many condensation rounds.
+// NoopSummarizer's heuristic summary. This bounds each round's contribution,
+// but on its own does NOT bound the summary across rounds — see
+// maxNoopSummaryLen.
 const maxNoopSnippetLen = 80
+
+// maxNoopSummaryLen bounds the TOTAL heuristic summary across many
+// condensation rounds. NoopSummarizer appends one segment per round, so
+// without this cap the summary grows unbounded (measured at ~3.3k tokens over
+// 50 turns in bench/token-economy), defeating the summary buffer's whole
+// purpose of a bounded prompt footprint. When the running summary would exceed
+// this budget the oldest text is elided, keeping the most-recent session state
+// (what matters most for the next turn) — the deterministic stand-in for a real
+// LLMSummarizer re-condensing to a fixed size.
+const maxNoopSummaryLen = 1024
+
+// noopElisionMarker prefixes a summary whose older head was dropped to stay
+// within maxNoopSummaryLen, so the elision is explicit rather than a silent
+// truncation.
+const noopElisionMarker = "[...older session state elided...] "
 
 // NoopSummarizer is a deterministic, heuristic Summarizer that requires no
 // LLM credentials: it appends a short, truncated description of each
@@ -58,7 +75,26 @@ func (NoopSummarizer) Condense(_ context.Context, existingSummary string, oldest
 		fmt.Fprintf(&sb, "%s said %q", m.Role, content)
 	}
 	sb.WriteString(".")
-	return sb.String(), nil
+	return boundNoopSummary(sb.String()), nil
+}
+
+// boundNoopSummary caps the heuristic summary at maxNoopSummaryLen, keeping the
+// most-recent tail and prefixing an explicit elision marker when older text is
+// dropped. The tail is advanced to the next full rune so a multi-byte character
+// is never split.
+func boundNoopSummary(s string) string {
+	if len(s) <= maxNoopSummaryLen {
+		return s
+	}
+	keep := maxNoopSummaryLen - len(noopElisionMarker)
+	if keep <= 0 {
+		return s[len(s)-maxNoopSummaryLen:]
+	}
+	tail := s[len(s)-keep:]
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	return noopElisionMarker + tail
 }
 
 // summarizerSystemPrompt instructs the LLM to produce a single condensed

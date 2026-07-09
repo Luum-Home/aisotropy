@@ -76,14 +76,16 @@ Each objective is a *demonstrable* increment of the [walking skeleton](index.md)
 | Metric | Objective | Why |
 |---|---|---|
 | **`bits/token/tenant` (memory lift)** | **Lift > 0 and a downward curve** | **How well the system knows the user, measured in bits ([Bet 6](../research/bet-06-bits-per-token-metric.md)).** |
-| Input tokens per request vs. naive baseline | −70% *(design target, unmeasured)* | The efficiency thesis. |
+| Input tokens per request vs. naive baseline | **−72% measured** (cumulative/50 turns; −83% per-request at depth) | The efficiency thesis. |
 | Time-to-First-Token (TTFT) | < 500 ms (excl. provider latency) | Interactive UX. |
 | Context leakage between tenants | 0 (automated test) | Non-negotiable. |
 | Cost per token attributable to tenant | 100% | Governance. |
 
-**On the −70% target:** this row is an objective, not a result — no benchmark has produced this
-number yet. It becomes a measured Key Result once the reproducible harness in
-[`bench/token-economy/`](../../bench/token-economy/) reports an actual input-token comparison
-against a naive/LangChain-style full-history baseline; until then it stays a target per
-[principles](../vision/principles.md#derived-operating-principles) ("if you don't know what
-string was sent, it's a design bug" extends to "if you haven't measured it, it's not a claim").
+**On the −70% target:** now a measured Key Result, not just an objective. The reproducible harness
+in [`bench/token-economy/`](../../bench/token-economy/) reports **−71.8% cumulative through 50 turns
+(−83.3% per-request at depth)** against a LangChain-style full-history baseline, under both token
+heuristics. Caveats are honest and documented in that README: offline, deterministic, an approximate
+tokenizer, a single synthetic conversation distribution, and a bounded deterministic summarizer
+standing in for a real LLM one — so it is a benchmark result of that setup, not a universal
+guarantee. Consistent with [principles](../vision/principles.md#derived-operating-principles) ("if
+you haven't measured it, it's not a claim"): re-run `go run ./bench/token-economy` to reproduce.
