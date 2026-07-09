@@ -10,10 +10,15 @@ timestamp: 2026-07-09T00:00:00Z
 
 ## Status
 
-🟡 **Proposed — pending approval.** Implements [Phase 8 — Adoption surface](../roadmap/milestones.md#phase-8--adoption-surface-public-api-and-sdk).
-Companion to [what Aisotropy is](../architecture/what-aisotropy-is.md) (which forward-references
-this decision as the runtime→framework gap) and interacts with the proposed
-[ADR-0012](0012-gollem-native-tool-calling-vs-homegrown-agentloop.md).
+✅ **Accepted (2026-07-09).** Operator-approved and implemented in the same session (the importable
+`aisotropy/` façade package + builder, dogfooded through `cmd/aisotropyd`, with an
+`examples/weatherbot` nested module proving public-surface-only). Implements
+[Phase 8 — Adoption surface](../roadmap/milestones.md#phase-8--adoption-surface-public-api-and-sdk).
+Companion to [what Aisotropy is](../architecture/what-aisotropy-is.md) (which forward-references this
+decision as the runtime→framework gap) and sits *above* the now-accepted
+[ADR-0012](0012-gollem-native-tool-calling-vs-homegrown-agentloop.md) native tool-calling — which
+landed keeping `ToolExecutor`'s `map[string]string` args unchanged, confirming this ADR's provisional
+args decision.
 
 ## Context
 
@@ -134,9 +139,9 @@ Explicitly **not** exposed: `tools.Registry`, `facts.Scope`/`NewScope`/`ExportAl
 1. **`args map[string]string` freeze.** `ToolExecutor.Execute` takes `args map[string]string`.
    Native tool-calling (ADR-0012) and richer tools may want typed/nested JSON. Publishing
    `map[string]string` and later needing `map[string]any`/`json.RawMessage` is a breaking façade
-   change. **Provisional decision:** keep `map[string]string` for the 0.x façade (ADR-0012 is only
-   *proposed*; widening now is speculative generality against the anti-magic/minimalism ethos), and
-   treat any widening as a documented 0.x break settled *together with* ADR-0012's direction.
+   change. **Decision (resolved 2026-07-09):** keep `map[string]string` for the 0.x façade. ADR-0012
+   (native tool-calling) has since landed **without** widening the args contract, so no break is
+   forced now; any future widening remains a documented 0.x change, not a silent one.
 2. **When to promote to `v1`.** What evidence (number of external consumers, surface stability
    duration) triggers the `v1` commitment.
 3. **Whether the persona seam should eventually carry more than a base prompt** (few-shots, tool

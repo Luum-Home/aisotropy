@@ -26,7 +26,7 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0010](0010-gollem-adoption-scope-and-observability.md) | Gollem adoption scope, and the two-path observability decision | **✅ accepted → selective adopt/adopt-later/do-not-adopt matrix** |
 | [0011](0011-tenant-scoped-statement-builder.md) | Tenant-scoped statement builder: isolation by construction for the pooled facts tier | **✅ accepted → `internal/tenancy`; an unscoped statement is a construction-time error** |
 | [0012](0012-gollem-native-tool-calling-vs-homegrown-agentloop.md) | Gollem native tool-calling vs. homegrown agentloop | 🟡 **proposed** |
-| [0013](0013-public-extension-surface-facade-vs-promote.md) | Public extension surface: façade package + builder vs. promoting `internal/` | 🟡 **proposed** |
+| [0013](0013-public-extension-surface-facade-vs-promote.md) | Public extension surface: façade package + builder vs. promoting `internal/` | **✅ accepted → façade `aisotropy/` + builder (B+C)** |
 
 ## Decisions already made in the source conversations
 
@@ -129,7 +129,7 @@ These were closed in the original design and are documented as retroactive "acce
   and routing the native path through Gollem `Agent[T]` for its guardrails/`CostTracker`/OTel.
 
 - **[ADR-0013 — Public extension surface: façade + builder](0013-public-extension-surface-facade-vs-promote.md):**
-  🟡 **proposed → pending approval**. The Phase 8 (adoption surface) decision: let a third party build
+  ✅ **accepted (2026-07-09) → implemented**. The Phase 8 (adoption surface) decision: let a third party build
   their bot on Aisotropy **without forking**. Chooses **B + C** — a thin importable façade package
   `aisotropy/` that re-exports only the extension types via **type aliases** (`Tool`, `ToolExecutor`,
   `LLMClient`, `Persona`, …) plus a functional-options **builder** (`aisotropy.New(...).Run(ctx)`) that
