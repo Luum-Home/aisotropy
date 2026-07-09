@@ -113,6 +113,11 @@ func (c *OpenAICompatClient) StreamChat(ctx context.Context, system, prompt stri
 		"stream":     true,
 		"max_tokens": c.maxTokens,
 		"messages":   msgs,
+		// include_usage asks the provider to emit one extra SSE chunk right
+		// before [DONE] carrying the real prompt/completion token counts (the
+		// OpenAI streaming usage contract) — without it, streaming responses
+		// carry no usage data at all.
+		"stream_options": map[string]any{"include_usage": true},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("openai-compat: marshal request: %w", err)
@@ -144,6 +149,8 @@ func (c *OpenAICompatClient) StreamChat(ctx context.Context, system, prompt stri
 		defer close(ch)
 		defer func() { _ = resp.Body.Close() }()
 
+		var usage *Usage
+
 		sc := bufio.NewScanner(resp.Body)
 		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 		for sc.Scan() {
@@ -156,7 +163,7 @@ func (c *OpenAICompatClient) StreamChat(ctx context.Context, system, prompt stri
 			}
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if data == "[DONE]" {
-				sendToken(ctx, ch, Token{Done: true})
+				sendToken(ctx, ch, Token{Done: true, Usage: usage})
 				return
 			}
 			var chunk struct {
@@ -165,9 +172,19 @@ func (c *OpenAICompatClient) StreamChat(ctx context.Context, system, prompt stri
 						Content string `json:"content"`
 					} `json:"delta"`
 				} `json:"choices"`
+				// Usage arrives on its own chunk (empty Choices), right before
+				// [DONE], because of the stream_options.include_usage request
+				// option set above.
+				Usage *struct {
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+				} `json:"usage"`
 			}
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 				continue // keep-alive / comment / non-JSON line
+			}
+			if chunk.Usage != nil {
+				usage = &Usage{InputTokens: chunk.Usage.PromptTokens, OutputTokens: chunk.Usage.CompletionTokens}
 			}
 			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
 				if !sendToken(ctx, ch, Token{Text: chunk.Choices[0].Delta.Content}) {
@@ -183,7 +200,7 @@ func (c *OpenAICompatClient) StreamChat(ctx context.Context, system, prompt stri
 			return
 		}
 		// Stream closed cleanly without an explicit [DONE]: signal normal end.
-		sendToken(ctx, ch, Token{Done: true})
+		sendToken(ctx, ch, Token{Done: true, Usage: usage})
 	}()
 	return ch, nil
 }

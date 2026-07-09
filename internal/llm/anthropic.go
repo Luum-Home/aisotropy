@@ -38,10 +38,14 @@ func NewAnthropicClient(apiKey, model string) *AnthropicClient {
 func (a *AnthropicClient) Name() string { return "anthropic:" + a.model }
 
 // StreamChat opens a real stream via MessageService.NewStreaming and
-// translates each text-type "content_block_delta" event into a Token.
-// Respects ctx.Done(): upon cancellation, the SDK cuts the underlying HTTP
-// stream (ssestream.Stream receives the same ctx) and the producer goroutine
-// immediately stops consuming/emitting tokens.
+// translates each text-type "content_block_delta" event into a Token. Also
+// captures real token usage: input_tokens from the "message_start" event's
+// embedded Message.Usage, and output_tokens from each "message_delta"
+// event's Usage (cumulative — the last one received before the stream ends
+// is the final count), attached to the terminal Token. Respects ctx.Done():
+// upon cancellation, the SDK cuts the underlying HTTP stream (ssestream.Stream
+// receives the same ctx) and the producer goroutine immediately stops
+// consuming/emitting tokens.
 func (a *AnthropicClient) StreamChat(ctx context.Context, system, prompt string) (<-chan Token, error) {
 	params := anthropic.MessageNewParams{
 		Model:     a.model,
@@ -61,15 +65,33 @@ func (a *AnthropicClient) StreamChat(ctx context.Context, system, prompt string)
 		defer close(out)
 		defer func() { _ = stream.Close() }()
 
+		var usage Usage
+		sawUsage := false
+
 		for stream.Next() {
 			if ctx.Err() != nil {
 				return
 			}
 
 			event := stream.Current()
-			if event.Type != "content_block_delta" {
+			switch event.Type {
+			case "message_start":
+				start := event.AsMessageStart()
+				usage.InputTokens = int(start.Message.Usage.InputTokens)
+				usage.OutputTokens = int(start.Message.Usage.OutputTokens)
+				sawUsage = true
+				continue
+			case "message_delta":
+				delta := event.AsMessageDelta()
+				usage.OutputTokens = int(delta.Usage.OutputTokens)
+				sawUsage = true
+				continue
+			case "content_block_delta":
+				// handled below
+			default:
 				continue
 			}
+
 			delta := event.AsContentBlockDelta().Delta
 			if delta.Type != "text_delta" || delta.Text == "" {
 				continue
@@ -92,9 +114,14 @@ func (a *AnthropicClient) StreamChat(ctx context.Context, system, prompt string)
 			return
 		}
 
+		done := Token{Done: true}
+		if sawUsage {
+			u := usage
+			done.Usage = &u
+		}
 		select {
 		case <-ctx.Done():
-		case out <- Token{Done: true}:
+		case out <- done:
 		}
 	}()
 

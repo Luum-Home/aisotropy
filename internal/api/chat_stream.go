@@ -19,10 +19,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
 
+	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 )
@@ -30,6 +32,14 @@ import (
 // recentMessagesWindow bounds how many recent active-buffer messages are
 // folded into the system prompt alongside the condensed summary.
 const recentMessagesWindow = 12
+
+// factsWindow bounds how many facts-memory engrams are injected into the
+// system prompt (docs say the top 3-4 by score; see rqlite-facts-memory.md).
+const factsWindow = 4
+
+// factExtractionTimeout bounds the detached post-response extraction write, so
+// a stalled facts store can't leak a goroutine indefinitely.
+const factExtractionTimeout = 10 * time.Second
 
 // StreamTokenEvent is the payload of each "token" SSE event: an incremental
 // fragment (delta) of the LLM response.
@@ -50,15 +60,16 @@ type StreamErrorEvent struct {
 }
 
 // RegisterStream mounts the chat endpoint in SSE streaming mode. It receives
-// the already-built llm.Client (llm.FromEnv() in main.go) and the shared
-// *memory.WorkingMemory instead of creating them here — no global state,
-// consistent with isolation via ctx (see docs/vision/principles.md).
+// the already-built llm.Client (llm.FromEnv() in main.go), the shared
+// *memory.WorkingMemory, and the facts-memory Store + Extractor (Phase 3)
+// instead of creating them here — no global state, consistent with isolation
+// via ctx (see docs/vision/principles.md).
 //
 // Deliberately reuses ChatInput/ChatRequest from chat.go: the same struct
 // governs the contract both in the stub endpoint (Phase 0) and in real
 // streaming (Phase 1+) — see "the struct as the single source of truth"
 // (docs/vision/thesis.md).
-func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory) {
+func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, extractor facts.Extractor) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
 		Method:      "POST",
@@ -93,6 +104,9 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory) {
 		ctx = llm.WithTenant(ctx, in.TenantID)
 		ctx = llm.WithUser(ctx, in.UserID)
 		key := memory.Key{Tenant: in.TenantID, User: in.UserID, Session: in.Body.SessionID}
+		// Facts memory (Phase 3) is scoped per (tenant, user) — not per
+		// session: an Engram journal persists across a user's sessions.
+		scope := facts.Scope{TenantID: in.TenantID, UserID: in.UserID}
 
 		slog.InfoContext(ctx, "chat stream request",
 			"tenant_id", in.TenantID,
@@ -103,7 +117,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory) {
 			"llm", client.Name(),
 		)
 
-		system, err := hydrateSystemPrompt(ctx, wm, key, in.Body.ProductID)
+		system, err := hydrateSystemPrompt(ctx, wm, store, key, scope, in.Body.ProductID, in.Body.Prompt)
 		if err != nil {
 			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("failed to hydrate working memory: %v", err)})
 			return
@@ -154,6 +168,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory) {
 							slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
 						}
 					}
+					extractFacts(store, extractor, scope, in.Body.Prompt, assistantReply.String())
 					_ = send.Data(StreamDoneEvent{TenantID: in.TenantID})
 					return
 				}
@@ -173,7 +188,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory) {
 // its most recent active-buffer messages), so the model sees prior turns of
 // the conversation instead of starting fresh on every request (see
 // docs/architecture/memory-tiers.md).
-func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, key memory.Key, productID string) (string, error) {
+func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, key memory.Key, scope facts.Scope, productID, prompt string) (string, error) {
 	base := systemPromptFor(productID)
 
 	summary, err := wm.Summary(ctx, key)
@@ -185,12 +200,32 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, key memo
 		return "", fmt.Errorf("read working-memory recent messages: %w", err)
 	}
 
-	if summary == "" && len(recent) == 0 {
+	// Facts memory (Phase 3): the top engrams for this user whose content
+	// matches the incoming prompt (FTS5, ranked by Relevance×Importance×
+	// Recency). Unlike working memory, a facts retrieval failure is NOT fatal
+	// — facts are an enrichment, not a hard dependency — so it degrades to
+	// "no facts" with a log line rather than failing the request.
+	var relevant []facts.ScoredFact
+	if store != nil {
+		relevant, err = store.Search(ctx, scope, prompt, factsWindow)
+		if err != nil {
+			slog.ErrorContext(ctx, "facts search failed; proceeding without facts", "err", err)
+			relevant = nil
+		}
+	}
+
+	if summary == "" && len(recent) == 0 && len(relevant) == 0 {
 		return base, nil
 	}
 
 	var sb strings.Builder
 	sb.WriteString(base)
+	if len(relevant) > 0 {
+		sb.WriteString("\n\nKnown facts about this user (long-term memory):\n")
+		for _, f := range relevant {
+			fmt.Fprintf(&sb, "- %s\n", f.Content)
+		}
+	}
 	if summary != "" {
 		sb.WriteString("\n\nSummary of the conversation so far: ")
 		sb.WriteString(summary)
@@ -202,6 +237,31 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, key memo
 		}
 	}
 	return sb.String(), nil
+}
+
+// extractFacts runs the Phase 3 online extractor over a completed turn and
+// persists any resulting facts off the request's hot path. The extraction
+// itself is cheap and runs inline; only the store write is deferred to a
+// goroutine, on a bounded, DETACHED context (the request ctx is cancelled the
+// moment this handler returns). It is fire-and-forget: a missed fact is logged,
+// never surfaced to the client, and must not break an otherwise successful chat.
+func extractFacts(store facts.Store, extractor facts.Extractor, scope facts.Scope, userMsg, assistantMsg string) {
+	if store == nil || extractor == nil {
+		return
+	}
+	candidates := extractor.Extract(scope, facts.Turn{UserMessage: userMsg, AssistantMessage: assistantMsg})
+	if len(candidates) == 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), factExtractionTimeout)
+		defer cancel()
+		for _, f := range candidates {
+			if err := store.Save(ctx, scope, f); err != nil {
+				slog.ErrorContext(ctx, "failed to persist extracted fact", "err", err, "fact_id", f.ID)
+			}
+		}
+	}()
 }
 
 // systemPromptFor builds the minimal system prompt for the given product_id.

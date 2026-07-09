@@ -1,10 +1,15 @@
 // Package api defines Aisotropy's HTTP contracts and handlers.
 //
-// Phase 0 of the roadmap (docs/roadmap/milestones.md): the Go struct is the
-// single source of truth. A single type governs both HTTP input validation
-// and the OpenAPI 3.1 schema that Huma autogenerates. Still no LLM or memory
-// — the handler returns a stub to prove the contract works end to end (see
-// docs/vision/thesis.md -> "The struct as the single source of truth").
+// Phase 0 of the roadmap (docs/roadmap/milestones.md) established the Go
+// struct as the single source of truth: a single type governs both HTTP
+// input validation and the OpenAPI 3.1 schema Huma autogenerates. Phase 2
+// follow-up wires this endpoint to a real structured-output pipeline: the
+// reflection loop (internal/llm's ReflectAuto — GollemReflect by default,
+// with the homegrown Reflect[T] fallback per ADR-0008) enforces the reply
+// against chatStructuredReply and fails closed (an HTTP error, never a
+// silent unstructured fallback) on a persistent schema violation, per
+// .claude/rules/constitutional-gates.md's "Structured-output / reflection
+// loop" gate.
 //
 // Phase 2 follow-up "C": tenant_id and user_id both travel as path params —
 // identity belongs in the path (and, from there, natively into ctx), never
@@ -19,12 +24,23 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/Luum-Home/aisotropy/internal/facts"
+	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 )
+
+// chatMaxReflectionRetries bounds the reflection loop's retries (ADR-0008 /
+// the constitutional "fail closed" gate): a persistent schema violation
+// returns an error after this many attempts, never a silent unstructured
+// fallback.
+const chatMaxReflectionRetries = 3
 
 // ChatRequest is the input contract (Input Guardrail via Huma).
 // The tags govern both HTTP validation and the published JSON Schema.
@@ -43,14 +59,46 @@ type ChatInput struct {
 	Body     ChatRequest
 }
 
-// ChatOutput is the strict output contract. In future phases this same
-// struct is what Gollem will enforce on the LLM via structured output.
+// ChatOutput is the strict output contract.
 type ChatOutput struct {
 	Body struct {
-		Reply    string `json:"reply" doc:"Agent response (stub in Phase 0)"`
+		Reply    string `json:"reply" doc:"Agent response, schema-enforced via the reflection loop"`
 		TenantID string `json:"tenant_id" doc:"Tenant that served the request (isolation echo)"`
-		Stub     bool   `json:"stub" doc:"true while no LLM is connected"`
+		Stub     bool   `json:"stub" doc:"true when the resolved LLM client is the credential-less stub (no provider key configured)"`
 	}
+}
+
+// chatStructuredReply is the schema the reflection loop enforces on the raw
+// LLM output (see internal/llm's ReflectAuto/GollemReflect). The Go struct
+// IS the schema: Agent[T] derives its JSON Schema from this type by
+// reflection — the same "struct as single source of truth" thesis
+// ChatRequest/ChatOutput apply to HTTP, applied here to the LLM's own output.
+type chatStructuredReply struct {
+	Reply string `json:"reply"`
+}
+
+// decodeChatReply is the ValidateFunc[T] the homegrown Reflect[T] fallback
+// backend (ADR-0008) uses to detect a schema violation: invalid JSON, or
+// JSON that does not carry a non-empty "reply" field.
+func decodeChatReply(raw string) (chatStructuredReply, error) {
+	var out chatStructuredReply
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return chatStructuredReply{}, fmt.Errorf(`response is not valid JSON matching {"reply": string}: %w`, err)
+	}
+	if strings.TrimSpace(out.Reply) == "" {
+		return chatStructuredReply{}, fmt.Errorf(`response JSON is valid but "reply" is empty`)
+	}
+	return out, nil
+}
+
+// validateChatReply is the business-validation step both RunWithReflection
+// (Gollem backend) and Reflect[T] (homegrown fallback) use: "" accepts a
+// non-empty feedback string requests a correction.
+func validateChatReply(_ context.Context, out chatStructuredReply) (string, error) {
+	if strings.TrimSpace(out.Reply) == "" {
+		return `the "reply" field must be a non-empty string`, nil
+	}
+	return "", nil
 }
 
 // tenantCtxKey is the key used to propagate the tenant through context.Context.
@@ -74,14 +122,22 @@ func withIdentity(ctx context.Context, tenant, user, session string) (context.Co
 	return ctx, nil
 }
 
-// Register mounts the chat endpoint on the Huma API.
-func Register(api huma.API) {
+// Register mounts the non-streaming chat endpoint on the Huma API. It
+// receives the already-built llm.Client (llm.FromEnv() in main.go) and the
+// shared *memory.WorkingMemory instead of creating them here — no global
+// state, consistent with isolation via ctx (see docs/vision/principles.md).
+func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat",
 		Method:      "POST",
 		Path:        "/v1/tenant/{tenant_id}/user/{user_id}/chat",
-		Summary:     "Chat with the agent (Phase 0: stub, no LLM)",
-		Description: "Validates the contract, isolates by tenant/user via ctx, and returns a stub response.",
+		Summary:     "Chat with the agent (structured output via the reflection loop)",
+		Description: "Validates the contract, isolates by tenant/user via ctx, hydrates the " +
+			"session's working memory into the system prompt, and enforces the reply " +
+			"against a JSON schema via the reflection loop (ReflectAuto: Gollem by " +
+			"default, with a homegrown fallback backend per ADR-0008). A persistent " +
+			"schema violation fails closed with an HTTP error — never a silent " +
+			"unstructured fallback (see .claude/rules/constitutional-gates.md).",
 	}, func(ctx context.Context, in *ChatInput) (*ChatOutput, error) {
 		// Isolation via ctx: tenant_id and user_id from the path travel
 		// natively downward (see docs/architecture/multi-tenancy.md).
@@ -89,17 +145,66 @@ func Register(api huma.API) {
 		if err != nil {
 			return nil, huma.Error422UnprocessableEntity("invalid tenant/user identity", err)
 		}
+		// Mirror chat_stream.go: also propagate identity through internal/llm's
+		// own ctx carrier so any OTel instrumentation on this path can attribute
+		// spans with tenant_id/user_id without internal/llm importing internal/api.
+		ctx = llm.WithTenant(ctx, in.TenantID)
+		ctx = llm.WithUser(ctx, in.UserID)
+		key := memory.Key{Tenant: in.TenantID, User: in.UserID, Session: in.Body.SessionID}
+		scope := facts.Scope{TenantID: in.TenantID, UserID: in.UserID}
+
 		slog.InfoContext(ctx, "chat request",
 			"tenant_id", in.TenantID,
 			"user_id", in.UserID,
+			"session_id", in.Body.SessionID,
 			"product_id", in.Body.ProductID,
 			"prompt_len", len(in.Body.Prompt),
+			"llm", client.Name(),
 		)
 
+		// The non-streaming endpoint hydrates from working memory only; facts
+		// memory (store) is injected on the streaming path (RegisterStream).
+		// Passing a nil store skips facts retrieval here (hydrateSystemPrompt
+		// guards on store != nil).
+		system, err := hydrateSystemPrompt(ctx, wm, store, key, scope, in.Body.ProductID, in.Body.Prompt)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to hydrate working memory", err)
+		}
+
+		// Persist the user's turn before calling the LLM: even if the
+		// reflection loop later fails closed, the user's message is real
+		// input that already happened and should not be lost — mirrors
+		// chat_stream.go's ordering.
+		if err := wm.Append(ctx, key, memory.Message{Role: "user", Content: in.Body.Prompt}); err != nil {
+			slog.ErrorContext(ctx, "failed to append user message to working memory", "err", err)
+		}
+
+		reply, attempts, backend, err := llm.ReflectAuto[chatStructuredReply](
+			ctx, client, system, in.Body.Prompt, decodeChatReply, validateChatReply, chatMaxReflectionRetries,
+		)
+		if err != nil {
+			// Fail closed: a persistent schema/business violation is an error
+			// response, never a silent fallback to unstructured text (the
+			// constitutional "Structured-output / reflection loop" gate).
+			slog.ErrorContext(ctx, "chat reflection loop failed closed",
+				"tenant_id", in.TenantID, "user_id", in.UserID, "backend", backend, "attempts", attempts, "err", err)
+			return nil, huma.Error502BadGateway(
+				fmt.Sprintf("agent failed to produce a valid structured reply after %d attempt(s)", attempts), err)
+		}
+
+		// Only a successfully validated turn gets persisted — a failed/rejected
+		// attempt (handled above) never reaches this line.
+		if err := wm.Append(ctx, key, memory.Message{Role: "assistant", Content: reply.Reply}); err != nil {
+			slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
+		}
+
+		slog.InfoContext(ctx, "chat request completed",
+			"tenant_id", in.TenantID, "user_id", in.UserID, "backend", backend, "attempts", attempts)
+
 		out := &ChatOutput{}
-		out.Body.Reply = "stub: contract validated; LLM connects in Phase 1"
+		out.Body.Reply = reply.Reply
 		out.Body.TenantID = in.TenantID
-		out.Body.Stub = true
+		out.Body.Stub = client.Name() == "stub"
 		return out, nil
 	})
 }

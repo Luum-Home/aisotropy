@@ -26,6 +26,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/Luum-Home/aisotropy/internal/api"
+	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 )
@@ -54,6 +55,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Facts memory (internal/facts, Phase 3 "Facts memory" tier): SQLite+FTS5
+	// by default (embedded, zero-config), or rqlite when RQLITE_URL is set
+	// (ADR-0004). HeuristicExtractor is the deterministic, cheap Phase 3
+	// extractor — richer LLM/DataFusion-driven distillation is Phase 6.
+	factsStore, err := facts.OpenFromEnv()
+	if err != nil {
+		slog.Error("failed to initialize facts memory", "err", err)
+		os.Exit(1)
+	}
+	factsExtractor := facts.HeuristicExtractor{}
+
 	// OTel tracing for the streaming chat path (ADR-0010: the streaming
 	// path calls llm.Client.StreamChat directly, so it gets its own
 	// provider-agnostic WithOTel(Client) decorator rather than Gollem's
@@ -76,8 +88,13 @@ func main() {
 	// The Go struct is the single source of truth: Huma derives the OpenAPI
 	// 3.1 schema and validates input from the same types (docs/vision/thesis.md).
 	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy", "0.1.0"))
-	api.Register(humaAPI)
-	api.RegisterStream(humaAPI, streamClient, wm)
+	// Register (the non-streaming endpoint) uses the plain llmClient, not the
+	// OTel-decorated streamClient: per ADR-0010's "two LLM call paths, two
+	// instrumentation strategies", the reflection path's own instrumentation
+	// is Gollem's ext/otel (not yet adopted — tracked as debt in the ADR),
+	// not the streaming path's WithOTel(Client) decorator.
+	api.Register(humaAPI, llmClient, wm, factsStore)
+	api.RegisterStream(humaAPI, streamClient, wm, factsStore, factsExtractor)
 
 	server := &http.Server{
 		Addr:    addr,
@@ -109,6 +126,7 @@ func main() {
 		if err != nil {
 			slog.Error("server stopped", "err", err)
 			_ = wm.Close()
+			_ = factsStore.Close()
 			_ = shutdownTracing(context.Background())
 			os.Exit(1)
 		}
@@ -122,6 +140,10 @@ func main() {
 
 	if err := wm.Close(); err != nil {
 		slog.Error("working memory close failed", "err", err)
+	}
+
+	if err := factsStore.Close(); err != nil {
+		slog.Error("facts memory close failed", "err", err)
 	}
 
 	if err := shutdownTracing(shutdownCtx); err != nil {

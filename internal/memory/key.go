@@ -10,7 +10,6 @@
 package memory
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -23,6 +22,24 @@ import (
 // enforcement point for tenant/user isolation at the key level (see the
 // "Data model / keys" section of the component doc).
 const reservedKeyChars = ":\x00\n"
+
+// ValidateIdentityComponent applies the exact non-empty / no-reserved-
+// character rule Key.Validate applies to each of its three components. It is
+// exported so identity carriers outside this package that are not
+// BadgerDB-keyed (e.g. internal/tenancy's Scope, built for the rqlite facts
+// tier) can reuse the same rule instead of re-implementing a parallel
+// character-class check that would have to be kept in lockstep with
+// reservedKeyChars by hand. field is used only to build a readable error
+// message (e.g. "tenant", "user").
+func ValidateIdentityComponent(field, value string) error {
+	if value == "" {
+		return fmt.Errorf("memory: %s requires a non-empty value", field)
+	}
+	if strings.ContainsAny(value, reservedKeyChars) {
+		return fmt.Errorf("memory: %s %q contains a reserved character", field, value)
+	}
+	return nil
+}
 
 // Key identifies a single chat session's working-memory buffer, scoped by
 // tenant and user. All three components are mandatory and explicit by
@@ -39,23 +56,14 @@ type Key struct {
 // character. Every WorkingMemory operation calls this before touching
 // BadgerDB, so an invalid Key can never reach the on-disk key space.
 func (k Key) Validate() error {
-	if k.Tenant == "" {
-		return errors.New("memory: key requires a non-empty tenant")
+	if err := ValidateIdentityComponent("tenant", k.Tenant); err != nil {
+		return err
 	}
-	if k.User == "" {
-		return errors.New("memory: key requires a non-empty user")
+	if err := ValidateIdentityComponent("user", k.User); err != nil {
+		return err
 	}
-	if k.Session == "" {
-		return errors.New("memory: key requires a non-empty session")
-	}
-	if strings.ContainsAny(k.Tenant, reservedKeyChars) {
-		return fmt.Errorf("memory: tenant %q contains a reserved character", k.Tenant)
-	}
-	if strings.ContainsAny(k.User, reservedKeyChars) {
-		return fmt.Errorf("memory: user %q contains a reserved character", k.User)
-	}
-	if strings.ContainsAny(k.Session, reservedKeyChars) {
-		return fmt.Errorf("memory: session %q contains a reserved character", k.Session)
+	if err := ValidateIdentityComponent("session", k.Session); err != nil {
+		return err
 	}
 	return nil
 }

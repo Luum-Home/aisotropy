@@ -82,7 +82,11 @@ func ReflectAuto[T any](
 		if feedback != "" {
 			full = p + "\n\n" + feedback
 		}
-		return generateFull(ctx, client, system, full)
+		// The homegrown Reflect[T] loop (GenerateFunc) has no Usage-carrying
+		// return slot — real usage accounting for this fallback path is
+		// covered by the caller's own Client (e.g. via WithOTel), not here.
+		raw, _, err := generateFull(ctx, client, system, full)
+		return raw, err
 	}
 
 	validate := func(raw string) (T, error) {

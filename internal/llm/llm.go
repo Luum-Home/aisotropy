@@ -29,6 +29,19 @@ import (
 // walking skeleton.
 const DefaultAnthropicModel = "claude-haiku-4-5-20251001"
 
+// Usage carries provider-reported token counts for a completed stream. It is
+// real accounting data from the provider (or, for StubClient, a deterministic
+// stand-in that exercises the same plumbing) — never a proxy metric like the
+// number of streamed deltas. See otel.go's attrGenAIInputTokens/
+// attrGenAIOutputTokens for where this lands in observability, and
+// gollem.go's GollemModel for where it lands in core.ModelResponse.Usage.
+type Usage struct {
+	// InputTokens is the provider-reported prompt/input token count.
+	InputTokens int
+	// OutputTokens is the provider-reported completion/output token count.
+	OutputTokens int
+}
+
 // Token is an incremental fragment of the model's response.
 type Token struct {
 	// Text is the fragment's text (delta, not accumulated).
@@ -40,6 +53,12 @@ type Token struct {
 	// channel closes; consumers must surface it and stop, never treat a failed
 	// stream as a clean finish.
 	Err error
+	// Usage, when non-nil, carries the provider-reported total token counts
+	// for the completed stream. Only ever set on the terminal Token (Done or,
+	// where the provider supplies it before an error, Err) — never on a
+	// mid-stream delta, since providers report usage as a stream-final
+	// summary, not incrementally per token.
+	Usage *Usage
 }
 
 // Client is the interface any LLM provider must implement.

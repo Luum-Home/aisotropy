@@ -78,12 +78,12 @@ func (m *GollemModel) ModelName() string { return m.client.Name() }
 func (m *GollemModel) Request(ctx context.Context, messages []core.ModelMessage, _ *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
 	system, prompt := buildGollemPrompt(messages, params)
 
-	raw, err := generateFull(ctx, m.client, system, prompt)
+	raw, usage, err := generateFull(ctx, m.client, system, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("gollem model %q: %w", m.ModelName(), err)
 	}
 
-	return toModelResponse(raw, params), nil
+	return toModelResponse(raw, usage, params), nil
 }
 
 // RequestStream implements core.Model in streaming mode: re-exposes the
@@ -110,6 +110,7 @@ type gollemStream struct {
 	params *core.ModelRequestParameters
 	buf    strings.Builder
 	state  gollemStreamState
+	usage  *Usage
 }
 
 type gollemStreamState int
@@ -133,6 +134,9 @@ func (s *gollemStream) Next() (core.ModelResponseStreamEvent, error) {
 		}
 		if !ok || tok.Done {
 			s.state = gollemStreamDone
+			if tok.Usage != nil {
+				s.usage = tok.Usage
+			}
 			return core.PartEndEvent{Index: 0}, nil
 		}
 		s.buf.WriteString(tok.Text)
@@ -143,34 +147,45 @@ func (s *gollemStream) Next() (core.ModelResponseStreamEvent, error) {
 }
 
 func (s *gollemStream) Response() *core.ModelResponse {
-	return toModelResponse(s.buf.String(), s.params)
+	return toModelResponse(s.buf.String(), s.usage, s.params)
 }
 
-func (s *gollemStream) Usage() core.Usage { return core.Usage{} }
+// Usage returns the real provider-reported token counts captured from the
+// stream's terminal Token, when the underlying Client supplied one — zero
+// value otherwise (never derived from a delta count).
+func (s *gollemStream) Usage() core.Usage {
+	if s.usage == nil {
+		return core.Usage{}
+	}
+	return core.Usage{InputTokens: s.usage.InputTokens, OutputTokens: s.usage.OutputTokens}
+}
 
 func (s *gollemStream) Close() error { s.state = gollemStreamDone; return nil }
 
 // generateFull drains the Client's streaming channel and returns the full
-// response as a single string — Gollem (Agent.Run, via Model.Request) needs
-// the full response to be able to parse/validate against T before deciding
-// whether to retry.
-func generateFull(ctx context.Context, client Client, system, prompt string) (string, error) {
+// response as a single string, plus the real Usage captured from the
+// terminal Token when the Client supplied one (nil otherwise) — Gollem
+// (Agent.Run, via Model.Request) needs the full response to be able to
+// parse/validate against T before deciding whether to retry, and the real
+// usage is what lets GollemModel populate core.ModelResponse.Usage (see
+// toModelResponse) so CostTracker records non-zero cost.
+func generateFull(ctx context.Context, client Client, system, prompt string) (string, *Usage, error) {
 	tokens, err := client.StreamChat(ctx, system, prompt)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	var b strings.Builder
 	for {
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", nil, ctx.Err()
 		case tok, ok := <-tokens:
 			if tok.Err != nil {
-				return "", tok.Err
+				return "", nil, tok.Err
 			}
 			if !ok || tok.Done {
-				return b.String(), nil
+				return b.String(), tok.Usage, nil
 			}
 			b.WriteString(tok.Text)
 		}
@@ -276,14 +291,26 @@ func outputInstruction(params *core.ModelRequestParameters) string {
 //     prose/backticks) and wraps it as ToolCallResponse — the synthetic
 //     "tool call" that Agent[T] will parse/validate against T.
 //   - Otherwise, treats it as free text (OutputModeText/Native with T=string).
-func toModelResponse(raw string, params *core.ModelRequestParameters) *core.ModelResponse {
+//
+// When usage is non-nil (the Client supplied real provider-reported token
+// counts on its terminal Token), it populates ModelResponse.Usage so
+// core.CostTracker (attached via gollemGuardrailOptions) records real,
+// non-zero cost instead of always seeing a zero core.Usage.
+func toModelResponse(raw string, usage *Usage, params *core.ModelRequestParameters) *core.ModelResponse {
 	raw = strings.TrimSpace(raw)
 
+	var resp *core.ModelResponse
 	if tool := primaryOutputTool(params); tool != nil {
-		return core.ToolCallResponse(tool.Name, extractJSONObject(raw))
+		resp = core.ToolCallResponse(tool.Name, extractJSONObject(raw))
+	} else {
+		resp = core.TextResponse(raw)
 	}
 
-	return core.TextResponse(raw)
+	if usage != nil {
+		resp.Usage = core.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens}
+	}
+
+	return resp
 }
 
 // extractJSONObject isolates the first balanced JSON object within s,
@@ -374,16 +401,16 @@ const (
 // (granular-control.md's cost axis) is explicitly out of scope here and
 // must be built on BadgerDB, not on core.UsageQuota.
 //
-// Separately, and more immediately limiting: GollemModel.toModelResponse
-// (below) never populates core.ModelResponse.Usage, because our narrow
-// llm.Client (StreamChat-only, see llm.go) does not expose provider token
-// counts at all. So even with real pricing configured, tracker.Record
-// currently always sees a zero core.Usage for traffic that goes through
-// GollemModel — the recorded cost is 0 until Client (or a provider-specific
-// wrapper) starts surfacing input/output token counts. The wiring itself
-// (this file) and the AgentOption attachment are correct and tested
-// independently against core.NewTestModel (gollem_test.go), which does let
-// a canned response carry non-zero Usage.
+// GollemModel.toModelResponse now DOES populate core.ModelResponse.Usage
+// whenever the underlying llm.Client supplies real token counts on its
+// terminal Token (see llm.go's Usage, generateFull, and each Client
+// implementation: AnthropicClient reads message_start/message_delta usage,
+// OpenAICompatClient requests stream_options.include_usage, StubClient emits
+// a deterministic fake Usage). So tracker.Record sees real (non-zero, when
+// pricing is configured) core.Usage for traffic through GollemModel — the
+// remaining gap is only that this map ships empty (no $/token entries), a
+// separate, deliberate decision (see the paragraph above), not a Usage
+// plumbing gap.
 var gollemModelPricing = map[string]core.ModelPricing{}
 
 // gollemGuardrailOptions returns the ADR-0010 "ADOPT NOW" AgentOptions
@@ -427,9 +454,11 @@ func gollemAuditLog(direction string, messages []core.ModelMessage) {
 //
 // Also attaches the ADR-0010 cost tracker + guardrails/interceptors (see
 // gollemGuardrailOptions above) and, once the run completes successfully,
-// logs the tracker's recorded cost/usage at slog debug (accounting only —
-// see the gollemModelPricing comment for why this is currently always 0 for
-// traffic through GollemModel).
+// logs the tracker's recorded cost/usage at slog debug. The cost is real
+// whenever the underlying Client reports usage AND gollemModelPricing has an
+// entry for its model name (see that variable's comment) — it is 0 only when
+// the model name is unpriced, an intentional accounting degrade, not a Usage
+// plumbing gap.
 func GollemReflect[T any](
 	ctx context.Context,
 	client Client,

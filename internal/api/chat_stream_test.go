@@ -13,19 +13,32 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 )
 
 // newTestRouter builds the same wiring as cmd/aisotropyd/main.go (chi +
 // humachi + Register + RegisterStream) so these tests exercise the real
-// route table, not a hand-rolled substitute.
+// route table, not a hand-rolled substitute. Facts memory uses an ephemeral
+// in-memory SQLiteStore + the deterministic HeuristicExtractor, so these
+// tests never depend on network access or external services.
 func newTestRouter(t *testing.T, client llm.Client, wm *memory.WorkingMemory) http.Handler {
 	t.Helper()
+	factsStore, err := facts.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatalf("facts.OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := factsStore.Close(); err != nil {
+			t.Errorf("facts store Close: %v", err)
+		}
+	})
+
 	router := chi.NewRouter()
 	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy-test", "0.1.0"))
-	Register(humaAPI)
-	RegisterStream(humaAPI, client, wm)
+	Register(humaAPI, client, wm, factsStore)
+	RegisterStream(humaAPI, client, wm, factsStore, facts.HeuristicExtractor{})
 	return router
 }
 

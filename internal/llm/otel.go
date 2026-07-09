@@ -50,7 +50,21 @@ const (
 	attrGenAISystem        = "gen_ai.system"
 	attrGenAIRequestModel  = "gen_ai.request.model"
 	attrGenAIOperationName = "gen_ai.operation.name"
-	attrGenAIOutputTokens  = "gen_ai.usage.output_tokens"
+	// attrGenAIInputTokens / attrGenAIOutputTokens carry REAL provider-reported
+	// token counts (Token.Usage, see llm.go) — never a proxy metric. They are
+	// only set on a span when the underlying Client actually supplied Usage on
+	// its terminal Token; a provider that reports no usage produces a span
+	// with neither attribute, rather than a fabricated number.
+	attrGenAIInputTokens  = "gen_ai.usage.input_tokens"
+	attrGenAIOutputTokens = "gen_ai.usage.output_tokens"
+
+	// attrStreamDeltaCount is the number of non-empty Token deltas forwarded
+	// during the stream — a stream-shape metric, deliberately NOT named
+	// gen_ai.usage.* so it can never be mistaken for real token accounting
+	// (the exact defect this attribute's renaming fixes: the delta count is
+	// not the token count, and providers often tokenize differently than the
+	// stream chunks it).
+	attrStreamDeltaCount = "aisotropy.stream.delta_count"
 
 	attrTTFTMillis     = "aisotropy.ttft_ms"
 	attrDurationMillis = "aisotropy.duration_ms"
@@ -86,10 +100,11 @@ type otelClient struct {
 }
 
 // WithOTel wraps c so every StreamChat call emits one gen_ai span carrying
-// provider/model identity, time-to-first-token, total duration, output
-// token count, and — when present on ctx — tenant_id/user_id identity
-// attributes (docs/architecture/observability.md's "Identity and isolation"
-// section).
+// provider/model identity, time-to-first-token, total duration, real
+// input/output token usage (when the Client supplies it — see llm.go's
+// Usage) alongside a separately-named stream delta count, and — when present
+// on ctx — tenant_id/user_id identity attributes (docs/architecture/
+// observability.md's "Identity and isolation" section).
 //
 // internal/llm must not import internal/api (see docs/architecture/
 // architecture layering), so tenant/user are read back out of ctx via this
@@ -148,20 +163,30 @@ func (o *otelClient) StreamChat(ctx context.Context, system, prompt string) (<-c
 }
 
 // forwardAndTrace ranges over in, forwarding every Token to out unchanged,
-// while recording TTFT/duration/output-token-count attributes and
-// terminating the span exactly once when the loop ends (in closes, a
-// Token.Err arrives, or ctx is cancelled).
+// while recording TTFT/duration/delta-count attributes (and REAL token usage
+// when the terminal Token carries one, see llm.go's Usage) and terminating
+// the span exactly once when the loop ends (in closes, a Token.Err arrives,
+// or ctx is cancelled).
 func forwardAndTrace(ctx context.Context, span trace.Span, in <-chan Token, out chan<- Token) {
 	start := time.Now()
 	var ttft time.Duration
 	ttftRecorded := false
-	outputTokens := 0
+	deltaCount := 0
+	var usage *Usage
 	var finishErr error
 
 	defer func() {
 		attrs := []attribute.KeyValue{
-			attribute.Int(attrGenAIOutputTokens, outputTokens),
+			attribute.Int(attrStreamDeltaCount, deltaCount),
 			attribute.Int64(attrDurationMillis, time.Since(start).Milliseconds()),
+		}
+		if usage != nil {
+			// Real, provider-reported counts only — never derived from
+			// deltaCount above.
+			attrs = append(attrs,
+				attribute.Int(attrGenAIInputTokens, usage.InputTokens),
+				attribute.Int(attrGenAIOutputTokens, usage.OutputTokens),
+			)
 		}
 		if ttftRecorded {
 			attrs = append(attrs, attribute.Int64(attrTTFTMillis, ttft.Milliseconds()))
@@ -190,11 +215,14 @@ loop:
 				break loop
 			}
 			if tok.Text != "" {
-				outputTokens++
+				deltaCount++
 				if !ttftRecorded {
 					ttftRecorded = true
 					ttft = time.Since(start)
 				}
+			}
+			if tok.Usage != nil {
+				usage = tok.Usage
 			}
 			if tok.Err != nil {
 				finishErr = tok.Err
