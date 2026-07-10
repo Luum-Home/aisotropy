@@ -1,0 +1,26 @@
+[package]
+name = "bitrate-scorer"
+version = "0.1.0"
+edition = "2021"
+description = "Aisotropy bitrate scorer (Bet 6, Phase 2): a sovereign Rust port of the validated Python bits-per-token scorer. Loads a pinned distilgpt2 (Apache-2.0) via candle and computes surprisal(text|context) in bits over an NDJSON subprocess contract identical to the Phase-1 Python scorer (ADR-0014). Invoked by the Go core (internal/bitrate)."
+license = "Apache-2.0"
+
+[[bin]]
+name = "bitrate-scorer"
+path = "src/main.rs"
+
+[dependencies]
+# All MIT/Apache-2.0 (verified): candle-core + candle-nn are dual MIT/Apache-2.0;
+# tokenizers is Apache-2.0; serde/serde_json MIT/Apache-2.0.
+# NOTE: candle-transformers 0.9.2 ships NO GPT-2 model (only bigcode/llama/etc.),
+# so the GPT-2 forward pass is implemented directly on candle-core + candle-nn
+# primitives — this *is* ADR-0014 Option B's "Rust port of surprisal.py's
+# surprisal loop". candle-transformers is therefore not a dependency.
+candle-core = "0.9"
+candle-nn = "0.9"
+tokenizers = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 2

@@ -14,7 +14,11 @@ timestamp: 2026-07-09T00:00:00Z
 [Bet 6 — bits-per-token-per-tenant](../research/bet-06-bits-per-token-metric.md), the North Star /
 fitness function of the [compression thesis](../vision/compression-thesis.md) and OKR O8. The
 Python-runtime dependency it introduces in Phase 1 is ratified separately in
-[ADR-0015](0015-bpt-eval-model-and-python-batch-runtime.md). Component design:
+[ADR-0015](0015-bpt-eval-model-and-python-batch-runtime.md). **Phase 2 (sovereign Rust candle
+scorer) delivered (2026-07-10):** `crates/bitrate-scorer` (candle-core/candle-nn, no Python/torch),
+NDJSON-contract-identical to the Phase-1 scorer, with golden-vector parity vs the Python scorer within
+~3e-5 bits on real distilgpt2 weights — the staged Python→Rust swap is now a binary-path change
+(`AISOTROPY_BITRATE_BIN`), Go side unchanged. Component design:
 [bitrate bpt scorer](../components/bitrate-bpt-scorer.md).
 
 ## Context
