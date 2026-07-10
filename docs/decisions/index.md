@@ -32,6 +32,7 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0016](0016-dual-surface-sealed-runtime-composition-sdk.md) | Dual surface: sealed runtime kernel + composition SDK over ctx-scoped nodes (be both A runtime and B framework) | **✅ accepted → dual A+B, invariant "node never constructs a Scope"; levers #1 (typed tools) + #2 (MCP) delivered** |
 | [0017](0017-semantic-tier-multi-kind-memory.md) | Semantic tier as a multi-kind associative memory (Document/Fact/Turn), with the scoped MemoryStore aggregate | **✅ accepted → per-kind lifecycle/bound/weight; facade owns Fact-kind vectors; Turn-kind bounded** |
 | [0018](0018-knowledge-ingestion-surface.md) | Knowledge-ingestion surface (Document kind): dual-surface SDK + HTTP, BYO embedder, chunk→embed→KindDocument | **✅ accepted → `WithEmbedder` + `IngestKnowledge` + `POST .../knowledge`, (tenant,user)-scoped** |
+| [0019](0019-tenant-wide-document-sharing.md) | Tenant-wide document sharing: tenant-only scope + merged retrieval, KindDocument only | **✅ accepted → `NewTenantScope` + `IngestTenantKnowledge` + `POST .../tenant/{id}/knowledge`; user-boundary relaxed for Documents only, never cross-tenant** |
 
 ## Decisions already made in the source conversations
 
