@@ -41,18 +41,26 @@ var ErrFactNotFound = errors.New("facts: fact not found in scope")
 // originates from ctx and never from an untrusted body/header.
 //
 // Obtain a Scope through NewScope or ScopeFromContext, never a bare
-// facts.Scope{...} literal: those constructors route identity through
-// internal/tenancy (ADR-0011), so tenant/user are validated by the single
-// shared rule (memory.ValidateIdentityComponent) that the working-memory and
-// tenancy tiers also use, and the two tiers can never drift on what a valid
-// identity is. The scope_isolation_test guards the other half — that every SQL
-// statement carries the tenant+user predicate — since the tenancy statement
-// builder cannot express this tier's FTS5 MATCH / bm25 / ON CONFLICT SQL (see
-// ADR-0011's "Reconciliation with the facts tier").
+// facts.Scope{...} literal: its fields are unexported, so a bare literal
+// outside this package does not even compile. Both constructors route
+// identity through internal/tenancy (ADR-0011), so tenant/user are validated
+// by the single shared rule (memory.ValidateIdentityComponent) that the
+// working-memory and tenancy tiers also use, and the two tiers can never
+// drift on what a valid identity is. The scope_isolation_test guards the
+// other half — that every SQL statement carries the tenant+user predicate —
+// since the tenancy statement builder cannot express this tier's FTS5 MATCH /
+// bm25 / ON CONFLICT SQL (see ADR-0011's "Reconciliation with the facts
+// tier").
 type Scope struct {
-	TenantID string
-	UserID   string
+	tenant string
+	user   string
 }
+
+// Tenant returns the scope's tenant identity.
+func (s Scope) Tenant() string { return s.tenant }
+
+// User returns the scope's user identity.
+func (s Scope) User() string { return s.user }
 
 // NewScope validates tenant/user through internal/tenancy and returns a facts
 // Scope, or an error if either component is empty or malformed. It is the
@@ -74,7 +82,7 @@ func ScopeFromContext(ctx context.Context) (Scope, error) {
 		return Scope{}, err
 	}
 	user, _ := ts.User()
-	return Scope{TenantID: ts.Tenant(), UserID: user}, nil
+	return Scope{tenant: ts.Tenant(), user: user}, nil
 }
 
 // Fact is one Engram-style memory. Content is distilled text (never raw chat)

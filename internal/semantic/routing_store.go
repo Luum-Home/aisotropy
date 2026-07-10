@@ -185,22 +185,22 @@ func (rs *RoutingStore) storeFor(tenant string) (Store, error) {
 	return st, nil
 }
 
-// Upsert dispatches to the physical Store for sc.TenantID. See Store.Upsert.
+// Upsert dispatches to the physical Store for sc's tenant. See Store.Upsert.
 // The mutex is only held long enough to resolve/provision that Store inside
 // storeFor; it is never held across the underlying Upsert call.
 func (rs *RoutingStore) Upsert(ctx context.Context, sc Scope, points []Point) error {
-	st, err := rs.storeFor(sc.TenantID)
+	st, err := rs.storeFor(sc.Tenant())
 	if err != nil {
 		return err
 	}
 	return st.Upsert(ctx, sc, points)
 }
 
-// Search dispatches to the physical Store for sc.TenantID. See Store.Search.
+// Search dispatches to the physical Store for sc's tenant. See Store.Search.
 // The mutex is only held long enough to resolve/provision that Store inside
 // storeFor; it is never held across the underlying Search call.
 func (rs *RoutingStore) Search(ctx context.Context, sc Scope, query []float32, limit int) ([]ScoredPoint, error) {
-	st, err := rs.storeFor(sc.TenantID)
+	st, err := rs.storeFor(sc.Tenant())
 	if err != nil {
 		return nil, err
 	}

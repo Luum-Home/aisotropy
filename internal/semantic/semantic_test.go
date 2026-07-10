@@ -20,8 +20,8 @@ func embedOne(t *testing.T, emb Embedder, text string) []float32 {
 func point(ctx context.Context, sc Scope, emb Embedder, messageID, content string) Point {
 	return Point{
 		ID:       PointID(sc, messageID),
-		TenantID: sc.TenantID,
-		UserID:   sc.UserID,
+		TenantID: sc.Tenant(),
+		UserID:   sc.User(),
 		Content:  content,
 		Vector:   mustEmbed(ctx, emb, content),
 	}
@@ -33,7 +33,7 @@ func mustEmbed(ctx context.Context, emb Embedder, text string) []float32 {
 }
 
 func TestPointIDDeterministicAndScoped(t *testing.T) {
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	a := PointID(sc, "msg-1")
 	if a != PointID(sc, "msg-1") {
 		t.Fatal("PointID not deterministic")
@@ -41,7 +41,7 @@ func TestPointIDDeterministicAndScoped(t *testing.T) {
 	if a == PointID(sc, "msg-2") {
 		t.Fatal("different messages share an id")
 	}
-	if a == PointID(Scope{TenantID: "globex", UserID: "alice"}, "msg-1") {
+	if a == PointID(Scope{tenant: "globex", user: "alice"}, "msg-1") {
 		t.Fatal("id collides across tenants — isolation risk in the idempotency key")
 	}
 }
@@ -66,7 +66,7 @@ func TestHashEmbedderDeterministic(t *testing.T) {
 func TestUpsertAndSearchCosineRanking(t *testing.T) {
 	emb := NewHashEmbedder(0)
 	st := NewInMemoryStore(emb.Dimension())
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	ctx := context.Background()
 
 	docs := map[string]string{
@@ -106,7 +106,7 @@ func TestTenantAndUserIsolation(t *testing.T) {
 	const content = "shared confidential runbook content"
 
 	mk := func(tenant, user, msg string) {
-		sc := Scope{TenantID: tenant, UserID: user}
+		sc := Scope{tenant: tenant, user: user}
 		if err := st.Upsert(ctx, sc, []Point{point(ctx, sc, emb, msg, content)}); err != nil {
 			t.Fatalf("Upsert %s/%s: %v", tenant, user, err)
 		}
@@ -115,7 +115,7 @@ func TestTenantAndUserIsolation(t *testing.T) {
 	mk("acme", "bob", "b")
 	mk("globex", "alice", "c")
 
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	got, err := st.Search(ctx, sc, embedOne(t, emb, content), 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -133,7 +133,7 @@ func TestTenantAndUserIsolation(t *testing.T) {
 func TestUpsertIsIdempotent(t *testing.T) {
 	emb := NewHashEmbedder(0)
 	st := NewInMemoryStore(emb.Dimension())
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	ctx := context.Background()
 
 	p1 := point(ctx, sc, emb, "msg-42", "first version of the chunk")
@@ -193,7 +193,7 @@ func TestRerankBoostsLexicalMatch(t *testing.T) {
 func TestUpsertErrorPaths(t *testing.T) {
 	emb := NewHashEmbedder(0)
 	st := NewInMemoryStore(emb.Dimension())
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	ctx := context.Background()
 
 	// Scope mismatch.

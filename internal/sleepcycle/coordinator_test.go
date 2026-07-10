@@ -22,7 +22,10 @@ func TestCoordinatorAppliesCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = fs.Close() })
-	sc := facts.Scope{TenantID: "acme", UserID: "alice"}
+	sc, err := facts.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 
 	// Two duplicates ("keep" wins on importance, "drop" is redundant) + one distinct.

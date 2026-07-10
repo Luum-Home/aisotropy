@@ -158,36 +158,36 @@ func (rs *RoutingStore) storeFor(tenant string) (Store, error) {
 	return rs.storeForResource(rs.router.Resource(rs.base, tenant))
 }
 
-// Save dispatches to the Store for sc.TenantID's tier.
+// Save dispatches to the Store for sc's tenant tier.
 func (rs *RoutingStore) Save(ctx context.Context, sc Scope, f Fact) error {
-	s, err := rs.storeFor(sc.TenantID)
+	s, err := rs.storeFor(sc.Tenant())
 	if err != nil {
 		return err
 	}
 	return s.Save(ctx, sc, f)
 }
 
-// Search dispatches to the Store for sc.TenantID's tier.
+// Search dispatches to the Store for sc's tenant tier.
 func (rs *RoutingStore) Search(ctx context.Context, sc Scope, query string, limit int) ([]ScoredFact, error) {
-	s, err := rs.storeFor(sc.TenantID)
+	s, err := rs.storeFor(sc.Tenant())
 	if err != nil {
 		return nil, err
 	}
 	return s.Search(ctx, sc, query, limit)
 }
 
-// Supersede dispatches to the Store for sc.TenantID's tier.
+// Supersede dispatches to the Store for sc's tenant tier.
 func (rs *RoutingStore) Supersede(ctx context.Context, sc Scope, oldID string, newFact Fact) error {
-	s, err := rs.storeFor(sc.TenantID)
+	s, err := rs.storeFor(sc.Tenant())
 	if err != nil {
 		return err
 	}
 	return s.Supersede(ctx, sc, oldID, newFact)
 }
 
-// Delete dispatches to the Store for sc.TenantID's tier.
+// Delete dispatches to the Store for sc's tenant tier.
 func (rs *RoutingStore) Delete(ctx context.Context, sc Scope, ids []string) error {
-	s, err := rs.storeFor(sc.TenantID)
+	s, err := rs.storeFor(sc.Tenant())
 	if err != nil {
 		return err
 	}

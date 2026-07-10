@@ -31,7 +31,7 @@ func saveAt(t *testing.T, st *SQLiteStore, at time.Time, sc Scope, f Fact) {
 
 func TestSaveAndSearchFTS5Match(t *testing.T) {
 	st := newTestStore(t)
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	f := Fact{ID: "f1", TenantID: "acme", UserID: "alice",
 		Content: "the user is refactoring the billing database", Importance: 0.5}
 	if err := st.Save(context.Background(), sc, f); err != nil {
@@ -53,7 +53,7 @@ func TestSaveAndSearchFTS5Match(t *testing.T) {
 
 func TestSearchEmptyQueryReturnsNothing(t *testing.T) {
 	st := newTestStore(t)
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	_ = st.Save(context.Background(), sc, Fact{ID: "f1", TenantID: "acme", UserID: "alice", Content: "hello world", Importance: 0.5})
 
 	for _, q := range []string{"", "   ", "!?.,", "a"} { // "a" is below the 2-char token floor
@@ -69,7 +69,7 @@ func TestSearchEmptyQueryReturnsNothing(t *testing.T) {
 
 func TestSearchRanksByImportance(t *testing.T) {
 	st := newTestStore(t)
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	st.now = func() time.Time { return now }
 
@@ -91,7 +91,7 @@ func TestSearchRanksByImportance(t *testing.T) {
 
 func TestSearchRanksByRecency(t *testing.T) {
 	st := newTestStore(t)
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 
 	// Equal importance; "old" updated two half-lives ago (recency 0.25),
@@ -111,7 +111,7 @@ func TestSearchRanksByRecency(t *testing.T) {
 
 func TestSearchRespectsLimit(t *testing.T) {
 	st := newTestStore(t)
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	for i, c := range []string{"alpha signal", "alpha noise", "alpha trace", "alpha beam"} {
 		id := "f" + string(rune('0'+i))
 		if err := st.Save(context.Background(), sc, Fact{ID: id, TenantID: "acme", UserID: "alice", Content: c, Importance: 0.5}); err != nil {
@@ -134,7 +134,7 @@ func TestTenantAndUserIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	mk := func(tenant, user, id string) {
-		sc := Scope{TenantID: tenant, UserID: user}
+		sc := Scope{tenant: tenant, user: user}
 		if err := st.Save(ctx, sc, Fact{ID: id, TenantID: tenant, UserID: user, Content: "shared secret keyword", Importance: 0.5}); err != nil {
 			t.Fatalf("Save %s: %v", id, err)
 		}
@@ -143,7 +143,7 @@ func TestTenantAndUserIsolation(t *testing.T) {
 	mk("acme", "bob", "a-bob")
 	mk("globex", "alice", "g-alice")
 
-	got, err := st.Search(ctx, Scope{TenantID: "acme", UserID: "alice"}, "secret keyword", 10)
+	got, err := st.Search(ctx, Scope{tenant: "acme", user: "alice"}, "secret keyword", 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestTenantAndUserIsolation(t *testing.T) {
 func TestSaveScopeMismatchRejected(t *testing.T) {
 	st := newTestStore(t)
 	// Fact claims a different tenant than the operation scope.
-	err := st.Save(context.Background(), Scope{TenantID: "acme", UserID: "alice"},
+	err := st.Save(context.Background(), Scope{tenant: "acme", user: "alice"},
 		Fact{ID: "x", TenantID: "globex", UserID: "alice", Content: "hi", Importance: 0.5})
 	if !errors.Is(err, ErrScopeMismatch) {
 		t.Fatalf("err = %v, want ErrScopeMismatch", err)
@@ -164,7 +164,7 @@ func TestSaveScopeMismatchRejected(t *testing.T) {
 
 func TestSaveIsIdempotentUpsert(t *testing.T) {
 	st := newTestStore(t)
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	ctx := context.Background()
 	base := Fact{ID: "dup", TenantID: "acme", UserID: "alice", Content: "unique marker token", Importance: 0.3}
 	if err := st.Save(ctx, sc, base); err != nil {
@@ -191,7 +191,7 @@ func TestSaveIsIdempotentUpsert(t *testing.T) {
 // one, which then disappears from Search while the new one is returned.
 func TestSupersede(t *testing.T) {
 	st := newTestStore(t)
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	ctx := context.Background()
 
 	old := Fact{ID: "pref-old", TenantID: "acme", UserID: "alice", Content: "prefers light theme", Importance: 0.7}
@@ -221,12 +221,12 @@ func TestSupersede(t *testing.T) {
 func TestSupersedeIsScopeIsolated(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	scA := Scope{TenantID: "acme", UserID: "alice"}
+	scA := Scope{tenant: "acme", user: "alice"}
 	if err := st.Save(ctx, scA, Fact{ID: "f", TenantID: "acme", UserID: "alice", Content: "a fact", Importance: 0.5}); err != nil {
 		t.Fatal(err)
 	}
 	// A different tenant cannot supersede acme/alice's fact.
-	scB := Scope{TenantID: "globex", UserID: "alice"}
+	scB := Scope{tenant: "globex", user: "alice"}
 	err := st.Supersede(ctx, scB, "f", Fact{ID: "g", TenantID: "globex", UserID: "alice", Content: "hijack", Importance: 0.9})
 	if !errors.Is(err, ErrFactNotFound) {
 		t.Fatalf("cross-tenant supersede err = %v, want ErrFactNotFound", err)

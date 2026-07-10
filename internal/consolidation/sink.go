@@ -86,7 +86,14 @@ func (s Sink) consolidateSemantic(ctx context.Context, e memory.OutboxEvent) err
 	if len(vecs) == 0 {
 		return nil
 	}
-	scope := semantic.Scope{TenantID: e.Tenant, UserID: e.User}
+	// Route identity through the blessed constructor (ADR-0011), threading ctx
+	// (rather than semantic.NewScope's internal context.Background()) so the
+	// validation honors the caller's cancellation — mirroring
+	// consolidateFacts above.
+	scope, err := semantic.ScopeFromContext(tenancy.WithUser(tenancy.WithTenant(ctx, e.Tenant), e.User))
+	if err != nil {
+		return fmt.Errorf("consolidation: invalid semantic scope: %w", err)
+	}
 	point := semantic.Point{
 		ID:       semantic.PointID(scope, e.ID),
 		TenantID: e.Tenant,

@@ -49,7 +49,7 @@ func TestNewScopeValidatesThroughTenancy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScope with a valid identity returned error: %v", err)
 	}
-	if sc.TenantID != "acme" || sc.UserID != "alice" {
+	if sc.Tenant() != "acme" || sc.User() != "alice" {
 		t.Errorf("NewScope = %+v, want tenant=acme user=alice", sc)
 	}
 }

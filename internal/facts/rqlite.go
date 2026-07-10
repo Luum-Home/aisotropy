@@ -58,7 +58,7 @@ func (s *RqliteStore) migrate(ctx context.Context) error {
 
 // Save upserts f. See Store.Save.
 func (s *RqliteStore) Save(ctx context.Context, sc Scope, f Fact) error {
-	if f.TenantID != sc.TenantID || f.UserID != sc.UserID {
+	if f.TenantID != sc.Tenant() || f.UserID != sc.User() {
 		return ErrScopeMismatch
 	}
 	now := s.now()
@@ -96,7 +96,7 @@ func (s *RqliteStore) Search(ctx context.Context, sc Scope, query string, limit 
 
 	qr, err := s.conn.QueryOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
 		Query:     searchSQL,
-		Arguments: []any{match, sc.TenantID, sc.UserID, pool},
+		Arguments: []any{match, sc.Tenant(), sc.User(), pool},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("facts: rqlite search: %w", err)
@@ -132,7 +132,7 @@ func (s *RqliteStore) Search(ctx context.Context, sc Scope, query string, limit 
 // rqlite executes as one transaction — so the archive and the replacement
 // commit together or not at all. See Store.Supersede.
 func (s *RqliteStore) Supersede(ctx context.Context, sc Scope, oldID string, newFact Fact) error {
-	if newFact.TenantID != sc.TenantID || newFact.UserID != sc.UserID {
+	if newFact.TenantID != sc.Tenant() || newFact.UserID != sc.User() {
 		return ErrScopeMismatch
 	}
 	now := s.now()
@@ -144,7 +144,7 @@ func (s *RqliteStore) Supersede(ctx context.Context, sc Scope, oldID string, new
 	results, err := s.conn.WriteParameterizedContext(ctx, []gorqlite.ParameterizedStatement{
 		{
 			Query:     markSupersededSQL,
-			Arguments: []any{newFact.ID, now.UnixMilli(), oldID, sc.TenantID, sc.UserID},
+			Arguments: []any{newFact.ID, now.UnixMilli(), oldID, sc.Tenant(), sc.User()},
 		},
 		{
 			Query: upsertSQL,
@@ -204,7 +204,7 @@ func (s *RqliteStore) Delete(ctx context.Context, sc Scope, ids []string) error 
 	for _, id := range ids {
 		stmts = append(stmts, gorqlite.ParameterizedStatement{
 			Query:     deleteSQL,
-			Arguments: []any{sc.TenantID, sc.UserID, id},
+			Arguments: []any{sc.Tenant(), sc.User(), id},
 		})
 	}
 	results, err := s.conn.WriteParameterizedContext(ctx, stmts)

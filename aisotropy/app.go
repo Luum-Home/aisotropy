@@ -427,8 +427,11 @@ func (a *App) Run(ctx context.Context) error {
 			return serr
 		}},
 		health.Probe{Name: "semantic", Check: func(ctx context.Context) error {
-			sc := semantic.Scope{TenantID: healthProbeTenant, UserID: healthProbeTenant}
-			_, serr := semanticStore.Search(ctx, sc, healthProbeVector(embedder.Dimension()), 1)
+			sc, serr := semantic.NewScope(healthProbeTenant, healthProbeTenant) //nolint:contextcheck // semantic.NewScope has no context parameter (internal/semantic, out of scope for this cleanup)
+			if serr != nil {
+				return serr
+			}
+			_, serr = semanticStore.Search(ctx, sc, healthProbeVector(embedder.Dimension()), 1)
 			return serr
 		}},
 	).Handler())

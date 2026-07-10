@@ -50,8 +50,8 @@ func fact(sc Scope, id, content string) Fact {
 	now := time.Now()
 	return Fact{
 		ID:        id,
-		TenantID:  sc.TenantID,
-		UserID:    sc.UserID,
+		TenantID:  sc.Tenant(),
+		UserID:    sc.User(),
 		Content:   content,
 		CreatedAt: now,
 		UpdatedAt: now,

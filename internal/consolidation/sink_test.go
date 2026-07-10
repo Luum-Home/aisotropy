@@ -32,7 +32,11 @@ func TestSinkConsolidatesToBothTiers(t *testing.T) {
 	}
 
 	// Facts tier: the extractor produced a fact, searchable by FTS5.
-	fres, err := fs.Search(ctx, facts.Scope{TenantID: "acme", UserID: "alice"}, "postgres database", 5)
+	fscope, err := facts.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fres, err := fs.Search(ctx, fscope, "postgres database", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +45,10 @@ func TestSinkConsolidatesToBothTiers(t *testing.T) {
 	}
 
 	// Semantic tier: a vector for the turn is retrievable and scoped.
-	sscope := semantic.Scope{TenantID: "acme", UserID: "alice"}
+	sscope, err := semantic.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
 	q, _ := emb.Embed(ctx, []string{"postgres billing database"})
 	sres, err := ss.Search(ctx, sscope, q[0], 5)
 	if err != nil {
@@ -76,7 +83,11 @@ func TestSinkTiersAreOptional(t *testing.T) {
 	if err := factsOnly.Consolidate(ctx, e); err != nil {
 		t.Fatalf("facts-only Consolidate: %v", err)
 	}
-	got, _ := fs.Search(ctx, facts.Scope{TenantID: "acme", UserID: "alice"}, "dark mode", 5)
+	factsOnlyScope, err := facts.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := fs.Search(ctx, factsOnlyScope, "dark mode", 5)
 	if len(got) == 0 {
 		t.Fatal("facts-only sink did not persist the fact")
 	}

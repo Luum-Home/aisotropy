@@ -89,7 +89,7 @@ func (s *SQLiteStore) Save(ctx context.Context, sc Scope, f Fact) error {
 // save performs the upsert against any execer (the DB or an open tx), so
 // Supersede can reuse it inside a transaction.
 func (s *SQLiteStore) save(ctx context.Context, ex execer, sc Scope, f Fact) error {
-	if f.TenantID != sc.TenantID || f.UserID != sc.UserID {
+	if f.TenantID != sc.Tenant() || f.UserID != sc.User() {
 		return ErrScopeMismatch
 	}
 	now := s.now()
@@ -124,7 +124,7 @@ func (s *SQLiteStore) Search(ctx context.Context, sc Scope, query string, limit 
 		pool = 20
 	}
 
-	rows, err := s.db.QueryContext(ctx, searchSQL, match, sc.TenantID, sc.UserID, pool)
+	rows, err := s.db.QueryContext(ctx, searchSQL, match, sc.Tenant(), sc.User(), pool)
 	if err != nil {
 		return nil, fmt.Errorf("facts: search: %w", err)
 	}
@@ -162,7 +162,7 @@ func (s *SQLiteStore) Search(ctx context.Context, sc Scope, query string, limit 
 
 // Supersede archives oldID and saves newFact atomically. See Store.Supersede.
 func (s *SQLiteStore) Supersede(ctx context.Context, sc Scope, oldID string, newFact Fact) error {
-	if newFact.TenantID != sc.TenantID || newFact.UserID != sc.UserID {
+	if newFact.TenantID != sc.Tenant() || newFact.UserID != sc.User() {
 		return ErrScopeMismatch
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -174,7 +174,7 @@ func (s *SQLiteStore) Supersede(ctx context.Context, sc Scope, oldID string, new
 	// Only a current fact within scope may be superseded. The scope filter is
 	// part of the WHERE — the isolation gate applies to writes too.
 	res, err := tx.ExecContext(ctx, markSupersededSQL,
-		newFact.ID, s.now().UnixMilli(), oldID, sc.TenantID, sc.UserID)
+		newFact.ID, s.now().UnixMilli(), oldID, sc.Tenant(), sc.User())
 	if err != nil {
 		return fmt.Errorf("facts: mark superseded: %w", err)
 	}
@@ -235,7 +235,7 @@ func (s *SQLiteStore) Delete(ctx context.Context, sc Scope, ids []string) error 
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, deleteSQL, sc.TenantID, sc.UserID, id); err != nil {
+		if _, err := tx.ExecContext(ctx, deleteSQL, sc.Tenant(), sc.User(), id); err != nil {
 			return fmt.Errorf("facts: delete %q: %w", id, err)
 		}
 	}

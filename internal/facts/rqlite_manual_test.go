@@ -39,8 +39,8 @@ func TestRqliteLive(t *testing.T) {
 	ctx := context.Background()
 	// Unique tenant per run so repeated runs against a shared node don't collide.
 	tenant := fmt.Sprintf("manual-%d", os.Getpid())
-	sc := Scope{TenantID: tenant, UserID: "alice"}
-	other := Scope{TenantID: tenant, UserID: "bob"}
+	sc := Scope{tenant: tenant, user: "alice"}
+	other := Scope{tenant: tenant, user: "bob"}
 
 	if err := st.Save(ctx, sc, Fact{ID: tenant + "-a", TenantID: tenant, UserID: "alice",
 		Content: "the user is migrating the billing database to postgres", Importance: 0.6}); err != nil {

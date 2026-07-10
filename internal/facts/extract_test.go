@@ -3,7 +3,7 @@ package facts
 import "testing"
 
 func TestHeuristicExtractor(t *testing.T) {
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	var ex HeuristicExtractor
 
 	cases := []struct {
@@ -36,7 +36,7 @@ func TestHeuristicExtractor(t *testing.T) {
 			if got[0].Importance != tc.wantImp {
 				t.Fatalf("importance = %v, want %v", got[0].Importance, tc.wantImp)
 			}
-			if got[0].TenantID != sc.TenantID || got[0].UserID != sc.UserID {
+			if got[0].TenantID != sc.Tenant() || got[0].UserID != sc.User() {
 				t.Fatalf("scope not stamped: %+v", got[0])
 			}
 			if got[0].ID == "" {
@@ -47,12 +47,12 @@ func TestHeuristicExtractor(t *testing.T) {
 }
 
 func TestFactIDIsStableAndScoped(t *testing.T) {
-	a := factID(Scope{TenantID: "acme", UserID: "alice"}, "prefers dark mode")
-	aAgain := factID(Scope{TenantID: "acme", UserID: "alice"}, "Prefers Dark Mode") // case-insensitive
+	a := factID(Scope{tenant: "acme", user: "alice"}, "prefers dark mode")
+	aAgain := factID(Scope{tenant: "acme", user: "alice"}, "Prefers Dark Mode") // case-insensitive
 	if a != aAgain {
 		t.Fatalf("ids differ by case: %q vs %q", a, aAgain)
 	}
-	other := factID(Scope{TenantID: "globex", UserID: "alice"}, "prefers dark mode")
+	other := factID(Scope{tenant: "globex", user: "alice"}, "prefers dark mode")
 	if a == other {
 		t.Fatal("ids collide across tenants — isolation risk in idempotency key")
 	}
@@ -62,7 +62,7 @@ func TestFactIDIsStableAndScoped(t *testing.T) {
 // fact is searchable, proving the online-extraction path end to end.
 func TestExtractorSavesRoundTrip(t *testing.T) {
 	st := newTestStore(t)
-	sc := Scope{TenantID: "acme", UserID: "alice"}
+	sc := Scope{tenant: "acme", user: "alice"}
 	facts := HeuristicExtractor{}.Extract(sc, Turn{UserMessage: "Remember that the primary region is eu-west-1"})
 	if len(facts) != 1 {
 		t.Fatalf("want 1 extracted fact, got %d", len(facts))

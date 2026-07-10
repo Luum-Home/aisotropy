@@ -363,11 +363,14 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 	var semantics []semantic.ScoredPoint
 	if semStore != nil && embedder != nil {
 		if vecs, eerr := embedder.Embed(ctx, []string{prompt}); eerr == nil && len(vecs) > 0 {
-			semScope := semantic.Scope{TenantID: scope.TenantID, UserID: scope.UserID}
-			if pts, serr := semStore.Search(ctx, semScope, vecs[0], semanticWindow); serr == nil {
-				semantics = pts
+			if semScope, serr := semantic.NewScope(scope.Tenant(), scope.User()); serr == nil { //nolint:contextcheck // semantic.NewScope has no context parameter (internal/semantic, out of scope for this cleanup)
+				if pts, serr := semStore.Search(ctx, semScope, vecs[0], semanticWindow); serr == nil {
+					semantics = pts
+				} else {
+					slog.ErrorContext(ctx, "semantic search failed; proceeding without it", "err", serr)
+				}
 			} else {
-				slog.ErrorContext(ctx, "semantic search failed; proceeding without it", "err", serr)
+				slog.ErrorContext(ctx, "semantic scope construction failed; proceeding without it", "err", serr)
 			}
 		}
 	}

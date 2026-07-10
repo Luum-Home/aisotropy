@@ -117,7 +117,7 @@ func (s *QdrantStore) Upsert(ctx context.Context, sc Scope, points []Point) erro
 	}
 	ps := make([]*qdrant.PointStruct, 0, len(points))
 	for _, p := range points {
-		if p.TenantID != sc.TenantID || p.UserID != sc.UserID {
+		if p.TenantID != sc.Tenant() || p.UserID != sc.User() {
 			return ErrScopeMismatch
 		}
 		if len(p.Vector) != s.dim {
@@ -161,8 +161,8 @@ func (s *QdrantStore) Search(ctx context.Context, sc Scope, query []float32, lim
 		Query:          qdrant.NewQuery(query...),
 		Filter: &qdrant.Filter{
 			Must: []*qdrant.Condition{
-				qdrant.NewMatch(payloadTenant, sc.TenantID),
-				qdrant.NewMatch(payloadUser, sc.UserID),
+				qdrant.NewMatch(payloadTenant, sc.Tenant()),
+				qdrant.NewMatch(payloadUser, sc.User()),
 			},
 		},
 		Limit:       &lim,

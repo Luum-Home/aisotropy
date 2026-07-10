@@ -29,7 +29,7 @@ func (s *InMemoryStore) Upsert(_ context.Context, sc Scope, points []Point) erro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range points {
-		if p.TenantID != sc.TenantID || p.UserID != sc.UserID {
+		if p.TenantID != sc.Tenant() || p.UserID != sc.User() {
 			return ErrScopeMismatch
 		}
 		if len(p.Vector) != s.dim {
@@ -55,7 +55,7 @@ func (s *InMemoryStore) Search(_ context.Context, sc Scope, query []float32, lim
 
 	var out []ScoredPoint
 	for _, p := range s.points {
-		if p.TenantID != sc.TenantID || p.UserID != sc.UserID {
+		if p.TenantID != sc.Tenant() || p.UserID != sc.User() {
 			continue // isolation filter during the scan, not after
 		}
 		out = append(out, ScoredPoint{Point: p, Score: cosine(query, p.Vector)})

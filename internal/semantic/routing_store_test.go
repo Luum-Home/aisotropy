@@ -53,8 +53,8 @@ func TestRoutingStore_DedicatedTenantIsolatedFromSharedPool(t *testing.T) {
 	defer rs.Close()
 
 	ctx := context.Background()
-	dedicatedScope := Scope{TenantID: "tenant-dedicated", UserID: "u1"}
-	sharedScope := Scope{TenantID: "tenant-shared", UserID: "u2"}
+	dedicatedScope := Scope{tenant: "tenant-dedicated", user: "u1"}
+	sharedScope := Scope{tenant: "tenant-shared", user: "u2"}
 
 	dedicatedPoint := Point{ID: "d1", TenantID: "tenant-dedicated", UserID: "u1", Content: "dedicated", Vector: []float32{1, 0, 0, 0}}
 	sharedPoint := Point{ID: "s1", TenantID: "tenant-shared", UserID: "u2", Content: "shared", Vector: []float32{1, 0, 0, 0}}
@@ -99,8 +99,8 @@ func TestRoutingStore_LazyProvisionsUnlistedDedicatedTenant(t *testing.T) {
 	defer rs.Close()
 
 	ctx := context.Background()
-	lateScope := Scope{TenantID: "tenant-late", UserID: "u1"}
-	sharedScope := Scope{TenantID: "tenant-shared", UserID: "u2"}
+	lateScope := Scope{tenant: "tenant-late", user: "u1"}
+	sharedScope := Scope{tenant: "tenant-shared", user: "u2"}
 
 	latePoint := Point{ID: "late1", TenantID: "tenant-late", UserID: "u1", Content: "late", Vector: []float32{0, 1, 0, 0}}
 	sharedPoint := Point{ID: "shared1", TenantID: "tenant-shared", UserID: "u2", Content: "shared", Vector: []float32{0, 1, 0, 0}}
@@ -163,7 +163,7 @@ func TestRoutingStore_ConcurrentUpsertAcrossTenants(t *testing.T) {
 			wg.Add(1)
 			go func(tenant string, ti, i int) {
 				defer wg.Done()
-				sc := Scope{TenantID: tenant, UserID: "u"}
+				sc := Scope{tenant: tenant, user: "u"}
 				p := Point{
 					ID:       tenant + "-" + string(rune('a'+i)),
 					TenantID: tenant,
@@ -179,7 +179,7 @@ func TestRoutingStore_ConcurrentUpsertAcrossTenants(t *testing.T) {
 	wg.Wait()
 
 	for _, tenant := range tenants {
-		sc := Scope{TenantID: tenant, UserID: "u"}
+		sc := Scope{tenant: tenant, user: "u"}
 		results, err := rs.Search(ctx, sc, []float32{0, 0, 0, 0}, perTenant*2)
 		if err != nil {
 			t.Fatalf("Search(%s): %v", tenant, err)
@@ -232,8 +232,8 @@ func TestRoutingStore_ConcurrentCloseNoLeak(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			sc := Scope{TenantID: "t" + strconv.Itoa(i), UserID: "u"}
-			p := Point{ID: "p" + strconv.Itoa(i), TenantID: sc.TenantID, UserID: sc.UserID, Vector: []float32{1, 0, 0, 0}}
+			sc := Scope{tenant: "t" + strconv.Itoa(i), user: "u"}
+			p := Point{ID: "p" + strconv.Itoa(i), TenantID: sc.Tenant(), UserID: sc.User(), Vector: []float32{1, 0, 0, 0}}
 			_ = rs.Upsert(ctx, sc, []Point{p})
 		}(i)
 	}
@@ -265,8 +265,8 @@ func TestRoutingStore_UseAfterClose(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	ctx := context.Background()
-	sc := Scope{TenantID: "tenant-shared", UserID: "u"}
-	p := Point{ID: "p1", TenantID: sc.TenantID, UserID: sc.UserID, Vector: []float32{1, 0, 0, 0}}
+	sc := Scope{tenant: "tenant-shared", user: "u"}
+	p := Point{ID: "p1", TenantID: sc.Tenant(), UserID: sc.User(), Vector: []float32{1, 0, 0, 0}}
 	if err := rs.Upsert(ctx, sc, []Point{p}); !errors.Is(err, ErrRoutingStoreClosed) {
 		t.Fatalf("Upsert after Close = %v, want ErrRoutingStoreClosed", err)
 	}

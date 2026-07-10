@@ -33,11 +33,11 @@ func TestQdrantLive(t *testing.T) {
 	defer func() { _ = st.Close() }()
 
 	tenant := fmt.Sprintf("manual-%d", os.Getpid())
-	sc := Scope{TenantID: tenant, UserID: "alice"}
-	other := Scope{TenantID: tenant, UserID: "bob"}
+	sc := Scope{tenant: tenant, user: "alice"}
+	other := Scope{tenant: tenant, user: "bob"}
 
 	mk := func(scope Scope, msg, content string) Point {
-		return Point{ID: PointID(scope, msg), TenantID: scope.TenantID, UserID: scope.UserID,
+		return Point{ID: PointID(scope, msg), TenantID: scope.Tenant(), UserID: scope.User(),
 			Content: content, Vector: mustEmbed(emb, content)}
 	}
 

@@ -67,8 +67,8 @@ func (HeuristicExtractor) Extract(sc Scope, turn Turn) []Fact {
 		}
 		return []Fact{{
 			ID:         factID(sc, content),
-			TenantID:   sc.TenantID,
-			UserID:     sc.UserID,
+			TenantID:   sc.Tenant(),
+			UserID:     sc.User(),
 			Content:    content,
 			Importance: r.importance,
 		}}
@@ -94,9 +94,9 @@ func cleanContent(s string) string {
 // linked via Supersede).
 func factID(sc Scope, content string) string {
 	h := sha256.New()
-	h.Write([]byte(sc.TenantID))
+	h.Write([]byte(sc.Tenant()))
 	h.Write([]byte{0})
-	h.Write([]byte(sc.UserID))
+	h.Write([]byte(sc.User()))
 	h.Write([]byte{0})
 	h.Write([]byte(strings.ToLower(content)))
 	return "fact-" + hex.EncodeToString(h.Sum(nil)[:16])

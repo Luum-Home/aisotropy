@@ -24,6 +24,8 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+
+	"github.com/Luum-Home/aisotropy/internal/tenancy"
 )
 
 // ErrScopeMismatch is returned when a Point's TenantID/UserID does not match
@@ -44,9 +46,46 @@ var pointNamespace = uuid.MustParse("6f9b1f6e-2c1a-5e7d-9a3b-0a1b2c3d4e5f")
 // Scope identifies the (tenant, user) a query is confined to, derived once at
 // the Huma handler boundary from the validated path params (mirroring
 // facts.Scope and memory.Key).
+//
+// Obtain a Scope through NewScope or ScopeFromContext, never a bare
+// semantic.Scope{...} literal: its fields are unexported, so a bare literal
+// outside this package does not even compile. Both constructors route
+// identity through internal/tenancy (ADR-0011), so tenant/user are validated
+// by the single shared rule (memory.ValidateIdentityComponent) that the
+// working-memory, facts, and tenancy tiers also use, and the tiers can never
+// drift on what a valid identity is.
 type Scope struct {
-	TenantID string
-	UserID   string
+	tenant string
+	user   string
+}
+
+// Tenant returns the scope's tenant identity.
+func (s Scope) Tenant() string { return s.tenant }
+
+// User returns the scope's user identity.
+func (s Scope) User() string { return s.user }
+
+// NewScope validates tenant/user through internal/tenancy and returns a
+// semantic Scope, or an error if either component is empty or malformed. It
+// is the blessed constructor for production call sites: identity is
+// validated by the same path internal/tenancy and internal/memory use,
+// satisfying ADR-0011's "reconciliation with the facts tier" for the
+// semantic tier too, without duplicating the validation rule here.
+func NewScope(tenant, user string) (Scope, error) {
+	ctx := tenancy.WithUser(tenancy.WithTenant(context.Background(), tenant), user)
+	return ScopeFromContext(ctx)
+}
+
+// ScopeFromContext derives a semantic Scope from identity already wired into
+// ctx via tenancy.WithTenant/WithUser, validating through internal/tenancy.
+// Use it when a validated identity is already carried on the request ctx.
+func ScopeFromContext(ctx context.Context) (Scope, error) {
+	ts, err := tenancy.FromContext(ctx)
+	if err != nil {
+		return Scope{}, err
+	}
+	user, _ := ts.User()
+	return Scope{tenant: ts.Tenant(), user: user}, nil
 }
 
 // Point is one embedded chunk of tenant knowledge. Content is the payload
@@ -114,6 +153,6 @@ type Reranker interface {
 // docs/components/qdrant-semantic-memory.md specifies. Reprocessing the same
 // message yields the same id, so the upsert is a true no-op.
 func PointID(sc Scope, messageID string) string {
-	name := sc.TenantID + "\x00" + sc.UserID + "\x00" + messageID
+	name := sc.tenant + "\x00" + sc.user + "\x00" + messageID
 	return uuid.NewSHA1(pointNamespace, []byte(name)).String()
 }
