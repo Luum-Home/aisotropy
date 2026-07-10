@@ -54,9 +54,24 @@ The three live routes each carry a *different subset* of the constitutional gate
 | Consolidation (write to long-term memory) | ✅ | ✅ | ❌ |
 | OTel gen_ai span | ❌ | ✅ | ❌ |
 
-The consequence that matters: **the fail-closed schema-enforcement gate lives only on `/chat`, but
-the full-featured route people actually use is `/chat/stream`, which forwards raw tokens with no
-schema enforcement.** The gate the thesis leans on hardest is on the least-used route.
+**Resolution (2026-07-10): most of this asymmetry is an INTENTIONAL per-route contract, not a bug.**
+The three routes are three different contracts, and the constitutional gates apply *per contract*:
+- **`/chat`** is the **structured-output** contract → the "structured output fails closed" gate
+  applies, and it does (`ReflectAuto` → 502). Fail-closed schema enforcement is *inherently* a
+  whole-object contract; a streaming route cannot validate a complete JSON object mid-stream without
+  buffering the whole reply and defeating streaming.
+- **`/chat/stream`** is the **free-text streaming** contract → the gate that applies to it is
+  "streaming respects ctx cancellation immediately" (constitutional-gates.md), which it does
+  (client disconnect cuts the upstream call, partial reply not persisted — now covered by
+  `TestChatStream_ClientCancellationStopsStream`). It deliberately does *not* enforce a JSON schema,
+  because it does not expect structured output.
+- **`/chat/agent`** is the **tool-loop** contract → its enforcement is the post-parse tool-name
+  re-check against the permitted set.
+
+So "`/chat/stream` lacks fail-closed" is by design, not a gap. The genuinely-worth-closing
+asymmetries were the *cost-metering* one (`/chat` did not record to the cost meter — now unified,
+see the debt list) and OTel coverage on `/chat`; the fail-closed one is a category difference
+between a structured contract and a streaming one.
 
 ### 2.2 Two cost systems that diverge
 
@@ -107,10 +122,11 @@ backlog from two angles. Merged and de-duplicated:
 ## 4. The one-line takeaway
 
 This is **one runtime with its verification, reconciliation, and positioning layer already
-interwoven** — not two separate codebases. The highest-value seam to close is the **endpoint
-capability asymmetry**: the constitutional gates (fail-closed output, quota, cost) apply unevenly
-across the three routes, and the most-used route (`/chat/stream`) is missing the schema-enforcement
-gate the thesis depends on.
+interwoven** — not two separate codebases. On the endpoint "asymmetry": most of it is an
+**intentional per-route contract** (structured `/chat` vs. streaming `/chat/stream` vs. tool-loop
+`/chat/agent`), with each constitutional gate applying to the contract it belongs to (§2.1). The
+parts that were genuine gaps — `/chat` not recording cost, and its missing OTel span — are the ones
+worth closing; the fail-closed-schema difference is a category distinction, not a hole.
 
 ## Cross-links
 
