@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Luum-Home/aisotropy/internal/facts"
+	"github.com/Luum-Home/aisotropy/internal/tenancy"
 )
 
 // FactStore is the subset of facts.Store the sleep cycle needs: a cross-tenant
@@ -89,8 +90,10 @@ func (c Coordinator) RunOnce(ctx context.Context) (Summary, error) {
 		// Route identity through the blessed constructor (ADR-0011): validate
 		// the stored tenant/user via internal/tenancy rather than building a
 		// bare facts.Scope literal. A malformed stored identity is skipped
-		// defensively — it simply won't be deduped this cycle.
-		sc, err := facts.NewScope(f.TenantID, f.UserID)
+		// defensively — it simply won't be deduped this cycle. ctx is threaded
+		// through (rather than facts.NewScope's internal context.Background())
+		// so the validation honors the caller's cancellation.
+		sc, err := facts.ScopeFromContext(tenancy.WithUser(tenancy.WithTenant(ctx, f.TenantID), f.UserID))
 		if err != nil {
 			continue
 		}

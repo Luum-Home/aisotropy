@@ -136,11 +136,11 @@ func TestRecordConcurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
-	for g := 0; g < numGoroutines; g++ {
+	for g := range numGoroutines {
 		go func(g int) {
 			defer wg.Done()
 			uniqueTenant := fmt.Sprintf("tenant-unique-%d", g)
-			for r := 0; r < numRecordsEach; r++ {
+			for r := range numRecordsEach {
 				// Half the records land on a shared tenant (contention), half on
 				// a tenant unique to this goroutine (map growth under
 				// concurrency).
@@ -178,7 +178,7 @@ func TestRecordConcurrent(t *testing.T) {
 	// Each unique-tenant goroutine records numRecordsEach/2 "odd r" hits of
 	// (7, 3, 0.0005).
 	wantUniqueRequests := int64(numRecordsEach / 2)
-	for g := 0; g < numGoroutines; g++ {
+	for g := range numGoroutines {
 		id := fmt.Sprintf("tenant-unique-%d", g)
 		s, ok := byID[id]
 		if !ok {

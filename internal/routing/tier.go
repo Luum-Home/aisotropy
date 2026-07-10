@@ -20,6 +20,14 @@ const (
 	Dedicated
 )
 
+// Lowercase tier names used in resource identifiers and log output, and
+// shared with the test suite so the string form has a single source of
+// truth.
+const (
+	sharedName    = "shared"
+	dedicatedName = "dedicated"
+)
+
 // String renders the tier as the lowercase name used in resource
 // identifiers and log output ("shared", "dedicated"). Any value outside the
 // two declared constants (which cannot occur through this package's own
@@ -28,9 +36,9 @@ const (
 func (t TenantTier) String() string {
 	switch t {
 	case Shared:
-		return "shared"
+		return sharedName
 	case Dedicated:
-		return "dedicated"
+		return dedicatedName
 	default:
 		return "unknown"
 	}

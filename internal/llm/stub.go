@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// stubProviderName is the Client.Name() / Registry key for StubClient, shared
+// by every place in this package (and its tests) that registers, looks up, or
+// asserts against the keyless fallback provider.
+const stubProviderName = "stub"
+
 // StubClient is a canned Client: it does not call any real LLM, it emits a
 // word-by-word token stream deterministically derived from the received
 // prompt. It exists so the full SSE pipeline (HTTP handler -> token channel
@@ -25,7 +30,7 @@ func NewStubClient() *StubClient {
 	return &StubClient{Delay: 15 * time.Millisecond}
 }
 
-func (s *StubClient) Name() string { return "stub" }
+func (s *StubClient) Name() string { return stubProviderName }
 
 // StreamChat emits, word by word, a canned response that echoes the received
 // prompt — unless prompt carries a structured-output schema instruction (see
@@ -156,7 +161,7 @@ func stubValueFor(propSchema map[string]any, name, userPart string) any {
 		return false
 	case "array":
 		return []any{}
-	case "object":
+	case jsonSchemaTypeObject:
 		return map[string]any{}
 	default: // "string" or unspecified: a canned, always non-empty value.
 		return fmt.Sprintf("stub-llm structured reply for %q (field %q)", userPart, name)

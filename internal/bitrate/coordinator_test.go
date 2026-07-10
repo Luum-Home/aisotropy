@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -132,7 +132,7 @@ func TestCoordinatorSkipsUnhydratableSamples(t *testing.T) {
 	// (a scheduled job stays robust to a bad session).
 	c := Coordinator{
 		Sampler:  fakeSampler{samples: []Sample{{TenantID: "acme", UserID: "alice", SampleID: "r1", Text: "x"}}},
-		Hydrator: fakeHydrator{err: fmt.Errorf("boom")},
+		Hydrator: fakeHydrator{err: errors.New("boom")},
 		Runner:   fakeRunner{withBPT: 1.0},
 		Store:    openTestStore(t),
 	}

@@ -56,7 +56,7 @@ func OpenSQLite(dsn string) (*SQLiteStore, error) {
 	} else {
 		// WAL lets a reader (hydration) and the writer (extraction) proceed
 		// without blocking each other on a file-backed database.
-		if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
+		if _, err := db.ExecContext(context.Background(), `PRAGMA journal_mode=WAL;`); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("facts: enable WAL: %w", err)
 		}

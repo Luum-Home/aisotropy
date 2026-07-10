@@ -159,7 +159,7 @@ func TestRoutingStore_ConcurrentUpsertAcrossTenants(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for ti, tenant := range tenants {
-		for i := 0; i < perTenant; i++ {
+		for i := range perTenant {
 			wg.Add(1)
 			go func(tenant string, ti, i int) {
 				defer wg.Done()
@@ -209,7 +209,7 @@ func (c countingStore) Close() error {
 func TestRoutingStore_ConcurrentCloseNoLeak(t *testing.T) {
 	const n = 64
 	tenants := make([]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		tenants[i] = "t" + strconv.Itoa(i)
 	}
 	router := newFakeRouter(tenants...)
@@ -228,7 +228,7 @@ func TestRoutingStore_ConcurrentCloseNoLeak(t *testing.T) {
 
 	ctx := context.Background()
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

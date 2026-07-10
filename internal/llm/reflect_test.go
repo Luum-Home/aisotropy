@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestReflectRepairsAfterInvalidAttempts(t *testing.T) {
 			return reflectOutput{}, fmt.Errorf("invalid json: %w", err)
 		}
 		if out.Reply == "" {
-			return reflectOutput{}, fmt.Errorf("reply cannot be empty")
+			return reflectOutput{}, errors.New("reply cannot be empty")
 		}
 		return out, nil
 	}
@@ -65,7 +66,7 @@ func TestReflectExhaustsRetries(t *testing.T) {
 		var out reflectOutput
 		_ = json.Unmarshal([]byte(raw), &out)
 		if out.Reply == "" {
-			return reflectOutput{}, fmt.Errorf("reply cannot be empty")
+			return reflectOutput{}, errors.New("reply cannot be empty")
 		}
 		return out, nil
 	}

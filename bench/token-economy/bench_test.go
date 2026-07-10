@@ -168,7 +168,7 @@ func BenchmarkStrategyA(b *testing.B) {
 	ctx := context.Background()
 	conv := GenerateConversation(DefaultConfig())
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if _, err := RunStrategyA(ctx, conv); err != nil {
 			b.Fatalf("RunStrategyA: %v", err)
 		}
@@ -180,7 +180,7 @@ func BenchmarkStrategyA(b *testing.B) {
 func BenchmarkStrategyB(b *testing.B) {
 	conv := GenerateConversation(DefaultConfig())
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = RunStrategyB(conv)
 	}
 }
@@ -190,7 +190,7 @@ func BenchmarkStrategyB(b *testing.B) {
 func BenchmarkGenerateConversation(b *testing.B) {
 	cfg := DefaultConfig()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = GenerateConversation(cfg)
 	}
 }
@@ -221,7 +221,7 @@ func TestNoopSummarizerSummaryStaysBounded(t *testing.T) {
 
 	var checkpoints, maxLen int
 	for i, turn := range conv {
-		if err := wm.Append(ctx, benchKey, memory.Message{Role: "user", Content: turn.User}); err != nil {
+		if err := wm.Append(ctx, benchKey, memory.Message{Role: roleUser, Content: turn.User}); err != nil {
 			t.Fatal(err)
 		}
 		wm.Sync()

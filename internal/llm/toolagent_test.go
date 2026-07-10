@@ -56,8 +56,8 @@ func TestGollemModelRequest_ToolCallBridge(t *testing.T) {
 	if resp.FinishReason != core.FinishReasonToolCall {
 		t.Fatalf("FinishReason = %q, want %q", resp.FinishReason, core.FinishReasonToolCall)
 	}
-	if resp.ModelName != "stub" {
-		t.Fatalf("ModelName = %q, want the real provider name %q (not test-model)", resp.ModelName, "stub")
+	if resp.ModelName != stubProviderName {
+		t.Fatalf("ModelName = %q, want the real provider name %q (not test-model)", resp.ModelName, stubProviderName)
 	}
 	calls := resp.ToolCalls()
 	if len(calls) != 1 {

@@ -36,7 +36,7 @@ func BenchmarkWorkingMemory_AppendRead(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		msg := Message{Role: "user", Content: fmt.Sprintf("benchmark message body %d", i)}
 		if err := wm.Append(ctx, key, msg); err != nil {
 			b.Fatalf("Append: %v", err)
@@ -61,7 +61,7 @@ func BenchmarkWorkingMemory_AppendOnly(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		msg := Message{Role: "user", Content: fmt.Sprintf("benchmark message body %d", i)}
 		if err := wm.Append(ctx, key, msg); err != nil {
 			b.Fatalf("Append: %v", err)
@@ -88,7 +88,7 @@ func BenchmarkWorkingMemory_AppendRead_LargeWindow(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		msg := Message{Role: "user", Content: fmt.Sprintf("benchmark message body %d", i)}
 		if err := wm.Append(ctx, key, msg); err != nil {
 			b.Fatalf("Append: %v", err)

@@ -41,6 +41,11 @@ import (
 // from scratch. See README.md "What we replicate vs. import".
 const baseSystemPrompt = "You are the Aisotropy agent. Respond briefly and directly."
 
+// roleUser is the memory.Message.Role value for a user turn, shared by every
+// strategy that appends conversation turns into a real or simulated
+// transcript.
+const roleUser = "user"
+
 // recentMessagesWindow mirrors the unexported constant of the same name in
 // internal/api/chat_stream.go (value 12 as of this writing — see
 // internal/api/chat_stream.go:32). It bounds how many recent active-buffer
@@ -112,7 +117,7 @@ func RunStrategyA(ctx context.Context, conv []Turn) ([]RequestCost, error) {
 		cumulative = cumulative.Add(perRequest)
 		results[i] = RequestCost{Turn: i + 1, PerRequest: perRequest, Cumulative: cumulative}
 
-		if err := wm.Append(ctx, benchKey, memory.Message{Role: "user", Content: turn.User}); err != nil {
+		if err := wm.Append(ctx, benchKey, memory.Message{Role: roleUser, Content: turn.User}); err != nil {
 			return nil, fmt.Errorf("strategy A: turn %d: append user: %w", i+1, err)
 		}
 		wm.Sync()
