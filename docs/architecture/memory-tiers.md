@@ -76,6 +76,20 @@ Quantization to cut RAM by up to ~90%.
 **When:** only when the prompt requires RAG over unstructured knowledge. Not everything is a
 vector — stable facts go to tier 2.
 
+**Multi-kind (ADR-0017/0018/0019).** Every vector carries a `Kind`, each with its own lifecycle,
+bound, and retrieval weight — the tier is not one undifferentiated blob:
+- **Document** — curated knowledge ingested through `IngestKnowledge` / `POST .../knowledge`
+  (user-private or tenant-shared, ADR-0019). Persists; the tier's intended high-value input.
+- **Fact** — distilled facts *dual-indexed* through the `engram` aggregate facade (ADR-0017),
+  keyed by the fact id: superseding or deleting the fact removes its vector, so the two never drift.
+- **Turn** — raw conversational turns, **bounded** by a TTL/cap pruner (default 168h / 500), and
+  kept out of the primary RAG so low-value turns never crowd out curated knowledge.
+
+Retrieval (`hydrateSystemPrompt`) searches `Document`+`Fact` at user scope and merges the
+tenant-shared `Document` bucket. The embedder is BYO (`semantic.Embedder`): a deterministic
+`HashEmbedder` for dev/tests, a real OpenAI-compatible `APIEmbedder` via `AISOTROPY_EMBED_URL` (which
+can point at a local server — sovereignty preserved). See ADR-0017, ADR-0018, ADR-0019.
+
 ```go
 // Search with isolation (conceptual)
 qdrant.Search(ctx, userEmbedding, Filter{

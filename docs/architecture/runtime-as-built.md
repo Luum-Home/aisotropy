@@ -122,12 +122,14 @@ over the facts store + `HeuristicExtractor` and the semantic store + `HashEmbedd
    when present, polling every second when empty, backing off exponentially (200ms → 30s) on store
    errors ([`internal/memory/outbox.go`](../../internal/memory/outbox.go)).
 
-For each drained event `Sink.Consolidate` runs the two sinks **sequentially** (facts, then
-semantic): the `Extractor` distils the event's `Content` (the user prompt) into facts and
-`Facts.Save` upserts them by content-derived id; the `Embedder` embeds the content and
-`Semantic.Upsert` writes a point keyed on a deterministic UUIDv5 (`semantic.PointID`). An event key
-is deleted **only after both sinks succeed** — at-least-once, idempotent on redelivery. Both nil
-tiers are skipped (facts-only or semantic-only deployments are allowed).
+For each drained event `Sink.Consolidate` runs two sinks: the facts sink `Extractor`-distils the
+event's `Content` (the user prompt) into facts and routes each through the `engram` facade
+(ADR-0017 Phase 2), which upserts the fact **and** a `KindFact` vector keyed by the fact id
+(dual-index, importance-gated); the semantic sink embeds the raw turn as a bounded `KindTurn` vector.
+Every vector is kind-tagged — `PointID(sc, kind, sourceID)` encodes the kind so a fact's and a
+turn's vector never collide (ADR-0017). An event key is deleted **only after both sinks succeed** —
+at-least-once, idempotent on redelivery. Both nil tiers are skipped (facts-only or semantic-only
+deployments are allowed).
 
 ### Sleep-cycle worker (DataFusion, Rust subprocess)
 
@@ -148,7 +150,7 @@ runs only when the binary is built and `AISOTROPY_SLEEPCYCLE_BIN` points at it.
 |---|---|---|---|---|---|
 | **Working** (L1) | [`internal/memory`](../../internal/memory/working_memory.go) | In-memory BadgerDB (no persistence) | On-disk BadgerDB at `AISOTROPY_DATA_DIR` | `Append` / `AppendWithOutbox` on every chat turn | `Summary` + `Recent` during hydration; also holds the quota buckets and the outbox queue |
 | **Facts** | [`internal/facts`](../../internal/facts/facts.go) | Ephemeral SQLite `:memory:` (FTS5) | File SQLite (`AISOTROPY_FACTS_DB` or `AISOTROPY_DATA_DIR/facts.db`) or **rqlite** (`RQLITE_URL`, ADR-0004) | Outbox worker → `Sink` → `HeuristicExtractor` → `Save` (UPSERT) | `Search` (FTS5 top-4) during hydration; `ExportAll`/`Delete` by the sleep cycle |
-| **Semantic** | [`internal/semantic`](../../internal/semantic/semantic.go) | In-memory brute-force cosine index | **Qdrant** (`QDRANT_HOST` + `QDRANT_PORT`/`QDRANT_API_KEY`/`QDRANT_USE_TLS`/`QDRANT_COLLECTION`, ADR-0001) | Outbox worker → `Sink` → `HashEmbedder` → `Upsert` (UUIDv5) | **Not read on the request path today** — written only (see §6) |
+| **Semantic** (multi-kind) | [`internal/semantic`](../../internal/semantic/semantic.go) | In-memory brute-force cosine index | **Qdrant** (`QDRANT_HOST` + `QDRANT_PORT`/`QDRANT_API_KEY`/`QDRANT_USE_TLS`/`QDRANT_COLLECTION`, ADR-0001) | `KindFact` via the `engram` facade (dual-indexed distilled facts), `KindTurn` via consolidation (bounded), `KindDocument` via knowledge ingestion (ADR-0017/0018/0019). Embedder is BYO (`HashEmbedder` default, `APIEmbedder` via `AISOTROPY_EMBED_URL`) | **Read on the request path**: `hydrateSystemPrompt` searches `KindDocument`+`KindFact` (user scope) merged with tenant-shared `KindDocument`; `KindTurn` is bounded (TTL/cap) and excluded from primary RAG |
 
 The embedder is the deterministic `HashEmbedder` placeholder and the working-memory summarizer is
 `LLMSummarizer` (real LLM condensation via the same chat client, or `NoopSummarizer` in tests).
@@ -183,12 +185,17 @@ All five knobs are constructed in `main.go` and threaded through the handlers:
 
 ## 6. Honest "not yet wired / limitations"
 
-- **Semantic (Qdrant) RAG on the streaming path: now read AND written.** The consolidation sink
-  writes vectors, and `hydrateSystemPrompt` now embeds the prompt and runs a scoped semantic
-  search (top `semanticWindow`), injecting the results — closing the earlier write-only gap. It
-  is wired on the **streaming** path only (the non-streaming `chat` passes a nil semantic store).
-  Hydration is still **sequential** (working memory → facts → semantic), not the goroutine-parallel
-  hydration the aspirational [request lifecycle](request-lifecycle.md) describes.
+- **Semantic tier is multi-kind (ADR-0017/0018/0019), read AND written.** Every vector carries a
+  `Kind`: `KindDocument` (curated knowledge, ingested via the SDK `IngestKnowledge` / HTTP
+  `POST .../knowledge`, user- or tenant-scoped), `KindFact` (distilled facts dual-indexed through the
+  `engram` facade, whose lifecycle is tied to the fact — supersede/delete removes the vector), and
+  `KindTurn` (raw turns, **bounded** by a TTL/cap pruner that runs always, independent of the Rust
+  sleep cycle). `hydrateSystemPrompt` retrieves `KindDocument`+`KindFact` at user scope, merges the
+  tenant-shared `KindDocument` bucket, and excludes raw `KindTurn` from the primary RAG. Wired on the
+  **streaming** path (the non-streaming `chat` passes a nil semantic store). Hydration is still
+  **sequential**, not the goroutine-parallel hydration the aspirational
+  [request lifecycle](request-lifecycle.md) describes. The embedder is BYO: `HashEmbedder` by default
+  (wires but does not rank semantically), a real `APIEmbedder` when `AISOTROPY_EMBED_URL` is set.
 - **Both chat routes consolidate; only `chat/agent` does not.** `chat/stream` and `chat` both call
   `AppendWithOutbox` (the non-streaming route since commit `85caf46`), so both feed the outbox →
   facts/semantic pipeline. `chat/agent` is the only route that neither hydrates nor consolidates
