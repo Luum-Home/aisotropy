@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: Milestones — breakdown by phase
-description: Aisotropy's 7 MVP-first roadmap phases, each with an objective, what gets built, a verifiable "done" definition, and the decisions/components it touches.
+description: Aisotropy's ten MVP-first roadmap phases (0–9), each with an objective, what gets built, a verifiable "done" definition, and the decisions/components it touches.
 tags: [roadmap, milestones, phases, mvp, definition-of-done]
 timestamp: 2026-07-08T00:00:00Z
 ---
@@ -13,8 +13,12 @@ module. The rule: a phase is *done* when its criterion can be **verified with a 
 test, curl, benchmark) — never "by vibes" (per the [observability](../architecture/observability.md)
 discipline and the [OKRs](okrs.md)). Each phase leaves the system **running**, just more capable.
 
-> **Global status:** design/architecture phase essentially closed (ADR-0000..0007 accepted).
-> Next: **Phase 0 → 1** (contracts + walking skeleton). Phases are numbered the same as in the [roadmap index](index.md).
+> **Global status (2026-07-10):** Phases 0–7 implemented and Phase 8 (public adoption surface)
+> shipped; Phase 9 (composition surface) partially delivered (ADR-0000..0020 accepted). The
+> per-phase checkboxes below are the intended-scope definition; for what is actually **running vs
+> dormant vs aspirational** the authoritative node is the
+> [reality ledger](../architecture/reality-ledger.md). Phases are numbered the same as in the
+> [roadmap index](index.md).
 
 ---
 

@@ -180,6 +180,25 @@ These were closed in the original design and are documented as retroactive "acce
   consumers), (5) wiring-only declarative config. Extends (does not reverse) ADR-0013; preserves
   ADR-0011 isolation and ADR-0002 anti-magic. Implements [Phase 9](../roadmap/milestones.md#phase-9--composition-surface-dual-a--b).
 
+- **[ADR-0017 — Semantic-tier multi-kind memory](0017-semantic-tier-multi-kind-memory.md):**
+  ✅ **accepted (2026-07-09)**. The semantic tier stores **kind-tagged** vectors — `KindDocument`
+  (curated tenant/user knowledge), `KindFact` (distilled facts dual-indexed via the `engram` facade,
+  their lifecycle tied to the fact), and `KindTurn` (raw turns, bounded by a TTL/cap pruner). The
+  `PointID(scope, kind, sourceID)` encoding keeps a fact's and a turn's vector from ever colliding,
+  and each kind gets its own retrieval + lifecycle policy.
+
+- **[ADR-0018 — Knowledge-ingestion surface](0018-knowledge-ingestion-surface.md):**
+  ✅ **accepted (2026-07-09)**. A **dual-surface** knowledge ingestion path — the SDK
+  `IngestKnowledge` and the HTTP `POST .../knowledge` (+ DELETE) — that writes `KindDocument` vectors
+  (user- or tenant-scoped), with a **bring-your-own** OpenAI-compatible embedder
+  (`AISOTROPY_EMBED_URL`), so a consumer feeds curated knowledge without touching the kernel.
+
+- **[ADR-0019 — Tenant-wide document sharing](0019-tenant-wide-document-sharing.md):**
+  ✅ **accepted (2026-07-09)**. A **tenant-wide shared `KindDocument` bucket**: a document ingested
+  once at tenant scope is retrievable by every user in that tenant, merged with the user-scoped
+  results at hydration — extending ADR-0017/0018 without weakening the per-user isolation of facts
+  and turns.
+
 - **[ADR-0020 — Build vs. adopt the LangChain suite or Mastra](0020-build-vs-adopt-lang-suite-mastra.md):**
   ✅ **accepted (2026-07-10)**. Promotes the [competitive-landscape](../research/competitive-landscape.md)
   research report into a **falsifiable positioning decision**: building the sovereign in-process Go+Rust
