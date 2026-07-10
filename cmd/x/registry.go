@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strings"
 )
@@ -217,6 +218,79 @@ var registry = []Task{
 		Category:    "quality-gate",
 		Steps:       []string{"build", "fmt", "vet", "test", "example"},
 	},
+	{
+		Key:            "dup",
+		Title:          "dup",
+		Description:    "golangci-lint run --enable-only dupl ./... — duplicate-code clones report",
+		Category:       "analysis",
+		CheckAvailable: checkGolangciLint,
+		NewCmd:         dupCmd,
+	},
+	{
+		Key:         "complexity",
+		Title:       "complexity",
+		Description: fmt.Sprintf("go run gocognit -over %d <module dirs> — functions over cognitive-complexity threshold %d", complexityThreshold, complexityThreshold),
+		Category:    "analysis",
+		NewCmd:      gocognitCmd,
+	},
+	{
+		Key:         "deadcode",
+		Title:       "deadcode",
+		Description: "go run golang.org/x/tools/cmd/deadcode@latest ./... — unreachable-function report",
+		Category:    "analysis",
+		NewCmd:      deadcodeCmd,
+	},
+	{
+		Key:         "cover",
+		Title:       "cover",
+		Description: "go test -coverprofile + go tool cover -func ./... — total coverage %, fails below the threshold (default 60%, override via AISOTROPY_X_COVER_THRESHOLD)",
+		Category:    "analysis",
+		NewCmd:      coverCmd,
+		EvalOutput:  coverageMeetsThreshold,
+	},
+	{
+		Key:         "vuln",
+		Title:       "vuln",
+		Description: "go run golang.org/x/vuln/cmd/govulncheck@latest ./... — known-vulnerability scan of the standard library and dependencies",
+		Category:    "analysis",
+		NewCmd:      govulncheckCmd,
+	},
+	{
+		Key:         "deps",
+		Title:       "deps",
+		Description: "go list -json internal/memory/... — fails if internal/memory imports internal/facts or internal/semantic (memory tiers must stay independent)",
+		Category:    "analysis",
+		NewCmd:      depsCmd,
+		EvalOutput:  layerCheckPass,
+	},
+	{
+		Key:         "audit",
+		Title:       "audit",
+		Description: "dup, complexity, deadcode, vuln, deps in sequence — consolidated code-optimization report",
+		Category:    "analysis",
+		Steps:       []string{"dup", "complexity", "deadcode", "vuln", "deps"},
+	},
+}
+
+// init appends the "tasks" entry to registry separately from the registry
+// literal above. tasksCmd (analysis.go) calls ListTasks, which calls
+// Tasks(), which reads registry itself; if "tasks" were declared inline
+// in the registry literal like every other entry, that reference would make
+// the Go compiler's package-initializer dependency analysis walk the chain
+// registry -> tasksCmd -> ListTasks -> Tasks -> registry and reject it as an
+// initialization cycle, even though tasksCmd is only ever invoked long after
+// package initialization has finished. Appending in init() — which always
+// runs after every package-level variable has finished initializing —
+// breaks that static analysis without changing runtime behavior or the
+// resulting task order (it still ends up last).
+func init() {
+	registry = append(registry, Task{
+		Key:         "tasks",
+		Title:       "tasks",
+		Description: "prints every registered task's key and description (same content as `x list`, runnable from inside the TUI)",
+		Category:    "meta",
+		NewCmd:      tasksCmd,
+	})
 }
 
 // Tasks returns the ordered task registry.

@@ -13,6 +13,9 @@ func TestTasksNonEmptyAndUnique(t *testing.T) {
 		}
 		seen[task.Key] = true
 
+		if task.Description == "" {
+			t.Errorf("task %q has an empty Description", task.Key)
+		}
 		if len(task.Steps) == 0 && task.NewCmd == nil {
 			t.Errorf("leaf task %q has neither NewCmd nor Steps", task.Key)
 		}
@@ -22,6 +25,39 @@ func TestTasksNonEmptyAndUnique(t *testing.T) {
 	}
 	if len(seen) == 0 {
 		t.Fatal("expected at least one registered task")
+	}
+}
+
+// TestAnalysisTasksRegistered asserts every code-optimization analysis task
+// (the "cockpit" expansion: dup, complexity, deadcode, cover, vuln, deps,
+// audit, tasks) is registered with a non-empty description, so `x list`/`x
+// --help`/the TUI always document them.
+func TestAnalysisTasksRegistered(t *testing.T) {
+	wantKeys := []string{"dup", "complexity", "deadcode", "cover", "vuln", "deps", "audit", "tasks"}
+	for _, key := range wantKeys {
+		task, ok := Lookup(key)
+		if !ok {
+			t.Errorf("expected analysis task %q to be registered", key)
+			continue
+		}
+		if task.Description == "" {
+			t.Errorf("analysis task %q has an empty Description", key)
+		}
+	}
+}
+
+func TestAuditStepsReferenceRealTasks(t *testing.T) {
+	audit, ok := Lookup("audit")
+	if !ok {
+		t.Fatal("expected an \"audit\" composite task")
+	}
+	if len(audit.Steps) == 0 {
+		t.Fatal("\"audit\" should have Steps")
+	}
+	for _, key := range audit.Steps {
+		if _, ok := Lookup(key); !ok {
+			t.Errorf("audit step %q does not resolve to a registered task", key)
+		}
 	}
 }
 
