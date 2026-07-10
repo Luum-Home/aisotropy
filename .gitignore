@@ -15,8 +15,11 @@ agent-tooling.yaml
 *.exe
 *.out
 *.test
-# Compiled example bot (nested module builds a binary named after its dir).
+# Compiled example bots (nested modules build a binary named after their dir).
 /examples/weatherbot/weatherbot
+/examples/helpdesk/helpdesk
+# Stray dev-console binary (go build ./cmd/x → ./x).
+/x
 # Cobertura
 *.cover
 coverage.out

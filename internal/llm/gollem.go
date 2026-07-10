@@ -133,6 +133,16 @@ func (m *GollemModel) requestWithTools(
 	specs := make([]ToolSpec, len(params.FunctionTools))
 	for i, td := range params.FunctionTools {
 		specs[i] = ToolSpec{Name: td.Name, Description: td.Description}
+		// Carry the tool's argument schema through to the provider so native
+		// tool-calling advertises the real shape (ADR-0016 lever #1). The Agent's
+		// core.ToolDefinition holds it as a core.Schema (map[string]any); marshal
+		// it back to the JSON bytes ToolSpec.Parameters carries. A tool with no
+		// declared schema leaves Parameters nil (permissive object downstream).
+		if len(td.ParametersSchema) > 0 {
+			if b, merr := json.Marshal(td.ParametersSchema); merr == nil {
+				specs[i].Parameters = b
+			}
+		}
 	}
 
 	res, err := tc.CallTools(ctx, system, prompt, specs)
@@ -150,7 +160,13 @@ func (m *GollemModel) requestWithTools(
 	parts := make([]core.ModelResponsePart, 0, len(res.Calls))
 	for i, call := range res.Calls {
 		argsJSON := []byte("{}")
-		if call.Args != nil { // json.Marshal(nil map) yields "null", not "{}"
+		switch {
+		case len(call.RawArgs) > 0:
+			// Prefer the model's exact JSON so nested/typed args survive to the
+			// tool handler (ADR-0016 lever #1); the flattened Args map would drop
+			// structure.
+			argsJSON = call.RawArgs
+		case call.Args != nil: // json.Marshal(nil map) yields "null", not "{}"
 			b, merr := json.Marshal(call.Args)
 			if merr != nil {
 				return nil, fmt.Errorf("gollem model %q: marshal args for tool %q: %w", m.ModelName(), call.Name, merr)

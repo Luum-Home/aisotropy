@@ -68,7 +68,7 @@ func RunToolAgent(
 	tracer oteltrace.TracerProvider,
 	system, prompt string,
 	tools []ToolSpec,
-	exec func(ctx context.Context, name string, args map[string]string) (string, error),
+	exec func(ctx context.Context, name string, argsJSON string) (string, error),
 	maxSteps int,
 ) ([]ToolStep, error) {
 	model := NewGollemModel(client)
@@ -83,31 +83,26 @@ func RunToolAgent(
 	for _, spec := range tools {
 		name := spec.Name // capture per tool for the handler closure
 		var handler core.ToolHandler = func(ctx context.Context, _ *core.RunContext, argsJSON string) (any, error) {
-			args, derr := decodeToolArgs(argsJSON)
-			if derr != nil {
-				return nil, fmt.Errorf("tool %q: decode args: %w", name, derr)
-			}
-			result, eerr := exec(ctx, name, args)
+			// exec receives the model's RAW JSON args so a typed tool can decode
+			// nested/typed fields (ADR-0016 lever #1); the caller owns decoding
+			// and validation. ToolStep.Args keeps a best-effort flattened view for
+			// the endpoint's display contract only.
+			result, eerr := exec(ctx, name, argsJSON)
 			if eerr != nil {
 				return nil, eerr
 			}
+			display, _ := decodeToolArgs(argsJSON)
 			mu.Lock()
-			steps = append(steps, ToolStep{Tool: name, Args: args, Result: result})
+			steps = append(steps, ToolStep{Tool: name, Args: display, Result: result})
 			mu.Unlock()
 			return result, nil
 		}
 		funcTools = append(funcTools, core.Tool{
 			Definition: core.ToolDefinition{
-				Name:        name,
-				Description: spec.Description,
-				Kind:        core.ToolKindFunction,
-				// String-keyed, string-valued args (llm.ToolCall.Args is
-				// map[string]string). additionalProperties keeps the schema
-				// open since ToolSpec does not carry per-argument shape.
-				ParametersSchema: core.Schema{
-					"type":                 "object",
-					"additionalProperties": map[string]any{"type": "string"},
-				},
+				Name:             name,
+				Description:      spec.Description,
+				Kind:             core.ToolKindFunction,
+				ParametersSchema: toolParametersSchema(spec.Parameters),
 			},
 			Handler: handler,
 		})
@@ -156,6 +151,23 @@ func otelTracingHooks(tracer oteltrace.TracerProvider) core.Hook {
 		tracingOpts = append(tracingOpts, otel.WithTracerProvider(tracer))
 	}
 	return otel.TracingHooks(tracingOpts...)
+}
+
+// toolParametersSchema turns a ToolSpec's JSON-Schema bytes into the core.Schema
+// (map[string]any) a Gollem function tool advertises. When the spec carries no
+// schema (untyped tool), it falls back to the permissive open object the
+// ADR-0012 minimal seam used, so an untyped tool still accepts free-form args.
+func toolParametersSchema(params json.RawMessage) core.Schema {
+	if len(params) > 0 {
+		var s core.Schema
+		if err := json.Unmarshal(params, &s); err == nil && len(s) > 0 {
+			return s
+		}
+	}
+	return core.Schema{
+		"type":                 "object",
+		"additionalProperties": map[string]any{"type": "string"},
+	}
 }
 
 // decodeToolArgs turns the model's JSON tool arguments into the string-keyed

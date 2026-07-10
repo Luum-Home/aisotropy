@@ -26,6 +26,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
 
+	"github.com/Luum-Home/aisotropy/internal/bitrate"
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
@@ -97,7 +98,15 @@ type StreamErrorEvent struct {
 // seam); nil selects the built-in default persona. inPricePer1M/outPricePer1M
 // are the USD prices per 1M tokens used for the /costs estimate; a value <= 0
 // falls back to the package default (costInputPricePer1M/costOutputPricePer1M).
-func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, inPricePer1M, outPricePer1M float64) {
+//
+// bptSampler (Bet 6, bits-per-token-per-tenant) reserves a deterministic ~5% of
+// turns as held-out samples for offline surprisal measurement (internal/bitrate);
+// nil disables sampling. A reserved turn is EXCLUDED from that turn's
+// facts/semantic consolidation so a later lift measurement is not spurious —
+// scoring text already distilled into memory would trivially predict it
+// (leakage). This is the request-side half of the anti-leakage contract; the
+// other half is bitrate.ShouldSample.
+func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, inPricePer1M, outPricePer1M float64, bptSampler bitrate.SampleRecorder) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
 		Method:      "POST",
@@ -188,9 +197,25 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 		// (internal/consolidation). The two writes are atomic — a crash cannot
 		// keep one without the other — and this happens before the LLM call
 		// because the user's message is real input that already happened.
-		event := memory.NewOutboxEvent(key, outboxRef(key, in.Body.Prompt), in.Body.Prompt, time.Now().UTC())
-		if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: "user", Content: in.Body.Prompt}, event); err != nil {
-			slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
+		ref := outboxRef(key, in.Body.Prompt)
+		if bptSampler != nil && bitrate.ShouldSample(ref) {
+			// Held-out bitrate sample (Bet 6): reserve this turn for offline
+			// surprisal measurement and DO NOT enqueue it for facts/semantic
+			// consolidation. The user message still enters working memory (it
+			// really happened); replacing the consolidation enqueue with the
+			// reservation is what keeps the scored text out of the tenant's
+			// long-term memory, so the later lift is not spurious (leakage).
+			if err := wm.Append(ctx, key, memory.Message{Role: "user", Content: in.Body.Prompt}); err != nil {
+				slog.ErrorContext(ctx, "failed to append held-out user message", "err", err)
+			}
+			if err := bptSampler.Reserve(ctx, in.TenantID, in.UserID, in.Body.SessionID, ref, in.Body.Prompt); err != nil {
+				slog.ErrorContext(ctx, "failed to reserve bitrate held-out sample", "err", err)
+			}
+		} else {
+			event := memory.NewOutboxEvent(key, ref, in.Body.Prompt, time.Now().UTC())
+			if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: "user", Content: in.Body.Prompt}, event); err != nil {
+				slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
+			}
 		}
 
 		// Quota-pressure degradation (Phase 7): when this tenant is near its
@@ -289,13 +314,22 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 		return "", fmt.Errorf("persona base prompt: %w", err)
 	}
 
-	summary, err := wm.Summary(ctx, key)
-	if err != nil {
-		return "", fmt.Errorf("read working-memory summary: %w", err)
-	}
-	recent, err := wm.Recent(ctx, key, recentMessagesWindow)
-	if err != nil {
-		return "", fmt.Errorf("read working-memory recent messages: %w", err)
+	// Working memory (Phase 2): the live session buffer. Optional — a nil wm
+	// yields no summary/recent. The Bet 6 bpt scorer passes nil here on purpose:
+	// it measures CONSOLIDATED memory (facts + semantic) vs the bare base, never
+	// the live buffer, which would still contain the held-out turn being scored
+	// (leakage). Real request handlers always pass a non-nil wm.
+	var summary string
+	var recent []memory.Message
+	if wm != nil {
+		summary, err = wm.Summary(ctx, key)
+		if err != nil {
+			return "", fmt.Errorf("read working-memory summary: %w", err)
+		}
+		recent, err = wm.Recent(ctx, key, recentMessagesWindow)
+		if err != nil {
+			return "", fmt.Errorf("read working-memory recent messages: %w", err)
+		}
 	}
 
 	// Facts memory (Phase 3): the top engrams for this user whose content

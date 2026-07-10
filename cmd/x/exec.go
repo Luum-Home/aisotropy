@@ -66,6 +66,11 @@ func StartTask(ctx context.Context, t Task) *Run {
 		if len(keys) == 0 {
 			keys = []string{t.Key}
 		}
+		// Flatten nested composites to leaf tasks: a step that is itself a
+		// composite (has Steps and no NewCmd, e.g. `check` -> `example`) would
+		// otherwise reach runStep, which calls NewCmd unconditionally and panics
+		// on the nil. Expanding here keeps runStep a pure leaf runner.
+		keys = flattenSteps(keys)
 
 		steps := make([]StepResult, 0, len(keys))
 		overallPass := true
@@ -93,6 +98,24 @@ func StartTask(ctx context.Context, t Task) *Run {
 		run.Events <- Event{Result: &Result{Steps: steps, Pass: overallPass}}
 	}()
 	return run
+}
+
+// flattenSteps recursively expands any composite step (a task with Steps and no
+// NewCmd) into its leaf tasks, so StartTask only ever hands runStep a runnable
+// leaf. A missing or leaf task passes through unchanged (StartTask reports the
+// missing one). Guards against a self-referential cycle by not re-expanding a
+// task into itself.
+func flattenSteps(keys []string) []string {
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		sub, ok := Lookup(k)
+		if ok && sub.NewCmd == nil && len(sub.Steps) > 0 && !(len(sub.Steps) == 1 && sub.Steps[0] == k) {
+			out = append(out, flattenSteps(sub.Steps)...)
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
 }
 
 // runStep executes a single leaf task and reports its StepResult, emitting

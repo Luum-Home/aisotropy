@@ -75,9 +75,13 @@ const (
 	// TenantFromContext/UserFromContext) — set by internal/api/chat_stream.go
 	// via llm.WithTenant/llm.WithUser alongside its own ctx injection.
 	//
-	// aisotropy.bpt (Bet 6, bits-per-token-per-tenant) is a future
-	// enrichment on this same span once logprobs are available from the
-	// provider response — not added here (see
+	// Bet 6 (bits-per-token-per-tenant) is deliberately NOT an attribute on
+	// this serving span: no serving provider exposes token logprobs, so bpt
+	// cannot be computed here. It is measured OUT OF BAND by an offline
+	// reference-model scorer (internal/bitrate), invoked as a subprocess like
+	// the sleep cycle, and persisted to the bpt store — surfaced via the
+	// agent.compression.bpt span event on the bitrate.run span and the
+	// GET /bitrate view, never as a gen_ai serving-span enrichment (see
 	// docs/research/bet-06-bits-per-token-metric.md).
 	attrTenantID = "tenant_id"
 	attrUserID   = "user_id"

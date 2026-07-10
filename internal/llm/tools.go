@@ -1,28 +1,49 @@
 package llm
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // ToolSpec describes one tool offered to a ToolCaller. The model sees Name +
-// Description and may return a ToolCall naming it. It is intentionally minimal
-// and expressed in Aisotropy's own vocabulary — no provider-specific
-// (OpenAI/Anthropic) tool schema leaks into this seam, per ADR-0012's
-// requirement to keep the public contract free of provider-isms and ADR-0009's
-// provider-agnostic Client seam.
+// Description (+ Parameters when present) and may return a ToolCall naming it.
+// It is intentionally minimal and expressed in Aisotropy's own vocabulary — no
+// provider-specific (OpenAI/Anthropic) tool schema leaks into this seam, per
+// ADR-0012's requirement to keep the public contract free of provider-isms and
+// ADR-0009's provider-agnostic Client seam.
 type ToolSpec struct {
 	// Name is the tool identifier the model must use verbatim when calling it.
 	Name string
 	// Description is the human/LLM-facing explanation of what the tool does.
 	Description string
+	// Parameters is the JSON Schema (draft 2020-12, as produced by SchemaFor)
+	// describing the tool's argument object. It is OPTIONAL: an empty/nil
+	// Parameters means "no declared argument shape" and callers advertise a
+	// permissive object, preserving the ADR-0012 minimal seam. When set, it is
+	// the struct-as-contract for tool INPUTS (ADR-0016 lever #1 / typed-tool-args
+	// SDD): the schema the model is shown and, later, the shape its arguments are
+	// validated against before a typed handler runs. Provider-agnostic JSON
+	// Schema bytes only — no OpenAI/Anthropic tool envelope.
+	Parameters json.RawMessage
 }
 
 // ToolCall is a single tool invocation a ToolCaller's model chose: the tool
-// Name and its string-keyed Args. The Name MUST be re-validated by the caller
-// against the offered tool set before execution — a ToolCaller implementation
-// (or an adversarial completion) that names a tool outside the offered set must
-// never reach execution (see ToolCaller's security note).
+// Name, its string-keyed Args (compat/display), and RawArgs, the model's
+// arguments as raw JSON. The Name MUST be re-validated by the caller against the
+// offered tool set before execution — a ToolCaller implementation (or an
+// adversarial completion) that names a tool outside the offered set must never
+// reach execution (see ToolCaller's security note).
+//
+// Args is the flattened string-keyed view kept for backward compatibility and
+// the map[string]string ToolExecutor seam. RawArgs (ADR-0016 lever #1 /
+// typed-tool-args SDD) preserves the model's arguments as the exact JSON it
+// produced, so a typed tool can decode nested/typed fields that would be lost by
+// the string flattening. RawArgs is optional: when empty, consumers fall back to
+// Args. A ToolCaller SHOULD populate both.
 type ToolCall struct {
-	Name string
-	Args map[string]string
+	Name    string
+	Args    map[string]string
+	RawArgs json.RawMessage
 }
 
 // ToolCallResult is what CallTools returns for one turn: the tool calls the

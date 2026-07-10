@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/fugue-labs/gollem/core"
@@ -126,9 +127,13 @@ func TestRunToolAgent_RecordsToolStep(t *testing.T) {
 		},
 	}
 	var execCalls int
-	exec := func(_ context.Context, name string, args map[string]string) (string, error) {
+	exec := func(_ context.Context, name string, argsJSON string) (string, error) {
 		execCalls++
-		return "hello " + args["who"], nil
+		var a struct {
+			Who string `json:"who"`
+		}
+		_ = json.Unmarshal([]byte(argsJSON), &a)
+		return "hello " + a.Who, nil
 	}
 
 	steps, err := RunToolAgent(context.Background(), tc, noop.NewTracerProvider(),
@@ -166,7 +171,7 @@ func TestRunToolAgent_UnofferedToolNeverExecutes(t *testing.T) {
 			{Message: "I cannot do that"},                  // terminal answer on the retry turn
 		},
 	}
-	exec := func(_ context.Context, name string, _ map[string]string) (string, error) {
+	exec := func(_ context.Context, name string, _ string) (string, error) {
 		t.Fatalf("exec ran for a tool that was never offered: %q", name)
 		return "", nil
 	}
@@ -194,7 +199,7 @@ func TestRunToolAgent_MaxStepsGraceful(t *testing.T) {
 	}
 	tc := &fakeToolCaller{Client: NewStubClient(), script: loop}
 	specs := []ToolSpec{{Name: "loop", Description: "never converges"}}
-	exec := func(context.Context, string, map[string]string) (string, error) { return "did", nil }
+	exec := func(context.Context, string, string) (string, error) { return "did", nil }
 
 	steps, err := RunToolAgent(context.Background(), tc, nil, "sys", "go", specs, exec, 2)
 	if err != nil {

@@ -177,11 +177,29 @@ var registry = []Task{
 		},
 	},
 	{
+		Key:         "example-build-helpdesk",
+		Title:       "example-build-helpdesk",
+		Description: "go -C examples/helpdesk build ./... — compiles the realistic public-surface example bot (typed tools + YAML wiring, a separate module)",
+		Category:    "example",
+		NewCmd: func(ctx context.Context) *exec.Cmd {
+			return exec.CommandContext(ctx, "go", "-C", "examples/helpdesk", "build", "./...")
+		},
+	},
+	{
+		Key:         "example-vet-helpdesk",
+		Title:       "example-vet-helpdesk",
+		Description: "go -C examples/helpdesk vet ./... — vets the realistic public-surface example bot",
+		Category:    "example",
+		NewCmd: func(ctx context.Context) *exec.Cmd {
+			return exec.CommandContext(ctx, "go", "-C", "examples/helpdesk", "vet", "./...")
+		},
+	},
+	{
 		Key:         "example",
 		Title:       "example",
-		Description: "build + vet examples/weatherbot — proves the Phase 8 public adoption surface compiles against the façade only",
+		Description: "build + vet examples/weatherbot + examples/helpdesk — proves the public adoption surface compiles against the façade only",
 		Category:    "example",
-		Steps:       []string{"example-build", "example-vet"},
+		Steps:       []string{"example-build", "example-vet", "example-build-helpdesk", "example-vet-helpdesk"},
 	},
 	{
 		Key:         "run",

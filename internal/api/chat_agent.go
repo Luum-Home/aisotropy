@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -80,7 +82,7 @@ func (f frictionExecutor) Execute(ctx context.Context, name string, args map[str
 // tracer instruments the native-tool Gollem agent (ADR-0012 follow-up) with
 // hierarchical OTel spans; it may be nil (the tracing hook then falls back to
 // the global OTel provider, a no-op unless one is configured).
-func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, detector *primitives.FrictionDetector, tracer oteltrace.TracerProvider, maxSteps int) {
+func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, typed *TypedToolExecutor, detector *primitives.FrictionDetector, tracer oteltrace.TracerProvider, maxSteps int) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat-agent",
 		Method:      "POST",
@@ -117,9 +119,13 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 		// executor — so switching paths never changes the isolation guarantee.
 		var steps []AgentStep
 		if tc, ok := client.(llm.ToolCaller); ok {
-			steps, err = runNativeToolAgent(ctx, tc, tracer, registry, exec, in.Body.Scopes, in.Body.Prompt, maxSteps)
+			steps, err = runNativeToolAgent(ctx, tc, tracer, registry, exec, typed, in.Body.Scopes, in.Body.Prompt, maxSteps)
 		} else {
-			loop := &agentloop.Loop{Client: client, Registry: registry, Executor: exec, MaxSteps: maxSteps}
+			// Fallback (no native tool-calling): the combined executor routes
+			// typed tools through the typed dispatcher (best-effort over the
+			// string map) and untyped tools through the friction-wrapped executor.
+			loopExec := agentloop.ToolExecutor(combinedMapExecutor{typed: typed, fallback: exec})
+			loop := &agentloop.Loop{Client: client, Registry: registry, Executor: loopExec, MaxSteps: maxSteps}
 			var loopSteps []agentloop.StepResult
 			loopSteps, err = loop.Run(ctx, in.Body.Scopes, in.Body.Prompt)
 			steps = agentStepsFromLoop(loopSteps)
@@ -169,14 +175,35 @@ const nativeToolSystemPrompt = "You are an assistant that may call the provided 
 // tool name lands in the agent's unknownCalls (a retry) and can never reach the
 // executor — the re-check half is structural, not a runtime re-validation. There
 // is no path from "not offered" to "executed".
-func runNativeToolAgent(ctx context.Context, tc llm.ToolCaller, tracer oteltrace.TracerProvider, registry *tools.Registry, executor agentloop.ToolExecutor, scopes []string, prompt string, maxSteps int) ([]AgentStep, error) {
+func runNativeToolAgent(ctx context.Context, tc llm.ToolCaller, tracer oteltrace.TracerProvider, registry *tools.Registry, executor agentloop.ToolExecutor, typed *TypedToolExecutor, scopes []string, prompt string, maxSteps int) ([]AgentStep, error) {
 	permitted := registry.Permitted(scopes)
 	specs := make([]llm.ToolSpec, 0, len(permitted))
 	for _, t := range permitted {
-		specs = append(specs, llm.ToolSpec{Name: t.Name, Description: t.Description})
+		// Carry the tool's argument schema (set by WithTypedTool) so the provider
+		// advertises the real shape; empty for untyped tools (ADR-0016 lever #1).
+		specs = append(specs, llm.ToolSpec{Name: t.Name, Description: t.Description, Parameters: t.Parameters})
 	}
 
-	toolSteps, err := llm.RunToolAgent(ctx, tc, tracer, nativeToolSystemPrompt, prompt, specs, executor.Execute, maxSteps)
+	// run receives the model's RAW JSON args. A typed tool decodes+validates them
+	// against its arg struct; a decode/validation failure (*ToolArgsError) is
+	// reflected back to the model AS THE TOOL RESULT so it self-corrects within
+	// the step budget (never a coerced call, SDD R4). An untyped tool flattens the
+	// args to the string map its ToolExecutor consumes. The double scope-gate is
+	// unchanged: only permitted tools are offered, so run only ever sees an
+	// offered tool name.
+	run := func(ctx context.Context, name, argsJSON string) (string, error) {
+		if typed.Has(name) {
+			res, rerr := typed.Run(ctx, name, json.RawMessage(argsJSON))
+			var ae *ToolArgsError
+			if errors.As(rerr, &ae) {
+				return "invalid arguments: " + ae.Err.Error() + " — please correct and retry.", nil
+			}
+			return res, rerr
+		}
+		return executor.Execute(ctx, name, decodeStringArgs(argsJSON))
+	}
+
+	toolSteps, err := llm.RunToolAgent(ctx, tc, tracer, nativeToolSystemPrompt, prompt, specs, run, maxSteps)
 	if err != nil {
 		return nil, err
 	}

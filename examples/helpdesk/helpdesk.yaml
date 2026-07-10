@@ -1,0 +1,28 @@
+# helpdesk bot — declarative WIRING (ADR-0016 lever #5). Deployment values only;
+# the tools' behavior lives in Go (main.go), the MCP server's behavior in its own
+# process. See examples/aisotropy.example.yaml for the full field reference.
+
+addr: ":8080"
+
+rate_limit:
+  per_sec: 15
+  burst: 30
+
+cost_pricing:
+  input_per_1m: 3.0
+  output_per_1m: 15.0
+
+personas:
+  - product_id: ""
+    base_prompt: "You are a concise customer-support agent. Use the tools you are given; ask for missing details before acting."
+  - product_id: helpdesk-pro
+    base_prompt: "You are a senior support engineer. Be precise, cite ticket and order ids, and prefer resolving in one turn."
+
+# Optional: a filesystem MCP server exposing read-only doc tools (any language;
+# here the reference JS server via npx). Best-effort — if npx / the server is not
+# installed, the runtime logs and skips it, and the Go typed tools still work.
+# Uncomment to enable:
+# mcp_servers:
+#   - required_scope: "read:docs"
+#     command: "npx"
+#     args: ["-y", "@modelcontextprotocol/server-filesystem", "./docs"]

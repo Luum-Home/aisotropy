@@ -16,10 +16,12 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
+	"github.com/fugue-labs/gollem/ext/mcp"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/Luum-Home/aisotropy/internal/api"
+	"github.com/Luum-Home/aisotropy/internal/bitrate"
 	"github.com/Luum-Home/aisotropy/internal/consolidation"
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
@@ -51,6 +53,9 @@ const (
 	// sleepCycleInterval is how often the offline DataFusion consolidation runs
 	// when a worker binary is configured (Phase 6).
 	sleepCycleInterval = 1 * time.Hour
+	// bitrateInterval is how often the offline bits-per-token-per-tenant
+	// measurement runs (Bet 6) when a scorer binary is configured.
+	bitrateInterval = 1 * time.Hour
 	// readinessProbeTimeout bounds each dependency probe on GET /health.
 	readinessProbeTimeout = 2 * time.Second
 	// healthProbeTenant is the reserved identity the readiness probes scope their
@@ -77,6 +82,8 @@ type App struct {
 	addr          string
 	toolset       []tools.Tool
 	executor      ToolExecutor
+	typedHandlers map[string]api.TypedToolHandler
+	mcpServers    []mcpServerSpec
 	personas      map[string]string
 	llmClient     llm.Client
 	ratePerSec    float64
@@ -218,6 +225,27 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Bitrate (Bet 6): the durable, tenant-scoped bpt store, gated on the scorer
+	// binary. When enabled it backs both the held-out sampler (the request path
+	// reserves ~5% of turns into it, excluded from consolidation) and the offline
+	// measurement coordinator. Disabled (bin unset) → nil store, nil sampler, no
+	// /bitrate route: turn ingestion is byte-for-byte unchanged.
+	var (
+		bitrateStore *bitrate.Store
+		bptSampler   bitrate.SampleRecorder
+	)
+	if os.Getenv("AISOTROPY_BITRATE_BIN") != "" {
+		bs, berr := openBitrateStore()
+		if berr != nil {
+			_ = wm.Close()
+			_ = factsStore.Close()
+			_ = semanticStore.Close()
+			return berr
+		}
+		bitrateStore = bs
+		bptSampler = bs
+	}
+
 	// Consolidation sink (Phase 5 outbox): distils each drained event into the
 	// facts + semantic tiers idempotently.
 	sink := consolidation.Sink{
@@ -286,8 +314,45 @@ func (a *App) Run(ctx context.Context) error {
 	// Per-tenant rate limiting (Phase 7 / constitutional gate).
 	rateLimiter := wm.NewLimiter(a.ratePerSec, a.burst)
 
-	// Scope-gated tool registry: built from the consumer's registered tools.
-	toolRegistry := tools.NewRegistry(a.toolset...)
+	// Connect any MCP servers (ADR-0016 lever #2: polyglot tool execution):
+	// discover each server's tools and merge them into the consumer's toolset +
+	// typed handlers, scope-gated. Best-effort — a server that fails to start or
+	// list is logged and skipped, never downing the runtime. The runtime owns the
+	// client lifecycle (clients are closed on shutdown).
+	toolset := append([]tools.Tool(nil), a.toolset...)
+	typedHandlers := make(map[string]api.TypedToolHandler, len(a.typedHandlers))
+	for k, v := range a.typedHandlers {
+		typedHandlers[k] = v
+	}
+	var mcpClosers []func() error
+	for _, spec := range a.mcpServers {
+		client, cerr := mcp.NewStdioClient(context.Background(), spec.command, spec.args...)
+		if cerr != nil {
+			slog.Error("mcp server connect failed; skipping its tools", "command", spec.command, "err", cerr)
+			continue
+		}
+		mtools, mhandlers, berr := api.BuildMCPTools(context.Background(), client, spec.requiredScope)
+		if berr != nil {
+			slog.Error("mcp list-tools failed; skipping this server", "command", spec.command, "err", berr)
+			_ = client.Close()
+			continue
+		}
+		toolset = append(toolset, mtools...)
+		for k, v := range mhandlers {
+			typedHandlers[k] = v
+		}
+		mcpClosers = append(mcpClosers, client.Close)
+		slog.Info("mcp server tools registered", "command", spec.command, "tools", len(mtools), "scope", spec.requiredScope)
+	}
+	closeMCP := func() {
+		for _, c := range mcpClosers {
+			_ = c()
+		}
+	}
+
+	// Scope-gated tool registry: the consumer's registered tools plus any
+	// MCP-discovered tools.
+	toolRegistry := tools.NewRegistry(toolset...)
 
 	// Persona provider composed over the consumer's registered personas, with the
 	// built-in default persona as the fallback for unknown product ids.
@@ -306,6 +371,47 @@ func (a *App) Run(ctx context.Context) error {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(costMeter.Snapshot())
 	})
+
+	// Bitrate (Bet 6): when the store is enabled, schedule the offline measurement
+	// and expose the per-tenant ops view. The coordinator hydrates each held-out
+	// sample's context THROUGH the api hydrator seam (the exact request-path
+	// hydration — anti-magic, ADR-0002), scores with/without memory in the scorer
+	// subprocess, and persists the lift.
+	if bitrateStore != nil {
+		bin := os.Getenv("AISOTROPY_BITRATE_BIN")
+		coordinator := bitrate.Coordinator{
+			Sampler: bitrateStore,
+			Hydrator: api.BitrateHydrator{
+				Store:    factsStore,
+				Semantic: semanticStore,
+				Embedder: embedder,
+				Persona:  persona,
+			},
+			Runner: bitrate.Worker{BinaryPath: bin, Tracer: tracer},
+			Store:  bitrateStore,
+		}
+		go coordinator.RunScheduler(workerCtx, bitrateInterval, func(ms []bitrate.Measurement, merr error) {
+			if merr != nil {
+				slog.Error("bitrate measurement failed", "err", merr)
+				return
+			}
+			if len(ms) > 0 {
+				slog.Info("bitrate measured memory lift", "samples", len(ms))
+			}
+		})
+		router.Get("/bitrate", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			summaries, serr := bitrateStore.AllSummaries(r.Context())
+			if serr != nil {
+				http.Error(w, `{"error":"bitrate summary failed"}`, http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(summaries)
+		})
+		slog.Info("bitrate scorer scheduled", "bin", bin, "interval", bitrateInterval)
+	} else {
+		slog.Info("bitrate scorer disabled", "reason", "AISOTROPY_BITRATE_BIN unset")
+	}
 
 	// Readiness: cheap, read-only, health-tenant-scoped probes of the networked
 	// tiers. No probe spends LLM tokens.
@@ -326,7 +432,7 @@ func (a *App) Run(ctx context.Context) error {
 	).Handler())
 
 	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry, persona)
-	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient, semanticStore, embedder, persona, a.inPricePer1M, a.outPricePer1M)
+	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient, semanticStore, embedder, persona, a.inPricePer1M, a.outPricePer1M, bptSampler)
 
 	// Per-user primitives (Phase 6 behavioral memory).
 	primStore := primitives.NewStore()
@@ -335,7 +441,11 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Agentic tool-use endpoint (Phase 7): the injected executor drives real tool
 	// logic, wrapped per-request in a friction recorder.
-	api.RegisterAgent(humaAPI, protectedClient, toolRegistry, executor, frictionDetector, tracerProvider, agentMaxSteps)
+	// Typed-tool dispatcher (ADR-0016 lever #1): raw-JSON handlers registered via
+	// WithTypedTool[T]. Preferred over the map executor for any tool it owns; nil
+	// handlers => an executor that owns nothing, so behavior is unchanged.
+	typedExecutor := api.NewTypedToolExecutor(typedHandlers)
+	api.RegisterAgent(humaAPI, protectedClient, toolRegistry, executor, typedExecutor, frictionDetector, tracerProvider, agentMaxSteps)
 
 	server := &http.Server{
 		Addr:    addr,
@@ -359,9 +469,13 @@ func (a *App) Run(ctx context.Context) error {
 		if serr != nil {
 			slog.Error("server stopped", "err", serr)
 			stopWorker()
+			closeMCP()
 			_ = wm.Close()
 			_ = factsStore.Close()
 			_ = semanticStore.Close()
+			if bitrateStore != nil {
+				_ = bitrateStore.Close()
+			}
 			_ = shutdownTracing(context.Background())
 			return serr
 		}
@@ -375,6 +489,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Stop the consolidation worker before closing the stores it writes to.
 	stopWorker()
+	closeMCP()
 
 	if cerr := wm.Close(); cerr != nil {
 		slog.Error("working memory close failed", "err", cerr)
@@ -384,6 +499,11 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	if cerr := semanticStore.Close(); cerr != nil {
 		slog.Error("semantic memory close failed", "err", cerr)
+	}
+	if bitrateStore != nil {
+		if cerr := bitrateStore.Close(); cerr != nil {
+			slog.Error("bitrate store close failed", "err", cerr)
+		}
 	}
 	if cerr := shutdownTracing(shutdownCtx); cerr != nil {
 		slog.Error("otel tracer shutdown failed", "err", cerr)
@@ -459,6 +579,19 @@ func openFactsStore(router routing.Router, dedicated []string) (facts.Store, err
 		return factory("facts")
 	}
 	return facts.NewRoutingStore(router, "facts", dedicated, factory)
+}
+
+// openBitrateStore builds the Bet 6 bpt store: on-disk SQLite under
+// AISOTROPY_DATA_DIR when set, else in-memory. Tenant isolation is per-statement
+// (every read/write filters by tenant_id+user_id through internal/tenancy), so no
+// tier routing is applied — a dedicated tenant's bpt rows are isolated by that
+// filter, not by a separate physical store.
+func openBitrateStore() (*bitrate.Store, error) {
+	dataDir := os.Getenv("AISOTROPY_DATA_DIR")
+	if dataDir == "" {
+		return bitrate.OpenStore(":memory:")
+	}
+	return bitrate.OpenStore(filepath.Join(dataDir, "bitrate.db"))
 }
 
 // openSemanticStore builds the semantic store, applying ADR-0007 routing so each

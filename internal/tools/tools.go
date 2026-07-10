@@ -8,6 +8,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -19,6 +20,12 @@ type Tool struct {
 	Name          string
 	Description   string
 	RequiredScope string
+	// Parameters is the OPTIONAL JSON Schema for the tool's argument object,
+	// set by the public builder's WithTypedTool[T] (ADR-0016 lever #1). When
+	// present it is advertised to the model via native tool-calling so the model
+	// knows the exact argument shape; when empty the tool is untyped (free-form
+	// string args). It never affects scope gating — only what the model is shown.
+	Parameters json.RawMessage
 }
 
 // Registry is an immutable, ordered set of tools.

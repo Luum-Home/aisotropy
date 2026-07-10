@@ -236,19 +236,27 @@ func (c *OpenAICompatClient) CallTools(ctx context.Context, system, prompt strin
 	if len(toolSpecs) > 0 {
 		tools := make([]map[string]any, 0, len(toolSpecs))
 		for _, t := range toolSpecs {
+			// When the ToolSpec declares a Parameters schema (ADR-0016 lever #1:
+			// struct-as-contract for tool inputs), advertise it verbatim so the
+			// model knows the exact argument shape. When it does not, fall back to
+			// the permissive object the ADR-0012 minimal seam used: the model may
+			// call the tool with or without free-form arguments.
+			var params any
+			if len(t.Parameters) > 0 {
+				params = t.Parameters // json.RawMessage marshals as its raw JSON
+			} else {
+				params = map[string]any{
+					"type":                 "object",
+					"properties":           map[string]any{},
+					"additionalProperties": true,
+				}
+			}
 			tools = append(tools, map[string]any{
 				"type": "function",
 				"function": map[string]any{
 					"name":        t.Name,
 					"description": t.Description,
-					// ToolSpec carries no parameter schema (ADR-0012 keeps the seam
-					// minimal), so advertise a permissive object: the model may call
-					// the tool with or without free-form arguments.
-					"parameters": map[string]any{
-						"type":                 "object",
-						"properties":           map[string]any{},
-						"additionalProperties": true,
-					},
+					"parameters":  params,
 				},
 			})
 		}
@@ -301,9 +309,31 @@ func (c *OpenAICompatClient) CallTools(ctx context.Context, system, prompt strin
 	msg := out.Choices[0].Message
 	res := ToolCallResult{Message: msg.Content}
 	for _, tc := range msg.ToolCalls {
-		res.Calls = append(res.Calls, ToolCall{Name: tc.Function.Name, Args: parseToolArgs(tc.Function.Arguments)})
+		// Args: flattened string view (compat / map executor). RawArgs: the
+		// provider's exact JSON, preserved so a typed tool can decode nested /
+		// typed fields the flattening drops (ADR-0016 lever #1).
+		res.Calls = append(res.Calls, ToolCall{
+			Name:    tc.Function.Name,
+			Args:    parseToolArgs(tc.Function.Arguments),
+			RawArgs: rawToolArgs(tc.Function.Arguments),
+		})
 	}
 	return res, nil
+}
+
+// rawToolArgs returns the model's tool arguments as raw JSON bytes for
+// ToolCall.RawArgs, preserving nested/typed structure for typed tools (ADR-0016
+// lever #1). It returns nil for empty or invalid JSON so a caller can cleanly
+// fall back to the flattened Args map.
+func rawToolArgs(argsJSON string) json.RawMessage {
+	trimmed := strings.TrimSpace(argsJSON)
+	if trimmed == "" {
+		return nil
+	}
+	if !json.Valid([]byte(trimmed)) {
+		return nil
+	}
+	return json.RawMessage(trimmed)
 }
 
 // parseToolArgs converts an OpenAI tool_call arguments JSON string into the
