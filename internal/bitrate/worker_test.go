@@ -138,7 +138,9 @@ func TestShouldSampleDeterministicAndBounded(t *testing.T) {
 	}
 	// Determinism: same ref → same decision.
 	for _, ref := range []string{"abc123", "deadbeef", "0f0f0f", "held-out-ref"} {
-		if ShouldSample(ref) != ShouldSample(ref) {
+		first := ShouldSample(ref)
+		second := ShouldSample(ref)
+		if first != second {
 			t.Fatalf("ShouldSample(%q) not deterministic", ref)
 		}
 	}
@@ -147,7 +149,7 @@ func TestShouldSampleDeterministicAndBounded(t *testing.T) {
 	// predicate that samples everything or nothing is caught.
 	held := 0
 	total := 4000
-	for i := 0; i < total; i++ {
+	for i := range total {
 		if ShouldSample(refFor(i)) {
 			held++
 		}

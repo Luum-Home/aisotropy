@@ -23,7 +23,7 @@ func TestLimiterHighContention(t *testing.T) {
 	var granted int64
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			if ok, err := l.Allow(context.Background(), "acme"); err == nil && ok {
@@ -51,7 +51,7 @@ func TestLimiterSustainedRateApproximatesConfig(t *testing.T) {
 
 	granted := 0
 	// Simulate 1 second in 1000 steps of 1ms; at 100/s a token frees ~every 10ms.
-	for step := 0; step < 1000; step++ {
+	for step := range 1000 {
 		mu.Lock()
 		clock = start.Add(time.Duration(step) * time.Millisecond)
 		mu.Unlock()
@@ -78,7 +78,7 @@ func BenchmarkLimiterAllow(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if _, err := l.Allow(ctx, "acme"); err != nil {
 			b.Fatal(err)
 		}

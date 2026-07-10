@@ -95,7 +95,7 @@ func (l *Loop) SelectTool(ctx context.Context, scopes []string, prompt string) (
 
 	dec, err := parseDecision(raw)
 	if err != nil {
-		return Decision{}, fmt.Errorf("%w: %v", ErrMalformedDecision, err)
+		return Decision{}, fmt.Errorf("%w: %w", ErrMalformedDecision, err)
 	}
 
 	if dec.Tool == "" {
@@ -132,7 +132,7 @@ type StepResult struct {
 func (l *Loop) Run(ctx context.Context, scopes []string, prompt string) ([]StepResult, error) {
 	var steps []StepResult
 	current := prompt
-	for i := 0; i < l.MaxSteps; i++ {
+	for range l.MaxSteps {
 		dec, err := l.SelectTool(ctx, scopes, current)
 		if err != nil {
 			return steps, err
@@ -243,7 +243,7 @@ func balancedJSONObjects(s string) []string {
 	var objs []string
 	depth, start := 0, -1
 	inStr, esc := false, false
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		if inStr {
 			switch {

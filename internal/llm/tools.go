@@ -5,6 +5,15 @@ import (
 	"encoding/json"
 )
 
+// jsonSchemaTypeObject is the JSON Schema "type": "object" literal, shared by
+// every place in this package (and its tests) that builds or asserts a
+// permissive/fallback object schema for a tool's parameters.
+const jsonSchemaTypeObject = "object"
+
+// jsonKeyType is the "type" map key shared by every hand-built JSON Schema /
+// provider tool-envelope literal in this package.
+const jsonKeyType = "type"
+
 // ToolSpec describes one tool offered to a ToolCaller. The model sees Name +
 // Description (+ Parameters when present) and may return a ToolCall naming it.
 // It is intentionally minimal and expressed in Aisotropy's own vocabulary — no

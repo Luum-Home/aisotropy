@@ -79,7 +79,7 @@ func TestHandler_StatusCodes(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/health", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
 			tc.checker.Handler().ServeHTTP(rec, req)
 
 			if rec.Code != tc.wantCode {

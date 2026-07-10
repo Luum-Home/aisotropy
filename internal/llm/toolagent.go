@@ -165,8 +165,8 @@ func toolParametersSchema(params json.RawMessage) core.Schema {
 		}
 	}
 	return core.Schema{
-		"type":                 "object",
-		"additionalProperties": map[string]any{"type": "string"},
+		jsonKeyType:            jsonSchemaTypeObject,
+		"additionalProperties": map[string]any{jsonKeyType: "string"},
 	}
 }
 

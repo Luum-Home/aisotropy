@@ -17,18 +17,18 @@ func embedOne(t *testing.T, emb Embedder, text string) []float32 {
 }
 
 // helper: build a scoped Point with a UUIDv5 id derived from messageID.
-func point(sc Scope, emb Embedder, messageID, content string) Point {
+func point(ctx context.Context, sc Scope, emb Embedder, messageID, content string) Point {
 	return Point{
 		ID:       PointID(sc, messageID),
 		TenantID: sc.TenantID,
 		UserID:   sc.UserID,
 		Content:  content,
-		Vector:   mustEmbed(emb, content),
+		Vector:   mustEmbed(ctx, emb, content),
 	}
 }
 
-func mustEmbed(emb Embedder, text string) []float32 {
-	vs, _ := emb.Embed(context.Background(), []string{text})
+func mustEmbed(ctx context.Context, emb Embedder, text string) []float32 {
+	vs, _ := emb.Embed(ctx, []string{text})
 	return vs[0]
 }
 
@@ -74,9 +74,9 @@ func TestUpsertAndSearchCosineRanking(t *testing.T) {
 		"m2": "kubernetes cluster autoscaling and pods",
 		"m3": "invoice billing pdf generation",
 	}
-	var pts []Point
+	pts := make([]Point, 0, len(docs))
 	for id, c := range docs {
-		pts = append(pts, point(sc, emb, id, c))
+		pts = append(pts, point(ctx, sc, emb, id, c))
 	}
 	if err := st.Upsert(ctx, sc, pts); err != nil {
 		t.Fatalf("Upsert: %v", err)
@@ -107,7 +107,7 @@ func TestTenantAndUserIsolation(t *testing.T) {
 
 	mk := func(tenant, user, msg string) {
 		sc := Scope{TenantID: tenant, UserID: user}
-		if err := st.Upsert(ctx, sc, []Point{point(sc, emb, msg, content)}); err != nil {
+		if err := st.Upsert(ctx, sc, []Point{point(ctx, sc, emb, msg, content)}); err != nil {
 			t.Fatalf("Upsert %s/%s: %v", tenant, user, err)
 		}
 	}
@@ -136,12 +136,12 @@ func TestUpsertIsIdempotent(t *testing.T) {
 	sc := Scope{TenantID: "acme", UserID: "alice"}
 	ctx := context.Background()
 
-	p1 := point(sc, emb, "msg-42", "first version of the chunk")
+	p1 := point(ctx, sc, emb, "msg-42", "first version of the chunk")
 	if err := st.Upsert(ctx, sc, []Point{p1}); err != nil {
 		t.Fatal(err)
 	}
 	// Same message id, updated content — must replace, not duplicate.
-	p2 := point(sc, emb, "msg-42", "updated version of the chunk")
+	p2 := point(ctx, sc, emb, "msg-42", "updated version of the chunk")
 	if err := st.Upsert(ctx, sc, []Point{p2}); err != nil {
 		t.Fatal(err)
 	}
@@ -161,8 +161,8 @@ func TestUpsertIsIdempotent(t *testing.T) {
 // to at most topK fragments.
 func TestRerankTrimsToTopK(t *testing.T) {
 	rr := LexicalReranker{}
-	var cands []ScoredPoint
-	for i := 0; i < 10; i++ {
+	cands := make([]ScoredPoint, 0, 10)
+	for i := range 10 {
 		cands = append(cands, ScoredPoint{
 			Point: Point{ID: string(rune('a' + i)), Content: "candidate fragment number"},
 			Score: float32(i) / 10,
@@ -197,7 +197,7 @@ func TestUpsertErrorPaths(t *testing.T) {
 	ctx := context.Background()
 
 	// Scope mismatch.
-	bad := Point{ID: "x", TenantID: "globex", UserID: "alice", Vector: mustEmbed(emb, "hi")}
+	bad := Point{ID: "x", TenantID: "globex", UserID: "alice", Vector: mustEmbed(ctx, emb, "hi")}
 	if err := st.Upsert(ctx, sc, []Point{bad}); !errors.Is(err, ErrScopeMismatch) {
 		t.Fatalf("err = %v, want ErrScopeMismatch", err)
 	}

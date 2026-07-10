@@ -22,7 +22,7 @@ func TestNoopSummarizerStaysBoundedAcrossRounds(t *testing.T) {
 
 	const rounds = 200
 	maxSeen := 0
-	for i := 0; i < rounds; i++ {
+	for i := range rounds {
 		next, err := s.Condense(context.Background(), summary, oldest)
 		if err != nil {
 			t.Fatalf("round %d: Condense returned error: %v", i, err)

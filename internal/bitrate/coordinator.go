@@ -70,31 +70,7 @@ func (c Coordinator) RunOnce(ctx context.Context) ([]Measurement, error) {
 
 	// Build the request set: two rows per usable sample (with / without memory).
 	// A sample whose hydration fails is dropped here and never scored.
-	var reqs []ScoreRequest
-	usable := make([]Sample, 0, len(samples))
-	for _, s := range samples {
-		ctxWith, err := c.Hydrator.ContextWith(ctx, s.TenantID, s.UserID, s.SessionID, "", s.Text)
-		if err != nil {
-			span.AddEvent("bitrate.hydrate_skipped", trace.WithAttributes(
-				attribute.String("sample_id", s.SampleID),
-				attribute.String("error", err.Error()),
-			))
-			continue
-		}
-		ctxWithout, err := c.Hydrator.ContextWithout(ctx, "")
-		if err != nil {
-			span.AddEvent("bitrate.hydrate_skipped", trace.WithAttributes(
-				attribute.String("sample_id", s.SampleID),
-				attribute.String("error", err.Error()),
-			))
-			continue
-		}
-		reqs = append(reqs,
-			ScoreRequest{ID: s.SampleID + "_with", Text: s.Text, Context: ctxWith},
-			ScoreRequest{ID: s.SampleID + "_without", Text: s.Text, Context: ctxWithout},
-		)
-		usable = append(usable, s)
-	}
+	reqs, usable := c.buildScoreRequests(ctx, span, samples)
 	if len(usable) == 0 {
 		return nil, nil
 	}
@@ -124,6 +100,53 @@ func (c Coordinator) RunOnce(ctx context.Context) ([]Measurement, error) {
 		byID[r.ID] = r
 	}
 
+	return c.saveMeasurements(ctx, span, usable, byID)
+}
+
+// buildScoreRequests hydrates each sample's context_with/context_without and
+// builds the two-row-per-sample request set the scorer subprocess consumes
+// (id "<sample>_with" / "<sample>_without"). A sample whose hydration fails
+// is dropped — recorded as a "bitrate.hydrate_skipped" span event — rather
+// than failing the whole batch, keeping a scheduled job robust to one bad
+// session. usable is samples in the same order, filtered to the ones that
+// produced a request pair.
+func (c Coordinator) buildScoreRequests(ctx context.Context, span trace.Span, samples []Sample) ([]ScoreRequest, []Sample) {
+	var reqs []ScoreRequest
+	usable := make([]Sample, 0, len(samples))
+	for _, s := range samples {
+		ctxWith, err := c.Hydrator.ContextWith(ctx, s.TenantID, s.UserID, s.SessionID, "", s.Text)
+		if err != nil {
+			span.AddEvent("bitrate.hydrate_skipped", trace.WithAttributes(
+				attribute.String("sample_id", s.SampleID),
+				attribute.String("error", err.Error()),
+			))
+			continue
+		}
+		ctxWithout, err := c.Hydrator.ContextWithout(ctx, "")
+		if err != nil {
+			span.AddEvent("bitrate.hydrate_skipped", trace.WithAttributes(
+				attribute.String("sample_id", s.SampleID),
+				attribute.String("error", err.Error()),
+			))
+			continue
+		}
+		reqs = append(reqs,
+			ScoreRequest{ID: s.SampleID + "_with", Text: s.Text, Context: ctxWith},
+			ScoreRequest{ID: s.SampleID + "_without", Text: s.Text, Context: ctxWithout},
+		)
+		usable = append(usable, s)
+	}
+	return reqs, usable
+}
+
+// saveMeasurements computes the memory lift for each usable sample that has
+// both a "_with" and "_without" row in byID, persists a Measurement per
+// sample, and emits the per-sample "agent.compression.bpt" audit span event
+// (docs/research/bet-06-bits-per-token-metric.md fixes the metric name). A
+// sample the scorer dropped a row for is skipped rather than persisting a
+// half measurement. On a Save error it returns what was persisted so far
+// alongside the error, matching RunOnce's original partial-progress contract.
+func (c Coordinator) saveMeasurements(ctx context.Context, span trace.Span, usable []Sample, byID map[string]ScoreResult) ([]Measurement, error) {
 	now := time.Now().UTC()
 	var out []Measurement
 	for _, s := range usable {
@@ -149,8 +172,6 @@ func (c Coordinator) RunOnce(ctx context.Context) ([]Measurement, error) {
 		if err := c.Store.Save(ctx, m); err != nil {
 			return out, fmt.Errorf("bitrate: save measurement: %w", err)
 		}
-		// One auditable measurement event per sample, using the metric name
-		// docs/research/bet-06-bits-per-token-metric.md fixes.
 		span.AddEvent("agent.compression.bpt", trace.WithAttributes(
 			attribute.String("tenant_id", s.TenantID),
 			attribute.String("user_id", s.UserID),

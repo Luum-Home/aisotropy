@@ -57,7 +57,7 @@ func NewOpenRouterClient(apiKey, model string) *OpenAICompatClient {
 	if model == "" {
 		model = DefaultOpenRouterModel
 	}
-	return newOpenAICompat(apiKey, model, openRouterBaseURL, "openrouter")
+	return newOpenAICompat(apiKey, model, openRouterBaseURL, providerOpenRouter)
 }
 
 // NewOpenAICompatClient creates a generic OpenAI-compatible client (allows
@@ -106,34 +106,10 @@ type chatMessage struct {
 // StreamChat opens the SSE stream and emits incremental tokens. Respects
 // ctx.Done() both on read and on channel send (immediate spend cutoff).
 func (c *OpenAICompatClient) StreamChat(ctx context.Context, system, prompt string) (<-chan Token, error) {
-	msgs := make([]chatMessage, 0, 2)
-	if system != "" {
-		msgs = append(msgs, chatMessage{Role: "system", Content: system})
-	}
-	msgs = append(msgs, chatMessage{Role: "user", Content: prompt})
-
-	body, err := json.Marshal(map[string]any{
-		"model":      c.model,
-		"stream":     true,
-		"max_tokens": c.maxTokens,
-		"messages":   msgs,
-		// include_usage asks the provider to emit one extra SSE chunk right
-		// before [DONE] carrying the real prompt/completion token counts (the
-		// OpenAI streaming usage contract) — without it, streaming responses
-		// carry no usage data at all.
-		"stream_options": map[string]any{"include_usage": true},
-	})
+	req, err := c.newStreamRequest(ctx, system, prompt)
 	if err != nil {
-		return nil, fmt.Errorf("openai-compat: marshal request: %w", err)
+		return nil, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("openai-compat: build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
 
 	//nolint:bodyclose // Body is closed on every path: the non-200 branch below
 	// closes it explicitly, and the success path hands it to the streaming
@@ -149,64 +125,120 @@ func (c *OpenAICompatClient) StreamChat(ctx context.Context, system, prompt stri
 	}
 
 	ch := make(chan Token)
-	go func() {
-		defer close(ch)
-		defer func() { _ = resp.Body.Close() }()
+	go c.consumeStream(ctx, resp.Body, ch)
+	return ch, nil
+}
 
-		var usage *Usage
+// newStreamRequest builds the POST /chat/completions request for a streaming
+// call: the system/user messages, stream:true, and stream_options.include_usage
+// (so the provider emits one extra SSE chunk right before [DONE] carrying the
+// real prompt/completion token counts — the OpenAI streaming usage contract;
+// without it, streaming responses carry no usage data at all).
+func (c *OpenAICompatClient) newStreamRequest(ctx context.Context, system, prompt string) (*http.Request, error) {
+	msgs := make([]chatMessage, 0, 2)
+	if system != "" {
+		msgs = append(msgs, chatMessage{Role: "system", Content: system})
+	}
+	msgs = append(msgs, chatMessage{Role: "user", Content: prompt})
 
-		sc := bufio.NewScanner(resp.Body)
-		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-		for sc.Scan() {
-			if ctx.Err() != nil {
-				return
-			}
-			line := strings.TrimSpace(sc.Text())
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if data == "[DONE]" {
-				sendToken(ctx, ch, Token{Done: true, Usage: usage})
-				return
-			}
-			var chunk struct {
-				Choices []struct {
-					Delta struct {
-						Content string `json:"content"`
-					} `json:"delta"`
-				} `json:"choices"`
-				// Usage arrives on its own chunk (empty Choices), right before
-				// [DONE], because of the stream_options.include_usage request
-				// option set above.
-				Usage *struct {
-					PromptTokens     int `json:"prompt_tokens"`
-					CompletionTokens int `json:"completion_tokens"`
-				} `json:"usage"`
-			}
-			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-				continue // keep-alive / comment / non-JSON line
-			}
-			if chunk.Usage != nil {
-				usage = &Usage{InputTokens: chunk.Usage.PromptTokens, OutputTokens: chunk.Usage.CompletionTokens}
-			}
-			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-				if !sendToken(ctx, ch, Token{Text: chunk.Choices[0].Delta.Content}) {
-					return
-				}
-			}
-		}
-		// A scanner stop can mean EOF (clean) OR a read error: check sc.Err().
-		if err := sc.Err(); err != nil && ctx.Err() == nil {
-			// Mid-stream read failure is NOT a clean end — propagate it so the
-			// consumer surfaces a truncated response as an error, not success.
-			sendToken(ctx, ch, Token{Err: fmt.Errorf("openai-compat: stream read: %w", err)})
+	body, err := json.Marshal(map[string]any{
+		"model":          c.model,
+		"stream":         true,
+		"max_tokens":     c.maxTokens,
+		"messages":       msgs,
+		"stream_options": map[string]any{"include_usage": true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openai-compat: marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("openai-compat: build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	return req, nil
+}
+
+// consumeStream scans body line by line, emitting a Token per text delta and
+// a terminal Done/Err Token, then closes ch. It owns body's lifetime (closes
+// it via defer) and is meant to run in its own goroutine, started by
+// StreamChat.
+func (c *OpenAICompatClient) consumeStream(ctx context.Context, body io.ReadCloser, ch chan<- Token) {
+	defer close(ch)
+	defer func() { _ = body.Close() }()
+
+	var usage *Usage
+
+	sc := bufio.NewScanner(body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		if ctx.Err() != nil {
 			return
 		}
-		// Stream closed cleanly without an explicit [DONE]: signal normal end.
-		sendToken(ctx, ch, Token{Done: true, Usage: usage})
-	}()
-	return ch, nil
+		data, ok := sseLineData(sc.Text())
+		if !ok {
+			continue
+		}
+		if data == "[DONE]" {
+			sendToken(ctx, ch, Token{Done: true, Usage: usage})
+			return
+		}
+		text, emit := applyStreamChunk(data, &usage)
+		if emit && !sendToken(ctx, ch, Token{Text: text}) {
+			return
+		}
+	}
+	// A scanner stop can mean EOF (clean) OR a read error: check sc.Err().
+	if err := sc.Err(); err != nil && ctx.Err() == nil {
+		// Mid-stream read failure is NOT a clean end — propagate it so the
+		// consumer surfaces a truncated response as an error, not success.
+		sendToken(ctx, ch, Token{Err: fmt.Errorf("openai-compat: stream read: %w", err)})
+		return
+	}
+	// Stream closed cleanly without an explicit [DONE]: signal normal end.
+	sendToken(ctx, ch, Token{Done: true, Usage: usage})
+}
+
+// sseLineData extracts the "data:" payload from one SSE line. ok is false for
+// a non-"data:" line (blank/keep-alive/comment), which the caller should skip.
+func sseLineData(line string) (data string, ok bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "data:") {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(line, "data:")), true
+}
+
+// applyStreamChunk decodes one SSE "data:" JSON payload, folding any usage it
+// carries into *usage (usage arrives on its own chunk, with empty Choices,
+// right before [DONE] — see newStreamRequest's stream_options.include_usage),
+// and returns the text delta to emit. emit is false for a usage-only chunk, a
+// non-JSON keep-alive line, or a chunk with no text delta.
+func applyStreamChunk(data string, usage **Usage) (text string, emit bool) {
+	var chunk struct {
+		Choices []struct {
+			Delta struct {
+				Content string `json:"content"`
+			} `json:"delta"`
+		} `json:"choices"`
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+		return "", false // keep-alive / comment / non-JSON line
+	}
+	if chunk.Usage != nil {
+		*usage = &Usage{InputTokens: chunk.Usage.PromptTokens, OutputTokens: chunk.Usage.CompletionTokens}
+	}
+	if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+		return chunk.Choices[0].Delta.Content, true
+	}
+	return "", false
 }
 
 // CallTools implements ToolCaller (ADR-0012) over the OpenAI /chat/completions
@@ -222,85 +254,11 @@ func (c *OpenAICompatClient) StreamChat(ctx context.Context, system, prompt stri
 // the ToolCaller security note; the agent endpoint's runNativeToolLoop enforces
 // the re-check).
 func (c *OpenAICompatClient) CallTools(ctx context.Context, system, prompt string, toolSpecs []ToolSpec) (ToolCallResult, error) {
-	msgs := make([]chatMessage, 0, 2)
-	if system != "" {
-		msgs = append(msgs, chatMessage{Role: "system", Content: system})
-	}
-	msgs = append(msgs, chatMessage{Role: "user", Content: prompt})
+	payload := c.buildToolCallPayload(system, prompt, toolSpecs)
 
-	payload := map[string]any{
-		"model":      c.model,
-		"max_tokens": c.maxTokens,
-		"messages":   msgs,
-	}
-	if len(toolSpecs) > 0 {
-		tools := make([]map[string]any, 0, len(toolSpecs))
-		for _, t := range toolSpecs {
-			// When the ToolSpec declares a Parameters schema (ADR-0016 lever #1:
-			// struct-as-contract for tool inputs), advertise it verbatim so the
-			// model knows the exact argument shape. When it does not, fall back to
-			// the permissive object the ADR-0012 minimal seam used: the model may
-			// call the tool with or without free-form arguments.
-			var params any
-			if len(t.Parameters) > 0 {
-				params = t.Parameters // json.RawMessage marshals as its raw JSON
-			} else {
-				params = map[string]any{
-					"type":                 "object",
-					"properties":           map[string]any{},
-					"additionalProperties": true,
-				}
-			}
-			tools = append(tools, map[string]any{
-				"type": "function",
-				"function": map[string]any{
-					"name":        t.Name,
-					"description": t.Description,
-					"parameters":  params,
-				},
-			})
-		}
-		payload["tools"] = tools
-		payload["tool_choice"] = "auto"
-	}
-
-	body, err := json.Marshal(payload)
+	out, err := c.sendToolCallRequest(ctx, payload)
 	if err != nil {
-		return ToolCallResult{}, fmt.Errorf("openai-compat: marshal tool request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return ToolCallResult{}, fmt.Errorf("openai-compat: build tool request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return ToolCallResult{}, fmt.Errorf("openai-compat: tool request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return ToolCallResult{}, fmt.Errorf("openai-compat: tool call status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
-	}
-
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content   string `json:"content"`
-				ToolCalls []struct {
-					Function struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return ToolCallResult{}, fmt.Errorf("openai-compat: decode tool response: %w", err)
+		return ToolCallResult{}, err
 	}
 	if len(out.Choices) == 0 {
 		return ToolCallResult{}, nil
@@ -319,6 +277,107 @@ func (c *OpenAICompatClient) CallTools(ctx context.Context, system, prompt strin
 		})
 	}
 	return res, nil
+}
+
+// buildToolCallPayload assembles the /chat/completions request body for a
+// CallTools invocation: the system/user messages plus, when toolSpecs is
+// non-empty, the "tools" + "tool_choice":"auto" envelope the provider expects.
+func (c *OpenAICompatClient) buildToolCallPayload(system, prompt string, toolSpecs []ToolSpec) map[string]any {
+	msgs := make([]chatMessage, 0, 2)
+	if system != "" {
+		msgs = append(msgs, chatMessage{Role: "system", Content: system})
+	}
+	msgs = append(msgs, chatMessage{Role: "user", Content: prompt})
+
+	payload := map[string]any{
+		"model":      c.model,
+		"max_tokens": c.maxTokens,
+		"messages":   msgs,
+	}
+	if len(toolSpecs) == 0 {
+		return payload
+	}
+
+	tools := make([]map[string]any, 0, len(toolSpecs))
+	for _, t := range toolSpecs {
+		// When the ToolSpec declares a Parameters schema (ADR-0016 lever #1:
+		// struct-as-contract for tool inputs), advertise it verbatim so the
+		// model knows the exact argument shape. When it does not, fall back to
+		// the permissive object the ADR-0012 minimal seam used: the model may
+		// call the tool with or without free-form arguments.
+		var params any
+		if len(t.Parameters) > 0 {
+			params = t.Parameters // json.RawMessage marshals as its raw JSON
+		} else {
+			params = map[string]any{
+				jsonKeyType:            jsonSchemaTypeObject,
+				"properties":           map[string]any{},
+				"additionalProperties": true,
+			}
+		}
+		tools = append(tools, map[string]any{
+			jsonKeyType: "function",
+			"function": map[string]any{
+				"name":        t.Name,
+				"description": t.Description,
+				"parameters":  params,
+			},
+		})
+	}
+	payload["tools"] = tools
+	payload["tool_choice"] = "auto"
+	return payload
+}
+
+// toolCallResponse is the subset of the /chat/completions response shape
+// CallTools needs: the first choice's message content plus any tool calls the
+// provider returned.
+type toolCallResponse struct {
+	Choices []struct {
+		Message struct {
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"message"`
+	} `json:"choices"`
+}
+
+// sendToolCallRequest POSTs payload to the /chat/completions endpoint and
+// decodes the response into a toolCallResponse, translating a non-2xx status
+// or a transport/decode failure into a descriptive error.
+func (c *OpenAICompatClient) sendToolCallRequest(ctx context.Context, payload map[string]any) (toolCallResponse, error) {
+	var out toolCallResponse
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return out, fmt.Errorf("openai-compat: marshal tool request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return out, fmt.Errorf("openai-compat: build tool request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return out, fmt.Errorf("openai-compat: tool request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return out, fmt.Errorf("openai-compat: tool call status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, fmt.Errorf("openai-compat: decode tool response: %w", err)
+	}
+	return out, nil
 }
 
 // rawToolArgs returns the model's tool arguments as raw JSON bytes for

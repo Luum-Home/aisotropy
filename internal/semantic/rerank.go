@@ -54,7 +54,7 @@ func (r LexicalReranker) Rerank(_ context.Context, query string, candidates []Sc
 		n = len(rs)
 	}
 	out := make([]ScoredPoint, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		out[i] = rs[i].p
 	}
 	return out

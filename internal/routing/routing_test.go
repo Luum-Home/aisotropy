@@ -8,8 +8,8 @@ func TestTenantTierString(t *testing.T) {
 		tier TenantTier
 		want string
 	}{
-		{"shared", Shared, "shared"},
-		{"dedicated", Dedicated, "dedicated"},
+		{sharedName, Shared, sharedName},
+		{dedicatedName, Dedicated, dedicatedName},
 		{"invalid", TenantTier(99), "unknown"},
 	}
 	for _, tc := range cases {

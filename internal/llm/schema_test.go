@@ -29,7 +29,7 @@ func TestSchemaFor_DerivesInlineObjectSchema(t *testing.T) {
 		t.Fatalf("schema is not valid JSON: %v\nraw: %s", err, raw)
 	}
 
-	if got := schema["type"]; got != "object" {
+	if got := schema["type"]; got != jsonSchemaTypeObject {
 		t.Errorf("schema type = %v, want object", got)
 	}
 	// No external-reference machinery: providers that reject $ref must accept it.
@@ -74,7 +74,7 @@ func TestSchemaFor_EmptyStructIsValid(t *testing.T) {
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		t.Fatalf("empty-struct schema not valid JSON: %v", err)
 	}
-	if schema["type"] != "object" {
+	if schema["type"] != jsonSchemaTypeObject {
 		t.Errorf("empty-struct schema type = %v, want object", schema["type"])
 	}
 }

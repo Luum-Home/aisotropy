@@ -51,7 +51,7 @@ func TestCircuitBreakerOpensAndRecovers(t *testing.T) {
 	ctx := context.Background()
 
 	// Three consecutive failures trip the breaker.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if _, err := cb.StreamChat(ctx, "", ""); err == nil {
 			t.Fatalf("call %d: expected provider error", i)
 		}
@@ -86,7 +86,7 @@ func TestCircuitBreakerHalfOpenFailureReopens(t *testing.T) {
 	cb.now = func() time.Time { return base }
 	ctx := context.Background()
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, _ = cb.StreamChat(ctx, "", "")
 	}
 	// Open. Cooldown elapses -> half-open trial, but provider still down -> the

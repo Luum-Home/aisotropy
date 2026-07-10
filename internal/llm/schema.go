@@ -62,6 +62,13 @@ type SchemaValidator struct {
 // the caller decide to degrade to decode-only validation.
 func CompileSchema(schema json.RawMessage) (*SchemaValidator, error) {
 	if len(bytes.TrimSpace(schema)) == 0 {
+		//nolint:nilnil // documented no-op contract (see doc comment above and
+		// TestCompileSchema_EmptyIsNoOp): an empty schema is not an error, it
+		// means "no declared argument shape", so (nil, nil) is the correct
+		// signal — callers treat a nil *SchemaValidator as a permissive no-op,
+		// not an error to unwrap. A sentinel error here would break that
+		// contract for existing callers (internal/api/typed_tools.go,
+		// internal/api/mcp_tools.go) that rely on err == nil in this case.
 		return nil, nil
 	}
 	doc, err := jsonschemav6.UnmarshalJSON(bytes.NewReader(schema))

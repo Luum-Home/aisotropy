@@ -25,14 +25,14 @@ func TestRegistryFromEnv_NoCredentials_OnlyStub(t *testing.T) {
 	reg := RegistryFromEnv()
 
 	names := reg.Names()
-	if len(names) != 1 || names[0] != "stub" {
+	if len(names) != 1 || names[0] != stubProviderName {
 		t.Fatalf("Names() = %v, want [stub]", names)
 	}
-	if reg.DefaultName() != "stub" {
-		t.Fatalf("DefaultName() = %q, want %q", reg.DefaultName(), "stub")
+	if reg.DefaultName() != stubProviderName {
+		t.Fatalf("DefaultName() = %q, want %q", reg.DefaultName(), stubProviderName)
 	}
-	if reg.Default().Name() != "stub" {
-		t.Fatalf("Default().Name() = %q, want %q", reg.Default().Name(), "stub")
+	if reg.Default().Name() != stubProviderName {
+		t.Fatalf("Default().Name() = %q, want %q", reg.Default().Name(), stubProviderName)
 	}
 }
 
@@ -48,13 +48,13 @@ func TestRegistryFromEnv_AllCredentials_RegistersAllAndDefaultsToOpenRouter(t *t
 	if len(names) != 4 {
 		t.Fatalf("Names() = %v, want 4 providers (openrouter, openai, anthropic, stub)", names)
 	}
-	for _, want := range []string{"openrouter", "openai", "anthropic", "stub"} {
+	for _, want := range []string{providerOpenRouter, providerOpenAI, providerAnthropic, stubProviderName} {
 		if _, ok := reg.Get(want); !ok {
 			t.Errorf("Get(%q) missing, want registered", want)
 		}
 	}
-	if reg.DefaultName() != "openrouter" {
-		t.Fatalf("DefaultName() = %q, want %q (highest precedence)", reg.DefaultName(), "openrouter")
+	if reg.DefaultName() != providerOpenRouter {
+		t.Fatalf("DefaultName() = %q, want %q (highest precedence)", reg.DefaultName(), providerOpenRouter)
 	}
 }
 
@@ -69,11 +69,11 @@ func TestRegistryFromEnv_OpenAIAndAnthropic_DefaultsToOpenAI(t *testing.T) {
 	if len(names) != 3 {
 		t.Fatalf("Names() = %v, want 3 providers (openai, anthropic, stub)", names)
 	}
-	if _, ok := reg.Get("openrouter"); ok {
-		t.Fatalf("Get(%q) present, want absent (no OPENROUTER_API_KEY set)", "openrouter")
+	if _, ok := reg.Get(providerOpenRouter); ok {
+		t.Fatalf("Get(%q) present, want absent (no OPENROUTER_API_KEY set)", providerOpenRouter)
 	}
-	if reg.DefaultName() != "openai" {
-		t.Fatalf("DefaultName() = %q, want %q", reg.DefaultName(), "openai")
+	if reg.DefaultName() != providerOpenAI {
+		t.Fatalf("DefaultName() = %q, want %q", reg.DefaultName(), providerOpenAI)
 	}
 }
 
@@ -87,10 +87,10 @@ func TestRegistryFromEnv_OnlyAnthropic_DefaultsToAnthropic(t *testing.T) {
 	if len(names) != 2 {
 		t.Fatalf("Names() = %v, want 2 providers (anthropic, stub)", names)
 	}
-	if reg.DefaultName() != "anthropic" {
-		t.Fatalf("DefaultName() = %q, want %q", reg.DefaultName(), "anthropic")
+	if reg.DefaultName() != providerAnthropic {
+		t.Fatalf("DefaultName() = %q, want %q", reg.DefaultName(), providerAnthropic)
 	}
-	c, ok := reg.Get("anthropic")
+	c, ok := reg.Get(providerAnthropic)
 	if !ok {
 		t.Fatal("Get(\"anthropic\") missing")
 	}

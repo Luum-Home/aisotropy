@@ -28,7 +28,7 @@ func TestPressureRisesAsTokensAreDrained(t *testing.T) {
 	ctx := context.Background()
 
 	const burst = 5
-	for i := 0; i < burst; i++ {
+	for i := range burst {
 		ok, err := l.Allow(ctx, "acme")
 		if err != nil {
 			t.Fatal(err)
@@ -53,7 +53,7 @@ func TestPressureFullyDrainedBucketIsOne(t *testing.T) {
 	l.now = func() time.Time { return frozen }
 	ctx := context.Background()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if ok, err := l.Allow(ctx, "acme"); err != nil || !ok {
 			t.Fatalf("drain %d: ok=%v err=%v", i, ok, err)
 		}
@@ -77,7 +77,7 @@ func TestPressureDoesNotConsumeTokens(t *testing.T) {
 	ctx := context.Background()
 
 	// Peek several times before consuming anything.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		p, err := l.Pressure(ctx, "acme")
 		if err != nil {
 			t.Fatal(err)
@@ -88,7 +88,7 @@ func TestPressureDoesNotConsumeTokens(t *testing.T) {
 	}
 
 	// Both burst tokens must still be available.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		ok, err := l.Allow(ctx, "acme")
 		if err != nil || !ok {
 			t.Fatalf("Allow %d after peeking: ok=%v err=%v, want granted", i, ok, err)
@@ -106,7 +106,7 @@ func TestPressureReflectsRefillOverTime(t *testing.T) {
 	ctx := context.Background()
 
 	// Drain the burst.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if ok, _ := l.Allow(ctx, "acme"); !ok {
 			t.Fatalf("drain %d denied", i)
 		}

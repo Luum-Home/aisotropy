@@ -28,7 +28,7 @@ func TestLimiterConcurrentCannotExceedBurst(t *testing.T) {
 	const goroutines = 50
 	var granted int64
 	var wg sync.WaitGroup
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -55,7 +55,7 @@ func TestLimiterSequentialExhaustsThenDenies(t *testing.T) {
 	l.now = func() time.Time { return frozen }
 	ctx := context.Background()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		ok, err := l.Allow(ctx, "acme")
 		if err != nil || !ok {
 			t.Fatalf("request %d: ok=%v err=%v, want granted", i, ok, err)
@@ -78,7 +78,7 @@ func TestLimiterRefillsOverTime(t *testing.T) {
 	ctx := context.Background()
 
 	// Drain the burst.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if ok, _ := l.Allow(ctx, "acme"); !ok {
 			t.Fatalf("drain %d denied", i)
 		}
@@ -89,7 +89,7 @@ func TestLimiterRefillsOverTime(t *testing.T) {
 	// Advance 200ms → 10/s * 0.2s = 2 tokens refilled.
 	now = now.Add(200 * time.Millisecond)
 	got := 0
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if ok, _ := l.Allow(ctx, "acme"); ok {
 			got++
 		}

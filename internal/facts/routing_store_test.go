@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Luum-Home/aisotropy/internal/tenancy"
 )
 
 // fakeRouter routes a fixed set of tenants to their own dedicated resource
@@ -270,11 +272,11 @@ func TestRoutingStore_ConcurrentSaveNoRace(t *testing.T) {
 	var wg sync.WaitGroup
 	const perTenant = 20
 	for _, tenant := range tenants {
-		for i := 0; i < perTenant; i++ {
+		for i := range perTenant {
 			wg.Add(1)
 			go func(tenant string, i int) {
 				defer wg.Done()
-				sc := mustScopeNoFatal(tenant, "user-x")
+				sc := mustScopeNoFatal(ctx, tenant, "user-x")
 				id := tenant + "-" + strconv.Itoa(i)
 				if err := rs.Save(ctx, sc, fact(sc, id, "concurrent content")); err != nil {
 					t.Errorf("concurrent Save(%s, %d): %v", tenant, i, err)
@@ -295,9 +297,11 @@ func TestRoutingStore_ConcurrentSaveNoRace(t *testing.T) {
 
 // mustScopeNoFatal builds a Scope without requiring *testing.T, so it can be
 // called from goroutines spawned inside a test (t.Fatalf is not
-// goroutine-safe to call from anywhere but the test's own goroutine).
-func mustScopeNoFatal(tenant, user string) Scope {
-	sc, err := NewScope(tenant, user)
+// goroutine-safe to call from anywhere but the test's own goroutine). ctx is
+// threaded through (rather than NewScope's internal context.Background()) so
+// the validation honors the caller's cancellation.
+func mustScopeNoFatal(ctx context.Context, tenant, user string) Scope {
+	sc, err := ScopeFromContext(tenancy.WithUser(tenancy.WithTenant(ctx, tenant), user))
 	if err != nil {
 		panic(err)
 	}
@@ -377,7 +381,7 @@ func (c countingStore) Close() error {
 func TestRoutingStore_ConcurrentCloseNoLeak(t *testing.T) {
 	const n = 64
 	dedicated := make(map[string]bool, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		dedicated["t"+strconv.Itoa(i)] = true
 	}
 	router := fakeRouter{dedicated: dedicated}
@@ -400,11 +404,11 @@ func TestRoutingStore_ConcurrentCloseNoLeak(t *testing.T) {
 
 	ctx := context.Background()
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			sc := mustScopeNoFatal("t"+strconv.Itoa(i), "user-x")
+			sc := mustScopeNoFatal(ctx, "t"+strconv.Itoa(i), "user-x")
 			// Either succeeds (opened before Close) or fails closed (after Close);
 			// both are correct. We only require no race and no leak.
 			_ = rs.Save(ctx, sc, fact(sc, "f"+strconv.Itoa(i), "concurrent open"))

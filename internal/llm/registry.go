@@ -7,6 +7,14 @@ import (
 	"sync"
 )
 
+// Registry keys for the built-in providers, shared by every place in this
+// package (and its tests) that registers, looks up, or asserts against them.
+const (
+	providerOpenRouter = "openrouter"
+	providerOpenAI     = "openai"
+	providerAnthropic  = "anthropic"
+)
+
 // Registry holds multiple named provider connections simultaneously. This is
 // the foundation for the runtime being provider-agnostic: instead of a single
 // global Client picked once by FromEnv, a Registry can keep several
@@ -127,23 +135,23 @@ func RegistryFromEnv() *Registry {
 	reg := NewRegistry()
 
 	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
-		reg.Register("openrouter", NewOpenRouterClient(key, firstNonEmpty(
+		reg.Register(providerOpenRouter, NewOpenRouterClient(key, firstNonEmpty(
 			os.Getenv("OPENROUTER_MODEL"), os.Getenv("AISOTROPY_MODEL"))))
 	}
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-		reg.Register("openai", NewOpenAICompatClient(key,
+		reg.Register(providerOpenAI, NewOpenAICompatClient(key,
 			firstNonEmpty(os.Getenv("OPENAI_MODEL"), os.Getenv("AISOTROPY_MODEL")),
-			os.Getenv("OPENAI_BASE_URL"), "openai"))
+			os.Getenv("OPENAI_BASE_URL"), providerOpenAI))
 	}
 	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		reg.Register("anthropic", NewAnthropicClient(key,
+		reg.Register(providerAnthropic, NewAnthropicClient(key,
 			firstNonEmpty(os.Getenv("ANTHROPIC_MODEL"), DefaultAnthropicModel)))
 	}
 	// Always available: a keyless fallback so the SSE path is exercisable
 	// with zero credentials configured (dev/CI).
-	reg.Register("stub", NewStubClient())
+	reg.Register(stubProviderName, NewStubClient())
 
-	for _, name := range []string{"openrouter", "openai", "anthropic", "stub"} {
+	for _, name := range []string{providerOpenRouter, providerOpenAI, providerAnthropic, stubProviderName} {
 		if _, ok := reg.Get(name); ok {
 			_ = reg.SetDefault(name)
 			break

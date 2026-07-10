@@ -63,7 +63,7 @@ func TestRecentLimitsToN(t *testing.T) {
 	wm := newTestStore(t, 100)
 	key := Key{Tenant: "acme", User: "bob", Session: "s1"}
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if err := wm.Append(ctx, key, Message{Role: "user", Content: fmt.Sprintf("msg-%d", i)}); err != nil {
 			t.Fatalf("Append: %v", err)
 		}
@@ -186,7 +186,7 @@ func TestSummaryBufferBoundsWindow(t *testing.T) {
 	key := Key{Tenant: "acme", User: "carol", Session: "s1"}
 
 	const totalMessages = 20
-	for i := 0; i < totalMessages; i++ {
+	for i := range totalMessages {
 		msg := Message{Role: "user", Content: fmt.Sprintf("turn %d", i)}
 		if err := wm.Append(ctx, key, msg); err != nil {
 			t.Fatalf("Append(%d): %v", i, err)
@@ -296,7 +296,7 @@ func TestAsyncCondensationDoesNotBlockAppend(t *testing.T) {
 	// after it returns, so if Append waited on Condense this call would
 	// never come back (and the test would fail on Go's own test timeout,
 	// not on a duration comparison here).
-	for i := 0; i < totalMessages; i++ {
+	for i := range totalMessages {
 		msg := Message{Role: "user", Content: fmt.Sprintf("turn %d", i)}
 		if err := wm.Append(ctx, key, msg); err != nil {
 			t.Fatalf("Append(%d): %v", i, err)

@@ -18,6 +18,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
+	"github.com/Luum-Home/aisotropy/internal/tenancy"
 )
 
 // Sink consolidates one drained outbox event into the facts (FTS5) and semantic
@@ -59,7 +60,10 @@ func (s Sink) consolidateFacts(ctx context.Context, e memory.OutboxEvent) error 
 	if s.Facts == nil || s.Extractor == nil {
 		return nil
 	}
-	scope, err := facts.NewScope(e.Tenant, e.User)
+	// Route identity through the blessed constructor (ADR-0011), threading ctx
+	// (rather than facts.NewScope's internal context.Background()) so the
+	// validation honors the caller's cancellation.
+	scope, err := facts.ScopeFromContext(tenancy.WithUser(tenancy.WithTenant(ctx, e.Tenant), e.User))
 	if err != nil {
 		return fmt.Errorf("consolidation: invalid facts scope: %w", err)
 	}

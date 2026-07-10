@@ -68,8 +68,8 @@ func TestWithOTel_RecordsOneSpanWithGenAIAttributes(t *testing.T) {
 	attrs := span.Attributes()
 
 	system, ok := attrValue(attrs, attrGenAISystem)
-	if !ok || system.AsString() != "stub" {
-		t.Errorf("gen_ai.system = %v (ok=%v), want %q", system, ok, "stub")
+	if !ok || system.AsString() != stubProviderName {
+		t.Errorf("gen_ai.system = %v (ok=%v), want %q", system, ok, stubProviderName)
 	}
 
 	op, ok := attrValue(attrs, attrGenAIOperationName)

@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/qdrant/go-client/qdrant"
@@ -47,7 +48,7 @@ func OpenQdrant(ctx context.Context, cfg QdrantConfig) (*QdrantStore, error) {
 		cfg.Collection = "aisotropy_knowledge"
 	}
 	if cfg.Dim <= 0 {
-		return nil, fmt.Errorf("semantic: qdrant requires a positive vector dimension")
+		return nil, errors.New("semantic: qdrant requires a positive vector dimension")
 	}
 
 	client, err := qdrant.NewClient(&qdrant.Config{

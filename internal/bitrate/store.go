@@ -77,14 +77,14 @@ func OpenStore(dsn string) (*Store, error) {
 	if inMemory {
 		db.SetMaxOpenConns(1)
 	} else {
-		if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
+		if _, err := db.ExecContext(context.Background(), `PRAGMA journal_mode=WAL;`); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("bitrate: enable WAL: %w", err)
 		}
 	}
 
 	s := &Store{db: db, now: time.Now}
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.ExecContext(context.Background(), schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("bitrate: migrate schema: %w", err)
 	}
@@ -94,10 +94,12 @@ func OpenStore(dsn string) (*Store, error) {
 // scope validates tenant/user through internal/tenancy — the same path the facts
 // tier uses — so the two tiers can never drift on what a valid identity is. It is
 // the isolation gate's front door: no scoped statement runs on an unvalidated
-// identity.
-func scope(tenant, user string) error {
-	ctx := tenancy.WithUser(tenancy.WithTenant(context.Background(), tenant), user)
-	ts, err := tenancy.FromContext(ctx)
+// identity. ctx is threaded through (rather than derived fresh from
+// context.Background()) so the validation honors the caller's cancellation and
+// carries any tenancy already attached to the request context.
+func scope(ctx context.Context, tenant, user string) error {
+	scoped := tenancy.WithUser(tenancy.WithTenant(ctx, tenant), user)
+	ts, err := tenancy.FromContext(scoped)
 	if err != nil {
 		return fmt.Errorf("bitrate: invalid scope: %w", err)
 	}
@@ -111,7 +113,7 @@ func scope(tenant, user string) error {
 // sample_id within scope: re-reserving the same turn (e.g. a client retry)
 // upserts rather than duplicating. Satisfies SampleRecorder.
 func (s *Store) Reserve(ctx context.Context, tenantID, userID, sessionID, sampleID, text string) error {
-	if err := scope(tenantID, userID); err != nil {
+	if err := scope(ctx, tenantID, userID); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `
@@ -168,7 +170,7 @@ func (s *Store) HeldOut(ctx context.Context, limit int) ([]Sample, error) {
 // Save upserts a measurement within its (TenantID, UserID). Idempotent on
 // sample_id within scope, so re-scoring a sample refreshes rather than duplicates.
 func (s *Store) Save(ctx context.Context, m Measurement) error {
-	if err := scope(m.TenantID, m.UserID); err != nil {
+	if err := scope(ctx, m.TenantID, m.UserID); err != nil {
 		return err
 	}
 	at := m.MeasuredAt
@@ -196,7 +198,7 @@ func (s *Store) Save(ctx context.Context, m Measurement) error {
 // Latest returns the most recent measurement for (tenant, user), or ok=false if
 // there is none. Scoped: the (tenant_id, user_id) predicate is the isolation gate.
 func (s *Store) Latest(ctx context.Context, tenant, user string) (Measurement, bool, error) {
-	if err := scope(tenant, user); err != nil {
+	if err := scope(ctx, tenant, user); err != nil {
 		return Measurement{}, false, err
 	}
 	row := s.db.QueryRowContext(ctx, `
@@ -219,7 +221,7 @@ func (s *Store) Latest(ctx context.Context, tenant, user string) (Measurement, b
 // Series returns every measurement for (tenant, user), oldest first — the input
 // to a per-tenant trend. Scoped.
 func (s *Store) Series(ctx context.Context, tenant, user string) ([]Measurement, error) {
-	if err := scope(tenant, user); err != nil {
+	if err := scope(ctx, tenant, user); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `

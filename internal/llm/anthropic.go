@@ -73,57 +73,76 @@ func (a *AnthropicClient) StreamChat(ctx context.Context, system, prompt string)
 				return
 			}
 
-			event := stream.Current()
-			switch event.Type {
-			case "message_start":
-				start := event.AsMessageStart()
-				usage.InputTokens = int(start.Message.Usage.InputTokens)
-				usage.OutputTokens = int(start.Message.Usage.OutputTokens)
-				sawUsage = true
-				continue
-			case "message_delta":
-				delta := event.AsMessageDelta()
-				usage.OutputTokens = int(delta.Usage.OutputTokens)
-				sawUsage = true
-				continue
-			case "content_block_delta":
-				// handled below
-			default:
-				continue
-			}
-
-			delta := event.AsContentBlockDelta().Delta
-			if delta.Type != "text_delta" || delta.Text == "" {
+			text, emit := anthropicEventText(stream.Current(), &usage, &sawUsage)
+			if !emit {
 				continue
 			}
 
 			select {
 			case <-ctx.Done():
 				return
-			case out <- Token{Text: delta.Text}:
+			case out <- Token{Text: text}:
 			}
 		}
 
-		if err := stream.Err(); err != nil && ctx.Err() == nil {
-			// Propagate the mid-stream error instead of masking it as a clean Done.
-			slog.ErrorContext(ctx, "anthropic stream error", "err", err)
-			select {
-			case <-ctx.Done():
-			case out <- Token{Err: err}:
-			}
-			return
-		}
-
-		done := Token{Done: true}
-		if sawUsage {
-			u := usage
-			done.Usage = &u
-		}
-		select {
-		case <-ctx.Done():
-		case out <- done:
-		}
+		finishAnthropicStream(ctx, stream.Err(), out, usage, sawUsage)
 	}()
 
 	return out, nil
+}
+
+// anthropicEventText processes one Anthropic stream event: it folds any
+// token-usage the event carries ("message_start" / "message_delta") into
+// usage/sawUsage, and — for a "content_block_delta" text event — returns the
+// text to emit. emit is false for every event that carries no emittable text
+// (usage-only events, non-text deltas, and any other event type).
+func anthropicEventText(event anthropic.MessageStreamEventUnion, usage *Usage, sawUsage *bool) (text string, emit bool) {
+	switch event.Type {
+	case "message_start":
+		start := event.AsMessageStart()
+		usage.InputTokens = int(start.Message.Usage.InputTokens)
+		usage.OutputTokens = int(start.Message.Usage.OutputTokens)
+		*sawUsage = true
+		return "", false
+	case "message_delta":
+		delta := event.AsMessageDelta()
+		usage.OutputTokens = int(delta.Usage.OutputTokens)
+		*sawUsage = true
+		return "", false
+	case "content_block_delta":
+		delta := event.AsContentBlockDelta().Delta
+		if delta.Type != "text_delta" || delta.Text == "" {
+			return "", false
+		}
+		return delta.Text, true
+	default:
+		return "", false
+	}
+}
+
+// finishAnthropicStream emits the terminal Token(s) once the stream's event
+// loop has exited: a genuine mid-stream error (not just ctx cancellation)
+// becomes an error Token instead of being masked as a clean Done; otherwise
+// it emits Done, attaching the accumulated Usage when the stream reported any
+// (message_start / message_delta events were seen).
+func finishAnthropicStream(ctx context.Context, streamErr error, out chan<- Token, usage Usage, sawUsage bool) {
+	if streamErr != nil && ctx.Err() == nil {
+		// Propagate the mid-stream error instead of masking it as a clean Done.
+		slog.ErrorContext(ctx, "anthropic stream error", "err", streamErr)
+		select {
+		case <-ctx.Done():
+		case out <- Token{Err: streamErr}:
+		}
+		return
+	}
+
+	done := Token{Done: true}
+	if sawUsage {
+		u := usage
+		done.Usage = &u
+	}
+	select {
+	case <-ctx.Done():
+	case out <- done:
+	}
 }

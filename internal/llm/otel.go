@@ -219,86 +219,130 @@ func (o *otelClient) StreamChat(ctx context.Context, system, prompt string) (<-c
 	return out, nil
 }
 
+// streamTraceState accumulates the per-call metrics forwardAndTrace records
+// on the span as tokens flow through: time-to-first-token, delta count, the
+// terminal (real, provider-reported) Usage when the stream supplied one, and
+// whatever error ended the loop (a Token.Err or ctx cancellation).
+type streamTraceState struct {
+	start        time.Time
+	ttft         time.Duration
+	ttftRecorded bool
+	deltaCount   int
+	usage        *Usage
+	finishErr    error
+}
+
+// observe folds one forwarded Token's observable effects into st: the first
+// non-empty text delta's latency (TTFT), the running delta count, the
+// terminal Usage (when the provider supplied one), and the terminal error
+// (when the Token itself carries one).
+func (st *streamTraceState) observe(tok Token) {
+	if tok.Text != "" {
+		st.deltaCount++
+		if !st.ttftRecorded {
+			st.ttftRecorded = true
+			st.ttft = time.Since(st.start)
+		}
+	}
+	if tok.Usage != nil {
+		st.usage = tok.Usage
+	}
+	if tok.Err != nil {
+		st.finishErr = tok.Err
+	}
+}
+
+// cancel records ctx's cancellation as the terminal error and adds the
+// "chat.cancelled" span event — but only if no terminal error was already
+// recorded (a Token.Err that raced with cancellation wins, matching the
+// original single-select loop's priority).
+func (st *streamTraceState) cancel(ctx context.Context, span trace.Span) {
+	if st.finishErr != nil {
+		return
+	}
+	st.finishErr = ctx.Err()
+	span.AddEvent("chat.cancelled")
+}
+
+// finish sets every gen_ai/aisotropy span attribute st accumulated, records
+// st.finishErr (or Ok when none), and ends the span. Deferred by
+// forwardAndTrace so it runs exactly once regardless of which loop exit path
+// was taken.
+func (st *streamTraceState) finish(span trace.Span) {
+	attrs := []attribute.KeyValue{
+		attribute.Int(attrStreamDeltaCount, st.deltaCount),
+		attribute.Int64(attrDurationMillis, time.Since(st.start).Milliseconds()),
+	}
+	if st.usage != nil {
+		// Real, provider-reported counts only — never derived from
+		// deltaCount above.
+		attrs = append(attrs,
+			attribute.Int(attrGenAIInputTokens, st.usage.InputTokens),
+			attribute.Int(attrGenAIOutputTokens, st.usage.OutputTokens),
+		)
+	}
+	if st.ttftRecorded {
+		attrs = append(attrs, attribute.Int64(attrTTFTMillis, st.ttft.Milliseconds()))
+	}
+	span.SetAttributes(attrs...)
+
+	if st.finishErr != nil {
+		span.RecordError(st.finishErr)
+		span.SetStatus(codes.Error, st.finishErr.Error())
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
+	span.End()
+}
+
 // forwardAndTrace ranges over in, forwarding every Token to out unchanged,
 // while recording TTFT/duration/delta-count attributes (and REAL token usage
 // when the terminal Token carries one, see llm.go's Usage) and terminating
 // the span exactly once when the loop ends (in closes, a Token.Err arrives,
 // or ctx is cancelled).
 func forwardAndTrace(ctx context.Context, span trace.Span, in <-chan Token, out chan<- Token) {
-	start := time.Now()
-	var ttft time.Duration
-	ttftRecorded := false
-	deltaCount := 0
-	var usage *Usage
-	var finishErr error
+	st := &streamTraceState{start: time.Now()}
+	defer close(out)
+	defer st.finish(span)
 
-	defer func() {
-		attrs := []attribute.KeyValue{
-			attribute.Int(attrStreamDeltaCount, deltaCount),
-			attribute.Int64(attrDurationMillis, time.Since(start).Milliseconds()),
-		}
-		if usage != nil {
-			// Real, provider-reported counts only — never derived from
-			// deltaCount above.
-			attrs = append(attrs,
-				attribute.Int(attrGenAIInputTokens, usage.InputTokens),
-				attribute.Int(attrGenAIOutputTokens, usage.OutputTokens),
-			)
-		}
-		if ttftRecorded {
-			attrs = append(attrs, attribute.Int64(attrTTFTMillis, ttft.Milliseconds()))
-		}
-		span.SetAttributes(attrs...)
+	forwardTokens(ctx, span, in, out, st)
+}
 
-		if finishErr != nil {
-			span.RecordError(finishErr)
-			span.SetStatus(codes.Error, finishErr.Error())
-		} else {
-			span.SetStatus(codes.Ok, "")
-		}
-		span.End()
-		close(out)
-	}()
-
-loop:
+// forwardTokens is forwardAndTrace's core loop: it ranges over in, honoring
+// ctx cancellation on both the read and the out<- send, forwards every Token
+// to out unchanged, and folds each Token's observable effects into st. It
+// returns when in closes, a Token signals Done/Err, or ctx is cancelled.
+func forwardTokens(ctx context.Context, span trace.Span, in <-chan Token, out chan<- Token, st *streamTraceState) {
 	for {
 		select {
 		case <-ctx.Done():
-			finishErr = ctx.Err()
-			span.AddEvent("chat.cancelled")
-			break loop
+			st.cancel(ctx, span)
+			return
 		case tok, ok := <-in:
 			if !ok {
-				break loop
+				return
 			}
-			if tok.Text != "" {
-				deltaCount++
-				if !ttftRecorded {
-					ttftRecorded = true
-					ttft = time.Since(start)
-				}
+			st.observe(tok)
+			if !sendTracedToken(ctx, span, out, tok, st) {
+				return
 			}
-			if tok.Usage != nil {
-				usage = tok.Usage
-			}
-			if tok.Err != nil {
-				finishErr = tok.Err
-			}
-
-			select {
-			case out <- tok:
-			case <-ctx.Done():
-				if finishErr == nil {
-					finishErr = ctx.Err()
-					span.AddEvent("chat.cancelled")
-				}
-				break loop
-			}
-
 			if tok.Done || tok.Err != nil {
-				break loop
+				return
 			}
 		}
+	}
+}
+
+// sendTracedToken sends tok to out, honoring ctx cancellation on the send. It
+// returns false when forwardTokens' loop should stop (ctx was cancelled
+// mid-send, recorded into st via cancel).
+func sendTracedToken(ctx context.Context, span trace.Span, out chan<- Token, tok Token, st *streamTraceState) bool {
+	select {
+	case out <- tok:
+		return true
+	case <-ctx.Done():
+		st.cancel(ctx, span)
+		return false
 	}
 }
 
