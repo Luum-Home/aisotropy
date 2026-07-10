@@ -180,7 +180,7 @@ func TestReflectAutoFallsBackToOwnOnGollemFailure(t *testing.T) {
 		return out, nil
 	}
 
-	out, attempts, backend, err := ReflectAuto[gollemTestOutput](context.Background(), client, "system", "hello", decode, nil, 3)
+	out, attempts, backend, _, err := ReflectAuto[gollemTestOutput](context.Background(), client, "system", "hello", decode, nil, 3)
 	if err != nil {
 		t.Fatalf("ReflectAuto returned unexpected error: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestReflectAutoDefaultsToGollem(t *testing.T) {
 		return out, nil
 	}
 
-	out, _, backend, err := ReflectAuto[gollemTestOutput](context.Background(), client, "system", "hello", decode, nil, 3)
+	out, _, backend, _, err := ReflectAuto[gollemTestOutput](context.Background(), client, "system", "hello", decode, nil, 3)
 	if err != nil {
 		t.Fatalf("ReflectAuto returned unexpected error: %v", err)
 	}

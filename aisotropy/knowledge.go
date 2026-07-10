@@ -108,6 +108,31 @@ func (a *App) ensureSemantic(ctx context.Context) (semantic.Store, semantic.Embe
 	return a.semanticStore, a.embedder, a.semanticErr
 }
 
+// Close releases resources this App lazily memoized outside of Run's own
+// lifecycle — currently, the semantic store ensureSemantic built (a Qdrant
+// gRPC connection, when QDRANT_HOST is configured; a no-op for the default
+// in-memory store).
+//
+// Run() manages its own graceful-shutdown lifecycle and already closes the
+// semantic store itself before returning, so Close only matters for SDK-only
+// consumers that call IngestKnowledge/IngestTenantKnowledge/DeleteKnowledge/
+// DeleteTenantKnowledge on an App that never calls Run — those callers
+// should `defer app.Close()` so the semantic store's underlying resources
+// are released when the App goes out of scope.
+//
+// Idempotent (safe to call more than once — a repeat call returns the same
+// result without closing twice) and nil-safe (an App whose semantic store
+// was never built, because neither IngestKnowledge nor Run ever ran,
+// returns nil without touching anything).
+func (a *App) Close() error {
+	a.closeOnce.Do(func() {
+		if a.semanticStore != nil {
+			a.closeErr = a.semanticStore.Close()
+		}
+	})
+	return a.closeErr
+}
+
 // IngestKnowledge chunks, embeds, and stores docs as KindDocument vectors
 // scoped to (tenant, user) — the SDK arm of the dual-surface ingestion
 // capability (ADR-0018; the HTTP arm is POST .../knowledge). tenant/user are

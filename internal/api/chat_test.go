@@ -12,14 +12,26 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 )
 
 // newChatOnlyRouter builds a router with only the non-streaming chat
-// endpoint registered, for tests that don't need the SSE endpoint too.
+// endpoint registered, for tests that don't need the SSE endpoint too. meter
+// is passed straight through to Register (nil is fine — see
+// newChatOnlyRouterWithMeter for the D.3 cost-accounting test).
 func newChatOnlyRouter(t *testing.T, client llm.Client, wm *memory.WorkingMemory) http.Handler {
+	t.Helper()
+	return newChatOnlyRouterWithMeter(t, client, wm, nil)
+}
+
+// newChatOnlyRouterWithMeter is newChatOnlyRouter with an explicit
+// *costmeter.Meter, for TestChat_RecordsCostToSharedMeter (D.3: the
+// non-streaming /chat route now records to the same shared meter the
+// streaming route uses).
+func newChatOnlyRouterWithMeter(t *testing.T, client llm.Client, wm *memory.WorkingMemory, meter *costmeter.Meter) http.Handler {
 	t.Helper()
 	router := chi.NewRouter()
 	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy-test", "0.1.0"))
@@ -32,7 +44,7 @@ func newChatOnlyRouter(t *testing.T, client llm.Client, wm *memory.WorkingMemory
 			t.Errorf("facts store close: %v", err)
 		}
 	})
-	Register(humaAPI, client, wm, store, nil, nil, nil)
+	Register(humaAPI, client, wm, store, nil, nil, nil, meter)
 	return router
 }
 
@@ -190,5 +202,46 @@ func TestChat_FailsClosedOnPersistentSchemaViolation(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Role != "user" {
 		t.Fatalf("Recent returned %+v, want exactly 1 user message (no assistant turn persisted on failure)", got)
+	}
+}
+
+// TestChat_RecordsCostToSharedMeter is the D.3 acceptance criterion: unified
+// cost accounting means the non-streaming /chat route (the reflection path)
+// now records real usage to the SAME *costmeter.Meter the streaming route
+// already used — previously GET /costs only ever reflected /chat/stream
+// traffic. StubClient reports a deterministic non-zero Usage on its terminal
+// token (see internal/llm/stub.go's stubUsageFor), which flows through
+// llm.ReflectAuto's Gollem path (core.ReflectResult.Usage) into the meter.
+func TestChat_RecordsCostToSharedMeter(t *testing.T) {
+	wm := newTestWorkingMemory(t)
+	meter := costmeter.New()
+	handler := newChatOnlyRouterWithMeter(t, llm.NewStubClient(), wm, meter)
+
+	body, err := json.Marshal(ChatRequest{Prompt: "hi", SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/tenant/acme/user/alice/chat", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	stats, ok := meter.Stats("acme")
+	if !ok {
+		t.Fatal("expected the shared meter to have recorded a call for tenant \"acme\", got none")
+	}
+	if stats.Requests != 1 {
+		t.Errorf("Requests = %d, want 1", stats.Requests)
+	}
+	if stats.InputTokens <= 0 {
+		t.Errorf("InputTokens = %d, want > 0 (StubClient reports non-zero deterministic usage)", stats.InputTokens)
+	}
+	if stats.OutputTokens <= 0 {
+		t.Errorf("OutputTokens = %d, want > 0 (StubClient reports non-zero deterministic usage)", stats.OutputTokens)
 	}
 }

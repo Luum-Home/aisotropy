@@ -52,6 +52,13 @@ type ReflectResult[T any] struct {
 	Output     T
 	Attempts   int
 	RawOutputs []string
+	// Usage carries the real provider-reported token counts for the run, when
+	// available (see ReflectAuto). The homegrown Reflect[T] loop below has no
+	// usage-carrying return slot on its GenerateFunc contract, so this stays
+	// the zero value on that path — a documented gap, not a bug: real usage
+	// accounting for structured output is a Gollem-path capability (see
+	// gollem.go's toModelResponse/generateFull).
+	Usage Usage
 }
 
 // Reflect runs the minimal self-repair loop: invokes gen, validates the

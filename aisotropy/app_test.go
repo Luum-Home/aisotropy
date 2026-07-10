@@ -69,6 +69,34 @@ func TestNewAppliesOptions(t *testing.T) {
 	}
 }
 
+// TestFactMinImportanceFromEnv is the C.2 acceptance criterion: the
+// engram.Store.MinImportance gate (ADR-0017 open question #2, Fact-kind
+// dual-indexing) is configurable via AISOTROPY_FACT_MIN_IMPORTANCE, defaults
+// to 0.0 (always dual-index — no behavior change from before this was
+// configurable) when unset, and falls back to the same default with a
+// logged warning on an unparsable value.
+func TestFactMinImportanceFromEnv(t *testing.T) {
+	t.Run("unset defaults to 0.0", func(t *testing.T) {
+		if got := factMinImportanceFromEnv(); got != defaultFactMinImportance {
+			t.Errorf("factMinImportanceFromEnv() = %v, want default %v", got, defaultFactMinImportance)
+		}
+	})
+
+	t.Run("parses a valid float", func(t *testing.T) {
+		t.Setenv("AISOTROPY_FACT_MIN_IMPORTANCE", "0.7")
+		if got := factMinImportanceFromEnv(); got != 0.7 {
+			t.Errorf("factMinImportanceFromEnv() = %v, want 0.7", got)
+		}
+	})
+
+	t.Run("invalid value falls back to default", func(t *testing.T) {
+		t.Setenv("AISOTROPY_FACT_MIN_IMPORTANCE", "not-a-float")
+		if got := factMinImportanceFromEnv(); got != defaultFactMinImportance {
+			t.Errorf("factMinImportanceFromEnv() = %v, want default %v on invalid input", got, defaultFactMinImportance)
+		}
+	})
+}
+
 // DemoStubExecutor is a trivial ToolExecutor used only by the builder tests.
 type DemoStubExecutor struct{}
 

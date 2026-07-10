@@ -33,6 +33,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
@@ -153,10 +154,16 @@ func withIdentity(ctx context.Context, tenant, user, session string) (context.Co
 // shared *memory.WorkingMemory instead of creating them here — no global
 // state, consistent with isolation via ctx (see docs/vision/principles.md).
 // persona supplies the base system prompt per product_id (Phase 8 adoption
-// seam); nil selects the built-in default persona.
+// seam); nil selects the built-in default persona. meter, when non-nil, is
+// the SAME *costmeter.Meter the streaming route (RegisterStream) records
+// to — unifying cost accounting onto one meter so GET /costs reflects both
+// routes (previously only the streaming path recorded real cost; the
+// reflection path's Gollem CostTracker has empty pricing and was never
+// surfaced here). A nil meter skips recording (keeps existing tests that
+// pass nil working unchanged).
 //
-//nolint:gocognit // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
-func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, persona PersonaProvider) {
+//nolint:gocognit,funlen // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
+func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, persona PersonaProvider, meter *costmeter.Meter) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat",
 		Method:      httpMethodPost,
@@ -232,7 +239,7 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 			slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
 		}
 
-		reply, attempts, backend, err := llm.ReflectAuto[chatStructuredReply](
+		reply, attempts, backend, usage, err := llm.ReflectAuto[chatStructuredReply](
 			ctx, client, system, in.Body.Prompt, decodeChatReply, validateChatReply, chatMaxReflectionRetries,
 		)
 		if err != nil {
@@ -249,6 +256,16 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 		// attempt (handled above) never reaches this line.
 		if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: reply.Reply}); err != nil {
 			slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
+		}
+
+		// Unify cost accounting onto the shared meter (same price basis
+		// RegisterStream uses): the homegrown Reflect[T] fallback reports a
+		// zero Usage (documented, see llm.ReflectResult.Usage), so this
+		// records 0 cost for that path rather than silently skipping it —
+		// the request count/attempt is still real signal for /costs.
+		if meter != nil {
+			cost := costmeter.EstimateCostUSD(usage.InputTokens, usage.OutputTokens, costInputPricePer1M, costOutputPricePer1M)
+			meter.Record(in.TenantID, usage.InputTokens, usage.OutputTokens, cost)
 		}
 
 		slog.InfoContext(ctx, "chat request completed",

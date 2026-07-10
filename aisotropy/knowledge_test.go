@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -342,6 +343,62 @@ func TestRun_KnowledgeRouteInOpenAPI(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("Run did not return after ctx cancellation")
+	}
+}
+
+// closeCountingStore wraps a semantic.Store to count Close calls, the same
+// pattern internal/semantic/routing_store_test.go uses, so a test can assert
+// idempotency (repeated Close calls do not close the underlying store twice).
+type closeCountingStore struct {
+	semantic.Store
+	closed *int32
+}
+
+func (c closeCountingStore) Close() error {
+	atomic.AddInt32(c.closed, 1)
+	return c.Store.Close()
+}
+
+// TestApp_Close_NilSafeWhenSemanticStoreNeverBuilt is the C.1 acceptance
+// criterion's nil-safety half: an App on which neither IngestKnowledge nor
+// Run was ever called (so ensureSemantic never ran and a.semanticStore is
+// still nil) returns nil from Close without touching anything.
+func TestApp_Close_NilSafeWhenSemanticStoreNeverBuilt(t *testing.T) {
+	a := New()
+	if err := a.Close(); err != nil {
+		t.Fatalf("Close on an App with no semantic store built = %v, want nil", err)
+	}
+}
+
+// TestApp_Close_ClosesMemoizedSemanticStoreIdempotently is the C.1 acceptance
+// criterion: Close closes the semantic store ensureSemantic memoized, and a
+// second Close call does not close it again (idempotent — verified via a
+// wrapped store's Close call count).
+func TestApp_Close_ClosesMemoizedSemanticStoreIdempotently(t *testing.T) {
+	a := New(WithLLM(llm.NewStubClient()))
+
+	// Force-build the semantic store the same way IngestKnowledge would (SDK-
+	// only usage, no Run), then wrap the memoized store so Close calls are
+	// counted.
+	if _, _, err := a.ensureSemantic(context.Background()); err != nil {
+		t.Fatalf("ensureSemantic: %v", err)
+	}
+	var closed int32
+	a.semanticStore = closeCountingStore{Store: a.semanticStore, closed: &closed}
+
+	if err := a.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := atomic.LoadInt32(&closed); got != 1 {
+		t.Fatalf("Close calls on the underlying store = %d, want 1", got)
+	}
+
+	// Idempotent: a second Close must not close the store again.
+	if err := a.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if got := atomic.LoadInt32(&closed); got != 1 {
+		t.Fatalf("Close calls on the underlying store after a second Close = %d, want 1 (idempotent)", got)
 	}
 }
 

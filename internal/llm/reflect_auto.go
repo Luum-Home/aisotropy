@@ -51,6 +51,14 @@ func ReflectionBackendFromEnv() ReflectionBackend {
 // business validation over the already-decoded T, with the shape expected
 // by core.RunWithReflection (also reused here for the homegrown path):
 // "" => accepted, non-empty => request correction with that feedback.
+//
+// usage carries the real provider-reported token counts for the run (see
+// ReflectResult.Usage): populated from core.ReflectResult.Usage on the
+// Gollem path, left at its zero value on the homegrown Reflect[T] fallback
+// path (which has no usage-carrying return slot — documented, not a bug).
+// This is what lets callers (e.g. internal/api.Register's /chat route)
+// record real cost to the shared costmeter.Meter for the reflection path,
+// the same way chat_stream.go already does for the streaming path.
 func ReflectAuto[T any](
 	ctx context.Context,
 	client Client,
@@ -58,19 +66,24 @@ func ReflectAuto[T any](
 	decode ValidateFunc[T],
 	business func(ctx context.Context, out T) (feedback string, err error),
 	maxRetries int,
-) (out T, attempts int, backend ReflectionBackend, err error) {
+) (out T, attempts int, backend ReflectionBackend, usage Usage, err error) {
 	backend = ReflectionBackendFromEnv()
 
 	if backend == ReflectionBackendGollem {
 		res, gerr := GollemReflect[T](ctx, client, system, prompt, business, maxRetries)
 		if gerr == nil {
-			return res.Output, res.Iterations, ReflectionBackendGollem, nil
+			result := ReflectResult[T]{
+				Output:   res.Output,
+				Attempts: res.Iterations,
+				Usage:    Usage{InputTokens: res.Usage.InputTokens, OutputTokens: res.Usage.OutputTokens},
+			}
+			return result.Output, result.Attempts, ReflectionBackendGollem, result.Usage, nil
 		}
 		if ctx.Err() != nil {
 			// Client cancellation: no point retrying with the homegrown
 			// backend, it will cut at the same point.
 			var zero T
-			return zero, 0, ReflectionBackendGollem, gerr
+			return zero, 0, ReflectionBackendGollem, Usage{}, gerr
 		}
 
 		slog.WarnContext(ctx, "gollem reflection failed, falling back to homegrown Reflect[T] (ADR-0008 fallback)",
@@ -108,5 +121,5 @@ func ReflectAuto[T any](
 	}
 
 	result, rerr := Reflect[T](ctx, gen, validate, prompt, maxRetries)
-	return result.Output, result.Attempts, ReflectionBackendOwn, rerr
+	return result.Output, result.Attempts, ReflectionBackendOwn, result.Usage, rerr
 }

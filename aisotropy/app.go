@@ -71,6 +71,11 @@ const (
 	// fallback (AISOTROPY_SEMANTIC_TURN_MAX) when the env var is unset or
 	// invalid.
 	defaultSemanticTurnMax = 500
+	// defaultFactMinImportance is the engram.Store.MinImportance fallback
+	// (AISOTROPY_FACT_MIN_IMPORTANCE) when the env var is unset or invalid:
+	// 0.0, i.e. always dual-index (ADR-0017 phase 2's original behavior, no
+	// change from before this became configurable).
+	defaultFactMinImportance = 0.0
 	// readinessProbeTimeout bounds each dependency probe on GET /health.
 	readinessProbeTimeout = 2 * time.Second
 	// healthProbeTenant is the reserved identity the readiness probes scope their
@@ -120,6 +125,12 @@ type App struct {
 	semanticOnce  sync.Once
 	semanticStore semantic.Store
 	semanticErr   error
+
+	// closeOnce/closeErr back Close (below): idempotent release of resources
+	// this App memoized outside of Run's own lifecycle (currently: the lazily
+	// built semantic store).
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // Option configures an App at construction time. Options are applied in order;
@@ -282,20 +293,29 @@ func (a *App) Run(ctx context.Context) error {
 		bptSampler = bs
 	}
 
+	// factMinImportance (ADR-0017 open question #2, now configurable via
+	// AISOTROPY_FACT_MIN_IMPORTANCE): the same gate value threads into every
+	// engram.Store facade this App builds, so "a fact and its Fact-kind
+	// vector live and die together" is decided consistently regardless of
+	// which path (consolidation sink vs. sleep-cycle dedup) constructed the
+	// facade.
+	factMinImportance := factMinImportanceFromEnv()
+
 	// The Fact-kind aggregate facade (ADR-0017 phase 2): the sole owner of
 	// "a fact and its Fact-kind vector live and die together". Every
 	// Fact-kind vector mutation — from consolidation's fact writes to the
 	// sleep cycle's dedup deletes below — routes through this facade, never
 	// semanticStore directly.
-	factEngram := engram.Store{Facts: factsStore, Semantic: semanticStore, Embedder: embedder}
+	factEngram := engram.Store{Facts: factsStore, Semantic: semanticStore, Embedder: embedder, MinImportance: factMinImportance}
 
 	// Consolidation sink (Phase 5 outbox): distils each drained event into the
 	// facts + semantic tiers idempotently.
 	sink := consolidation.Sink{
-		Facts:     factsStore,
-		Extractor: factsExtractor,
-		Semantic:  semanticStore,
-		Embedder:  embedder,
+		Facts:         factsStore,
+		Extractor:     factsExtractor,
+		Semantic:      semanticStore,
+		Embedder:      embedder,
+		MinImportance: factMinImportance,
 	}
 
 	// Cold-boot reconciliation, then the steady-state worker.
@@ -495,7 +515,7 @@ func (a *App) Run(ctx context.Context) error {
 		}},
 	).Handler())
 
-	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry, persona)
+	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry, persona, costMeter)
 	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient, semanticStore, embedder, persona, a.inPricePer1M, a.outPricePer1M, bptSampler)
 	// Knowledge ingestion (ADR-0018): the HTTP arm of the dual-surface
 	// capability, sharing the exact same semantic store/embedder pair the
@@ -684,6 +704,24 @@ func semanticTurnMaxFromEnv() int {
 		slog.Warn("invalid AISOTROPY_SEMANTIC_TURN_MAX; using default", "value", v, "default", defaultSemanticTurnMax)
 	}
 	return defaultSemanticTurnMax
+}
+
+// factMinImportanceFromEnv parses AISOTROPY_FACT_MIN_IMPORTANCE (a float) for
+// engram.Store.MinImportance (ADR-0017 open question #2 / phase 2's
+// Fact-kind dual-indexing gate): a fact's content is embedded into a
+// Fact-kind vector only when its Importance is >= this threshold. Falls back
+// to defaultFactMinImportance (0.0, i.e. always dual-index — no behavior
+// change from before this was configurable) when unset or unparsable. A
+// deployment can raise this to bound embedding cost by skipping
+// low-importance facts.
+func factMinImportanceFromEnv() float64 {
+	if v := os.Getenv("AISOTROPY_FACT_MIN_IMPORTANCE"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+		slog.Warn("invalid AISOTROPY_FACT_MIN_IMPORTANCE; using default", "value", v, "default", defaultFactMinImportance)
+	}
+	return defaultFactMinImportance
 }
 
 // openBitrateStore builds the Bet 6 bpt store: on-disk SQLite under

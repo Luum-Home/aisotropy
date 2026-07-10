@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
@@ -38,7 +39,7 @@ func newTestRouter(t *testing.T, client llm.Client, wm *memory.WorkingMemory) ht
 
 	router := chi.NewRouter()
 	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy-test", "0.1.0"))
-	Register(humaAPI, client, wm, factsStore, nil, nil, nil)
+	Register(humaAPI, client, wm, factsStore, nil, nil, nil, nil)
 	RegisterStream(humaAPI, client, wm, factsStore, nil, nil, nil, nil, nil, nil, nil, 0, 0, nil)
 	return router
 }
@@ -448,5 +449,131 @@ func TestHydrateSystemPrompt_TenantSharedExcludesFactAndTurn(t *testing.T) {
 	}
 	if strings.Contains(prompt, "TENANT-SHARED-TURN-MARKER-SHOULD-NOT-APPEAR") {
 		t.Fatalf("tenant-shared Turn-kind point leaked into hydration: %s", prompt)
+	}
+}
+
+// cancelAwareStubClient is an llm.Client used only by
+// TestChatStream_ClientCancellationStopsStream. It sends exactly one token,
+// signals firstTokenSent so the test knows the stream is genuinely mid-flight,
+// then blocks on ctx.Done() — it deliberately never emits a Done token — so a
+// mid-stream client cancellation is the only way its StreamChat goroutine
+// ever returns. observedCancel is closed if and only if that goroutine itself
+// unblocked via ctx.Done(), which is the proof that the upstream producer
+// (not just the HTTP handler) noticed the cancellation (acceptance criterion c).
+type cancelAwareStubClient struct {
+	firstTokenSent chan struct{}
+	observedCancel chan struct{}
+}
+
+func newCancelAwareStubClient() *cancelAwareStubClient {
+	return &cancelAwareStubClient{
+		firstTokenSent: make(chan struct{}),
+		observedCancel: make(chan struct{}),
+	}
+}
+
+func (c *cancelAwareStubClient) Name() string { return "cancel-aware-stub" }
+
+func (c *cancelAwareStubClient) StreamChat(ctx context.Context, _, _ string) (<-chan llm.Token, error) {
+	out := make(chan llm.Token)
+	go func() {
+		defer close(out)
+		select {
+		case out <- llm.Token{Text: "partial-token "}:
+		case <-ctx.Done():
+			close(c.observedCancel)
+			return
+		}
+		close(c.firstTokenSent)
+
+		// Simulate a slow upstream still "in flight": block until the test
+		// cancels the request context. The 5s fallback exists only so a
+		// regression that fails to propagate cancellation times the test out
+		// instead of hanging the suite forever.
+		select {
+		case <-ctx.Done():
+			close(c.observedCancel)
+		case <-time.After(5 * time.Second):
+		}
+	}()
+	return out, nil
+}
+
+// TestChatStream_ClientCancellationStopsStream is the constitutional
+// streaming gate (.claude/rules/constitutional-gates.md: "a cancelled client
+// request must stop the upstream LLM call immediately, not just stop writing
+// to the response"). It drives /chat/stream with a request context that is
+// cancelled once the producer has emitted its first token, and asserts:
+//
+//	(a) the stream stops — ServeHTTP returns promptly after cancellation;
+//	(b) no assistant turn is persisted to working memory — only the user
+//	    turn, per chat_stream.go's ordering (user turn is appended before the
+//	    LLM call; the assistant turn is appended only after a clean Done
+//	    token, which never arrives here);
+//	(c) the upstream producer itself observed the cancellation, not merely
+//	    that the HTTP handler stopped reading from the token channel.
+func TestChatStream_ClientCancellationStopsStream(t *testing.T) {
+	wm := newTestWorkingMemory(t)
+	client := newCancelAwareStubClient()
+	handler := newTestRouter(t, client, wm)
+
+	reqBody, err := json.Marshal(ChatRequest{Prompt: "hello", SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("marshal request body: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	path := "/v1/tenant/acme/user/alice/chat/stream"
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, path, bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(rec, req)
+	}()
+
+	// Wait for the producer to emit its first token before cancelling, so
+	// this is a genuine mid-stream cancellation, not a cancel-before-start.
+	select {
+	case <-client.firstTokenSent:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the first token to be produced")
+	}
+
+	cancel()
+
+	// (a) the stream stops: ServeHTTP returns promptly after cancellation.
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ServeHTTP did not return after client cancellation")
+	}
+
+	// (c) the upstream producer itself observed the cancellation.
+	select {
+	case <-client.observedCancel:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream producer never observed ctx cancellation")
+	}
+
+	// (b) no assistant turn was persisted.
+	key := memory.Key{Tenant: "acme", User: "alice", Session: "s1"}
+	got, err := wm.Recent(context.Background(), key, 10)
+	if err != nil {
+		t.Fatalf("Recent: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Recent returned %d messages after cancellation, want 1 (user turn only): %+v", len(got), got)
+	}
+	if got[0].Role != roleUser || got[0].Content != "hello" {
+		t.Errorf("message 0 = %+v, want user message %q", got[0], "hello")
+	}
+	for _, m := range got {
+		if m.Role == roleAssistant {
+			t.Errorf("assistant turn was persisted despite client cancellation: %+v", m)
+		}
 	}
 }
