@@ -8,7 +8,11 @@ timestamp: 2026-07-08T00:00:00Z
 
 # Bet 2 — Working memory as a codec
 
-> **Maturity:** 🟡 proven by Bellard (nncp/ts_zip are record-holders).
+> **Maturity:** 🟢 **method confirmed in-repo (2026-07-10)** on top of "proven by Bellard".
+> `spikes/compression/bet02_lm_arithmetic_codec.py` (distilgpt2 LM + a pure-Python arithmetic coder)
+> compresses a chat history to **2.34 bits/char, byte-for-byte lossless**, **beating gzip ~42%**
+> (2.34 vs 4.06; bzip2 4.08, xz 4.31). The **< 1 bit/char target is NOT reached with distilgpt2** —
+> a model-capacity ceiling (Bellard's nncp uses far larger models), not a method failure.
 > **One line:** history isn't lossily summarized; it's compressed against the model and reconstructed.
 
 ## Hypothesis

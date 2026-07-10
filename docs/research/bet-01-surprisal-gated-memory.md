@@ -8,8 +8,13 @@ timestamp: 2026-07-08T00:00:00Z
 
 # Bet 1 — Surprisal-gated memory
 
-> **Maturity:** 🟠 inconclusive — spiked twice, no clean separation found; needs a re-run
-> with a changed method before this can move to 🟢. See "Risk and maturity" below and the
+> **Maturity:** 🟠 **re-run done (2026-07-10) — mechanism partial.** The decisive re-run
+> (`spikes/compression/bet01_rerun_context_profile.py`) confirmed the bet's *direction*:
+> profile-conditioning lifts redundant-vs-surprising separation **+0.10 AUC on both models**
+> (DeepESP 0.61→0.72, distilgpt2 0.73→0.83; gap +1.14 bits/tok, d≈1.0) — but the best is only
+> **0.72 AUC / 15-of-20** on the definitive Spanish model (no clean gap), and **rarity-normalization
+> alone is refuted** (AUC 0.49/0.34). Verdict: **soft importance-weight yes, hard binary gate not
+> yet** — do NOT build the sleep-cycle gate on this. See "Risk and maturity" below and the
 > [spike results](../../spikes/compression/README.md).
 > **One line:** store bits, not text. An engram enters memory only if the model didn't already know it.
 

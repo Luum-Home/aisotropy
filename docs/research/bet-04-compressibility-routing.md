@@ -8,7 +8,11 @@ timestamp: 2026-07-08T00:00:00Z
 
 # Bet 4 — Compressibility routing
 
-> **Maturity:** 🟡 plausible, elegant.
+> **Maturity:** 🟡 plausible, elegant — but **refuted as a length-independent proxy (2026-07-10)**.
+> `spikes/compression/bet04_compressibility_routing.py` (30 labeled prompts, DeepESP): the
+> length-free signal (bits/tok) correlates with difficulty only **ρ=0.41** (below the ρ≥0.6 bar);
+> every signal that clears 0.6 (bits_total, gzip) is **raw length in disguise** — plain byte-length
+> scores ρ=0.94, beating them all. Compressibility-per-token does **not** cleanly proxy difficulty.
 > **One line:** what's hard is what's incompressible. Measure bits, don't train a classifier.
 
 ## Hypothesis
