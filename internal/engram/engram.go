@@ -21,6 +21,7 @@ package engram
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
@@ -121,6 +122,11 @@ func (s Store) indexFact(ctx context.Context, sc facts.Scope, f facts.Fact) erro
 		Kind:     semantic.KindFact,
 		Content:  f.Content,
 		Vector:   vecs[0],
+		// CreatedAt is the write-time timestamp (ADR-0017 phase 3): a
+		// re-indexed fact (Save/Supersede) gets a fresh CreatedAt on its
+		// vector, consistent with PruneTurns only ever considering KindTurn
+		// points — Fact-kind vectors are never pruned by age.
+		CreatedAt: time.Now().UTC(),
 	}
 	if err := s.Semantic.Upsert(ctx, semScope, []semantic.Point{point}); err != nil {
 		return fmt.Errorf("engram: upsert fact vector: %w", err)

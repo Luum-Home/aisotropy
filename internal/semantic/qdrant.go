@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/qdrant/go-client/qdrant"
 )
@@ -103,12 +104,19 @@ func (s *QdrantStore) ensureCollection(ctx context.Context) error {
 }
 
 const (
-	payloadTenant  = "tenant_id"
-	payloadUser    = "user_id"
-	payloadContent = "content"
-	payloadSource  = "source"
-	payloadKind    = "kind"
+	payloadTenant    = "tenant_id"
+	payloadUser      = "user_id"
+	payloadContent   = "content"
+	payloadSource    = "source"
+	payloadKind      = "kind"
+	payloadCreatedAt = "created_at"
 )
+
+// turnScrollLimit bounds how many KindTurn points PruneTurns scrolls in a
+// single pass per scope. PruneTurns runs periodically (the sleep cycle) and
+// is itself what keeps a scope's Turn population bounded, so this ceiling is
+// a defensive cap on one pass's own cost, not the steady-state population.
+const turnScrollLimit = 10000
 
 // Upsert writes points, keyed by their UUIDv5 ID (a re-upsert replaces in
 // place, so an at-least-once retry is a no-op). See Store.Upsert.
@@ -124,15 +132,20 @@ func (s *QdrantStore) Upsert(ctx context.Context, sc Scope, points []Point) erro
 		if len(p.Vector) != s.dim {
 			return ErrDimensionMismatch
 		}
+		createdAt := p.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = time.Now().UTC()
+		}
 		ps = append(ps, &qdrant.PointStruct{
 			Id:      qdrant.NewIDUUID(p.ID),
 			Vectors: qdrant.NewVectors(p.Vector...),
 			Payload: map[string]*qdrant.Value{
-				payloadTenant:  qdrant.NewValueString(p.TenantID),
-				payloadUser:    qdrant.NewValueString(p.UserID),
-				payloadContent: qdrant.NewValueString(p.Content),
-				payloadSource:  qdrant.NewValueString(p.Source),
-				payloadKind:    qdrant.NewValueString(string(p.Kind)),
+				payloadTenant:    qdrant.NewValueString(p.TenantID),
+				payloadUser:      qdrant.NewValueString(p.UserID),
+				payloadContent:   qdrant.NewValueString(p.Content),
+				payloadSource:    qdrant.NewValueString(p.Source),
+				payloadKind:      qdrant.NewValueString(string(p.Kind)),
+				payloadCreatedAt: qdrant.NewValueInt(createdAt.UnixMilli()),
 			},
 		})
 	}
@@ -188,12 +201,13 @@ func (s *QdrantStore) Search(ctx context.Context, sc Scope, query []float32, lim
 		payload := r.GetPayload()
 		out = append(out, ScoredPoint{
 			Point: Point{
-				ID:       r.GetId().GetUuid(),
-				TenantID: payload[payloadTenant].GetStringValue(),
-				UserID:   payload[payloadUser].GetStringValue(),
-				Kind:     Kind(payload[payloadKind].GetStringValue()),
-				Content:  payload[payloadContent].GetStringValue(),
-				Source:   payload[payloadSource].GetStringValue(),
+				ID:        r.GetId().GetUuid(),
+				TenantID:  payload[payloadTenant].GetStringValue(),
+				UserID:    payload[payloadUser].GetStringValue(),
+				Kind:      Kind(payload[payloadKind].GetStringValue()),
+				Content:   payload[payloadContent].GetStringValue(),
+				Source:    payload[payloadSource].GetStringValue(),
+				CreatedAt: time.UnixMilli(payload[payloadCreatedAt].GetIntegerValue()).UTC(),
 			},
 			Score: r.GetScore(),
 		})
@@ -231,6 +245,91 @@ func (s *QdrantStore) Delete(ctx context.Context, sc Scope, ids []string) error 
 		return fmt.Errorf("semantic: qdrant delete: %w", err)
 	}
 	return nil
+}
+
+// PruneTurns evicts KindTurn points within sc by age and/or count cap. See
+// Store.PruneTurns. Both criteria are evaluated via a payload-filtered scroll
+// (never touching Document/Fact points, whose kind never matches the
+// KindTurn condition below) and the union of the two matched id sets is then
+// removed through the same scoped Delete path used elsewhere in this file,
+// so the isolation guarantee is identical.
+//
+// The count-cap criterion is best-effort: it orders by created_at (desc) and
+// scrolls up to turnScrollLimit points, so a scope whose Turn population
+// exceeds that ceiling in a single pass keeps only the ceiling's worth
+// pruned this pass rather than the full excess — steady-state periodic
+// pruning converges it down regardless.
+func (s *QdrantStore) PruneTurns(ctx context.Context, sc Scope, maxAge time.Duration, maxCount int) (int, error) {
+	if maxAge <= 0 && maxCount <= 0 {
+		return 0, nil
+	}
+	base := []*qdrant.Condition{
+		qdrant.NewMatch(payloadTenant, sc.Tenant()),
+		qdrant.NewMatch(payloadUser, sc.User()),
+		qdrant.NewMatchKeyword(payloadKind, string(KindTurn)),
+	}
+
+	toDelete := make(map[string]struct{})
+
+	if maxAge > 0 {
+		cutoff := float64(time.Now().Add(-maxAge).UnixMilli())
+		must := append(append([]*qdrant.Condition{}, base...), qdrant.NewRange(payloadCreatedAt, &qdrant.Range{Lt: &cutoff}))
+		ids, err := s.scrollTurnIDs(ctx, must, nil)
+		if err != nil {
+			return 0, fmt.Errorf("semantic: qdrant prune turns by age: %w", err)
+		}
+		for _, id := range ids {
+			toDelete[id] = struct{}{}
+		}
+	}
+
+	if maxCount > 0 {
+		desc := qdrant.Direction_Desc
+		order := &qdrant.OrderBy{Key: payloadCreatedAt, Direction: &desc}
+		ids, err := s.scrollTurnIDs(ctx, base, order)
+		if err != nil {
+			return 0, fmt.Errorf("semantic: qdrant prune turns by count: %w", err)
+		}
+		if len(ids) > maxCount {
+			for _, id := range ids[maxCount:] {
+				toDelete[id] = struct{}{}
+			}
+		}
+	}
+
+	if len(toDelete) == 0 {
+		return 0, nil
+	}
+	ids := make([]string, 0, len(toDelete))
+	for id := range toDelete {
+		ids = append(ids, id)
+	}
+	if err := s.Delete(ctx, sc, ids); err != nil {
+		return 0, fmt.Errorf("semantic: qdrant prune turns delete: %w", err)
+	}
+	return len(ids), nil
+}
+
+// scrollTurnIDs returns up to turnScrollLimit point ids matching must,
+// optionally ordered by order. Used by PruneTurns to find candidate KindTurn
+// ids for each of its two eviction criteria.
+func (s *QdrantStore) scrollTurnIDs(ctx context.Context, must []*qdrant.Condition, order *qdrant.OrderBy) ([]string, error) {
+	lim := uint32(turnScrollLimit)
+	res, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+		CollectionName: s.collection,
+		Filter:         &qdrant.Filter{Must: must},
+		Limit:          &lim,
+		OrderBy:        order,
+		WithPayload:    qdrant.NewWithPayload(false),
+	})
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(res))
+	for _, r := range res {
+		ids = append(ids, r.GetId().GetUuid())
+	}
+	return ids, nil
 }
 
 // Close closes the gRPC connection.

@@ -16,6 +16,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
+	"github.com/Luum-Home/aisotropy/internal/semantic"
 )
 
 // newTestRouter builds the same wiring as cmd/aisotropyd/main.go (chi +
@@ -276,5 +277,59 @@ func TestChatStream_TenantIsolation(t *testing.T) {
 	}
 	if len(acmeGot) != 2 {
 		t.Fatalf("acme tenant's history changed after globex's request: got %d messages, want 2: %+v", len(acmeGot), acmeGot)
+	}
+}
+
+// TestHydrateSystemPrompt_SemanticSearchExcludesTurnKind is the ADR-0017
+// phase-3 DoD (acceptance criterion 7c): hydrateSystemPrompt's semantic RAG
+// search targets only Document+Fact kinds, so a KindTurn point is never
+// returned by the hydration search path even when it is the closer match.
+func TestHydrateSystemPrompt_SemanticSearchExcludesTurnKind(t *testing.T) {
+	ctx := context.Background()
+	emb := semantic.NewHashEmbedder(0)
+	semStore := semantic.NewInMemoryStore(emb.Dimension())
+
+	scope, err := facts.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatalf("facts.NewScope: %v", err)
+	}
+	semScope, err := semantic.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatalf("semantic.NewScope: %v", err)
+	}
+
+	const query = "database migration plan"
+	vecs, err := emb.Embed(ctx, []string{query})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	queryVec := vecs[0]
+
+	// Both points carry the query's own vector, so a Turn/Fact-blind search
+	// would rank them identically -- the kind filter is what must exclude
+	// the Turn point, not similarity ranking.
+	turnPoint := semantic.Point{
+		ID: semantic.PointID(semScope, semantic.KindTurn, "turn-1"), TenantID: "acme", UserID: "alice",
+		Kind: semantic.KindTurn, Content: "RAW-TURN-MARKER-SHOULD-NOT-APPEAR", Vector: queryVec,
+	}
+	factPoint := semantic.Point{
+		ID: semantic.PointID(semScope, semantic.KindFact, "fact-1"), TenantID: "acme", UserID: "alice",
+		Kind: semantic.KindFact, Content: "DISTILLED-FACT-MARKER-SHOULD-APPEAR", Vector: queryVec,
+	}
+	if err := semStore.Upsert(ctx, semScope, []semantic.Point{turnPoint, factPoint}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	key := memory.Key{Tenant: "acme", User: "alice", Session: "s1"}
+	prompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, key, scope, "p1", query)
+	if err != nil {
+		t.Fatalf("hydrateSystemPrompt: %v", err)
+	}
+
+	if !strings.Contains(prompt, "DISTILLED-FACT-MARKER-SHOULD-APPEAR") {
+		t.Fatalf("expected the Fact-kind point in the hydrated prompt, got: %s", prompt)
+	}
+	if strings.Contains(prompt, "RAW-TURN-MARKER-SHOULD-NOT-APPEAR") {
+		t.Fatalf("KindTurn point leaked into hydration; the primary RAG injection must exclude it: %s", prompt)
 	}
 }

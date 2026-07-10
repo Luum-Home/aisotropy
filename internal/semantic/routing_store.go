@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // ErrRoutingStoreClosed is returned by a RoutingStore operation issued after Close.
@@ -216,6 +217,18 @@ func (rs *RoutingStore) Delete(ctx context.Context, sc Scope, ids []string) erro
 		return err
 	}
 	return st.Delete(ctx, sc, ids)
+}
+
+// PruneTurns dispatches to the physical Store for sc's tenant. See
+// Store.PruneTurns. The mutex is only held long enough to resolve/provision
+// that Store inside storeFor; it is never held across the underlying
+// PruneTurns call.
+func (rs *RoutingStore) PruneTurns(ctx context.Context, sc Scope, maxAge time.Duration, maxCount int) (int, error) {
+	st, err := rs.storeFor(sc.Tenant())
+	if err != nil {
+		return 0, err
+	}
+	return st.PruneTurns(ctx, sc, maxAge, maxCount)
 }
 
 // Close closes every provisioned physical Store (the shared pool plus every

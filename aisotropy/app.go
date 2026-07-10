@@ -54,9 +54,22 @@ const (
 	// sleepCycleInterval is how often the offline DataFusion consolidation runs
 	// when a worker binary is configured (Phase 6).
 	sleepCycleInterval = 1 * time.Hour
+	// turnPruneInterval is how often KindTurn vectors are evicted past their
+	// TTL/cap (ADR-0017 Phase 3). Runs always (pure Go), independent of the
+	// DataFusion sleep cycle.
+	turnPruneInterval = 1 * time.Hour
 	// bitrateInterval is how often the offline bits-per-token-per-tenant
 	// measurement runs (Bet 6) when a scorer binary is configured.
 	bitrateInterval = 1 * time.Hour
+	// defaultSemanticTurnTTL is the age-TTL fallback for KindTurn vector
+	// eviction (ADR-0017 phase 3, AISOTROPY_SEMANTIC_TURN_TTL) when the env
+	// var is unset or invalid: 7 days. Bounded, not unbounded — the entire
+	// point of Phase 3 is that raw-turn vectors do not grow forever.
+	defaultSemanticTurnTTL = 7 * 24 * time.Hour
+	// defaultSemanticTurnMax is the per-(tenant,user) KindTurn count-cap
+	// fallback (AISOTROPY_SEMANTIC_TURN_MAX) when the env var is unset or
+	// invalid.
+	defaultSemanticTurnMax = 500
 	// readinessProbeTimeout bounds each dependency probe on GET /health.
 	readinessProbeTimeout = 2 * time.Second
 	// healthProbeTenant is the reserved identity the readiness probes scope their
@@ -308,6 +321,23 @@ func (a *App) Run(ctx context.Context) error {
 		slog.Info("sleep-cycle worker scheduled", "bin", bin, "interval", sleepCycleInterval)
 	} else {
 		slog.Info("sleep-cycle worker disabled", "reason", "AISOTROPY_SLEEPCYCLE_BIN unset")
+	}
+
+	// Turn-vector bounding (ADR-0017 Phase 3) runs ALWAYS — independent of the
+	// DataFusion sleep-cycle binary above. It is a pure-Go semantic-tier
+	// maintenance pass; without it, raw KindTurn vectors would grow unbounded and
+	// pollute retrieval. No-op when there is no semantic store or no bound set.
+	if semanticStore != nil {
+		pruner := sleepcycle.Coordinator{
+			Store:        factsStore,
+			Semantic:     semanticStore,
+			TurnMaxAge:   semanticTurnTTLFromEnv(),
+			TurnMaxCount: semanticTurnMaxFromEnv(),
+		}
+		go pruner.RunTurnPruneScheduler(workerCtx, turnPruneInterval, func(perr error) { //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
+			slog.Error("turn-vector pruning failed", "err", perr)
+		})
+		slog.Info("turn-vector pruning scheduled", "ttl", semanticTurnTTLFromEnv(), "max", semanticTurnMaxFromEnv(), "interval", turnPruneInterval)
 	}
 
 	router := chi.NewRouter()
@@ -593,6 +623,35 @@ func openFactsStore(router routing.Router, dedicated []string) (facts.Store, err
 		return factory("facts")
 	}
 	return facts.NewRoutingStore(router, "facts", dedicated, factory)
+}
+
+// semanticTurnTTLFromEnv parses AISOTROPY_SEMANTIC_TURN_TTL (a Go duration,
+// e.g. "168h") for the sleep cycle's Turn-kind age-TTL policy (ADR-0017
+// phase 3). Falls back to defaultSemanticTurnTTL when unset, unparsable, or
+// non-positive, so the policy is always bounded, never accidentally
+// unbounded from a bad env value.
+func semanticTurnTTLFromEnv() time.Duration {
+	if v := os.Getenv("AISOTROPY_SEMANTIC_TURN_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+		slog.Warn("invalid AISOTROPY_SEMANTIC_TURN_TTL; using default", "value", v, "default", defaultSemanticTurnTTL)
+	}
+	return defaultSemanticTurnTTL
+}
+
+// semanticTurnMaxFromEnv parses AISOTROPY_SEMANTIC_TURN_MAX (an integer
+// count) for the sleep cycle's Turn-kind per-(tenant,user) count-cap policy
+// (ADR-0017 phase 3). Falls back to defaultSemanticTurnMax when unset,
+// unparsable, or non-positive.
+func semanticTurnMaxFromEnv() int {
+	if v := os.Getenv("AISOTROPY_SEMANTIC_TURN_MAX"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+		slog.Warn("invalid AISOTROPY_SEMANTIC_TURN_MAX; using default", "value", v, "default", defaultSemanticTurnMax)
+	}
+	return defaultSemanticTurnMax
 }
 
 // openBitrateStore builds the Bet 6 bpt store: on-disk SQLite under

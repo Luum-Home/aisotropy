@@ -22,6 +22,7 @@ package semantic
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -130,6 +131,12 @@ type Point struct {
 	Source string
 	// Vector is the embedding; its length must equal the store's dimension.
 	Vector []float32
+	// CreatedAt is when this point was written, set by the writer at upsert
+	// time (consolidation for Turn-kind, the engram facade for Fact-kind).
+	// It is the basis of PruneTurns' age-TTL eviction (ADR-0017 phase 3):
+	// implementations persist it (Qdrant as a payload field, mirroring the
+	// facts tier's unix-millis timestamp convention) so it survives restarts.
+	CreatedAt time.Time
 }
 
 // ScoredPoint is a Point returned from Search, annotated with its cosine
@@ -163,6 +170,19 @@ type Store interface {
 	// different tenant/user is left untouched. Unknown ids are ignored (no
 	// error).
 	Delete(ctx context.Context, sc Scope, ids []string) error
+
+	// PruneTurns evicts KindTurn points within sc per ADR-0017 phase 3
+	// ("Turn-kind bounding"): every KindTurn point older than maxAge is
+	// deleted (when maxAge > 0), and, independently, only the maxCount
+	// most-recent (by CreatedAt) KindTurn points are kept, with the excess
+	// deleted (when maxCount > 0) — the union of both criteria is removed.
+	// maxAge <= 0 disables the age policy; maxCount <= 0 disables the count
+	// policy; both <= 0 makes the call a no-op. Document- and Fact-kind
+	// points are NEVER touched by this method, regardless of age or count.
+	// Scoped to sc exactly like Delete: another tenant/user's KindTurn
+	// points are structurally unreachable. Returns the number of points
+	// deleted.
+	PruneTurns(ctx context.Context, sc Scope, maxAge time.Duration, maxCount int) (int, error)
 
 	// Close releases resources (index / gRPC client).
 	Close() error

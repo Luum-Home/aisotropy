@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/Luum-Home/aisotropy/internal/engram"
 	"github.com/Luum-Home/aisotropy/internal/facts"
@@ -112,6 +113,9 @@ func (s Sink) consolidateSemantic(ctx context.Context, e memory.OutboxEvent) err
 		Kind:     semantic.KindTurn,
 		Content:  e.Content,
 		Vector:   vecs[0],
+		// CreatedAt is the write-time timestamp (ADR-0017 phase 3), the basis
+		// of the sleep cycle's Turn age-TTL eviction (PruneTurns).
+		CreatedAt: time.Now().UTC(),
 	}
 	if err := s.Semantic.Upsert(ctx, scope, []semantic.Point{point}); err != nil {
 		return fmt.Errorf("consolidation: upsert vector: %w", err)

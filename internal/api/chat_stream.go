@@ -359,12 +359,16 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 	// Semantic memory (Phase 4): vectors semantically similar to the prompt for
 	// this user (RAG over what the consolidation sink embedded). Also non-fatal
 	// enrichment — an embed/search failure degrades to "no semantic context"
-	// rather than failing the request.
+	// rather than failing the request. ADR-0017 phase 3: the primary RAG
+	// injection targets only the high-value kinds (curated Document knowledge
+	// and distilled Fact projections); raw KindTurn vectors are excluded here
+	// so they never dominate the injected context — Turn stays available in
+	// the tier for a possible future fallback path, just not this one.
 	var semantics []semantic.ScoredPoint
 	if semStore != nil && embedder != nil {
 		if vecs, eerr := embedder.Embed(ctx, []string{prompt}); eerr == nil && len(vecs) > 0 {
 			if semScope, serr := semantic.NewScope(scope.Tenant(), scope.User()); serr == nil { //nolint:contextcheck // semantic.NewScope has no context parameter (internal/semantic, out of scope for this cleanup)
-				if pts, serr := semStore.Search(ctx, semScope, vecs[0], semanticWindow); serr == nil {
+				if pts, serr := semStore.Search(ctx, semScope, vecs[0], semanticWindow, semantic.KindDocument, semantic.KindFact); serr == nil {
 					semantics = pts
 				} else {
 					slog.ErrorContext(ctx, "semantic search failed; proceeding without it", "err", serr)

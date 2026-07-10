@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"time"
 )
 
 // InMemoryStore is a brute-force cosine vector index held in process. It is the
@@ -97,6 +98,56 @@ func (s *InMemoryStore) Delete(_ context.Context, sc Scope, ids []string) error 
 		delete(s.points, id)
 	}
 	return nil
+}
+
+// PruneTurns evicts KindTurn points within sc by age and/or count cap. See
+// Store.PruneTurns. Only KindTurn points are ever scanned/deleted — Document
+// and Fact points never enter toDelete. Scoped to sc exactly like Delete: the
+// scan itself is filtered to sc's (tenant,user), so another tenant/user's
+// KindTurn points are never even considered.
+func (s *InMemoryStore) PruneTurns(_ context.Context, sc Scope, maxAge time.Duration, maxCount int) (int, error) {
+	if maxAge <= 0 && maxCount <= 0 {
+		return 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var turns []Point
+	for _, p := range s.points {
+		if p.TenantID != sc.Tenant() || p.UserID != sc.User() || p.Kind != KindTurn {
+			continue
+		}
+		turns = append(turns, p)
+	}
+
+	toDelete := make(map[string]struct{})
+
+	if maxAge > 0 {
+		cutoff := time.Now().Add(-maxAge)
+		for _, p := range turns {
+			if p.CreatedAt.Before(cutoff) {
+				toDelete[p.ID] = struct{}{}
+			}
+		}
+	}
+
+	if maxCount > 0 && len(turns) > maxCount {
+		// Newest first, so the surviving prefix is the maxCount most recent.
+		sort.Slice(turns, func(i, j int) bool {
+			if !turns[i].CreatedAt.Equal(turns[j].CreatedAt) {
+				return turns[i].CreatedAt.After(turns[j].CreatedAt)
+			}
+			return turns[i].ID < turns[j].ID // deterministic tiebreak
+		})
+		for _, p := range turns[maxCount:] {
+			toDelete[p.ID] = struct{}{}
+		}
+	}
+
+	for id := range toDelete {
+		delete(s.points, id)
+	}
+	return len(toDelete), nil
 }
 
 // Close is a no-op for the in-memory index.

@@ -3,7 +3,9 @@ package semantic
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 )
 
 // helper: embed one text with the shared HashEmbedder.
@@ -336,5 +338,174 @@ func TestSearchKindFilter(t *testing.T) {
 	}
 	if len(docsOnly) != 0 {
 		t.Fatalf("Document-filtered search = %d points, want 0", len(docsOnly))
+	}
+}
+
+// mkPointAt builds a scoped Point of the given kind with an explicit
+// CreatedAt, for exercising PruneTurns deterministically.
+func mkPointAt(ctx context.Context, sc Scope, emb Embedder, kind Kind, id string, createdAt time.Time) Point {
+	return Point{
+		ID:        PointID(sc, kind, id),
+		TenantID:  sc.Tenant(),
+		UserID:    sc.User(),
+		Kind:      kind,
+		Content:   id,
+		Vector:    mustEmbed(ctx, emb, id),
+		CreatedAt: createdAt,
+	}
+}
+
+// TestPruneTurnsAgeAndCountCap is the ADR-0017 phase-3 DoD (acceptance
+// criterion 7a): PruneTurns deletes KindTurn points older than maxAge and
+// beyond maxCount (keeping the most-recent), and NEVER touches
+// Document/Fact-kind points, however old they are.
+func TestPruneTurnsAgeAndCountCap(t *testing.T) {
+	emb := NewHashEmbedder(0)
+	st := NewInMemoryStore(emb.Dimension())
+	ctx := context.Background()
+	sc := Scope{tenant: "acme", user: "alice"}
+	now := time.Now()
+
+	// Five turns, newest (0d old) to oldest (10d old).
+	ages := []time.Duration{0, 2 * 24 * time.Hour, 4 * 24 * time.Hour, 8 * 24 * time.Hour, 10 * 24 * time.Hour}
+	pts := make([]Point, 0, len(ages)+2)
+	for i, age := range ages {
+		pts = append(pts, mkPointAt(ctx, sc, emb, KindTurn, fmt.Sprintf("turn-%d", i), now.Add(-age)))
+	}
+	// A Document and a Fact point, both far older than any TTL below — must
+	// survive regardless, since PruneTurns only ever considers KindTurn.
+	pts = append(pts, mkPointAt(ctx, sc, emb, KindDocument, "doc-1", now.Add(-100*24*time.Hour)))
+	pts = append(pts, mkPointAt(ctx, sc, emb, KindFact, "fact-1", now.Add(-100*24*time.Hour)))
+	if err := st.Upsert(ctx, sc, pts); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	// maxAge=7d evicts turn-3 (8d) and turn-4 (10d). maxCount=2 keeps only
+	// the 2 most-recent turns (turn-0, turn-1), evicting turn-2 as excess.
+	// Union of both criteria: {turn-2, turn-3, turn-4} = 3 deletions.
+	deleted, err := st.PruneTurns(ctx, sc, 7*24*time.Hour, 2)
+	if err != nil {
+		t.Fatalf("PruneTurns: %v", err)
+	}
+	if deleted != 3 {
+		t.Fatalf("deleted = %d, want 3", deleted)
+	}
+
+	survivingTurns := map[string]bool{}
+	for id, p := range st.points {
+		if p.Kind == KindTurn {
+			survivingTurns[id] = true
+		}
+	}
+	wantSurvivors := []string{
+		PointID(sc, KindTurn, "turn-0"),
+		PointID(sc, KindTurn, "turn-1"),
+	}
+	if len(survivingTurns) != len(wantSurvivors) {
+		t.Fatalf("surviving turns = %d, want %d (%+v)", len(survivingTurns), len(wantSurvivors), survivingTurns)
+	}
+	for _, id := range wantSurvivors {
+		if !survivingTurns[id] {
+			t.Fatalf("expected turn %s to survive (within age+count budget), but it was pruned", id)
+		}
+	}
+	wantPruned := []string{
+		PointID(sc, KindTurn, "turn-2"),
+		PointID(sc, KindTurn, "turn-3"),
+		PointID(sc, KindTurn, "turn-4"),
+	}
+	for _, id := range wantPruned {
+		if survivingTurns[id] {
+			t.Fatalf("expected turn %s to be pruned (over age or count budget), but it survived", id)
+		}
+	}
+
+	// Document/Fact points are untouched regardless of their age.
+	if _, ok := st.points[PointID(sc, KindDocument, "doc-1")]; !ok {
+		t.Fatal("PruneTurns deleted a Document-kind point — must never touch non-Turn kinds")
+	}
+	if _, ok := st.points[PointID(sc, KindFact, "fact-1")]; !ok {
+		t.Fatal("PruneTurns deleted a Fact-kind point — must never touch non-Turn kinds")
+	}
+}
+
+// TestPruneTurnsDisabledIsNoOp confirms maxAge<=0 and maxCount<=0 together
+// disable the call entirely, per the Store.PruneTurns contract.
+func TestPruneTurnsDisabledIsNoOp(t *testing.T) {
+	emb := NewHashEmbedder(0)
+	st := NewInMemoryStore(emb.Dimension())
+	ctx := context.Background()
+	sc := Scope{tenant: "acme", user: "alice"}
+
+	old := time.Now().Add(-365 * 24 * time.Hour)
+	pt := mkPointAt(ctx, sc, emb, KindTurn, "ancient-turn", old)
+	if err := st.Upsert(ctx, sc, []Point{pt}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	deleted, err := st.PruneTurns(ctx, sc, 0, 0)
+	if err != nil {
+		t.Fatalf("PruneTurns: %v", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted = %d, want 0 (both policies disabled)", deleted)
+	}
+	if _, ok := st.points[pt.ID]; !ok {
+		t.Fatal("PruneTurns(0,0) must be a true no-op, but the point was removed")
+	}
+}
+
+// TestPruneTurnsScopeIsolated is the ADR-0017 phase-3 DoD (acceptance
+// criterion 7b): a PruneTurns call scoped to one tenant/user must never
+// touch another tenant/user's KindTurn points, even under an aggressive
+// policy that would evict them too if isolation were broken.
+func TestPruneTurnsScopeIsolated(t *testing.T) {
+	emb := NewHashEmbedder(0)
+	st := NewInMemoryStore(emb.Dimension())
+	ctx := context.Background()
+	acme := Scope{tenant: "acme", user: "alice"}
+	globex := Scope{tenant: "globex", user: "bob"}
+	old := time.Now().Add(-30 * 24 * time.Hour)
+
+	if err := st.Upsert(ctx, acme, []Point{
+		mkPointAt(ctx, acme, emb, KindTurn, "a1", old),
+		mkPointAt(ctx, acme, emb, KindTurn, "a2", old),
+	}); err != nil {
+		t.Fatalf("Upsert acme: %v", err)
+	}
+	if err := st.Upsert(ctx, globex, []Point{
+		mkPointAt(ctx, globex, emb, KindTurn, "g1", old),
+		mkPointAt(ctx, globex, emb, KindTurn, "g2", old),
+	}); err != nil {
+		t.Fatalf("Upsert globex: %v", err)
+	}
+
+	// Aggressive age-TTL (1h) would evict globex's equally-old turns too if
+	// PruneTurns leaked across scopes.
+	deleted, err := st.PruneTurns(ctx, acme, time.Hour, 0)
+	if err != nil {
+		t.Fatalf("PruneTurns: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2 (only acme's turns)", deleted)
+	}
+
+	var globexTurns, acmeTurns int
+	for _, p := range st.points {
+		if p.Kind != KindTurn {
+			continue
+		}
+		switch p.TenantID {
+		case "globex":
+			globexTurns++
+		case "acme":
+			acmeTurns++
+		}
+	}
+	if acmeTurns != 0 {
+		t.Fatalf("acme turns remaining = %d, want 0", acmeTurns)
+	}
+	if globexTurns != 2 {
+		t.Fatalf("scope-isolated PruneTurns removed globex's turns: remaining = %d, want 2", globexTurns)
 	}
 }
