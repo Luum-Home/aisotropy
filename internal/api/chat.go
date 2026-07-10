@@ -149,6 +149,130 @@ func withIdentity(ctx context.Context, tenant, user, session string) (context.Co
 	return ctx, nil
 }
 
+// chatIdentity validates the tenant/user/session identity, injects it into
+// ctx (both the local carrier and internal/llm's own ctx carrier, mirroring
+// chat_stream.go so OTel instrumentation can attribute spans without
+// internal/llm importing internal/api), and builds the memory.Key +
+// facts.Scope the rest of the handler needs. Both failure modes below map to
+// the same 422 in Register — an invalid identity, wherever it is caught, is
+// always a client-input problem.
+func chatIdentity(ctx context.Context, in *ChatInput) (outCtx context.Context, key memory.Key, scope facts.Scope, err error) {
+	// Isolation via ctx: tenant_id and user_id from the path travel
+	// natively downward (see docs/architecture/multi-tenancy.md).
+	outCtx, err = withIdentity(ctx, in.TenantID, in.UserID, in.Body.SessionID)
+	if err != nil {
+		// Named returns: key/scope stay at their zero value here without a
+		// bare facts.Scope{}/memory.Key{} literal (ADR-0011 — facts.Scope is
+		// a VO constructed exclusively via facts.NewScope/ScopeFromContext).
+		return outCtx, key, scope, err
+	}
+	outCtx = llm.WithTenant(outCtx, in.TenantID)
+	outCtx = llm.WithUser(outCtx, in.UserID)
+	key = memory.Key{Tenant: in.TenantID, User: in.UserID, Session: in.Body.SessionID}
+	scope, err = facts.NewScope(in.TenantID, in.UserID) //nolint:contextcheck // facts.NewScope has no context parameter (internal/facts, out of scope for this cleanup)
+	if err != nil {
+		return outCtx, memory.Key{}, scope, err
+	}
+	return outCtx, key, scope, nil
+}
+
+// chatCheckQuota is the Phase 7 / constitutional quota gate: reject BEFORE
+// the LLM call with a clean 429 so a rate-limited tenant never spends
+// tokens. A nil limiter (as in tests) skips the check. The returned error,
+// when non-nil, is already a huma.StatusError ready to return as-is.
+func chatCheckQuota(ctx context.Context, limiter *memory.Limiter, tenantID string) error {
+	if limiter == nil {
+		return nil
+	}
+	allowed, err := limiter.Allow(ctx, tenantID)
+	if err != nil {
+		return huma.Error500InternalServerError("quota check failed", err)
+	}
+	if !allowed {
+		return huma.Error429TooManyRequests("rate limit exceeded for tenant " + tenantID)
+	}
+	return nil
+}
+
+// chatBuildSystemPrompt hydrates the system prompt from working memory +
+// facts (the non-streaming endpoint does not wire semantic RAG — semStore/
+// embedder are nil, that's the streaming path's job) and appends the
+// scope-gated tools fragment (Phase 7): a forbidden tool never enters the
+// payload (granular-control.md).
+func chatBuildSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, toolReg *tools.Registry, persona PersonaProvider, key memory.Key, scope facts.Scope, in *ChatInput) (string, error) {
+	system, err := hydrateSystemPrompt(ctx, wm, store, nil, nil, persona, key, scope, in.Body.ProductID, in.Body.Prompt)
+	if err != nil {
+		return "", err
+	}
+	if toolReg != nil {
+		if frag := toolReg.PromptFragment(in.Body.Scopes); frag != "" {
+			system += "\n\n" + frag
+		}
+	}
+	return system, nil
+}
+
+// chatPersistUserTurn persists the user's turn AND its consolidation intent
+// in one BadgerDB transaction (Transactional Outbox), mirroring the
+// streaming path — so the non-streaming endpoint also feeds the facts +
+// semantic tiers via the outbox worker, not only the streaming one. Called
+// before the LLM call because the user's message is real input that already
+// happened. A persistence failure is logged, not fatal to the request.
+func chatPersistUserTurn(ctx context.Context, wm *memory.WorkingMemory, key memory.Key, prompt string) {
+	event := memory.NewOutboxEvent(key, outboxRef(key, prompt), prompt, time.Now().UTC())
+	if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: roleUser, Content: prompt}, event); err != nil {
+		slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
+	}
+}
+
+// chatReflectAndRecord runs the reflection loop, persists the assistant's
+// validated reply, and records cost to the shared meter. A persistent
+// schema/business violation fails closed: the returned error is already a
+// huma.StatusError (502), never a silent fallback to unstructured text (the
+// constitutional "Structured-output / reflection loop" gate).
+func chatReflectAndRecord(ctx context.Context, client llm.Client, system string, in *ChatInput, wm *memory.WorkingMemory, key memory.Key, meter *costmeter.Meter) (chatStructuredReply, error) {
+	reply, attempts, backend, usage, err := llm.ReflectAuto[chatStructuredReply](
+		ctx, client, system, in.Body.Prompt, decodeChatReply, validateChatReply, chatMaxReflectionRetries,
+	)
+	if err != nil {
+		slog.ErrorContext(ctx, "chat reflection loop failed closed",
+			"tenant_id", in.TenantID, "user_id", in.UserID, "backend", backend, "attempts", attempts, "err", err)
+		return chatStructuredReply{}, huma.Error502BadGateway(
+			fmt.Sprintf("agent failed to produce a valid structured reply after %d attempt(s)", attempts), err)
+	}
+
+	// Only a successfully validated turn gets persisted — a failed/rejected
+	// attempt (handled above) never reaches this line.
+	if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: reply.Reply}); err != nil {
+		slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
+	}
+
+	// Unify cost accounting onto the shared meter (same price basis
+	// RegisterStream uses): the homegrown Reflect[T] fallback reports a
+	// zero Usage (documented, see llm.ReflectResult.Usage), so this
+	// records 0 cost for that path rather than silently skipping it —
+	// the request count/attempt is still real signal for /costs.
+	if meter != nil {
+		cost := costmeter.EstimateCostUSD(usage.InputTokens, usage.OutputTokens, costInputPricePer1M, costOutputPricePer1M)
+		meter.Record(in.TenantID, usage.InputTokens, usage.OutputTokens, cost)
+	}
+
+	slog.InfoContext(ctx, "chat request completed",
+		"tenant_id", in.TenantID, "user_id", in.UserID, "backend", backend, "attempts", attempts)
+
+	return reply, nil
+}
+
+// chatBuildOutput assembles the strict ChatOutput contract from a validated
+// reply.
+func chatBuildOutput(reply chatStructuredReply, tenantID string, client llm.Client) *ChatOutput {
+	out := &ChatOutput{}
+	out.Body.Reply = reply.Reply
+	out.Body.TenantID = tenantID
+	out.Body.Stub = client.Name() == "stub"
+	return out
+}
+
 // Register mounts the non-streaming chat endpoint on the Huma API. It
 // receives the already-built llm.Client (llm.FromEnv() in main.go) and the
 // shared *memory.WorkingMemory instead of creating them here — no global
@@ -161,8 +285,6 @@ func withIdentity(ctx context.Context, tenant, user, session string) (context.Co
 // reflection path's Gollem CostTracker has empty pricing and was never
 // surfaced here). A nil meter skips recording (keeps existing tests that
 // pass nil working unchanged).
-//
-//nolint:gocognit,funlen // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
 func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, persona PersonaProvider, meter *costmeter.Meter) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat",
@@ -176,33 +298,13 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 			"schema violation fails closed with an HTTP error — never a silent " +
 			"unstructured fallback (see .claude/rules/constitutional-gates.md).",
 	}, func(ctx context.Context, in *ChatInput) (*ChatOutput, error) {
-		// Isolation via ctx: tenant_id and user_id from the path travel
-		// natively downward (see docs/architecture/multi-tenancy.md).
-		ctx, err := withIdentity(ctx, in.TenantID, in.UserID, in.Body.SessionID)
-		if err != nil {
-			return nil, huma.Error422UnprocessableEntity("invalid tenant/user identity", err)
-		}
-		// Mirror chat_stream.go: also propagate identity through internal/llm's
-		// own ctx carrier so any OTel instrumentation on this path can attribute
-		// spans with tenant_id/user_id without internal/llm importing internal/api.
-		ctx = llm.WithTenant(ctx, in.TenantID)
-		ctx = llm.WithUser(ctx, in.UserID)
-		key := memory.Key{Tenant: in.TenantID, User: in.UserID, Session: in.Body.SessionID}
-		scope, err := facts.NewScope(in.TenantID, in.UserID) //nolint:contextcheck // facts.NewScope has no context parameter (internal/facts, out of scope for this cleanup)
+		ctx, key, scope, err := chatIdentity(ctx, in)
 		if err != nil {
 			return nil, huma.Error422UnprocessableEntity("invalid tenant/user identity", err)
 		}
 
-		// Quota gate (Phase 7 / constitutional gate): reject BEFORE the LLM call
-		// with a clean 429 so a rate-limited tenant never spends tokens.
-		if limiter != nil {
-			allowed, err := limiter.Allow(ctx, in.TenantID)
-			if err != nil {
-				return nil, huma.Error500InternalServerError("quota check failed", err)
-			}
-			if !allowed {
-				return nil, huma.Error429TooManyRequests("rate limit exceeded for tenant " + in.TenantID)
-			}
+		if err := chatCheckQuota(ctx, limiter, in.TenantID); err != nil {
+			return nil, err
 		}
 
 		slog.InfoContext(ctx, "chat request",
@@ -214,68 +316,19 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 			"llm", client.Name(),
 		)
 
-		// The non-streaming endpoint hydrates working memory + facts; semantic
-		// RAG (semStore/embedder) is wired on the streaming path, so nil is
-		// passed for those two here.
-		system, err := hydrateSystemPrompt(ctx, wm, store, nil, nil, persona, key, scope, in.Body.ProductID, in.Body.Prompt)
+		system, err := chatBuildSystemPrompt(ctx, wm, store, toolReg, persona, key, scope, in)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to hydrate working memory", err)
 		}
-		// Scope-gated tools (Phase 7): inject only the scope-permitted tools —
-		// a forbidden tool never enters the payload (granular-control.md).
-		if toolReg != nil {
-			if frag := toolReg.PromptFragment(in.Body.Scopes); frag != "" {
-				system += "\n\n" + frag
-			}
-		}
 
-		// Persist the user's turn AND its consolidation intent in one BadgerDB
-		// transaction (Transactional Outbox), mirroring the streaming path — so
-		// the non-streaming endpoint also feeds the facts + semantic tiers via
-		// the outbox worker, not only the streaming one. Done before the LLM
-		// call because the user's message is real input that already happened.
-		event := memory.NewOutboxEvent(key, outboxRef(key, in.Body.Prompt), in.Body.Prompt, time.Now().UTC())
-		if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: roleUser, Content: in.Body.Prompt}, event); err != nil {
-			slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
-		}
+		chatPersistUserTurn(ctx, wm, key, in.Body.Prompt)
 
-		reply, attempts, backend, usage, err := llm.ReflectAuto[chatStructuredReply](
-			ctx, client, system, in.Body.Prompt, decodeChatReply, validateChatReply, chatMaxReflectionRetries,
-		)
+		reply, err := chatReflectAndRecord(ctx, client, system, in, wm, key, meter)
 		if err != nil {
-			// Fail closed: a persistent schema/business violation is an error
-			// response, never a silent fallback to unstructured text (the
-			// constitutional "Structured-output / reflection loop" gate).
-			slog.ErrorContext(ctx, "chat reflection loop failed closed",
-				"tenant_id", in.TenantID, "user_id", in.UserID, "backend", backend, "attempts", attempts, "err", err)
-			return nil, huma.Error502BadGateway(
-				fmt.Sprintf("agent failed to produce a valid structured reply after %d attempt(s)", attempts), err)
+			return nil, err
 		}
 
-		// Only a successfully validated turn gets persisted — a failed/rejected
-		// attempt (handled above) never reaches this line.
-		if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: reply.Reply}); err != nil {
-			slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
-		}
-
-		// Unify cost accounting onto the shared meter (same price basis
-		// RegisterStream uses): the homegrown Reflect[T] fallback reports a
-		// zero Usage (documented, see llm.ReflectResult.Usage), so this
-		// records 0 cost for that path rather than silently skipping it —
-		// the request count/attempt is still real signal for /costs.
-		if meter != nil {
-			cost := costmeter.EstimateCostUSD(usage.InputTokens, usage.OutputTokens, costInputPricePer1M, costOutputPricePer1M)
-			meter.Record(in.TenantID, usage.InputTokens, usage.OutputTokens, cost)
-		}
-
-		slog.InfoContext(ctx, "chat request completed",
-			"tenant_id", in.TenantID, "user_id", in.UserID, "backend", backend, "attempts", attempts)
-
-		out := &ChatOutput{}
-		out.Body.Reply = reply.Reply
-		out.Body.TenantID = in.TenantID
-		out.Body.Stub = client.Name() == "stub"
-		return out, nil
+		return chatBuildOutput(reply, in.TenantID, client), nil
 	})
 }
 

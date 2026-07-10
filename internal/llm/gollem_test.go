@@ -367,3 +367,105 @@ func TestReflectAutoDefaultsToGollem(t *testing.T) {
 		t.Fatalf("Reply = %q, expected %q", out.Reply, "ok")
 	}
 }
+
+// usageFakeClient is fakeClient (above) extended to also carry a distinct
+// llm.Usage per canned response, so a test can force >1 StreamChat call and
+// assert that the per-call Usage values are actually SUMMED, not just the
+// last call's value forwarded. fakeClient itself never sets Token.Usage, so
+// it cannot exercise aggregation — that gap is what this type closes.
+type usageFakeClient struct {
+	responses []string
+	usages    []Usage
+	calls     int
+}
+
+func (f *usageFakeClient) Name() string { return "usage-fake" }
+
+func (f *usageFakeClient) StreamChat(_ context.Context, _, _ string) (<-chan Token, error) {
+	idx := f.calls
+	f.calls++
+
+	text := f.responses[len(f.responses)-1]
+	if idx < len(f.responses) {
+		text = f.responses[idx]
+	}
+	usage := f.usages[len(f.usages)-1]
+	if idx < len(f.usages) {
+		usage = f.usages[idx]
+	}
+
+	out := make(chan Token, 2)
+	out <- Token{Text: text}
+	out <- Token{Done: true, Usage: &Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens}}
+	close(out)
+	return out, nil
+}
+
+// TestReflectAuto_AggregatesUsageAcrossRetries proves ReflectAuto's usage
+// return value is the SUM of per-iteration token counts across a
+// multi-request Gollem run, not just the last request's — i.e. that
+// core.ReflectResult[T].Usage ("the combined usage across all iterations",
+// core/reflect.go) really does propagate through GollemReflect/ReflectAuto
+// end to end.
+//
+// The multiple requests are driven the same way
+// TestGollemReflectRepairsSchemaViaAgentInternalRetry (above) proves Agent[T]
+// retries internally: the first response is not valid JSON, so Agent[T]
+// re-issues a second Model.Request (and therefore a second
+// usageFakeClient.StreamChat call) with the exact schema error attached —
+// this is a real 2-request run through our own GollemModel adapter, not a
+// hand-constructed core.ReflectResult. Verified against the vendored
+// dependency source (core/run_engine.go:397 `e.state.usage.IncrRequest(resp.Usage)`,
+// called on every Model.Request — including this internal retry — and
+// core/reflect.go:83 `totalUsage.IncrRun(result.Usage)`), and independently
+// confirmed by the upstream test core/reflect_test.go
+// TestRunWithReflection_UsageAggregation.
+func TestReflectAuto_AggregatesUsageAcrossRetries(t *testing.T) {
+	client := &usageFakeClient{
+		responses: []string{
+			"this is not JSON at all", // triggers Agent[T]'s internal schema retry
+			`{"reply":"ok"}`,
+		},
+		usages: []Usage{
+			{InputTokens: 100, OutputTokens: 20},
+			{InputTokens: 50, OutputTokens: 10},
+		},
+	}
+	decode := func(raw string) (gollemTestOutput, error) {
+		var out gollemTestOutput
+		if err := json.Unmarshal([]byte(raw), &out); err != nil {
+			return gollemTestOutput{}, err
+		}
+		return out, nil
+	}
+
+	out, attempts, backend, usage, err := ReflectAuto[gollemTestOutput](
+		context.Background(), client, "system", "hello", decode, nil, 3,
+	)
+	if err != nil {
+		t.Fatalf("ReflectAuto returned unexpected error: %v", err)
+	}
+	if backend != ReflectionBackendGollem {
+		t.Fatalf("backend = %q, expected %q", backend, ReflectionBackendGollem)
+	}
+	if out.Reply != "ok" {
+		t.Fatalf("Reply = %q, expected %q", out.Reply, "ok")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, expected 1 (schema repair is internal to Agent.Run, "+
+			"not a RunWithReflection cycle — mirrors TestGollemReflectRepairsSchemaViaAgentInternalRetry)", attempts)
+	}
+	if client.calls != 2 {
+		t.Fatalf("client.calls = %d, expected 2 (1 invalid attempt + 1 repaired)", client.calls)
+	}
+
+	const wantInput, wantOutput = 100 + 50, 20 + 10
+	if usage.InputTokens != wantInput {
+		t.Fatalf("usage.InputTokens = %d, expected %d (sum of both iterations' usage, not just the last)",
+			usage.InputTokens, wantInput)
+	}
+	if usage.OutputTokens != wantOutput {
+		t.Fatalf("usage.OutputTokens = %d, expected %d (sum of both iterations' usage, not just the last)",
+			usage.OutputTokens, wantOutput)
+	}
+}

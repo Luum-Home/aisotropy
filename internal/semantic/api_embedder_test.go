@@ -20,6 +20,12 @@ func TestAPIEmbedderEmbedRequestShapeAndOrder(t *testing.T) {
 		if r.URL.Path != "/embeddings" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("Content-Type header = %q, want application/json", got)
+		}
 		if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
 			t.Errorf("Authorization header = %q, want Bearer %s", got, apiKey)
 		}
@@ -68,6 +74,11 @@ func TestAPIEmbedderEmbedRequestShapeAndOrder(t *testing.T) {
 	}
 	if len(vecs) != 2 {
 		t.Fatalf("len(vecs) = %d, want 2", len(vecs))
+	}
+	for i, v := range vecs {
+		if len(v) != emb.Dimension() {
+			t.Errorf("vecs[%d] has dimension %d, want configured dimension %d", i, len(v), emb.Dimension())
+		}
 	}
 	if vecs[0][0] != 0.1 || vecs[0][1] != 0.2 {
 		t.Errorf("vecs[0] = %v, want [0.1 0.2] (input order preserved)", vecs[0])
