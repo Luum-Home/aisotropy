@@ -247,8 +247,10 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	factsExtractor := facts.HeuristicExtractor{}
 
-	// Semantic memory (Phase 4): deterministic HashEmbedder (or a BYO
-	// WithEmbedder) + in-memory/Qdrant by env, built through ensureSemantic
+	// Semantic memory (Phase 4): a BYO WithEmbedder, else an env-configured
+	// APIEmbedder (AISOTROPY_EMBED_URL), else the deterministic HashEmbedder
+	// placeholder (see knowledge.go's ensureSemantic doc for the full
+	// precedence) + in-memory/Qdrant by env, built through ensureSemantic
 	// (ADR-0018) so IngestKnowledge shares exactly this store/embedder pair
 	// whether it was called before Run (and already built them) or is
 	// called later, alongside the running server.

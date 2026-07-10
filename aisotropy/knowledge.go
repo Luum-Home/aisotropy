@@ -6,6 +6,7 @@ package aisotropy
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/Luum-Home/aisotropy/internal/routing"
@@ -13,12 +14,15 @@ import (
 )
 
 // Embedder maps text to vectors for the semantic tier. Supply a real model
-// via WithEmbedder; the default is a deterministic HashEmbedder placeholder
-// (semantic.NewHashEmbedder(0)) that wires and tests the ingestion/RAG path
-// but does not rank semantically — see ADR-0018's "BYO embedder" decision.
-// It is an alias for the real internal/semantic type, so a consumer's
-// Embedder is the exact contract the runtime's semantic store and
-// hydrateSystemPrompt RAG hydration use.
+// via WithEmbedder, or set AISOTROPY_EMBED_URL to point semantic.EmbedderFromEnv
+// at an OpenAI-compatible /v1/embeddings endpoint — OpenAI, OpenRouter, or a
+// fully local server (Ollama, text-embeddings-inference, llama.cpp's server)
+// — via semantic.APIEmbedder. With neither set, the default is a
+// deterministic HashEmbedder placeholder (semantic.NewHashEmbedder(0)) that
+// wires and tests the ingestion/RAG path but does not rank semantically —
+// see ADR-0018's "BYO embedder" decision. It is an alias for the real
+// internal/semantic type, so a consumer's Embedder is the exact contract the
+// runtime's semantic store and hydrateSystemPrompt RAG hydration use.
 type Embedder = semantic.Embedder
 
 // Document is one piece of knowledge to ingest via IngestKnowledge or
@@ -74,13 +78,23 @@ func (a *App) chunkOptions() semantic.ChunkOptions {
 // itself calls ensureSemantic instead of building its own store, so both
 // surfaces always share one semantic index per App, never two independently
 // evolving ones.
+//
+// Embedder selection precedence (ADR-0018, extended for the BYO API
+// embedder): an explicit WithEmbedder always wins; otherwise
+// semantic.EmbedderFromEnv() resolves a real APIEmbedder when
+// AISOTROPY_EMBED_URL is configured, or falls back to the deterministic
+// HashEmbedder placeholder when it is not. So: WithEmbedder > env-configured
+// APIEmbedder > HashEmbedder.
 func (a *App) ensureSemantic(ctx context.Context) (semantic.Store, semantic.Embedder, error) {
 	a.semanticOnce.Do(func() {
 		emb := a.embedder
 		if emb == nil {
-			emb = semantic.NewHashEmbedder(0)
+			emb = semantic.EmbedderFromEnv()
 		}
 		a.embedder = emb
+		// Never log the API key (AISOTROPY_EMBED_API_KEY) — only the
+		// non-secret shape of the active embedder.
+		slog.Info("semantic embedder selected", "type", fmt.Sprintf("%T", emb), "dimension", emb.Dimension())
 
 		// Physical multi-tenancy (ADR-0007), the same routing Run applies to
 		// the facts/semantic stores: tenants in AISOTROPY_DEDICATED_TENANTS
