@@ -48,6 +48,18 @@ published in this repository.
 
 ## Status
 
-- **Phase:** Phase 0–1 of the roadmap implemented — contracts + walking skeleton with real SSE streaming. See the [roadmap](roadmap/index.md).
+The single source of truth for "what is actually built vs dormant vs aspirational" is the
+**[reality ledger](architecture/reality-ledger.md)** — consult it before treating any capability
+below as live.
+
+- **Phase:** Phases 0–7 implemented and Phase 8 (public adoption surface) shipped; Phase 9
+  (composition surface) partially delivered — see [milestones](roadmap/milestones.md) and the
+  [reality ledger](architecture/reality-ledger.md). Note that the heaviest tiers (Qdrant, networked
+  rqlite, the DataFusion sleep cycle, native tool-calling) are **real code but dormant by default**,
+  reached via env vars and verified only under the `manual` build tag — the zero-config binary runs
+  their in-process fallbacks.
 - **Framework name:** **Aisotropy** (decided). See [ADR-0000](decisions/index.md).
 - **Stack:** closed and 100% MIT/Apache-2.0 (zero BSL). See [architecture](architecture/overview.md).
+- **Positioning:** why this stack over the LangChain suite / Mastra — recorded as a falsifiable
+  decision with "when this stops being true" triggers in
+  [ADR-0020](decisions/0020-build-vs-adopt-lang-suite-mastra.md).

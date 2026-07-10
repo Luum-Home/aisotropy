@@ -180,6 +180,18 @@ These were closed in the original design and are documented as retroactive "acce
   consumers), (5) wiring-only declarative config. Extends (does not reverse) ADR-0013; preserves
   ADR-0011 isolation and ADR-0002 anti-magic. Implements [Phase 9](../roadmap/milestones.md#phase-9--composition-surface-dual-a--b).
 
+- **[ADR-0020 — Build vs. adopt the LangChain suite or Mastra](0020-build-vs-adopt-lang-suite-mastra.md):**
+  ✅ **accepted (2026-07-10)**. Promotes the [competitive-landscape](../research/competitive-landscape.md)
+  research report into a **falsifiable positioning decision**: building the sovereign in-process Go+Rust
+  runtime is the right call **only** for a Go-fluent team shipping a long-lived, multi-tenant,
+  sovereignty-constrained SaaS — and the wrong call otherwise (adopt LangChain-suite/Mastra for
+  speed-to-market, ecosystem breadth, single-tenant, or a TS/Python team). Includes an honest win/loss
+  scorecard (wins: isolation-by-construction, sovereignty, efficiency, supply chain, no-magic; **loses
+  badly on ecosystem/integrations/DX/community**) and explicit **"when this stops being true" revisit
+  triggers** (team leaves Go, product stops being multi-tenant, a comparator closes the sovereignty or
+  isolation gap, time-to-market dominates, or a fair benchmark shrinks the efficiency edge). Depends on
+  the [reality ledger](../architecture/reality-ledger.md) staying accurate.
+
 ## Next ADRs to write
 
 - New ones arising from the research phase (e.g., the codec format for [Bet 2](../research/bet-02-working-memory-codec.md)).
