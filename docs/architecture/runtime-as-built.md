@@ -3,7 +3,7 @@ type: Concept
 title: Runtime as built — what aisotropyd actually wires and runs
 description: A code-grounded description of the aisotropyd runtime as it is actually assembled in cmd/aisotropyd/main.go — the HTTP surface, the streaming request lifecycle, the async outbox/sleep-cycle side, the memory tiers, the Phase 7 granular-control machinery, and an honest ledger of what is not yet wired.
 tags: [architecture, as-built, runtime, request-lifecycle, outbox, quota, circuit-breaker, cost-meter, phase-7]
-timestamp: 2026-07-09T00:00:00Z
+timestamp: 2026-07-10T00:00:00Z
 ---
 
 # Runtime as built — what aisotropyd actually wires and runs
@@ -16,9 +16,21 @@ describe the *intended* design: [overview](overview.md), [request lifecycle](req
 [granular control](granular-control.md), [observability](observability.md). This is the honest
 "here is what boots" counterpart.
 
-Everything below is anchored in [`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go), which is
-the single wiring point: it constructs every tier and decorator and mounts every route. There is no
-other composition root.
+Everything below is anchored in the composition root. **As of Phase 8 (ADR-0013) that root moved**:
+the wiring now lives in the importable builder [`aisotropy/app.go`](../../aisotropy/app.go)
+(`App.Run` constructs every tier, decorator, and route), and
+[`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go) is a ~50-line thin consumer of it. Read
+this doc together with the one-screen [reality ledger](reality-ledger.md) (REAL vs dormant vs
+aspirational) and the [data model](data-model.md) / [API reference](api-reference.md).
+
+> **Freshness note (2026-07-10):** this document is being reconciled to recent work. Corrections
+> since it was first written, now reflected below: (1) the wiring point is `aisotropy/app.go`, not
+> `main.go`; (2) the agent endpoint now supports **native provider tool-calling** via Gollem
+> `Agent[T]` when the client implements `llm.ToolCaller` (ADR-0012) — the old "no native
+> function-calling" claim is corrected in §6; (3) knowledge-ingestion routes exist
+> (`POST/DELETE .../knowledge`, user- and tenant-scoped, ADR-0018/0019) beyond the three chat routes
+> tabled below; (4) the semantic tier is multi-kind (Document/Fact/Turn, ADR-0017). Where a detail
+> here still lags the code, the [reality ledger](reality-ledger.md) is the arbiter.
 
 ## 1. The HTTP surface (every route actually registered)
 
@@ -211,11 +223,16 @@ All five knobs are constructed in `main.go` and threaded through the handlers:
   does **facts dedup**, not primitive rewriting — contrary to the package's own docstring.
 - **Model degradation needs `AISOTROPY_CHEAP_MODEL`.** Without it `CheapClientFromEnv()` returns
   `nil` and every near-quota tenant gets the primary model (the degradation branch is skipped).
-- **The agent loop is structured-output, not native function-calling.** `internal/agentloop` drives
-  "tool use" by asking the model for a JSON `Decision` over the plain `StreamChat` interface — there
-  is no native Gollem/provider function-calling. The wired `Executor` is `demoToolExecutor`, which
-  only echoes the invocation; real tool implementations replace it. The agent route also does not
-  hydrate memory, persist turns, rate-limit, or meter cost.
+- **The agent loop has TWO dispatch paths (ADR-0012).** When the LLM client implements
+  `llm.ToolCaller` — today **only** the OpenAI-compatible/OpenRouter client — the endpoint runs a
+  Gollem `core.Agent[string]` with real function tools (native provider tool-calling), inheriting its
+  guardrails/cost-tracker/OTel. Otherwise (the stub, the Anthropic client) it falls back to the
+  homegrown `internal/agentloop`, which asks the model for a JSON `Decision` over the plain
+  `StreamChat` interface. **Both paths enforce the identical double scope-gate** (only
+  scope-permitted tools offered; the chosen name re-validated before execution). The default
+  executor is `DemoExecutor` (echoes the call); a consumer injects a real one via the builder's
+  `WithToolExecutor` (Phase 8). The agent route still does not hydrate memory, persist turns,
+  rate-limit, or meter cost — see the [threat model](threat-model.md) T4.
 - **Rate limiting and the cost meter are per-instance.** Both live in-process; there is no
   cross-replica shared quota or accounting. A multi-replica deployment would need to move this state
   to a networked tier.

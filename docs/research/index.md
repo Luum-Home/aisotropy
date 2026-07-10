@@ -13,6 +13,11 @@ down to concrete experiments. Each doc follows the same template: **Hypothesis �
 Success criterion (in bits) · Architectural fit · Risk and maturity · Dependencies · Next
 experiment**. The Bellard rule: nothing is declared "better" without a number in bits.
 
+> **The measured numbers live in [evaluation](evaluation.md)** — the canonical node that surfaces
+> the real, reproducible results (token-economy reduction, Bet 6's +1.469 bits/token offline lift,
+> Bet 1's inconclusive spike, the distroless footprint) into the graph, each with the caveat that
+> keeps it honest. Read a bet's hypothesis here; read what has actually been measured there.
+
 ## The ledger
 
 | # | Bet | Maturity | Success criterion (summary) |
