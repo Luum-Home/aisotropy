@@ -86,7 +86,14 @@ func (c Coordinator) RunOnce(ctx context.Context) (Summary, error) {
 		if !ok {
 			continue // an id we didn't export; ignore defensively
 		}
-		sc := facts.Scope{TenantID: f.TenantID, UserID: f.UserID}
+		// Route identity through the blessed constructor (ADR-0011): validate
+		// the stored tenant/user via internal/tenancy rather than building a
+		// bare facts.Scope literal. A malformed stored identity is skipped
+		// defensively — it simply won't be deduped this cycle.
+		sc, err := facts.NewScope(f.TenantID, f.UserID)
+		if err != nil {
+			continue
+		}
 		byScope[sc] = append(byScope[sc], id)
 	}
 	for sc, ids := range byScope {
