@@ -9,6 +9,7 @@ timestamp: 2026-07-08T00:00:00Z
 # Bet 5 — Sovereign NN core
 
 > **Maturity:** 🔴 ambitious — the convergence vision. Built once the greens/yellows prove their value.
+> **Promoted to next-invest substrate (2026-07-10, [ADR-0021](../decisions/0021-compression-signal-small-lm-surprisal-ceiling.md)):** the compression-bets round measured that small-LM subword surprisal is a *lexical*, not *semantic*, signal — so the viable path for Bet 1 (surprisal gate) and Bet 4 (routing) runs through **embedding-density / semantic distance**, which is this bet's territory. The next minimum experiment is a semantic-distance probe (does embedding-density separate redundant-vs-surprising / easy-vs-hard?), *before* any full NN-core build.
 > **One line:** let Aisotropy think without going out to the network. This project's "run a 4G station on a laptop."
 
 ## Hypothesis

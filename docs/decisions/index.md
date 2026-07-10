@@ -33,6 +33,8 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0017](0017-semantic-tier-multi-kind-memory.md) | Semantic tier as a multi-kind associative memory (Document/Fact/Turn), with the scoped MemoryStore aggregate | **✅ accepted → per-kind lifecycle/bound/weight; facade owns Fact-kind vectors; Turn-kind bounded** |
 | [0018](0018-knowledge-ingestion-surface.md) | Knowledge-ingestion surface (Document kind): dual-surface SDK + HTTP, BYO embedder, chunk→embed→KindDocument | **✅ accepted → `WithEmbedder` + `IngestKnowledge` + `POST .../knowledge`, (tenant,user)-scoped** |
 | [0019](0019-tenant-wide-document-sharing.md) | Tenant-wide document sharing: tenant-only scope + merged retrieval, KindDocument only | **✅ accepted → `NewTenantScope` + `IngestTenantKnowledge` + `POST .../tenant/{id}/knowledge`; user-boundary relaxed for Documents only, never cross-tenant** |
+| [0020](0020-build-vs-adopt-lang-suite-mastra.md) | Build Aisotropy vs. adopt the LangChain suite or Mastra | **✅ accepted → build (positioning verdict + revisit triggers)** |
+| [0021](0021-compression-signal-small-lm-surprisal-ceiling.md) | Compression bets' signal ceiling: small-LM surprisal ≠ semantic/difficulty | **✅ accepted → route semantic bets (1/4) via embedding-density/Bet 5; Bet 2 codec is a scale question; soft-weight not hard-gate** |
 
 ## Decisions already made in the source conversations
 
@@ -210,6 +212,20 @@ These were closed in the original design and are documented as retroactive "acce
   triggers** (team leaves Go, product stops being multi-tenant, a comparator closes the sovereignty or
   isolation gap, time-to-market dominates, or a fair benchmark shrinks the efficiency edge). Depends on
   the [reality ledger](../architecture/reality-ledger.md) staying accurate.
+
+- **[ADR-0021 — The compression bets' signal ceiling](0021-compression-signal-small-lm-surprisal-ceiling.md):**
+  ✅ **accepted (2026-07-10)**. Records the **measured** conclusion of the compression-bets round (Bets
+  1/2/4, [evaluation.md](../research/evaluation.md)): a small LM's subword **`bits/token` measures
+  syntactic/lexical predictability, not the semantic novelty (Bet 1) or reasoning difficulty (Bet 4)**
+  those bets need. Bet 1's surprisal gate tops out at 0.72 AUC (no clean gap) — usable as a **soft
+  importance weight, not a hard gate**; Bet 4's compressibility is **refuted as a length-independent
+  difficulty proxy** (bits/tok ρ=0.41; raw length ρ=0.94 beats it). Bet 2's codec **works** (lossless,
+  beats gzip ~42%) but `< 1 bit/char` is a model-scale question. **Decision:** stop iterating
+  small-LM-surprisal spikes for the *semantic* signals; route Bets 1/4's viable path through
+  **embedding-density / the sovereign NN core ([Bet 5](../research/bet-05-sovereign-nn-core.md))**,
+  which this measurement promotes from far-🔴 to the next-invest substrate; keep Bet 2 (codec) and Bet 6
+  (measurement) on the small-LM track. Preserves the negative results as evidence so the ceiling is a
+  decision, not a re-discovered dead end.
 
 ## Next ADRs to write
 

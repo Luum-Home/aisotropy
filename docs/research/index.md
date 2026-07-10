@@ -26,7 +26,7 @@ experiment**. The Bellard rule: nothing is declared "better" without a number in
 | 2 | [Working memory as a codec](bet-02-working-memory-codec.md) | 🟢 method confirmed in-repo — lossless + beats gzip ~42% (2.34 vs 4.06 bits/char, distilgpt2); < 1 bit/char needs a larger model (capacity ceiling, not method failure) | < 1 bit/char, 100% lossless reconstruction |
 | 3 | [Context as rate-distortion](bet-03-rate-distortion-context.md) | 🟡 solid framework — not yet spiked (builds on Bets 2/4) | lower distortion at fixed token budget |
 | 4 | [Compressibility routing](bet-04-compressibility-routing.md) | 🟡 speculative — **refuted as a length-independent proxy**: bits/tok ρ=0.41 (weak); every ρ≥0.6 signal is raw length in disguise (length ρ=0.94) | bits↔difficulty correlation; ↓ cost without ↓ quality |
-| 5 | [Sovereign NN core](bet-05-sovereign-nn-core.md) | 🔴 ambitious | cognitive hot path in µs, 0 network calls |
+| 5 | [Sovereign NN core](bet-05-sovereign-nn-core.md) | 🔴 ambitious — **promoted to next-invest substrate** (ADR-0021): the *semantic* signal Bets 1/4 need lives here (embedding-density), not in small-LM surprisal | cognitive hot path in µs, 0 network calls |
 | 6 | [Bits-per-token-per-tenant](bet-06-bits-per-token-metric.md) | 🟢 solid | downward curve over time per tenant |
 
 **Legend:** 🟢 start now · 🟡 research phase · 🟠 spiked, inconclusive (needs a re-run with a
