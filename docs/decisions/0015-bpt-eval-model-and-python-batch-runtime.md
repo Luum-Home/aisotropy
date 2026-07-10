@@ -51,12 +51,24 @@ time series is meaningless.
    binary and its Distroless image gain **nothing**. If `AISOTROPY_BITRATE_BIN` is unset, the runtime
    behaves exactly as before (the whole feature is dormant, mirroring `AISOTROPY_SLEEPCYCLE_BIN`).
 
-2. **Pinned evaluation model = `distilgpt2` (Apache-2.0).** Chosen as the shipped default because its
-   weight license is **confirmed permissive (Apache-2.0)**, satisfying the
-   [license policy](../../.claude/rules/cos/license-policy.md) with no gray area. `DeepESP/gpt2-spanish`
-   (the spike's higher-lift default) remains an **opt-in override** via `SURPRISAL_MODEL`, gated on a
-   weight-license confirmation before it can become a shipped default. The scorer echoes the resolved
-   `model_id` (with revision) on every NDJSON row.
+2. **Pinned evaluation model = `DeepESP/gpt2-spanish` (MIT).** *(Flipped from `distilgpt2` on
+   2026-07-10.)* Its weight license is **confirmed MIT** (HF model card), and it is Spanish-fluent for
+   the target users with a higher measured lift than `distilgpt2`; switching now carries **zero
+   comparability cost** (no live bpt series exists yet). `distilgpt2` (Apache-2.0) remains a supported
+   override via `SURPRISAL_MODEL` (Python) / `AISOTROPY_BITRATE_MODEL_ID` (Rust). The scorer echoes the
+   resolved `model_id` on every NDJSON row.
+   - **Both scorers pin the same model (the swap invariant).** Python (`bitrate_scorer.py`) defaults to
+     `DeepESP/gpt2-spanish`; the Phase-2 Rust scorer's `model_id()` is now env-driven (default the
+     same) and its `unit` label is derived from the model, not hardcoded.
+   - **Sovereign-Rust provisioning caveat.** DeepESP ships `pytorch_model.bin` but **no**
+     `model.safetensors`/`tokenizer.json`, which the Rust scorer requires. One-time offline
+     conversion: `AutoModelForCausalLM.from_pretrained("DeepESP/gpt2-spanish").save_pretrained(dir,
+     safe_serialization=True)` + `AutoTokenizer…save_pretrained(dir)`, then point
+     `AISOTROPY_BITRATE_MODEL_DIR` at `dir`. (Python needs no conversion — `transformers` loads
+     DeepESP natively.)
+   - **Parity re-verified on DeepESP (2026-07-10):** Python vs Rust `bits_per_token` within **≤4.1e-3
+     bits** with **identical `n_tokens`** — larger than distilgpt2's ~3e-5 (expected f32 divergence in
+     the 12-layer model), still well inside the 1e-2 golden tolerance.
 
 3. **Determinism pinning.** Pin the model as a `{model_id, revision_sha, tokenizer}` triple; run eval
    mode + `no_grad` + CPU + fixed dtype + real BOS/EOS 1-token context (the spike already does this).
@@ -90,15 +102,11 @@ time series is meaningless.
 
 ## Open questions
 
-1. **`DeepESP/gpt2-spanish` weight license — RESOLVED (2026-07-10): MIT** (confirmed on the HF model
-   card, https://huggingface.co/DeepESP/gpt2-spanish). It is now license-clean (✅ SAFE) and therefore
-   **eligible as the shipped default**. Given the product's Spanish-speaking target users and its higher
-   spike lift (+1.731 vs distilgpt2's +1.469), DeepESP is the *better* default — and since no live bpt
-   series exists yet (Bet 6 just shipped), switching the pinned model now carries **zero comparability
-   cost** (no historical curve to invalidate). **Recommended follow-up:** flip the pinned default from
-   `distilgpt2` to `DeepESP/gpt2-spanish` in `spikes/compression/bitrate_scorer.py` **and** the Phase-2
-   Rust scorer together, so both implementations pin the same model (golden-vector parity stays
-   meaningful). Not done in-place here to avoid diverging from the in-flight Rust port mid-parallel-work.
+1. **`DeepESP/gpt2-spanish` weight license — RESOLVED (2026-07-10): MIT** (HF model card) → ✅ SAFE.
+   **Flip DONE (2026-07-10):** both scorers now default to `DeepESP/gpt2-spanish` (Python
+   `bitrate_scorer.py` + the env-driven Rust `model_id()`), pinning the same model so golden-vector
+   parity stays meaningful (re-verified: Δ ≤4.1e-3 bits, identical `n_tokens`). See Decision §2 for the
+   sovereign-Rust safetensors/tokenizer conversion recipe. `distilgpt2` remains a supported override.
 2. **CI weight caching** — cache the HF weights in CI or bundle a small safetensors to avoid a network
    fetch, once the opt-in integration test is wired into CI.
 

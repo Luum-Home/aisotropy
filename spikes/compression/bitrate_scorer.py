@@ -37,11 +37,14 @@ import json
 import os
 import sys
 
-# Pin the license-clean default BEFORE importing surprisal: surprisal.py decides
-# its backend ONCE at import time from SURPRISAL_MODEL. setdefault preserves an
-# explicit operator override (e.g. SURPRISAL_MODEL=DeepESP/gpt2-spanish) while
-# making distilgpt2 the default for the Go-invoked scorer.
-os.environ.setdefault("SURPRISAL_MODEL", "distilgpt2")
+# Pin the eval model BEFORE importing surprisal: surprisal.py decides its backend
+# ONCE at import time from SURPRISAL_MODEL. setdefault preserves an explicit
+# operator override (e.g. SURPRISAL_MODEL=distilgpt2) while making
+# DeepESP/gpt2-spanish the default for the Go-invoked scorer — MIT-licensed
+# (ADR-0015, verified 2026-07-10) and Spanish-fluent for the target users, with a
+# higher measured lift than distilgpt2 and zero comparability cost (no live series
+# yet). The Rust Phase-2 scorer pins the same model via its model dir.
+os.environ.setdefault("SURPRISAL_MODEL", "DeepESP/gpt2-spanish")
 
 # surprisal.py lives next to this file; Python puts the script's directory on
 # sys.path[0], so this plain import resolves without packaging.

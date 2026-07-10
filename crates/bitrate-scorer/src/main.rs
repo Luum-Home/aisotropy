@@ -318,11 +318,12 @@ impl Scorer {
         let model = Gpt2::load(dir)?;
         let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json"))
             .map_err(|e| format!("load tokenizer.json: {e}"))?;
+        let unit = unit_for(&model_id);
         Ok(Scorer {
             model,
             tokenizer,
             model_id,
-            unit: "subword-distilgpt2".to_string(),
+            unit,
         })
     }
 
@@ -417,8 +418,22 @@ fn resolve_model_dir() -> Result<PathBuf, String> {
 /// set (e.g. the HF snapshot revision), it is used; otherwise '@pinned', exactly
 /// mirroring the Phase-1 Python scorer's '<model>@pinned'.
 fn model_id() -> String {
+    // The model NAME is config/env-provided, not hardcoded: the forward pass is
+    // config.json-driven (any GPT-2-class model), so the echoed label must follow
+    // whatever weights AISOTROPY_BITRATE_MODEL_DIR actually holds. Default is the
+    // pinned eval model DeepESP/gpt2-spanish (MIT, Spanish-fluent — ADR-0015).
+    let name =
+        env::var("AISOTROPY_BITRATE_MODEL_ID").unwrap_or_else(|_| "DeepESP/gpt2-spanish".to_string());
     let rev = env::var("AISOTROPY_BITRATE_MODEL_REV").unwrap_or_else(|_| "pinned".to_string());
-    format!("distilgpt2@{rev}")
+    format!("{name}@{rev}")
+}
+
+/// unit_for derives the subword-unit label from the model id, e.g.
+/// "DeepESP/gpt2-spanish@pinned" -> "subword-gpt2-spanish".
+fn unit_for(model_id: &str) -> String {
+    let base = model_id.split('@').next().unwrap_or(model_id);
+    let short = base.rsplit('/').next().unwrap_or(base);
+    format!("subword-{short}")
 }
 
 fn run() -> Result<(), String> {
