@@ -2,6 +2,7 @@ package tenancy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -113,11 +114,11 @@ func (r *fakeRows) Scan(dest ...any) error {
 	row := r.rows[r.idx]
 	bodyVal, ok := rowValue(row, "body")
 	if !ok {
-		return fmt.Errorf("fakeRows: row has no body column")
+		return errors.New("fakeRows: row has no body column")
 	}
 	ptr, ok := dest[0].(*string)
 	if !ok {
-		return fmt.Errorf("fakeRows: dest[0] must be *string")
+		return errors.New("fakeRows: dest[0] must be *string")
 	}
 	*ptr = fmt.Sprintf("%v", bodyVal)
 	return nil
@@ -193,7 +194,7 @@ func TestConcurrentTenantsDoNotRace(t *testing.T) {
 
 	const tenants = 8
 	var wg sync.WaitGroup
-	for i := 0; i < tenants; i++ {
+	for i := range tenants {
 		tenant := fmt.Sprintf("tenant-%d", i)
 		wg.Add(1)
 		go func() {

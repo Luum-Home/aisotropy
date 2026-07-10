@@ -64,7 +64,7 @@ func TestModelNavigation(t *testing.T) {
 
 	// Clamped: pressing down at the bottom must not exceed len(tasks)-1.
 	last := len(m.tasks) - 1
-	for i := 0; i < len(m.tasks)+3; i++ {
+	for range len(m.tasks) + 3 {
 		newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = newModel.(Model)
 	}

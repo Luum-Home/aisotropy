@@ -1,6 +1,7 @@
 package aisotropy
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -85,10 +86,10 @@ func LoadConfigFile(path string) (Config, error) {
 // at request time.
 func (c Config) validate() error {
 	if c.RateLimit != nil && (c.RateLimit.PerSec < 0 || c.RateLimit.Burst < 0) {
-		return fmt.Errorf("rate_limit: per_sec and burst must be >= 0")
+		return errors.New("rate_limit: per_sec and burst must be >= 0")
 	}
 	if c.CostPricing != nil && (c.CostPricing.InputPer1M < 0 || c.CostPricing.OutputPer1M < 0) {
-		return fmt.Errorf("cost_pricing: input_per_1m and output_per_1m must be >= 0")
+		return errors.New("cost_pricing: input_per_1m and output_per_1m must be >= 0")
 	}
 	for i, m := range c.MCPServers {
 		if m.Command == "" {

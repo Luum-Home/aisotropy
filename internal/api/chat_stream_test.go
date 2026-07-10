@@ -103,7 +103,7 @@ func postChatStream(t *testing.T, handler http.Handler, tenant, user, prompt, se
 	}
 
 	path := "/v1/tenant/" + tenant + "/user/" + user + "/chat/stream"
-	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(reqBody))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, bytes.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 

@@ -37,7 +37,7 @@ type BitrateHydrator struct {
 // sessionID is not used: consolidated memory is scoped by (tenant, user).
 func (h BitrateHydrator) ContextWith(ctx context.Context, tenantID, userID, sessionID, productID, query string) (string, error) {
 	key := memory.Key{Tenant: tenantID, User: userID, Session: sessionID}
-	scope, err := facts.NewScope(tenantID, userID)
+	scope, err := facts.NewScope(tenantID, userID) //nolint:contextcheck // facts.NewScope has no context parameter (internal/facts, out of scope for this cleanup)
 	if err != nil {
 		return "", fmt.Errorf("bitrate hydrate scope: %w", err)
 	}

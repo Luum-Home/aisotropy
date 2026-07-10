@@ -85,7 +85,7 @@ func (f frictionExecutor) Execute(ctx context.Context, name string, args map[str
 func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, typed *TypedToolExecutor, detector *primitives.FrictionDetector, tracer oteltrace.TracerProvider, maxSteps int) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat-agent",
-		Method:      "POST",
+		Method:      httpMethodPost,
 		Path:        "/v1/tenant/{tenant_id}/user/{user_id}/chat/agent",
 		Summary:     "Agentic tool use over structured output (Phase 7)",
 		Description: "Runs a bounded structured-output loop: the model chooses, as " +
@@ -105,7 +105,7 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 		// Per-request executor so friction is scoped to this (tenant, user): the
 		// injected host executor runs the tool, wrapped in a friction recorder
 		// when a detector is configured.
-		var exec agentloop.ToolExecutor = executor
+		exec := executor
 		if detector != nil {
 			exec = frictionExecutor{inner: executor, detector: detector, tenant: in.TenantID, user: in.UserID}
 		}

@@ -2,6 +2,7 @@ package tenancy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -282,7 +283,7 @@ func (s *UpdateStatement) Render() (string, []any, error) {
 		return "", nil, err
 	}
 	if len(s.values) == 0 {
-		return "", nil, fmt.Errorf("tenancy: Update requires at least one column to set")
+		return "", nil, errors.New("tenancy: Update requires at least one column to set")
 	}
 
 	keys := sortedKeys(s.values)

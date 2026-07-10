@@ -83,6 +83,12 @@ type StreamErrorEvent struct {
 	Message string `json:"message" doc:"Error description"`
 }
 
+// sseEventToken / sseEventDone name the SSE event kinds registered below.
+const (
+	sseEventToken = "token"
+	sseEventDone  = "done"
+)
+
 // RegisterStream mounts the chat endpoint in SSE streaming mode. It receives
 // the already-built llm.Client (llm.FromEnv() in main.go), the shared
 // *memory.WorkingMemory, and the facts-memory Store + Extractor (Phase 3)
@@ -106,10 +112,12 @@ type StreamErrorEvent struct {
 // scoring text already distilled into memory would trivially predict it
 // (leakage). This is the request-side half of the anti-leakage contract; the
 // other half is bitrate.ShouldSample.
+//
+//nolint:gocognit,cyclop,funlen // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
 func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, inPricePer1M, outPricePer1M float64, bptSampler bitrate.SampleRecorder) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
-		Method:      "POST",
+		Method:      httpMethodPost,
 		Path:        "/v1/tenant/{tenant_id}/user/{user_id}/chat/stream",
 		Summary:     "Chat with the agent via SSE streaming (Phase 1+)",
 		Description: "Streams the LLM response token by token, hydrating the " +
@@ -122,9 +130,9 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			"connection, the stream stops immediately and no partial " +
 			"assistant turn is persisted.",
 	}, map[string]any{
-		"token": StreamTokenEvent{},
-		"done":  StreamDoneEvent{},
-		"error": StreamErrorEvent{},
+		sseEventToken: StreamTokenEvent{},
+		sseEventDone:  StreamDoneEvent{},
+		"error":       StreamErrorEvent{},
 	}, func(ctx context.Context, in *ChatInput, send sse.Sender) {
 		ctx, err := withIdentity(ctx, in.TenantID, in.UserID, in.Body.SessionID)
 		if err != nil {
@@ -144,7 +152,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 		// Facts memory (Phase 3) is scoped per (tenant, user) — not per
 		// session: an Engram journal persists across a user's sessions.
 		// NewScope validates identity through internal/tenancy (ADR-0011).
-		scope, err := facts.NewScope(in.TenantID, in.UserID)
+		scope, err := facts.NewScope(in.TenantID, in.UserID) //nolint:contextcheck // facts.NewScope has no context parameter (internal/facts, out of scope for this cleanup)
 		if err != nil {
 			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("invalid tenant/user identity: %v", err)})
 			return
@@ -205,7 +213,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			// really happened); replacing the consolidation enqueue with the
 			// reservation is what keeps the scored text out of the tenant's
 			// long-term memory, so the later lift is not spurious (leakage).
-			if err := wm.Append(ctx, key, memory.Message{Role: "user", Content: in.Body.Prompt}); err != nil {
+			if err := wm.Append(ctx, key, memory.Message{Role: roleUser, Content: in.Body.Prompt}); err != nil {
 				slog.ErrorContext(ctx, "failed to append held-out user message", "err", err)
 			}
 			if err := bptSampler.Reserve(ctx, in.TenantID, in.UserID, in.Body.SessionID, ref, in.Body.Prompt); err != nil {
@@ -213,7 +221,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			}
 		} else {
 			event := memory.NewOutboxEvent(key, ref, in.Body.Prompt, time.Now().UTC())
-			if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: "user", Content: in.Body.Prompt}, event); err != nil {
+			if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: roleUser, Content: in.Body.Prompt}, event); err != nil {
 				slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
 			}
 		}
@@ -268,7 +276,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 					// Only a clean, complete stream gets its assistant turn
 					// persisted to working memory.
 					if assistantReply.Len() > 0 {
-						if err := wm.Append(ctx, key, memory.Message{Role: "assistant", Content: assistantReply.String()}); err != nil {
+						if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: assistantReply.String()}); err != nil {
 							slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
 						}
 					}
@@ -305,6 +313,8 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 // its most recent active-buffer messages), so the model sees prior turns of
 // the conversation instead of starting fresh on every request (see
 // docs/architecture/memory-tiers.md).
+//
+//nolint:gocognit,cyclop // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
 func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, key memory.Key, scope facts.Scope, productID, prompt string) (string, error) {
 	if persona == nil {
 		persona = defaultPersonaProvider{}

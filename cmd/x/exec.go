@@ -11,12 +11,19 @@ import (
 	"sync"
 )
 
+// streamStdout / streamStderr name the two output streams a task's process
+// writes to (Line.Stream).
+const (
+	streamStdout = "stdout"
+	streamStderr = "stderr"
+)
+
 // Line is one line of output produced while running a task, tagged with the
 // task-registry key that emitted it (for composite tasks this is the sub-task
 // key, not the top-level one) and which stream it came from.
 type Line struct {
 	Step   string
-	Stream string // "stdout" or "stderr"
+	Stream string // streamStdout or streamStderr
 	Text   string
 }
 
@@ -77,7 +84,7 @@ func StartTask(ctx context.Context, t Task) *Run {
 		for _, key := range keys {
 			sub, ok := Lookup(key)
 			if !ok {
-				run.Events <- Event{Line: &Line{Step: key, Stream: "stderr", Text: fmt.Sprintf("unknown task %q", key)}}
+				run.Events <- Event{Line: &Line{Step: key, Stream: streamStderr, Text: fmt.Sprintf("unknown task %q", key)}}
 				steps = append(steps, StepResult{Key: key, Pass: false})
 				overallPass = false
 				continue
@@ -109,7 +116,7 @@ func flattenSteps(keys []string) []string {
 	out := make([]string, 0, len(keys))
 	for _, k := range keys {
 		sub, ok := Lookup(k)
-		if ok && sub.NewCmd == nil && len(sub.Steps) > 0 && !(len(sub.Steps) == 1 && sub.Steps[0] == k) {
+		if ok && sub.NewCmd == nil && len(sub.Steps) > 0 && (len(sub.Steps) != 1 || sub.Steps[0] != k) {
 			out = append(out, flattenSteps(sub.Steps)...)
 			continue
 		}
@@ -123,7 +130,7 @@ func flattenSteps(keys []string) []string {
 func runStep(ctx context.Context, t Task, events chan<- Event) StepResult {
 	if t.CheckAvailable != nil {
 		if ok, hint := t.CheckAvailable(); !ok {
-			events <- Event{Line: &Line{Step: t.Key, Stream: "stderr", Text: fmt.Sprintf("%s unavailable: %s", t.Title, hint)}}
+			events <- Event{Line: &Line{Step: t.Key, Stream: streamStderr, Text: fmt.Sprintf("%s unavailable: %s", t.Title, hint)}}
 			return StepResult{Key: t.Key, Title: t.Title, Unavailable: true, Hint: hint}
 		}
 	}
@@ -133,7 +140,7 @@ func runStep(ctx context.Context, t Task, events chan<- Event) StepResult {
 		events <- Event{Line: &Line{Step: t.Key, Stream: stream, Text: text}}
 	})
 	if err != nil {
-		events <- Event{Line: &Line{Step: t.Key, Stream: "stderr", Text: fmt.Sprintf("failed to run: %v", err)}}
+		events <- Event{Line: &Line{Step: t.Key, Stream: streamStderr, Text: fmt.Sprintf("failed to run: %v", err)}}
 		return StepResult{Key: t.Key, Title: t.Title, ExitCode: -1, Pass: false}
 	}
 
@@ -177,13 +184,13 @@ func streamCmd(ctx context.Context, cmd *exec.Cmd, onLine func(stream, text stri
 		scanLines(stdoutPipe, func(line string) {
 			stdoutBuf.WriteString(line)
 			stdoutBuf.WriteByte('\n')
-			onLine("stdout", line)
+			onLine(streamStdout, line)
 		})
 	}()
 	go func() {
 		defer wg.Done()
 		scanLines(stderrPipe, func(line string) {
-			onLine("stderr", line)
+			onLine(streamStderr, line)
 		})
 	}()
 	wg.Wait()
@@ -200,7 +207,7 @@ func streamCmd(ctx context.Context, cmd *exec.Cmd, onLine func(stream, text stri
 	if ctx.Err() != nil {
 		// Killed via context cancellation (e.g. the TUI stopping a
 		// long-running task such as "run"): not a real failure to report.
-		return -1, stdoutBuf.String(), nil
+		return -1, stdoutBuf.String(), nil //nolint:nilerr // ctx cancellation is a deliberate stop, not a command failure to surface as an error
 	}
 	return -1, stdoutBuf.String(), waitErr
 }

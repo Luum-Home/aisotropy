@@ -31,10 +31,15 @@ import (
 // makes it exit 1 when it finds anything over this threshold).
 const complexityThreshold = 15
 
+// cliRun is the "run" subcommand passed to the go/golangci-lint external
+// tools this file and registry.go shell out to (distinct from keyRun, the
+// registry's own "run" dev-server Task key, in registry.go).
+const cliRun = "run"
+
 // dupCmd runs golangci-lint with only the "dupl" (duplicate code) linter
 // enabled, matching how the existing "lint" task shells out.
 func dupCmd(ctx context.Context) *exec.Cmd {
-	return exec.CommandContext(ctx, "golangci-lint", "run", "--enable-only", "dupl", "./...")
+	return exec.CommandContext(ctx, "golangci-lint", cliRun, "--enable-only", "dupl", "./...")
 }
 
 // gocognitCmd runs gocognit over every package directory in the module
@@ -44,8 +49,10 @@ func dupCmd(ctx context.Context) *exec.Cmd {
 // go tools normally accept, so it needs the same directory-listing approach
 // as gofmtCmd.
 func gocognitCmd(ctx context.Context) *exec.Cmd {
-	args := []string{"run", "github.com/uudashr/gocognit/cmd/gocognit@latest", "-over", strconv.Itoa(complexityThreshold)}
-	args = append(args, gofmtTargets(ctx)...)
+	dirs := gofmtTargets(ctx)
+	args := make([]string, 0, 4+len(dirs))
+	args = append(args, cliRun, "github.com/uudashr/gocognit/cmd/gocognit@latest", "-over", strconv.Itoa(complexityThreshold))
+	args = append(args, dirs...)
 	return exec.CommandContext(ctx, "go", args...)
 }
 
@@ -55,14 +62,14 @@ func gocognitCmd(ctx context.Context) *exec.Cmd {
 // exitCode==0 pass/fail (no EvalOutput): a nonzero exit here means the tool
 // itself failed to run, not that dead code was found.
 func deadcodeCmd(ctx context.Context) *exec.Cmd {
-	return exec.CommandContext(ctx, "go", "run", "golang.org/x/tools/cmd/deadcode@latest", "./...")
+	return exec.CommandContext(ctx, "go", cliRun, "golang.org/x/tools/cmd/deadcode@latest", "./...")
 }
 
 // govulncheckCmd runs golang.org/x/vuln/cmd/govulncheck, which exits
 // nonzero when a known vulnerability affects code actually reachable from
 // this module (the default exitCode==0 pass/fail is exactly right here).
 func govulncheckCmd(ctx context.Context) *exec.Cmd {
-	return exec.CommandContext(ctx, "go", "run", "golang.org/x/vuln/cmd/govulncheck@latest", "./...")
+	return exec.CommandContext(ctx, "go", cliRun, "golang.org/x/vuln/cmd/govulncheck@latest", "./...")
 }
 
 // --- cover: coverage threshold gate ---

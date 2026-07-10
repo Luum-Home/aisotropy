@@ -86,23 +86,52 @@ func gofmtCmd(mode string) func(ctx context.Context) *exec.Cmd {
 	}
 }
 
+// Task keys and categories referenced from more than one place in this file
+// (a Task's own Key/Title, a composite Task's Steps list, and/or the literal
+// arg passed to the underlying tool). Centralizing them as constants means a
+// key can never drift between where it's declared and where it's referenced.
+const (
+	keyBuild                = "build"
+	keyFmt                  = "fmt"
+	keyVet                  = "vet"
+	keyLint                 = "lint"
+	keyTest                 = "test"
+	keyExampleBuild         = "example-build"
+	keyExample              = "example" // also the shared Category for the four example-* tasks
+	keyExampleVet           = "example-vet"
+	keyExampleBuildHelpdesk = "example-build-helpdesk"
+	keyExampleVetHelpdesk   = "example-vet-helpdesk"
+	keyRun                  = "run"
+	keyDup                  = "dup"
+	keyComplexity           = "complexity"
+	keyDeadcode             = "deadcode"
+	keyCover                = "cover"
+	keyVuln                 = "vuln"
+	keyDeps                 = "deps"
+	keyAudit                = "audit"
+	keyTasks                = "tasks"
+
+	categoryQualityGate = "quality-gate"
+	categoryAnalysis    = "analysis"
+)
+
 // registry is the ordered list of tasks shown in the TUI and resolvable from
 // the CLI. Order here is the display order in the interactive list.
 var registry = []Task{
 	{
-		Key:         "build",
-		Title:       "build",
+		Key:         keyBuild,
+		Title:       keyBuild,
 		Description: "go build ./... — compiles every package",
-		Category:    "quality-gate",
+		Category:    categoryQualityGate,
 		NewCmd: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, "go", "build", "./...")
+			return exec.CommandContext(ctx, "go", keyBuild, "./...")
 		},
 	},
 	{
-		Key:         "fmt",
-		Title:       "fmt",
+		Key:         keyFmt,
+		Title:       keyFmt,
 		Description: "gofmt -l <module dirs> — reports files that are not gofmt-formatted",
-		Category:    "quality-gate",
+		Category:    categoryQualityGate,
 		NewCmd:      gofmtCmd("-l"),
 		EvalOutput:  fmtClean,
 	},
@@ -110,165 +139,165 @@ var registry = []Task{
 		Key:         "fmt-fix",
 		Title:       "fmt-fix",
 		Description: "gofmt -w <module dirs> — rewrites files in place to match gofmt",
-		Category:    "quality-gate",
+		Category:    categoryQualityGate,
 		NewCmd:      gofmtCmd("-w"),
 	},
 	{
-		Key:         "vet",
-		Title:       "vet",
+		Key:         keyVet,
+		Title:       keyVet,
 		Description: "go vet ./... — static analysis for suspicious constructs",
-		Category:    "quality-gate",
+		Category:    categoryQualityGate,
 		NewCmd: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, "go", "vet", "./...")
+			return exec.CommandContext(ctx, "go", keyVet, "./...")
 		},
 	},
 	{
-		Key:            "lint",
-		Title:          "lint",
+		Key:            keyLint,
+		Title:          keyLint,
 		Description:    "golangci-lint run ./... — aggregated linters",
-		Category:       "quality-gate",
+		Category:       categoryQualityGate,
 		CheckAvailable: checkGolangciLint,
 		NewCmd: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, "golangci-lint", "run", "./...")
+			return exec.CommandContext(ctx, "golangci-lint", cliRun, "./...")
 		},
 	},
 	{
-		Key:         "test",
-		Title:       "test",
+		Key:         keyTest,
+		Title:       keyTest,
 		Description: "go test ./... — runs the unit test suite",
-		Category:    "quality-gate",
+		Category:    categoryQualityGate,
 		NewCmd: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, "go", "test", "./...")
+			return exec.CommandContext(ctx, "go", keyTest, "./...")
 		},
 	},
 	{
 		Key:         "race",
 		Title:       "race",
 		Description: "go test -race ./... — unit tests with the race detector",
-		Category:    "quality-gate",
+		Category:    categoryQualityGate,
 		NewCmd: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, "go", "test", "-race", "./...")
+			return exec.CommandContext(ctx, "go", keyTest, "-race", "./...")
 		},
 	},
 	{
 		Key:         "bench",
 		Title:       "bench",
 		Description: "go test -run '^$' -bench=. -benchmem ./... — benchmarks only",
-		Category:    "quality-gate",
+		Category:    categoryQualityGate,
 		NewCmd: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, "go", "test", "-run", "^$", "-bench=.", "-benchmem", "./...")
+			return exec.CommandContext(ctx, "go", keyTest, "-run", "^$", "-bench=.", "-benchmem", "./...")
 		},
 	},
 	{
-		Key:         "example-build",
-		Title:       "example-build",
+		Key:         keyExampleBuild,
+		Title:       keyExampleBuild,
 		Description: "go -C examples/weatherbot build ./... — compiles the public-surface example bot (a separate module)",
-		Category:    "example",
+		Category:    keyExample,
 		NewCmd: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, "go", "-C", "examples/weatherbot", "build", "./...")
+			return exec.CommandContext(ctx, "go", "-C", "examples/weatherbot", keyBuild, "./...")
 		},
 	},
 	{
-		Key:         "example-vet",
-		Title:       "example-vet",
+		Key:         keyExampleVet,
+		Title:       keyExampleVet,
 		Description: "go -C examples/weatherbot vet ./... — vets the public-surface example bot",
-		Category:    "example",
+		Category:    keyExample,
 		NewCmd: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, "go", "-C", "examples/weatherbot", "vet", "./...")
+			return exec.CommandContext(ctx, "go", "-C", "examples/weatherbot", keyVet, "./...")
 		},
 	},
 	{
-		Key:         "example-build-helpdesk",
-		Title:       "example-build-helpdesk",
+		Key:         keyExampleBuildHelpdesk,
+		Title:       keyExampleBuildHelpdesk,
 		Description: "go -C examples/helpdesk build ./... — compiles the realistic public-surface example bot (typed tools + YAML wiring, a separate module)",
-		Category:    "example",
+		Category:    keyExample,
 		NewCmd: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, "go", "-C", "examples/helpdesk", "build", "./...")
+			return exec.CommandContext(ctx, "go", "-C", "examples/helpdesk", keyBuild, "./...")
 		},
 	},
 	{
-		Key:         "example-vet-helpdesk",
-		Title:       "example-vet-helpdesk",
+		Key:         keyExampleVetHelpdesk,
+		Title:       keyExampleVetHelpdesk,
 		Description: "go -C examples/helpdesk vet ./... — vets the realistic public-surface example bot",
-		Category:    "example",
+		Category:    keyExample,
 		NewCmd: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, "go", "-C", "examples/helpdesk", "vet", "./...")
+			return exec.CommandContext(ctx, "go", "-C", "examples/helpdesk", keyVet, "./...")
 		},
 	},
 	{
-		Key:         "example",
-		Title:       "example",
+		Key:         keyExample,
+		Title:       keyExample,
 		Description: "build + vet examples/weatherbot + examples/helpdesk — proves the public adoption surface compiles against the façade only",
-		Category:    "example",
-		Steps:       []string{"example-build", "example-vet", "example-build-helpdesk", "example-vet-helpdesk"},
+		Category:    keyExample,
+		Steps:       []string{keyExampleBuild, keyExampleVet, keyExampleBuildHelpdesk, keyExampleVetHelpdesk},
 	},
 	{
-		Key:         "run",
-		Title:       "run",
+		Key:         keyRun,
+		Title:       keyRun,
 		Description: "go run ./cmd/aisotropyd — starts the server; long-running, streams until cancelled",
 		Category:    "dev-server",
 		NewCmd: func(ctx context.Context) *exec.Cmd {
-			return exec.CommandContext(ctx, "go", "run", "./cmd/aisotropyd")
+			return exec.CommandContext(ctx, "go", cliRun, "./cmd/aisotropyd")
 		},
 	},
 	{
 		Key:         "check",
 		Title:       "check",
 		Description: "build, fmt, vet, test, example in sequence — the quality gates from agent-tooling.yaml plus the adoption-surface example",
-		Category:    "quality-gate",
-		Steps:       []string{"build", "fmt", "vet", "test", "example"},
+		Category:    categoryQualityGate,
+		Steps:       []string{keyBuild, keyFmt, keyVet, keyTest, keyExample},
 	},
 	{
-		Key:            "dup",
-		Title:          "dup",
+		Key:            keyDup,
+		Title:          keyDup,
 		Description:    "golangci-lint run --enable-only dupl ./... — duplicate-code clones report",
-		Category:       "analysis",
+		Category:       categoryAnalysis,
 		CheckAvailable: checkGolangciLint,
 		NewCmd:         dupCmd,
 	},
 	{
-		Key:         "complexity",
-		Title:       "complexity",
+		Key:         keyComplexity,
+		Title:       keyComplexity,
 		Description: fmt.Sprintf("go run gocognit -over %d <module dirs> — functions over cognitive-complexity threshold %d", complexityThreshold, complexityThreshold),
-		Category:    "analysis",
+		Category:    categoryAnalysis,
 		NewCmd:      gocognitCmd,
 	},
 	{
-		Key:         "deadcode",
-		Title:       "deadcode",
+		Key:         keyDeadcode,
+		Title:       keyDeadcode,
 		Description: "go run golang.org/x/tools/cmd/deadcode@latest ./... — unreachable-function report",
-		Category:    "analysis",
+		Category:    categoryAnalysis,
 		NewCmd:      deadcodeCmd,
 	},
 	{
-		Key:         "cover",
-		Title:       "cover",
+		Key:         keyCover,
+		Title:       keyCover,
 		Description: "go test -coverprofile + go tool cover -func ./... — total coverage %, fails below the threshold (default 60%, override via AISOTROPY_X_COVER_THRESHOLD)",
-		Category:    "analysis",
+		Category:    categoryAnalysis,
 		NewCmd:      coverCmd,
 		EvalOutput:  coverageMeetsThreshold,
 	},
 	{
-		Key:         "vuln",
-		Title:       "vuln",
+		Key:         keyVuln,
+		Title:       keyVuln,
 		Description: "go run golang.org/x/vuln/cmd/govulncheck@latest ./... — known-vulnerability scan of the standard library and dependencies",
-		Category:    "analysis",
+		Category:    categoryAnalysis,
 		NewCmd:      govulncheckCmd,
 	},
 	{
-		Key:         "deps",
-		Title:       "deps",
+		Key:         keyDeps,
+		Title:       keyDeps,
 		Description: "go list -json internal/memory/... — fails if internal/memory imports internal/facts or internal/semantic (memory tiers must stay independent)",
-		Category:    "analysis",
+		Category:    categoryAnalysis,
 		NewCmd:      depsCmd,
 		EvalOutput:  layerCheckPass,
 	},
 	{
-		Key:         "audit",
-		Title:       "audit",
+		Key:         keyAudit,
+		Title:       keyAudit,
 		Description: "dup, complexity, deadcode, vuln, deps in sequence — consolidated code-optimization report",
-		Category:    "analysis",
-		Steps:       []string{"dup", "complexity", "deadcode", "vuln", "deps"},
+		Category:    categoryAnalysis,
+		Steps:       []string{keyDup, keyComplexity, keyDeadcode, keyVuln, keyDeps},
 	},
 }
 
@@ -285,8 +314,8 @@ var registry = []Task{
 // resulting task order (it still ends up last).
 func init() {
 	registry = append(registry, Task{
-		Key:         "tasks",
-		Title:       "tasks",
+		Key:         keyTasks,
+		Title:       keyTasks,
 		Description: "prints every registered task's key and description (same content as `x list`, runnable from inside the TUI)",
 		Category:    "meta",
 		NewCmd:      tasksCmd,

@@ -24,7 +24,7 @@ func RunNonInteractive(ctx context.Context, key string, stdout, stderr io.Writer
 		switch {
 		case ev.Line != nil:
 			w := stdout
-			if ev.Line.Stream == "stderr" {
+			if ev.Line.Stream == streamStderr {
 				w = stderr
 			}
 			fmt.Fprintln(w, ev.Line.Text)

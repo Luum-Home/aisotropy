@@ -173,6 +173,8 @@ func WithCostPricing(inPer1M, outPer1M float64) Option {
 // ctx cancellation, SIGINT, or SIGTERM all trigger graceful shutdown. Run
 // returns nil on a clean shutdown and a non-nil error only if the HTTP server
 // itself fails to start/serve.
+//
+//nolint:gocognit,cyclop,funlen // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
 func (a *App) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -208,7 +210,7 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	// Facts memory (Phase 3): SQLite+FTS5 / rqlite by env (ADR-0007 routing).
-	factsStore, err := openFactsStore(tierRouter, dedicatedTenants)
+	factsStore, err := openFactsStore(tierRouter, dedicatedTenants) //nolint:contextcheck // facts.OpenSQLite has no context parameter (internal/facts, out of scope for this cleanup)
 	if err != nil {
 		_ = wm.Close()
 		return err
@@ -218,7 +220,7 @@ func (a *App) Run(ctx context.Context) error {
 	// Semantic memory (Phase 4): deterministic HashEmbedder + in-memory/Qdrant by
 	// env. Resolve the embedder first, since the store dimension derives from it.
 	embedder := semantic.NewHashEmbedder(0)
-	semanticStore, err := openSemanticStore(context.Background(), tierRouter, dedicatedTenants, embedder.Dimension())
+	semanticStore, err := openSemanticStore(ctx, tierRouter, dedicatedTenants, embedder.Dimension())
 	if err != nil {
 		_ = wm.Close()
 		_ = factsStore.Close()
@@ -235,7 +237,7 @@ func (a *App) Run(ctx context.Context) error {
 		bptSampler   bitrate.SampleRecorder
 	)
 	if os.Getenv("AISOTROPY_BITRATE_BIN") != "" {
-		bs, berr := openBitrateStore()
+		bs, berr := openBitrateStore() //nolint:contextcheck // bitrate.OpenStore has no context parameter (internal/bitrate, out of scope for this cleanup)
 		if berr != nil {
 			_ = wm.Close()
 			_ = factsStore.Close()
@@ -258,16 +260,16 @@ func (a *App) Run(ctx context.Context) error {
 	// Cold-boot reconciliation, then the steady-state worker.
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	defer stopWorker()
-	if n, rerr := wm.RecoverOutbox(context.Background(), sink); rerr != nil {
+	if n, rerr := wm.RecoverOutbox(ctx, sink); rerr != nil {
 		slog.Error("cold-boot outbox reconciliation failed", "err", rerr)
 	} else if n > 0 {
 		slog.Info("cold-boot outbox reconciliation drained orphaned events", "count", n)
 	}
-	go wm.RunOutboxWorker(workerCtx, sink, outboxPollInterval)
+	go wm.RunOutboxWorker(workerCtx, sink, outboxPollInterval) //nolint:contextcheck // workerCtx intentionally outlives ctx (which is cancelled on signal) so this worker keeps draining until stopWorker() during graceful shutdown
 
 	// OTel tracing (ADR-0010, no-op by default), circuit breaker, and the OTel
 	// decorator shared by the streaming and reflection paths.
-	shutdownTracing, tracer, tracerProvider := llm.NewTracerProvider(context.Background())
+	shutdownTracing, tracer, tracerProvider := llm.NewTracerProvider(context.Background()) //nolint:contextcheck // tracer lifetime must outlive ctx (cancelled on signal): shutdownTracing is invoked later, during graceful shutdown, with its own bounded context
 	protectedClient := llm.WithCircuitBreaker(llmClient, circuitFailureThreshold, circuitCooldown)
 	streamClient := llm.WithOTel(protectedClient, tracer)
 
@@ -285,7 +287,7 @@ func (a *App) Run(ctx context.Context) error {
 			Store:  factsStore,
 			Runner: sleepcycle.Worker{BinaryPath: bin, Tracer: tracer},
 		}
-		go coordinator.RunScheduler(workerCtx, sleepCycleInterval, func(s sleepcycle.Summary, serr error) {
+		go coordinator.RunScheduler(workerCtx, sleepCycleInterval, func(s sleepcycle.Summary, serr error) { //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
 			if serr != nil {
 				slog.Error("sleep cycle failed", "err", serr)
 				return
@@ -326,12 +328,12 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	var mcpClosers []func() error
 	for _, spec := range a.mcpServers {
-		client, cerr := mcp.NewStdioClient(context.Background(), spec.command, spec.args...)
+		client, cerr := mcp.NewStdioClient(ctx, spec.command, spec.args...)
 		if cerr != nil {
 			slog.Error("mcp server connect failed; skipping its tools", "command", spec.command, "err", cerr)
 			continue
 		}
-		mtools, mhandlers, berr := api.BuildMCPTools(context.Background(), client, spec.requiredScope)
+		mtools, mhandlers, berr := api.BuildMCPTools(ctx, client, spec.requiredScope)
 		if berr != nil {
 			slog.Error("mcp list-tools failed; skipping this server", "command", spec.command, "err", berr)
 			_ = client.Close()
@@ -390,7 +392,7 @@ func (a *App) Run(ctx context.Context) error {
 			Runner: bitrate.Worker{BinaryPath: bin, Tracer: tracer},
 			Store:  bitrateStore,
 		}
-		go coordinator.RunScheduler(workerCtx, bitrateInterval, func(ms []bitrate.Measurement, merr error) {
+		go coordinator.RunScheduler(workerCtx, bitrateInterval, func(ms []bitrate.Measurement, merr error) { //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
 			if merr != nil {
 				slog.Error("bitrate measurement failed", "err", merr)
 				return
@@ -417,7 +419,7 @@ func (a *App) Run(ctx context.Context) error {
 	// tiers. No probe spends LLM tokens.
 	router.Get("/health", health.New(readinessProbeTimeout,
 		health.Probe{Name: "facts", Check: func(ctx context.Context) error {
-			sc, serr := facts.NewScope(healthProbeTenant, healthProbeTenant)
+			sc, serr := facts.NewScope(healthProbeTenant, healthProbeTenant) //nolint:contextcheck // facts.NewScope has no context parameter (internal/facts, out of scope for this cleanup)
 			if serr != nil {
 				return serr
 			}
@@ -437,7 +439,7 @@ func (a *App) Run(ctx context.Context) error {
 	// Per-user primitives (Phase 6 behavioral memory).
 	primStore := primitives.NewStore()
 	frictionDetector := primitives.NewFrictionDetector(primStore)
-	go runPrimitiveConsolidation(workerCtx, primStore)
+	go runPrimitiveConsolidation(workerCtx, primStore) //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
 
 	// Agentic tool-use endpoint (Phase 7): the injected executor drives real tool
 	// logic, wrapped per-request in a friction recorder.
@@ -476,14 +478,14 @@ func (a *App) Run(ctx context.Context) error {
 			if bitrateStore != nil {
 				_ = bitrateStore.Close()
 			}
-			_ = shutdownTracing(context.Background())
+			_ = shutdownTracing(context.Background()) //nolint:contextcheck // ctx is already cancelled here (server failed to start after a shutdown signal); tracer shutdown deliberately uses a fresh context
 			return serr
 		}
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	if serr := server.Shutdown(shutdownCtx); serr != nil {
+	if serr := server.Shutdown(shutdownCtx); serr != nil { //nolint:contextcheck // ctx is already cancelled at this point (draining triggered by ctx.Done()); shutdownCtx deliberately gives the drain its own bounded deadline
 		slog.Error("server shutdown did not complete cleanly", "err", serr)
 	}
 
@@ -505,7 +507,7 @@ func (a *App) Run(ctx context.Context) error {
 			slog.Error("bitrate store close failed", "err", cerr)
 		}
 	}
-	if cerr := shutdownTracing(shutdownCtx); cerr != nil {
+	if cerr := shutdownTracing(shutdownCtx); cerr != nil { //nolint:contextcheck // ctx is already cancelled at this point; shutdownCtx deliberately gives tracer shutdown its own bounded deadline
 		slog.Error("otel tracer shutdown failed", "err", cerr)
 	}
 

@@ -25,6 +25,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -43,6 +44,18 @@ import (
 // returns an error after this many attempts, never a silent unstructured
 // fallback.
 const chatMaxReflectionRetries = 3
+
+// httpMethodPost is the HTTP method every chat route (chat, chat/stream,
+// chat/agent) registers under.
+const httpMethodPost = "POST"
+
+// roleUser / roleAssistant are the memory.Message.Role values persisted for
+// each side of a chat turn, shared across the non-streaming and streaming
+// handlers.
+const (
+	roleUser      = "user"
+	roleAssistant = "assistant"
+)
 
 // ChatRequest is the input contract (Input Guardrail via Huma).
 // The tags govern both HTTP validation and the published JSON Schema.
@@ -99,7 +112,7 @@ func decodeChatReply(raw string) (chatStructuredReply, error) {
 		return chatStructuredReply{}, fmt.Errorf(`response is not valid JSON matching {"reply": string}: %w`, err)
 	}
 	if strings.TrimSpace(out.Reply) == "" {
-		return chatStructuredReply{}, fmt.Errorf(`response JSON is valid but "reply" is empty`)
+		return chatStructuredReply{}, errors.New(`response JSON is valid but "reply" is empty`)
 	}
 	return out, nil
 }
@@ -141,10 +154,12 @@ func withIdentity(ctx context.Context, tenant, user, session string) (context.Co
 // state, consistent with isolation via ctx (see docs/vision/principles.md).
 // persona supplies the base system prompt per product_id (Phase 8 adoption
 // seam); nil selects the built-in default persona.
+//
+//nolint:gocognit // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
 func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, persona PersonaProvider) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat",
-		Method:      "POST",
+		Method:      httpMethodPost,
 		Path:        "/v1/tenant/{tenant_id}/user/{user_id}/chat",
 		Summary:     "Chat with the agent (structured output via the reflection loop)",
 		Description: "Validates the contract, isolates by tenant/user via ctx, hydrates the " +
@@ -166,7 +181,7 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 		ctx = llm.WithTenant(ctx, in.TenantID)
 		ctx = llm.WithUser(ctx, in.UserID)
 		key := memory.Key{Tenant: in.TenantID, User: in.UserID, Session: in.Body.SessionID}
-		scope, err := facts.NewScope(in.TenantID, in.UserID)
+		scope, err := facts.NewScope(in.TenantID, in.UserID) //nolint:contextcheck // facts.NewScope has no context parameter (internal/facts, out of scope for this cleanup)
 		if err != nil {
 			return nil, huma.Error422UnprocessableEntity("invalid tenant/user identity", err)
 		}
@@ -213,7 +228,7 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 		// the outbox worker, not only the streaming one. Done before the LLM
 		// call because the user's message is real input that already happened.
 		event := memory.NewOutboxEvent(key, outboxRef(key, in.Body.Prompt), in.Body.Prompt, time.Now().UTC())
-		if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: "user", Content: in.Body.Prompt}, event); err != nil {
+		if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: roleUser, Content: in.Body.Prompt}, event); err != nil {
 			slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
 		}
 
@@ -232,7 +247,7 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 
 		// Only a successfully validated turn gets persisted — a failed/rejected
 		// attempt (handled above) never reaches this line.
-		if err := wm.Append(ctx, key, memory.Message{Role: "assistant", Content: reply.Reply}); err != nil {
+		if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: reply.Reply}); err != nil {
 			slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
 		}
 

@@ -98,7 +98,11 @@ func TestRunServesAndShutsDown(t *testing.T) {
 	waitForServer(t, base+"/healthz")
 
 	for _, path := range []string{"/healthz", "/costs", "/openapi.json"} {
-		resp, err := http.Get(base + path)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
+		if err != nil {
+			t.Fatalf("build request %s: %v", path, err)
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
 		}
@@ -125,7 +129,8 @@ func TestRunServesAndShutsDown(t *testing.T) {
 // local test.
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve port: %v", err)
 	}
@@ -139,7 +144,11 @@ func waitForServer(t *testing.T, url string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(url)
+		req, rerr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+		if rerr != nil {
+			t.Fatalf("build request %s: %v", url, rerr)
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
