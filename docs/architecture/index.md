@@ -17,6 +17,8 @@ timestamp: 2026-07-08T00:00:00Z
 - [Request lifecycle](request-lifecycle.md) — What happens from HTTP to SSE and the sleep cycle (the *aspirational* lifecycle).
 - [Runtime as built](runtime-as-built.md) — Code-grounded: what `aisotropyd` actually wires and runs, with a debt ledger. The honest counterpart to the request lifecycle.
 - [Phases 3–7 as built](phases-3-7-as-built.md) — Constitutional-gate → test-coverage matrix + honest debt ledger.
+- [Data model](data-model.md) — The unified schema reference: identity keys, HTTP contract structs, and per-tier storage shapes (facts, semantic `Point`/`Kind`, working-memory keys, outbox). The struct is the single source of truth.
+- [API reference](api-reference.md) — Every endpoint: method, path, request/response/error, and SSE semantics.
 - [Tiered memory](memory-tiers.md) — The three-tier memory system + batch. **The heart of the design.**
 - [Consistency](consistency.md) — Transactional Outbox, sleep cycle, idempotency, reconciliation. **The keystone of the design.**
 - [Multi-tenancy](multi-tenancy.md) — Isolation via `ctx` at every layer.
