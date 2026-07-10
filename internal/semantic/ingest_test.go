@@ -154,8 +154,11 @@ func TestIngestWritesKindDocumentPoints(t *testing.T) {
 	if got[0].Kind != KindDocument {
 		t.Fatalf("Kind = %q, want %q", got[0].Kind, KindDocument)
 	}
-	if got[0].Source != "handbook.md" {
-		t.Fatalf("Source = %q, want handbook.md", got[0].Source)
+	if got[0].Source != "handbook" {
+		t.Fatalf("Source = %q, want the document id %q (the DeleteBySource chunk-group key)", got[0].Source, "handbook")
+	}
+	if got[0].Citation != "handbook.md" {
+		t.Fatalf("Citation = %q, want handbook.md (the caller-supplied provenance)", got[0].Citation)
 	}
 	if got[0].CreatedAt.IsZero() {
 		t.Fatal("CreatedAt was not set")
@@ -187,6 +190,71 @@ func TestIngestIsIdempotent(t *testing.T) {
 	}
 	if got[0].Content != "second, updated version of the document" {
 		t.Fatalf("content = %q, want the updated version", got[0].Content)
+	}
+}
+
+// TestIngestReingestShrunkDocumentLeavesNoOrphanChunks is the ADR-0018
+// orphan-chunk-gap closure: re-ingesting a document whose new content
+// produces FEWER chunks than the previous version must not leave any of the
+// now-stale chunk indices behind. Ingest deletes by source before
+// re-upserting, so only the current chunk set survives.
+func TestIngestReingestShrunkDocumentLeavesNoOrphanChunks(t *testing.T) {
+	emb := NewHashEmbedder(0)
+	st := NewInMemoryStore(emb.Dimension())
+	sc := Scope{tenant: "acme", user: "alice"}
+	ctx := context.Background()
+	opts := ChunkOptions{Size: 10, Overlap: 0}
+
+	long := strings.Repeat("abcdefghij", 5) // 50 runes -> 5 chunks at size 10
+	n, err := Ingest(ctx, st, emb, sc, opts, []Document{{ID: "shrinking-doc", Content: long}})
+	if err != nil {
+		t.Fatalf("first Ingest: %v", err)
+	}
+	if n != 5 {
+		t.Fatalf("first ingest chunks = %d, want 5", n)
+	}
+
+	short := "abcdefghij" // 10 runes -> 1 chunk
+	n, err = Ingest(ctx, st, emb, sc, opts, []Document{{ID: "shrinking-doc", Content: short}})
+	if err != nil {
+		t.Fatalf("second Ingest: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("second ingest chunks = %d, want 1", n)
+	}
+
+	var survivors int
+	for _, p := range st.points {
+		if p.TenantID == "acme" && p.UserID == "alice" && p.Kind == KindDocument && p.Source == "shrinking-doc" {
+			survivors++
+		}
+	}
+	if survivors != 1 {
+		t.Fatalf("orphan chunks: %d KindDocument points survive for shrinking-doc, want exactly 1 (the new chunk count)", survivors)
+	}
+}
+
+// TestIngestReingestToEmptyContentLeavesNoOrphanChunks covers the extreme
+// shrink case: content that chunks to zero chunks (empty string) must still
+// remove every previously-ingested chunk of that document id.
+func TestIngestReingestToEmptyContentLeavesNoOrphanChunks(t *testing.T) {
+	emb := NewHashEmbedder(0)
+	st := NewInMemoryStore(emb.Dimension())
+	sc := Scope{tenant: "acme", user: "alice"}
+	ctx := context.Background()
+	opts := ChunkOptions{Size: 10, Overlap: 0}
+
+	if _, err := Ingest(ctx, st, emb, sc, opts, []Document{{ID: "vanishing-doc", Content: strings.Repeat("x", 30)}}); err != nil {
+		t.Fatalf("first Ingest: %v", err)
+	}
+	if _, err := Ingest(ctx, st, emb, sc, opts, []Document{{ID: "vanishing-doc", Content: ""}}); err != nil {
+		t.Fatalf("second Ingest (empty content): %v", err)
+	}
+
+	for _, p := range st.points {
+		if p.Kind == KindDocument && p.Source == "vanishing-doc" {
+			t.Fatalf("orphan chunk survived after re-ingesting empty content: %+v", p)
+		}
 	}
 }
 

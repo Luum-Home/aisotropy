@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -356,28 +357,10 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 		}
 	}
 
-	// Semantic memory (Phase 4): vectors semantically similar to the prompt for
-	// this user (RAG over what the consolidation sink embedded). Also non-fatal
-	// enrichment — an embed/search failure degrades to "no semantic context"
-	// rather than failing the request. ADR-0017 phase 3: the primary RAG
-	// injection targets only the high-value kinds (curated Document knowledge
-	// and distilled Fact projections); raw KindTurn vectors are excluded here
-	// so they never dominate the injected context — Turn stays available in
-	// the tier for a possible future fallback path, just not this one.
-	var semantics []semantic.ScoredPoint
-	if semStore != nil && embedder != nil {
-		if vecs, eerr := embedder.Embed(ctx, []string{prompt}); eerr == nil && len(vecs) > 0 {
-			if semScope, serr := semantic.NewScope(scope.Tenant(), scope.User()); serr == nil { //nolint:contextcheck // semantic.NewScope has no context parameter (internal/semantic, out of scope for this cleanup)
-				if pts, serr := semStore.Search(ctx, semScope, vecs[0], semanticWindow, semantic.KindDocument, semantic.KindFact); serr == nil {
-					semantics = pts
-				} else {
-					slog.ErrorContext(ctx, "semantic search failed; proceeding without it", "err", serr)
-				}
-			} else {
-				slog.ErrorContext(ctx, "semantic scope construction failed; proceeding without it", "err", serr)
-			}
-		}
-	}
+	// Semantic memory (Phase 4 + ADR-0019 tenant-shared merge): see
+	// searchSemanticContext's doc for the full rationale (kind filtering,
+	// non-fatal degradation, the tenant-shared merge).
+	semantics := searchSemanticContext(ctx, semStore, embedder, scope, prompt)
 
 	if summary == "" && len(recent) == 0 && len(relevant) == 0 && len(semantics) == 0 {
 		return base, nil
@@ -408,4 +391,81 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 		}
 	}
 	return sb.String(), nil
+}
+
+// searchSemanticContext returns the semantic-memory fragments to inject into
+// the system prompt for scope's tenant/user against prompt: vectors
+// semantically similar to prompt (RAG over what the consolidation sink
+// embedded). Non-fatal enrichment throughout — an embed/search/scope failure
+// degrades to "no semantic context" (or "user results only") rather than
+// failing the request. ADR-0017 phase 3: the primary RAG injection targets
+// only the high-value kinds (curated Document knowledge and distilled Fact
+// projections); raw KindTurn vectors are excluded so they never dominate the
+// injected context.
+//
+// ADR-0019 (tenant-wide document sharing): a SECOND, single-scope search
+// against the tenant-shared bucket (semantic.NewTenantScope, KindDocument
+// only) is merged in with the user's own results, client-side — never a
+// widened/OR-filtered store scan. The two searches degrade independently: a
+// failure on either side still lets the other contribute.
+func searchSemanticContext(ctx context.Context, semStore semantic.Store, embedder semantic.Embedder, scope facts.Scope, prompt string) []semantic.ScoredPoint {
+	if semStore == nil || embedder == nil {
+		return nil
+	}
+	vecs, eerr := embedder.Embed(ctx, []string{prompt})
+	if eerr != nil || len(vecs) == 0 {
+		return nil
+	}
+	query := vecs[0]
+	var userPts, tenantPts []semantic.ScoredPoint
+
+	if semScope, serr := semantic.NewScope(scope.Tenant(), scope.User()); serr == nil { //nolint:contextcheck // semantic.NewScope has no context parameter (internal/semantic, out of scope for this cleanup)
+		if pts, serr := semStore.Search(ctx, semScope, query, semanticWindow, semantic.KindDocument, semantic.KindFact); serr == nil {
+			userPts = pts
+		} else {
+			slog.ErrorContext(ctx, "semantic search failed; proceeding without it", "err", serr)
+		}
+	} else {
+		slog.ErrorContext(ctx, "semantic scope construction failed; proceeding without it", "err", serr)
+	}
+
+	if tenantScope, terr := semantic.NewTenantScope(scope.Tenant()); terr == nil { //nolint:contextcheck // semantic.NewTenantScope has no context parameter (internal/semantic, out of scope for this cleanup)
+		if pts, serr := semStore.Search(ctx, tenantScope, query, semanticWindow, semantic.KindDocument); serr == nil {
+			tenantPts = pts
+		} else {
+			slog.ErrorContext(ctx, "tenant-shared semantic search failed; proceeding without it", "err", serr)
+		}
+	} else {
+		slog.ErrorContext(ctx, "tenant scope construction failed; proceeding without it", "err", terr)
+	}
+
+	return mergeScoredPoints(semanticWindow, userPts, tenantPts)
+}
+
+// mergeScoredPoints merges already-scoped semantic search result sets (a
+// user's own search plus the tenant-shared Document search, ADR-0019),
+// dedupes by point ID (first occurrence wins — sets is ordered
+// user-scope-first, so a user's own copy of a point would win over a
+// same-ID tenant-shared one, though in practice PointID's scope-derived hash
+// makes that collision structurally impossible), sorts by score descending,
+// and truncates to limit. Two clean single-scope searches merged
+// client-side — never a widened/OR-filtered store scan, per ADR-0019's
+// "Alternative A rejected".
+func mergeScoredPoints(limit int, sets ...[]semantic.ScoredPoint) []semantic.ScoredPoint {
+	seen := make(map[string]struct{})
+	var merged []semantic.ScoredPoint
+	for _, set := range sets {
+		for _, p := range set {
+			if _, dup := seen[p.ID]; dup {
+				continue
+			}
+			seen[p.ID] = struct{}{}
+			merged = append(merged, p)
+		}
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Score > merged[j].Score })
+	if limit > 0 && len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged
 }

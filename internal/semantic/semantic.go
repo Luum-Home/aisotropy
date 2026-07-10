@@ -89,6 +89,22 @@ func ScopeFromContext(ctx context.Context) (Scope, error) {
 	return Scope{tenant: ts.Tenant(), user: user}, nil
 }
 
+// NewTenantScope validates tenant through internal/tenancy and returns a
+// tenant-only Scope — an empty user (per ADR-0019, "Tenant-wide document
+// sharing"). Its points carry UserID == "": the tenant-shared bucket used
+// exclusively for KindDocument. A user-scoped Scope (NewScope) never matches
+// a tenant-shared point and vice versa — each Store scan stays strictly
+// single-scope; sharing is achieved by merging two clean searches at the
+// call site (internal/api/chat_stream.go's hydrateSystemPrompt), never by
+// widening a store's own filter. Joins NewScope/ScopeFromContext as the only
+// blessed constructors — semantic.Scope stays a VO (ADR-0011); there is no
+// bare semantic.Scope{} path to an empty-user scope from outside this
+// package.
+func NewTenantScope(tenant string) (Scope, error) {
+	ctx := tenancy.WithTenant(context.Background(), tenant)
+	return ScopeFromContext(ctx)
+}
+
 // Kind classifies what a Point represents, per ADR-0017
 // (docs/decisions/0017-semantic-tier-multi-kind-memory.md): the semantic tier
 // is a multi-kind associative memory, and each kind carries its own
@@ -127,8 +143,19 @@ type Point struct {
 	// Content is the chunk text kept as payload so retrieval returns usable
 	// text (and the reranker can read it), not just an id.
 	Content string
-	// Source is optional provenance (document id, url, section) for citations.
+	// Source is the group-identity key for chunk-level operations: for
+	// KindDocument points (set by Ingest) it is the ingested Document.ID, so
+	// every chunk of one document shares the same Source regardless of chunk
+	// count, and Store.DeleteBySource(sc, KindDocument, docID) can remove
+	// them all as a unit (ADR-0018 open q#3 / ADR-0019 open q#1). Other kinds
+	// leave Source empty today.
 	Source string
+	// Citation is optional caller-supplied provenance (url, filename,
+	// section) for a KindDocument point, surfaced on retrieved chunks so an
+	// application can build a citation UI. Distinct from Source: Source is
+	// the internal chunk-group key, Citation is the human-facing origin
+	// string a caller passed as Document.Source.
+	Citation string
 	// Vector is the embedding; its length must equal the store's dimension.
 	Vector []float32
 	// CreatedAt is when this point was written, set by the writer at upsert
@@ -170,6 +197,15 @@ type Store interface {
 	// different tenant/user is left untouched. Unknown ids are ignored (no
 	// error).
 	Delete(ctx context.Context, sc Scope, ids []string) error
+
+	// DeleteBySource removes every point within sc whose Kind equals kind and
+	// whose Source equals source — e.g. every chunk of one ingested document,
+	// regardless of how many chunks it has (ADR-0018 open q#3). Applied
+	// during the same scoped lookup as Delete, never a post-filter: a
+	// colliding source belonging to a different tenant/user is left
+	// untouched. Returns the number of points removed; no matching points is
+	// not an error (returns 0, nil).
+	DeleteBySource(ctx context.Context, sc Scope, kind Kind, source string) (int, error)
 
 	// PruneTurns evicts KindTurn points within sc per ADR-0017 phase 3
 	// ("Turn-kind bounding"): every KindTurn point older than maxAge is

@@ -137,3 +137,76 @@ func (a *App) IngestKnowledge(ctx context.Context, tenant, user string, docs ...
 	}
 	return n, nil
 }
+
+// DeleteKnowledge removes every previously ingested chunk of docID within
+// (tenant, user) — the SDK arm of ADR-0018's open question #3, the HTTP arm
+// being DELETE .../user/{user_id}/knowledge/{doc_id}. Idempotent: deleting
+// an unknown or already-deleted docID returns (0, nil), never an error.
+// Returns the number of chunks removed.
+func (a *App) DeleteKnowledge(ctx context.Context, tenant, user, docID string) (int, error) {
+	sc, err := semantic.NewScope(tenant, user) //nolint:contextcheck // semantic.NewScope has no context parameter (internal/semantic, out of scope for this cleanup)
+	if err != nil {
+		return 0, fmt.Errorf("aisotropy: delete knowledge: %w", err)
+	}
+	store, _, err := a.ensureSemantic(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("aisotropy: delete knowledge: build semantic store: %w", err)
+	}
+	n, err := store.DeleteBySource(ctx, sc, semantic.KindDocument, docID)
+	if err != nil {
+		return 0, fmt.Errorf("aisotropy: delete knowledge: %w", err)
+	}
+	return n, nil
+}
+
+// IngestTenantKnowledge chunks, embeds, and stores docs as KindDocument
+// vectors in the tenant-shared bucket (ADR-0019; semantic.NewTenantScope, an
+// empty-user Scope) — the SDK arm of the dual-surface tenant-wide sharing
+// capability, the HTTP arm being POST /v1/tenant/{tenant_id}/knowledge. A
+// document ingested here is retrievable by every user of tenant via
+// hydrateSystemPrompt's merged search, with no per-user re-ingestion.
+// tenant is validated through semantic.NewTenantScope: a bad tenant is
+// returned as an error, never silently accepted. Returns the number of
+// chunks written across all docs.
+func (a *App) IngestTenantKnowledge(ctx context.Context, tenant string, docs ...Document) (int, error) {
+	sc, err := semantic.NewTenantScope(tenant) //nolint:contextcheck // semantic.NewTenantScope has no context parameter (internal/semantic, out of scope for this cleanup)
+	if err != nil {
+		return 0, fmt.Errorf("aisotropy: ingest tenant knowledge: %w", err)
+	}
+	store, emb, err := a.ensureSemantic(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("aisotropy: ingest tenant knowledge: build semantic store: %w", err)
+	}
+
+	internalDocs := make([]semantic.Document, 0, len(docs))
+	for _, d := range docs {
+		internalDocs = append(internalDocs, semantic.Document{ID: d.ID, Content: d.Content, Source: d.Source})
+	}
+
+	n, err := semantic.Ingest(ctx, store, emb, sc, a.chunkOptions(), internalDocs)
+	if err != nil {
+		return 0, fmt.Errorf("aisotropy: ingest tenant knowledge: %w", err)
+	}
+	return n, nil
+}
+
+// DeleteTenantKnowledge removes every previously ingested chunk of docID
+// from the tenant-shared bucket (ADR-0019 open question #1) — the SDK arm,
+// the HTTP arm being DELETE /v1/tenant/{tenant_id}/knowledge/{doc_id}.
+// Idempotent: deleting an unknown or already-deleted docID returns (0, nil),
+// never an error. Returns the number of chunks removed.
+func (a *App) DeleteTenantKnowledge(ctx context.Context, tenant, docID string) (int, error) {
+	sc, err := semantic.NewTenantScope(tenant) //nolint:contextcheck // semantic.NewTenantScope has no context parameter (internal/semantic, out of scope for this cleanup)
+	if err != nil {
+		return 0, fmt.Errorf("aisotropy: delete tenant knowledge: %w", err)
+	}
+	store, _, err := a.ensureSemantic(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("aisotropy: delete tenant knowledge: build semantic store: %w", err)
+	}
+	n, err := store.DeleteBySource(ctx, sc, semantic.KindDocument, docID)
+	if err != nil {
+		return 0, fmt.Errorf("aisotropy: delete tenant knowledge: %w", err)
+	}
+	return n, nil
+}

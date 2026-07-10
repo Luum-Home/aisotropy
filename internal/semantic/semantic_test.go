@@ -276,6 +276,74 @@ func TestDeleteRemovesPointsScopeIsolated(t *testing.T) {
 	}
 }
 
+// TestDeleteBySourceRemovesAllChunksScopeIsolated is the ADR-0018 open q#3
+// DoD: DeleteBySource removes every point sharing (Kind, Source) — e.g. every
+// chunk of one document, regardless of how many there are — while staying
+// scope-isolated exactly like Delete: a call scoped to a different
+// tenant/user must never remove another owner's points, even with a
+// colliding Source string.
+func TestDeleteBySourceRemovesAllChunksScopeIsolated(t *testing.T) {
+	emb := NewHashEmbedder(0)
+	st := NewInMemoryStore(emb.Dimension())
+	ctx := context.Background()
+	acme := Scope{tenant: "acme", user: "alice"}
+	globex := Scope{tenant: "globex", user: "bob"}
+
+	acmeChunks := []Point{
+		point(ctx, acme, emb, KindDocument, "doc-1#0", "acme chunk zero"),
+		point(ctx, acme, emb, KindDocument, "doc-1#1", "acme chunk one"),
+		point(ctx, acme, emb, KindDocument, "doc-1#2", "acme chunk two"),
+	}
+	for i := range acmeChunks {
+		acmeChunks[i].Source = "doc-1"
+	}
+	// A Fact-kind point with the SAME Source string must survive: the kind
+	// half of (Kind,Source) must be honored too.
+	acmeFact := point(ctx, acme, emb, KindFact, "fact-1", "unrelated fact")
+	acmeFact.Source = "doc-1"
+
+	// A colliding Source ("doc-1") belonging to a DIFFERENT tenant/user must
+	// never be touched by an acme-scoped delete.
+	globexChunk := point(ctx, globex, emb, KindDocument, "doc-1#0", "globex chunk zero")
+	globexChunk.Source = "doc-1"
+
+	if err := st.Upsert(ctx, acme, append(append([]Point{}, acmeChunks...), acmeFact)); err != nil {
+		t.Fatalf("Upsert acme: %v", err)
+	}
+	if err := st.Upsert(ctx, globex, []Point{globexChunk}); err != nil {
+		t.Fatalf("Upsert globex: %v", err)
+	}
+
+	deleted, err := st.DeleteBySource(ctx, acme, KindDocument, "doc-1")
+	if err != nil {
+		t.Fatalf("DeleteBySource: %v", err)
+	}
+	if deleted != 3 {
+		t.Fatalf("deleted = %d, want 3 (all of acme's doc-1 chunks)", deleted)
+	}
+
+	for id, p := range st.points {
+		if p.TenantID == "acme" && p.UserID == "alice" && p.Kind == KindDocument && p.Source == "doc-1" {
+			t.Fatalf("chunk %s survived DeleteBySource", id)
+		}
+	}
+	if _, ok := st.points[acmeFact.ID]; !ok {
+		t.Fatal("DeleteBySource removed a Fact-kind point with a colliding Source — kind must be honored")
+	}
+	if _, ok := st.points[globexChunk.ID]; !ok {
+		t.Fatal("DeleteBySource scoped to acme removed globex's point — scope isolation broken")
+	}
+
+	// Unknown source: no-op, no error.
+	deleted, err = st.DeleteBySource(ctx, acme, KindDocument, "does-not-exist")
+	if err != nil {
+		t.Fatalf("DeleteBySource (unknown source): %v", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted = %d, want 0 for an unknown source", deleted)
+	}
+}
+
 // TestSearchKindFilter is the ADR-0017 phase-1 DoD: Search with a kind filter
 // returns only points of that kind, while the (tenant,user) isolation filter
 // still applies.

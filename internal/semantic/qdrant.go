@@ -108,15 +108,18 @@ const (
 	payloadUser      = "user_id"
 	payloadContent   = "content"
 	payloadSource    = "source"
+	payloadCitation  = "citation"
 	payloadKind      = "kind"
 	payloadCreatedAt = "created_at"
 )
 
-// turnScrollLimit bounds how many KindTurn points PruneTurns scrolls in a
-// single pass per scope. PruneTurns runs periodically (the sleep cycle) and
-// is itself what keeps a scope's Turn population bounded, so this ceiling is
-// a defensive cap on one pass's own cost, not the steady-state population.
-const turnScrollLimit = 10000
+// scrollLimit bounds how many points a single filtered scroll pass returns,
+// used by both PruneTurns (per scope) and DeleteBySource (per document).
+// PruneTurns runs periodically (the sleep cycle) and is itself what keeps a
+// scope's Turn population bounded, so this ceiling is a defensive cap on one
+// pass's own cost, not the steady-state population; likewise a single
+// document's chunk count is expected to stay well under this ceiling.
+const scrollLimit = 10000
 
 // Upsert writes points, keyed by their UUIDv5 ID (a re-upsert replaces in
 // place, so an at-least-once retry is a no-op). See Store.Upsert.
@@ -144,6 +147,7 @@ func (s *QdrantStore) Upsert(ctx context.Context, sc Scope, points []Point) erro
 				payloadUser:      qdrant.NewValueString(p.UserID),
 				payloadContent:   qdrant.NewValueString(p.Content),
 				payloadSource:    qdrant.NewValueString(p.Source),
+				payloadCitation:  qdrant.NewValueString(p.Citation),
 				payloadKind:      qdrant.NewValueString(string(p.Kind)),
 				payloadCreatedAt: qdrant.NewValueInt(createdAt.UnixMilli()),
 			},
@@ -207,6 +211,7 @@ func (s *QdrantStore) Search(ctx context.Context, sc Scope, query []float32, lim
 				Kind:      Kind(payload[payloadKind].GetStringValue()),
 				Content:   payload[payloadContent].GetStringValue(),
 				Source:    payload[payloadSource].GetStringValue(),
+				Citation:  payload[payloadCitation].GetStringValue(),
 				CreatedAt: time.UnixMilli(payload[payloadCreatedAt].GetIntegerValue()).UTC(),
 			},
 			Score: r.GetScore(),
@@ -247,6 +252,34 @@ func (s *QdrantStore) Delete(ctx context.Context, sc Scope, ids []string) error 
 	return nil
 }
 
+// DeleteBySource removes every point within sc whose kind and source payload
+// match, via a filtered scroll (to find candidate ids) followed by the same
+// scoped Delete path used elsewhere in this file, so the isolation guarantee
+// is identical to Delete's. See Store.DeleteBySource.
+//
+// Best-effort at scale: a single document's chunk count is expected to stay
+// well under scrollLimit; a source with more matching points than that
+// ceiling has only the first scrollLimit removed by one call.
+func (s *QdrantStore) DeleteBySource(ctx context.Context, sc Scope, kind Kind, source string) (int, error) {
+	must := []*qdrant.Condition{
+		qdrant.NewMatch(payloadTenant, sc.Tenant()),
+		qdrant.NewMatch(payloadUser, sc.User()),
+		qdrant.NewMatchKeyword(payloadKind, string(kind)),
+		qdrant.NewMatch(payloadSource, source),
+	}
+	ids, err := s.scrollIDs(ctx, must, nil)
+	if err != nil {
+		return 0, fmt.Errorf("semantic: qdrant delete by source scroll: %w", err)
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if err := s.Delete(ctx, sc, ids); err != nil {
+		return 0, fmt.Errorf("semantic: qdrant delete by source: %w", err)
+	}
+	return len(ids), nil
+}
+
 // PruneTurns evicts KindTurn points within sc by age and/or count cap. See
 // Store.PruneTurns. Both criteria are evaluated via a payload-filtered scroll
 // (never touching Document/Fact points, whose kind never matches the
@@ -255,7 +288,7 @@ func (s *QdrantStore) Delete(ctx context.Context, sc Scope, ids []string) error 
 // so the isolation guarantee is identical.
 //
 // The count-cap criterion is best-effort: it orders by created_at (desc) and
-// scrolls up to turnScrollLimit points, so a scope whose Turn population
+// scrolls up to scrollLimit points, so a scope whose Turn population
 // exceeds that ceiling in a single pass keeps only the ceiling's worth
 // pruned this pass rather than the full excess — steady-state periodic
 // pruning converges it down regardless.
@@ -274,7 +307,7 @@ func (s *QdrantStore) PruneTurns(ctx context.Context, sc Scope, maxAge time.Dura
 	if maxAge > 0 {
 		cutoff := float64(time.Now().Add(-maxAge).UnixMilli())
 		must := append(append([]*qdrant.Condition{}, base...), qdrant.NewRange(payloadCreatedAt, &qdrant.Range{Lt: &cutoff}))
-		ids, err := s.scrollTurnIDs(ctx, must, nil)
+		ids, err := s.scrollIDs(ctx, must, nil)
 		if err != nil {
 			return 0, fmt.Errorf("semantic: qdrant prune turns by age: %w", err)
 		}
@@ -286,7 +319,7 @@ func (s *QdrantStore) PruneTurns(ctx context.Context, sc Scope, maxAge time.Dura
 	if maxCount > 0 {
 		desc := qdrant.Direction_Desc
 		order := &qdrant.OrderBy{Key: payloadCreatedAt, Direction: &desc}
-		ids, err := s.scrollTurnIDs(ctx, base, order)
+		ids, err := s.scrollIDs(ctx, base, order)
 		if err != nil {
 			return 0, fmt.Errorf("semantic: qdrant prune turns by count: %w", err)
 		}
@@ -310,11 +343,12 @@ func (s *QdrantStore) PruneTurns(ctx context.Context, sc Scope, maxAge time.Dura
 	return len(ids), nil
 }
 
-// scrollTurnIDs returns up to turnScrollLimit point ids matching must,
-// optionally ordered by order. Used by PruneTurns to find candidate KindTurn
-// ids for each of its two eviction criteria.
-func (s *QdrantStore) scrollTurnIDs(ctx context.Context, must []*qdrant.Condition, order *qdrant.OrderBy) ([]string, error) {
-	lim := uint32(turnScrollLimit)
+// scrollIDs returns up to scrollLimit point ids matching must, optionally
+// ordered by order. Used by PruneTurns (candidate KindTurn ids for each of
+// its two eviction criteria) and by DeleteBySource (candidate ids for one
+// document's chunks).
+func (s *QdrantStore) scrollIDs(ctx context.Context, must []*qdrant.Condition, order *qdrant.OrderBy) ([]string, error) {
+	lim := uint32(scrollLimit)
 	res, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
 		CollectionName: s.collection,
 		Filter:         &qdrant.Filter{Must: must},

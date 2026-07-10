@@ -36,7 +36,10 @@ type Document struct {
 	// Ingest per ChunkOptions.
 	Content string
 	// Source is optional provenance (url, filename, section) carried onto
-	// every chunk's Point.Source, for citations at retrieval time.
+	// every chunk's Point.Citation, for citations at retrieval time. Distinct
+	// from ID: ID is the chunk-group key Ingest writes onto Point.Source (so
+	// Store.DeleteBySource can remove every chunk of this document as a
+	// unit), Source is purely a human-facing display string.
 	Source string
 }
 
@@ -109,12 +112,16 @@ func chunkRunes(content string, opts ChunkOptions) []string {
 
 // Ingest chunks each Document's Content (per opts), embeds the chunks via
 // emb, and upserts one KindDocument Point per chunk into store, scoped to
-// sc (ADR-0018). Idempotent: re-ingesting the same Document.ID with the same
-// chunk count replaces the prior points at those chunk indices in place,
-// because PointID derives deterministically from (sc, KindDocument,
-// ID+"#"+chunkIndex) — a stable id upsert, not an append. A nil store or nil
-// embedder is a clear error, never a silent no-op. Returns the total number
-// of chunks written across all docs.
+// sc (ADR-0018). Idempotent, and idempotent even across a SHRINKING
+// document: before writing a document's fresh chunks, Ingest first calls
+// store.DeleteBySource(sc, KindDocument, doc.ID) to remove every
+// previously-ingested chunk of that document id, then upserts the current
+// chunk set. Re-ingesting the same content therefore always leaves exactly
+// today's chunk set behind — never orphaned chunks from a longer prior
+// version (the gap ADR-0018 flagged; closed here rather than relying on
+// PointID collisions, which only cover a same-or-larger chunk count). A nil
+// store or nil embedder is a clear error, never a silent no-op. Returns the
+// total number of chunks written across all docs.
 func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts ChunkOptions, docs []Document) (int, error) {
 	if store == nil {
 		return 0, ErrNilStore
@@ -126,6 +133,10 @@ func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts Chunk
 	now := time.Now().UTC()
 	var points []Point
 	for _, doc := range docs {
+		if _, err := store.DeleteBySource(ctx, sc, KindDocument, doc.ID); err != nil {
+			return 0, fmt.Errorf("semantic: delete stale chunks for document %q: %w", doc.ID, err)
+		}
+
 		chunks := chunkRunes(doc.Content, opts)
 		if len(chunks) == 0 {
 			continue
@@ -144,7 +155,8 @@ func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts Chunk
 				UserID:    sc.User(),
 				Kind:      KindDocument,
 				Content:   chunk,
-				Source:    doc.Source,
+				Source:    doc.ID,
+				Citation:  doc.Source,
 				Vector:    vecs[i],
 				CreatedAt: now,
 			})

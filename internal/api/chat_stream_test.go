@@ -333,3 +333,120 @@ func TestHydrateSystemPrompt_SemanticSearchExcludesTurnKind(t *testing.T) {
 		t.Fatalf("KindTurn point leaked into hydration; the primary RAG injection must exclude it: %s", prompt)
 	}
 }
+
+// TestHydrateSystemPrompt_MergesTenantSharedDocuments is the ADR-0019
+// acceptance criterion: hydrateSystemPrompt merges a tenant-shared Document
+// (ingested once, no user) with the requesting user's own semantic results,
+// so a DIFFERENT user of the same tenant still sees it, but another tenant
+// never does.
+func TestHydrateSystemPrompt_MergesTenantSharedDocuments(t *testing.T) {
+	ctx := context.Background()
+	emb := semantic.NewHashEmbedder(0)
+	semStore := semantic.NewInMemoryStore(emb.Dimension())
+
+	const query = "employee benefits enrollment"
+	vecs, err := emb.Embed(ctx, []string{query})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	queryVec := vecs[0]
+
+	tenantScope, err := semantic.NewTenantScope("acme")
+	if err != nil {
+		t.Fatalf("semantic.NewTenantScope: %v", err)
+	}
+	sharedDoc := semantic.Point{
+		ID: semantic.PointID(tenantScope, semantic.KindDocument, "handbook"), TenantID: "acme", UserID: "",
+		Kind: semantic.KindDocument, Content: "TENANT-SHARED-HANDBOOK-MARKER", Vector: queryVec,
+	}
+	if err := semStore.Upsert(ctx, tenantScope, []semantic.Point{sharedDoc}); err != nil {
+		t.Fatalf("Upsert (tenant-shared): %v", err)
+	}
+
+	// A DIFFERENT user (bob) of the same tenant, who never ingested anything
+	// of his own, still gets the tenant-shared document injected.
+	factsScope, err := facts.NewScope("acme", "bob")
+	if err != nil {
+		t.Fatalf("facts.NewScope: %v", err)
+	}
+	key := memory.Key{Tenant: "acme", User: "bob", Session: "s1"}
+	prompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, key, factsScope, "p1", query)
+	if err != nil {
+		t.Fatalf("hydrateSystemPrompt: %v", err)
+	}
+	if !strings.Contains(prompt, "TENANT-SHARED-HANDBOOK-MARKER") {
+		t.Fatalf("expected the tenant-shared document in bob's hydrated prompt, got: %s", prompt)
+	}
+
+	// A user of a DIFFERENT tenant must never see it.
+	otherFactsScope, err := facts.NewScope("globex", "carol")
+	if err != nil {
+		t.Fatalf("facts.NewScope (globex): %v", err)
+	}
+	otherKey := memory.Key{Tenant: "globex", User: "carol", Session: "s1"}
+	otherPrompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, otherKey, otherFactsScope, "p1", query)
+	if err != nil {
+		t.Fatalf("hydrateSystemPrompt (globex): %v", err)
+	}
+	if strings.Contains(otherPrompt, "TENANT-SHARED-HANDBOOK-MARKER") {
+		t.Fatalf("cross-tenant leak: globex's hydrated prompt contains acme's tenant-shared document: %s", otherPrompt)
+	}
+}
+
+// TestHydrateSystemPrompt_TenantSharedExcludesFactAndTurn is the ADR-0019
+// "Mandatory" guardrail exercised at the hydration call site: even though
+// hydrateSystemPrompt's tenant-shared search always passes KindDocument as
+// its only kind filter, this test proves the effect end-to-end — a Fact- or
+// Turn-kind point sitting in the tenant-shared bucket never reaches the
+// hydrated prompt.
+func TestHydrateSystemPrompt_TenantSharedExcludesFactAndTurn(t *testing.T) {
+	ctx := context.Background()
+	emb := semantic.NewHashEmbedder(0)
+	semStore := semantic.NewInMemoryStore(emb.Dimension())
+
+	const query = "quarterly roadmap"
+	vecs, err := emb.Embed(ctx, []string{query})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	queryVec := vecs[0]
+
+	tenantScope, err := semantic.NewTenantScope("acme")
+	if err != nil {
+		t.Fatalf("semantic.NewTenantScope: %v", err)
+	}
+	docPt := semantic.Point{
+		ID: semantic.PointID(tenantScope, semantic.KindDocument, "roadmap-doc"), TenantID: "acme", UserID: "",
+		Kind: semantic.KindDocument, Content: "TENANT-SHARED-DOC-MARKER", Vector: queryVec,
+	}
+	factPt := semantic.Point{
+		ID: semantic.PointID(tenantScope, semantic.KindFact, "roadmap-fact"), TenantID: "acme", UserID: "",
+		Kind: semantic.KindFact, Content: "TENANT-SHARED-FACT-MARKER-SHOULD-NOT-APPEAR", Vector: queryVec,
+	}
+	turnPt := semantic.Point{
+		ID: semantic.PointID(tenantScope, semantic.KindTurn, "roadmap-turn"), TenantID: "acme", UserID: "",
+		Kind: semantic.KindTurn, Content: "TENANT-SHARED-TURN-MARKER-SHOULD-NOT-APPEAR", Vector: queryVec,
+	}
+	if err := semStore.Upsert(ctx, tenantScope, []semantic.Point{docPt, factPt, turnPt}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	factsScope, err := facts.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatalf("facts.NewScope: %v", err)
+	}
+	key := memory.Key{Tenant: "acme", User: "alice", Session: "s1"}
+	prompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, key, factsScope, "p1", query)
+	if err != nil {
+		t.Fatalf("hydrateSystemPrompt: %v", err)
+	}
+	if !strings.Contains(prompt, "TENANT-SHARED-DOC-MARKER") {
+		t.Fatalf("expected the tenant-shared Document in the hydrated prompt, got: %s", prompt)
+	}
+	if strings.Contains(prompt, "TENANT-SHARED-FACT-MARKER-SHOULD-NOT-APPEAR") {
+		t.Fatalf("tenant-shared Fact-kind point leaked into hydration: %s", prompt)
+	}
+	if strings.Contains(prompt, "TENANT-SHARED-TURN-MARKER-SHOULD-NOT-APPEAR") {
+		t.Fatalf("tenant-shared Turn-kind point leaked into hydration: %s", prompt)
+	}
+}

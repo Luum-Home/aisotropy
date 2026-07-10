@@ -100,6 +100,27 @@ func (s *InMemoryStore) Delete(_ context.Context, sc Scope, ids []string) error 
 	return nil
 }
 
+// DeleteBySource removes every point within sc whose Kind and Source match,
+// checked before every delete exactly like Delete, so a colliding
+// (kind,source) belonging to a different tenant/user is left untouched. See
+// Store.DeleteBySource.
+func (s *InMemoryStore) DeleteBySource(_ context.Context, sc Scope, kind Kind, source string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	for id, p := range s.points {
+		if p.TenantID != sc.Tenant() || p.UserID != sc.User() {
+			continue // isolation filter during the scan, not after
+		}
+		if p.Kind != kind || p.Source != source {
+			continue
+		}
+		delete(s.points, id)
+		n++
+	}
+	return n, nil
+}
+
 // PruneTurns evicts KindTurn points within sc by age and/or count cap. See
 // Store.PruneTurns. Only KindTurn points are ever scanned/deleted — Document
 // and Fact points never enter toDelete. Scoped to sc exactly like Delete: the

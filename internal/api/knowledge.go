@@ -1,7 +1,7 @@
-// Package api: the HTTP arm of the knowledge-ingestion surface (ADR-0018).
-// Mirrors chat.go's route-registration pattern (Huma operation, tenant/user
-// identity in the path, never the body) so document ingestion follows the
-// same multi-tenancy gate as every other route.
+// Package api: the HTTP arm of the knowledge-ingestion surface (ADR-0018,
+// ADR-0019). Mirrors chat.go's route-registration pattern (Huma operation,
+// tenant/user identity in the path, never the body) so document ingestion
+// follows the same multi-tenancy gate as every other route.
 package api
 
 import (
@@ -11,6 +11,10 @@ import (
 
 	"github.com/Luum-Home/aisotropy/internal/semantic"
 )
+
+// httpMethodDelete is the HTTP method the knowledge-deletion routes register
+// under (ADR-0018 open q#3 / ADR-0019 open q#1).
+const httpMethodDelete = "DELETE"
 
 // KnowledgeDocument is one document to ingest, per ADR-0018. The tags govern
 // both HTTP validation and the published JSON Schema (the struct-as-contract
@@ -74,18 +78,147 @@ func RegisterKnowledge(api huma.API, store semantic.Store, emb semantic.Embedder
 		ctx = context.WithValue(ctx, tenantCtxKey{}, in.TenantID)
 		ctx = context.WithValue(ctx, userCtxKey{}, in.UserID)
 
-		docs := make([]semantic.Document, 0, len(in.Body.Documents))
-		for _, d := range in.Body.Documents {
-			docs = append(docs, semantic.Document{ID: d.ID, Content: d.Content, Source: d.Source})
-		}
-
-		n, err := semantic.Ingest(ctx, store, emb, sc, opts, docs)
+		n, err := semantic.Ingest(ctx, store, emb, sc, opts, documentsFromRequest(in.Body.Documents))
 		if err != nil {
 			return nil, huma.Error500InternalServerError("knowledge ingestion failed", err)
 		}
 
 		out := &KnowledgeOutput{}
 		out.Body.ChunksIngested = n
+		return out, nil
+	})
+}
+
+// documentsFromRequest maps the wire KnowledgeDocument batch onto
+// internal/semantic.Document, shared by every ingest route (user-scoped and
+// tenant-shared).
+func documentsFromRequest(reqDocs []KnowledgeDocument) []semantic.Document {
+	docs := make([]semantic.Document, 0, len(reqDocs))
+	for _, d := range reqDocs {
+		docs = append(docs, semantic.Document{ID: d.ID, Content: d.Content, Source: d.Source})
+	}
+	return docs
+}
+
+// KnowledgeDeleteInput is the DELETE .../knowledge/{doc_id} path, user-scoped
+// (ADR-0018 open q#3).
+type KnowledgeDeleteInput struct {
+	TenantID string `path:"tenant_id" pattern:"^[a-zA-Z0-9_-]{1,64}$" doc:"Unique customer/tenant ID" example:"acme"`
+	UserID   string `path:"user_id" pattern:"^[a-zA-Z0-9_-]{1,64}$" doc:"Unique user ID within the tenant" example:"alice"`
+	DocID    string `path:"doc_id" pattern:"^[a-zA-Z0-9_.-]{1,128}$" doc:"Document id previously used to ingest this document" example:"handbook-v3"`
+}
+
+// KnowledgeDeleteOutput is the strict output contract for both delete
+// routes (user-scoped and tenant-shared).
+type KnowledgeDeleteOutput struct {
+	Body struct {
+		Deleted int `json:"deleted" doc:"Number of KindDocument chunks removed"`
+	}
+}
+
+// RegisterKnowledgeDelete mounts the user-scoped document-deletion endpoint
+// (ADR-0018 open q#3): DELETE /v1/tenant/{tenant_id}/user/{user_id}/knowledge/{doc_id}.
+// Removes every chunk of the given document id, regardless of how many
+// chunks it has (Store.DeleteBySource), scoped to (tenant_id, user_id) —
+// never touching another tenant/user's document even under a colliding id.
+func RegisterKnowledgeDelete(api huma.API, store semantic.Store) {
+	huma.Register(api, huma.Operation{
+		OperationID: "delete-knowledge",
+		Method:      httpMethodDelete,
+		Path:        "/v1/tenant/{tenant_id}/user/{user_id}/knowledge/{doc_id}",
+		Summary:     "Delete a document's chunks from the semantic tier (KindDocument, ADR-0018 open q#3)",
+		Description: "Validates the contract, isolates by tenant/user via the scoped store call, and " +
+			"removes every KindDocument chunk previously ingested under doc_id — idempotent: deleting " +
+			"an unknown or already-deleted doc_id returns deleted:0, never an error.",
+	}, func(ctx context.Context, in *KnowledgeDeleteInput) (*KnowledgeDeleteOutput, error) {
+		sc, err := semantic.NewScope(in.TenantID, in.UserID) //nolint:contextcheck // semantic.NewScope has no context parameter (internal/semantic, out of scope for this cleanup)
+		if err != nil {
+			return nil, huma.Error422UnprocessableEntity("invalid tenant/user identity", err)
+		}
+		n, err := store.DeleteBySource(ctx, sc, semantic.KindDocument, in.DocID)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("knowledge deletion failed", err)
+		}
+		out := &KnowledgeDeleteOutput{}
+		out.Body.Deleted = n
+		return out, nil
+	})
+}
+
+// TenantKnowledgeInput is the POST /v1/tenant/{tenant_id}/knowledge body: a
+// tenant-shared ingest, no user path segment (ADR-0019).
+type TenantKnowledgeInput struct {
+	TenantID string `path:"tenant_id" pattern:"^[a-zA-Z0-9_-]{1,64}$" doc:"Unique customer/tenant ID" example:"acme"`
+	Body     KnowledgeRequest
+}
+
+// RegisterTenantKnowledge mounts the tenant-shared document-ingestion
+// endpoint (ADR-0019): POST /v1/tenant/{tenant_id}/knowledge. Ingests into
+// the tenant-shared bucket (semantic.NewTenantScope, an empty-user Scope),
+// so every user of tenant retrieves the same corpus without re-ingesting it
+// — hydrateSystemPrompt merges this bucket's KindDocument points into every
+// user's RAG hydration. store/emb/opts mirror RegisterKnowledge exactly.
+func RegisterTenantKnowledge(api huma.API, store semantic.Store, emb semantic.Embedder, opts semantic.ChunkOptions) {
+	huma.Register(api, huma.Operation{
+		OperationID: "ingest-tenant-knowledge",
+		Method:      httpMethodPost,
+		Path:        "/v1/tenant/{tenant_id}/knowledge",
+		Summary:     "Ingest documents into the tenant-shared semantic bucket (KindDocument, ADR-0019)",
+		Description: "Validates the contract, chunks each document's content, embeds the chunks " +
+			"(BYO Embedder), and upserts them as KindDocument vectors scoped to a tenant-only, " +
+			"empty-user Scope (semantic.NewTenantScope) — visible to every user of tenant_id via " +
+			"the chat/chat-stream routes' semantic RAG hydration merge. Idempotent, exactly like " +
+			"the user-scoped POST .../user/{user_id}/knowledge.",
+	}, func(ctx context.Context, in *TenantKnowledgeInput) (*KnowledgeOutput, error) {
+		sc, err := semantic.NewTenantScope(in.TenantID) //nolint:contextcheck // semantic.NewTenantScope has no context parameter (internal/semantic, out of scope for this cleanup)
+		if err != nil {
+			return nil, huma.Error422UnprocessableEntity("invalid tenant identity", err)
+		}
+		ctx = context.WithValue(ctx, tenantCtxKey{}, in.TenantID)
+
+		n, err := semantic.Ingest(ctx, store, emb, sc, opts, documentsFromRequest(in.Body.Documents))
+		if err != nil {
+			return nil, huma.Error500InternalServerError("tenant knowledge ingestion failed", err)
+		}
+
+		out := &KnowledgeOutput{}
+		out.Body.ChunksIngested = n
+		return out, nil
+	})
+}
+
+// TenantKnowledgeDeleteInput is the DELETE .../tenant/{tenant_id}/knowledge/{doc_id}
+// path, tenant-shared (ADR-0019 open q#1).
+type TenantKnowledgeDeleteInput struct {
+	TenantID string `path:"tenant_id" pattern:"^[a-zA-Z0-9_-]{1,64}$" doc:"Unique customer/tenant ID" example:"acme"`
+	DocID    string `path:"doc_id" pattern:"^[a-zA-Z0-9_.-]{1,128}$" doc:"Document id previously used to ingest this tenant-shared document" example:"handbook-v3"`
+}
+
+// RegisterTenantKnowledgeDelete mounts the tenant-shared document-deletion
+// endpoint (ADR-0019 open q#1): DELETE /v1/tenant/{tenant_id}/knowledge/{doc_id}.
+// Same delete-by-source mechanism as RegisterKnowledgeDelete, applied to the
+// tenant-shared Scope instead of a (tenant,user) Scope.
+func RegisterTenantKnowledgeDelete(api huma.API, store semantic.Store) {
+	huma.Register(api, huma.Operation{
+		OperationID: "delete-tenant-knowledge",
+		Method:      httpMethodDelete,
+		Path:        "/v1/tenant/{tenant_id}/knowledge/{doc_id}",
+		Summary:     "Delete a tenant-shared document's chunks from the semantic tier (KindDocument, ADR-0019)",
+		Description: "Removes every KindDocument chunk previously ingested under doc_id in the " +
+			"tenant-shared bucket — idempotent: deleting an unknown or already-deleted doc_id " +
+			"returns deleted:0, never an error. Never touches a user-private document (a disjoint " +
+			"scope) or another tenant's shared bucket.",
+	}, func(ctx context.Context, in *TenantKnowledgeDeleteInput) (*KnowledgeDeleteOutput, error) {
+		sc, err := semantic.NewTenantScope(in.TenantID) //nolint:contextcheck // semantic.NewTenantScope has no context parameter (internal/semantic, out of scope for this cleanup)
+		if err != nil {
+			return nil, huma.Error422UnprocessableEntity("invalid tenant identity", err)
+		}
+		n, err := store.DeleteBySource(ctx, sc, semantic.KindDocument, in.DocID)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("tenant knowledge deletion failed", err)
+		}
+		out := &KnowledgeDeleteOutput{}
+		out.Body.Deleted = n
 		return out, nil
 	})
 }

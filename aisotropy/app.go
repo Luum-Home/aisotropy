@@ -501,6 +501,14 @@ func (a *App) Run(ctx context.Context) error {
 	// capability, sharing the exact same semantic store/embedder pair the
 	// chat routes' RAG hydration reads from above.
 	api.RegisterKnowledge(humaAPI, semanticStore, embedder, a.chunkOptions())
+	// Knowledge deletion (ADR-0018 open q#3): removes a document's chunks by
+	// id, regardless of chunk count.
+	api.RegisterKnowledgeDelete(humaAPI, semanticStore)
+	// Tenant-shared knowledge ingestion + deletion (ADR-0019): a corpus
+	// ingested once at tenant scope, retrievable by every user of that
+	// tenant via hydrateSystemPrompt's merged search.
+	api.RegisterTenantKnowledge(humaAPI, semanticStore, embedder, a.chunkOptions())
+	api.RegisterTenantKnowledgeDelete(humaAPI, semanticStore)
 
 	// Per-user primitives (Phase 6 behavioral memory).
 	primStore := primitives.NewStore()

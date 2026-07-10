@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -46,6 +47,67 @@ func postKnowledge(t *testing.T, handler http.Handler, tenant, user string, docs
 	path := "/v1/tenant/" + tenant + "/user/" + user + "/knowledge"
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// newFullKnowledgeRouter builds a router with every knowledge route
+// registered (user-scoped ingest+delete, tenant-shared ingest+delete),
+// backed by a fresh in-memory semantic store + the deterministic
+// HashEmbedder, mirroring newKnowledgeRouter's pattern.
+func newFullKnowledgeRouter(t *testing.T, opts semantic.ChunkOptions) (http.Handler, semantic.Store, semantic.Embedder) {
+	t.Helper()
+	emb := semantic.NewHashEmbedder(0)
+	store := semantic.NewInMemoryStore(emb.Dimension())
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("semantic store close: %v", err)
+		}
+	})
+	router := chi.NewRouter()
+	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy-test", "0.1.0"))
+	RegisterKnowledge(humaAPI, store, emb, opts)
+	RegisterKnowledgeDelete(humaAPI, store)
+	RegisterTenantKnowledge(humaAPI, store, emb, opts)
+	RegisterTenantKnowledgeDelete(humaAPI, store)
+	return router, store, emb
+}
+
+// deleteKnowledge issues a DELETE against
+// /v1/tenant/{tenant}/user/{user}/knowledge/{docID} and returns the raw
+// response.
+func deleteKnowledge(t *testing.T, handler http.Handler, tenant, user, docID string) *httptest.ResponseRecorder {
+	t.Helper()
+	path := "/v1/tenant/" + tenant + "/user/" + user + "/knowledge/" + docID
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, path, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// postTenantKnowledge issues a POST against /v1/tenant/{tenant}/knowledge
+// (no user segment) and returns the raw response.
+func postTenantKnowledge(t *testing.T, handler http.Handler, tenant string, docs []KnowledgeDocument) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(KnowledgeRequest{Documents: docs})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	path := "/v1/tenant/" + tenant + "/knowledge"
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// deleteTenantKnowledge issues a DELETE against
+// /v1/tenant/{tenant}/knowledge/{docID} and returns the raw response.
+func deleteTenantKnowledge(t *testing.T, handler http.Handler, tenant, docID string) *httptest.ResponseRecorder {
+	t.Helper()
+	path := "/v1/tenant/" + tenant + "/knowledge/" + docID
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, path, nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec
@@ -104,8 +166,11 @@ func TestRegisterKnowledge_IngestedChunkIsRetrievable(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %d KindDocument results, want 1", len(got))
 	}
-	if got[0].Source != "runbook.md" {
-		t.Fatalf("Source = %q, want runbook.md", got[0].Source)
+	if got[0].Source != "runbook" {
+		t.Fatalf("Source = %q, want the document id %q (the DeleteBySource chunk-group key)", got[0].Source, "runbook")
+	}
+	if got[0].Citation != "runbook.md" {
+		t.Fatalf("Citation = %q, want runbook.md (the caller-supplied provenance)", got[0].Citation)
 	}
 }
 
@@ -148,6 +213,188 @@ func TestRegisterKnowledge_RejectsInvalidIdentity(t *testing.T) {
 	handler, _, _ := newKnowledgeRouter(t, semantic.DefaultChunkOptions())
 
 	rec := postKnowledge(t, handler, "acme!not-allowed", "alice", []KnowledgeDocument{{ID: "d", Content: "content"}})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s, want 422 for an invalid tenant id", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRegisterKnowledgeDelete_RemovesAllChunks is the HTTP-surface half of
+// ADR-0018 open q#3's acceptance criterion: DELETE .../knowledge/{doc_id}
+// removes every chunk of a multi-chunk document.
+func TestRegisterKnowledgeDelete_RemovesAllChunks(t *testing.T) {
+	opts := semantic.ChunkOptions{Size: 10, Overlap: 0}
+	handler, store, emb := newFullKnowledgeRouter(t, opts)
+
+	long := strings.Repeat("abcdefghij", 5) // 5 chunks at size 10
+	rec := postKnowledge(t, handler, "acme", "alice", []KnowledgeDocument{{ID: "runbook", Content: long}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = deleteKnowledge(t, handler, "acme", "alice", "runbook")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out KnowledgeDeleteOutput
+	if err := json.Unmarshal(rec.Body.Bytes(), &out.Body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Body.Deleted != 5 {
+		t.Fatalf("deleted = %d, want 5", out.Body.Deleted)
+	}
+
+	sc, err := semantic.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatalf("NewScope: %v", err)
+	}
+	vecs, err := emb.Embed(context.Background(), []string{"abcdefghij"})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	got, err := store.Search(context.Background(), sc, vecs[0], 10, semantic.KindDocument)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d results after DELETE, want 0", len(got))
+	}
+}
+
+// TestRegisterKnowledgeDelete_ScopeIsolated verifies DELETE is scope-bound: a
+// delete issued for one tenant/user must never remove another tenant/user's
+// document, even with a colliding doc_id.
+func TestRegisterKnowledgeDelete_ScopeIsolated(t *testing.T) {
+	handler, store, emb := newFullKnowledgeRouter(t, semantic.DefaultChunkOptions())
+
+	rec := postKnowledge(t, handler, "acme", "alice", []KnowledgeDocument{{ID: "shared-id", Content: "acme's private policy document"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	// A different tenant deleting a colliding doc_id must not affect acme's document.
+	rec = deleteKnowledge(t, handler, "globex", "bob", "shared-id")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE (wrong scope) status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out KnowledgeDeleteOutput
+	if err := json.Unmarshal(rec.Body.Bytes(), &out.Body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Body.Deleted != 0 {
+		t.Fatalf("cross-scope delete removed %d points, want 0", out.Body.Deleted)
+	}
+
+	sc, err := semantic.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatalf("NewScope: %v", err)
+	}
+	vecs, err := emb.Embed(context.Background(), []string{"acme's private policy document"})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	got, err := store.Search(context.Background(), sc, vecs[0], 10, semantic.KindDocument)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("scope-isolated delete removed acme's document: got %d results, want 1", len(got))
+	}
+}
+
+// TestRegisterTenantKnowledge_SharedAcrossUsersIsolatedAcrossTenants is the
+// HTTP-surface half of ADR-0019's acceptance criterion: POST
+// /v1/tenant/{tenant_id}/knowledge ingests to the tenant-shared bucket,
+// retrievable by any user of that tenant but never by another tenant.
+func TestRegisterTenantKnowledge_SharedAcrossUsersIsolatedAcrossTenants(t *testing.T) {
+	handler, store, emb := newFullKnowledgeRouter(t, semantic.DefaultChunkOptions())
+
+	rec := postTenantKnowledge(t, handler, "acme", []KnowledgeDocument{{ID: "handbook", Content: "the acme handbook covers benefits and payroll for every employee"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out KnowledgeOutput
+	if err := json.Unmarshal(rec.Body.Bytes(), &out.Body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Body.ChunksIngested != 1 {
+		t.Fatalf("chunks_ingested = %d, want 1", out.Body.ChunksIngested)
+	}
+
+	tenantScope, err := semantic.NewTenantScope("acme")
+	if err != nil {
+		t.Fatalf("NewTenantScope: %v", err)
+	}
+	vecs, err := emb.Embed(context.Background(), []string{"handbook benefits payroll employee"})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	got, err := store.Search(context.Background(), tenantScope, vecs[0], 10, semantic.KindDocument)
+	if err != nil {
+		t.Fatalf("Search (tenant-shared): %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d tenant-shared results, want 1", len(got))
+	}
+
+	otherTenantScope, err := semantic.NewTenantScope("globex")
+	if err != nil {
+		t.Fatalf("NewTenantScope (globex): %v", err)
+	}
+	leaked, err := store.Search(context.Background(), otherTenantScope, vecs[0], 10, semantic.KindDocument)
+	if err != nil {
+		t.Fatalf("Search (globex tenant-shared): %v", err)
+	}
+	if len(leaked) != 0 {
+		t.Fatalf("cross-tenant leak: globex's tenant-shared search returned %d documents, want 0", len(leaked))
+	}
+}
+
+// TestRegisterTenantKnowledgeDelete_RemovesSharedDocument is the HTTP-surface
+// half of ADR-0019 open q#1: DELETE /v1/tenant/{tenant_id}/knowledge/{doc_id}
+// removes a tenant-shared document's chunks.
+func TestRegisterTenantKnowledgeDelete_RemovesSharedDocument(t *testing.T) {
+	handler, store, emb := newFullKnowledgeRouter(t, semantic.DefaultChunkOptions())
+
+	rec := postTenantKnowledge(t, handler, "acme", []KnowledgeDocument{{ID: "faq", Content: "frequently asked questions about expense reports"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = deleteTenantKnowledge(t, handler, "acme", "faq")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out KnowledgeDeleteOutput
+	if err := json.Unmarshal(rec.Body.Bytes(), &out.Body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if out.Body.Deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", out.Body.Deleted)
+	}
+
+	tenantScope, err := semantic.NewTenantScope("acme")
+	if err != nil {
+		t.Fatalf("NewTenantScope: %v", err)
+	}
+	vecs, err := emb.Embed(context.Background(), []string{"frequently asked questions expense reports"})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	got, err := store.Search(context.Background(), tenantScope, vecs[0], 10, semantic.KindDocument)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d results after DELETE, want 0", len(got))
+	}
+}
+
+// TestRegisterTenantKnowledge_RejectsInvalidIdentity mirrors
+// TestRegisterKnowledge_RejectsInvalidIdentity for the tenant-shared route.
+func TestRegisterTenantKnowledge_RejectsInvalidIdentity(t *testing.T) {
+	handler, _, _ := newFullKnowledgeRouter(t, semantic.DefaultChunkOptions())
+
+	rec := postTenantKnowledge(t, handler, "acme!not-allowed", []KnowledgeDocument{{ID: "d", Content: "content"}})
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, body = %s, want 422 for an invalid tenant id", rec.Code, rec.Body.String())
 	}

@@ -85,6 +85,154 @@ func TestApp_IngestKnowledge_EndToEnd(t *testing.T) {
 	}
 }
 
+// TestApp_DeleteKnowledge_RemovesAllChunks is the SDK-surface half of
+// ADR-0018 open q#3's acceptance criterion: DeleteKnowledge removes every
+// chunk of a multi-chunk document, and the document is no longer retrievable
+// afterward.
+func TestApp_DeleteKnowledge_RemovesAllChunks(t *testing.T) {
+	a := New(WithLLM(llm.NewStubClient()), WithChunkSize(10, 0))
+	ctx := context.Background()
+
+	long := strings.Repeat("abcdefghij", 5) // 50 runes -> 5 chunks at size 10
+	n, err := a.IngestKnowledge(ctx, "acme", "alice", Document{ID: "runbook", Content: long})
+	if err != nil {
+		t.Fatalf("IngestKnowledge: %v", err)
+	}
+	if n != 5 {
+		t.Fatalf("chunks ingested = %d, want 5", n)
+	}
+
+	deleted, err := a.DeleteKnowledge(ctx, "acme", "alice", "runbook")
+	if err != nil {
+		t.Fatalf("DeleteKnowledge: %v", err)
+	}
+	if deleted != 5 {
+		t.Fatalf("deleted = %d, want 5 (all chunks removed)", deleted)
+	}
+
+	store, emb, err := a.ensureSemantic(ctx)
+	if err != nil {
+		t.Fatalf("ensureSemantic: %v", err)
+	}
+	sc, err := semantic.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatalf("NewScope: %v", err)
+	}
+	vecs, err := emb.Embed(ctx, []string{"abcdefghij"})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	got, err := store.Search(ctx, sc, vecs[0], 10, semantic.KindDocument)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d KindDocument results after DeleteKnowledge, want 0", len(got))
+	}
+
+	// Deleting again (unknown docID by now) is idempotent: no error, 0 deleted.
+	deleted, err = a.DeleteKnowledge(ctx, "acme", "alice", "runbook")
+	if err != nil {
+		t.Fatalf("second DeleteKnowledge: %v", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("second deleted = %d, want 0", deleted)
+	}
+}
+
+// TestApp_IngestTenantKnowledge_SharedAcrossUsersIsolatedAcrossTenants is the
+// SDK-surface half of ADR-0019's acceptance criterion: a document ingested
+// via IngestTenantKnowledge is retrievable by a DIFFERENT user of the same
+// tenant, but never by another tenant.
+func TestApp_IngestTenantKnowledge_SharedAcrossUsersIsolatedAcrossTenants(t *testing.T) {
+	a := New(WithLLM(llm.NewStubClient()))
+	ctx := context.Background()
+
+	n, err := a.IngestTenantKnowledge(ctx, "acme", Document{ID: "handbook", Content: "the acme onboarding handbook covers benefits and payroll"})
+	if err != nil {
+		t.Fatalf("IngestTenantKnowledge: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("chunks ingested = %d, want 1", n)
+	}
+
+	store, emb, err := a.ensureSemantic(ctx)
+	if err != nil {
+		t.Fatalf("ensureSemantic: %v", err)
+	}
+	vecs, err := emb.Embed(ctx, []string{"onboarding handbook benefits payroll"})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+
+	// A DIFFERENT user of the SAME tenant retrieves it via the tenant-shared
+	// scope (the same scope IngestTenantKnowledge wrote to).
+	tenantScope, err := semantic.NewTenantScope("acme")
+	if err != nil {
+		t.Fatalf("NewTenantScope: %v", err)
+	}
+	got, err := store.Search(ctx, tenantScope, vecs[0], 10, semantic.KindDocument)
+	if err != nil {
+		t.Fatalf("Search (tenant-shared scope): %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d tenant-shared results, want 1 (visible regardless of which user asks)", len(got))
+	}
+
+	// A DIFFERENT tenant's shared scope must never see it.
+	otherTenantScope, err := semantic.NewTenantScope("globex")
+	if err != nil {
+		t.Fatalf("NewTenantScope (globex): %v", err)
+	}
+	leaked, err := store.Search(ctx, otherTenantScope, vecs[0], 10, semantic.KindDocument)
+	if err != nil {
+		t.Fatalf("Search (globex tenant-shared scope): %v", err)
+	}
+	if len(leaked) != 0 {
+		t.Fatalf("cross-tenant leak: globex's tenant-shared search returned %d acme documents, want 0", len(leaked))
+	}
+}
+
+// TestApp_DeleteTenantKnowledge_RemovesSharedDocument is the SDK-surface
+// half of ADR-0019 open q#1: DeleteTenantKnowledge removes a tenant-shared
+// document's chunks.
+func TestApp_DeleteTenantKnowledge_RemovesSharedDocument(t *testing.T) {
+	a := New(WithLLM(llm.NewStubClient()))
+	ctx := context.Background()
+
+	if _, err := a.IngestTenantKnowledge(ctx, "acme", Document{ID: "faq", Content: "frequently asked questions about time off"}); err != nil {
+		t.Fatalf("IngestTenantKnowledge: %v", err)
+	}
+
+	deleted, err := a.DeleteTenantKnowledge(ctx, "acme", "faq")
+	if err != nil {
+		t.Fatalf("DeleteTenantKnowledge: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", deleted)
+	}
+
+	store, emb, err := a.ensureSemantic(ctx)
+	if err != nil {
+		t.Fatalf("ensureSemantic: %v", err)
+	}
+	tenantScope, err := semantic.NewTenantScope("acme")
+	if err != nil {
+		t.Fatalf("NewTenantScope: %v", err)
+	}
+	vecs, err := emb.Embed(ctx, []string{"frequently asked questions time off"})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	got, err := store.Search(ctx, tenantScope, vecs[0], 10, semantic.KindDocument)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d results after DeleteTenantKnowledge, want 0", len(got))
+	}
+}
+
 // TestApp_IngestKnowledge_BadIdentityRejected verifies a bad tenant/user is
 // returned as an error (via semantic.NewScope, ADR-0011), never silently
 // accepted or ingested.
@@ -173,6 +321,17 @@ func TestRun_KnowledgeRouteInOpenAPI(t *testing.T) {
 	paths, _ := doc["paths"].(map[string]any)
 	if _, ok := paths["/v1/tenant/{tenant_id}/user/{user_id}/knowledge"]; !ok {
 		t.Fatalf("POST .../knowledge missing from OpenAPI paths: %v", keysOf(paths))
+	}
+	// ADR-0018 open q#3 + ADR-0019: the delete and tenant-shared routes must
+	// also be published in the OpenAPI contract, not just wired at runtime.
+	for _, want := range []string{
+		"/v1/tenant/{tenant_id}/user/{user_id}/knowledge/{doc_id}",
+		"/v1/tenant/{tenant_id}/knowledge",
+		"/v1/tenant/{tenant_id}/knowledge/{doc_id}",
+	} {
+		if _, ok := paths[want]; !ok {
+			t.Fatalf("%s missing from OpenAPI paths: %v", want, keysOf(paths))
+		}
 	}
 
 	cancel()
