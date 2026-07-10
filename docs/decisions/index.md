@@ -30,6 +30,7 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0014](0014-bits-per-token-reference-scorer-boundary.md) | Bits-per-token reference scorer: Go↔subprocess boundary + staged Python→Rust (Bet 6) | **✅ accepted → offline scorer, staged** |
 | [0015](0015-bpt-eval-model-and-python-batch-runtime.md) | Pinned eval model + Python-torch batch runtime for Bet 6 (Phase 1) | **✅ accepted → distilgpt2 (Apache-2.0), env-gated** |
 | [0016](0016-dual-surface-sealed-runtime-composition-sdk.md) | Dual surface: sealed runtime kernel + composition SDK over ctx-scoped nodes (be both A runtime and B framework) | **✅ accepted → dual A+B, invariant "node never constructs a Scope"; levers #1 (typed tools) + #2 (MCP) delivered** |
+| [0017](0017-semantic-tier-multi-kind-memory.md) | Semantic tier as a multi-kind associative memory (Document/Fact/Turn), with the scoped MemoryStore aggregate | **✅ accepted → per-kind lifecycle/bound/weight; facade owns Fact-kind vectors; Turn-kind bounded** |
 
 ## Decisions already made in the source conversations
 
