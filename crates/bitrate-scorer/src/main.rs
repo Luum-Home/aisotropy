@@ -1,8 +1,9 @@
 //! Aisotropy bitrate scorer (Bet 6, Phase 2 — ADR-0014 Option B): a sovereign
 //! Rust port of the validated Python bits-per-token scorer
-//! (`spikes/compression/surprisal.py` + `bitrate_scorer.py`). It loads a pinned
-//! distilgpt2 (Apache-2.0) from safetensors via candle, tokenizes with the model's
-//! own tokenizer, runs a causal forward pass, and computes
+//! (`spikes/compression/surprisal.py` + `bitrate_scorer.py`). It loads a
+//! config.json-driven GPT-2-class model (default `DeepESP/gpt2-spanish`, MIT —
+//! ADR-0015; `distilgpt2` still supported) from safetensors via candle, tokenizes
+//! with the model's own tokenizer, runs a causal forward pass, and computes
 //!
 //!   bits(text | context) = − Σ log₂ P(token_i | context + preceding text tokens)
 //!
@@ -17,7 +18,7 @@
 //!   argv:   --input <requests.ndjson> --output <results.ndjson>
 //!   input:  {"id":"...","text":"...","context":"..."}
 //!   output: {"id":"...","bits_total":F,"bits_per_token":F,"n_tokens":N,
-//!            "model_id":"distilgpt2@<rev-or-pinned>","unit":"subword-distilgpt2"}
+//!            "model_id":"<model>@<rev-or-pinned>","unit":"subword-<model>"}
 //!   stdout: {"scored":N,"model_id":"...","backend":"LM_REAL"}   (final line)
 //!   exit:   0 = ok; non-zero = failure (reason on stderr).
 //!
