@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/Luum-Home/aisotropy/internal/engram"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
@@ -29,6 +30,10 @@ type Sink struct {
 	Extractor facts.Extractor
 	Semantic  semantic.Store
 	Embedder  semantic.Embedder
+	// MinImportance gates Fact-kind dual-indexing (ADR-0017 phase 2), passed
+	// through to the engram.Store facade consolidateFacts routes every
+	// distilled fact through. The zero value dual-indexes every fact.
+	MinImportance float64
 }
 
 // Consolidate distils the event into facts and (if configured) embeds it into
@@ -67,8 +72,14 @@ func (s Sink) consolidateFacts(ctx context.Context, e memory.OutboxEvent) error 
 	if err != nil {
 		return fmt.Errorf("consolidation: invalid facts scope: %w", err)
 	}
+	// Every distilled fact goes through the engram facade (ADR-0017 phase 2),
+	// never s.Facts.Save directly, so it is dual-indexed as a Fact-kind vector
+	// alongside the facts-tier write from the moment it is born. Semantic and
+	// Embedder are the same instances consolidateSemantic uses for the
+	// (unrelated, unchanged) Turn-kind path below.
+	store := engram.Store{Facts: s.Facts, Semantic: s.Semantic, Embedder: s.Embedder, MinImportance: s.MinImportance}
 	for _, f := range s.Extractor.Extract(scope, facts.Turn{UserMessage: e.Content}) {
-		if err := s.Facts.Save(ctx, scope, f); err != nil {
+		if err := store.Save(ctx, scope, f); err != nil {
 			return fmt.Errorf("consolidation: save fact: %w", err)
 		}
 	}

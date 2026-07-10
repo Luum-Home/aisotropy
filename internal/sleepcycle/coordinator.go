@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Luum-Home/aisotropy/internal/engram"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/tenancy"
 )
 
-// FactStore is the subset of facts.Store the sleep cycle needs: a cross-tenant
-// export for the batch input, and a scoped delete to apply the dedup's cleanup.
+// FactStore is the subset of facts.Store the sleep cycle needs for the batch
+// input: a cross-tenant export of every current fact.
 type FactStore interface {
 	ExportAll(ctx context.Context) ([]facts.Fact, error)
-	Delete(ctx context.Context, sc facts.Scope, ids []string) error
 }
 
 // Runner runs one dedup pass over an NDJSON input, writing a Parquet output and
@@ -32,6 +32,12 @@ type Runner interface {
 type Coordinator struct {
 	Store  FactStore
 	Runner Runner
+	// Engram applies the dedup cleanup: it removes each dropped fact AND its
+	// Fact-kind vector (ADR-0017 phase 2), so a deduped fact never leaves a
+	// stale vector behind in the semantic tier. Fact-kind vector mutation
+	// MUST go through this facade, never a direct facts.Store.Delete — a nil
+	// Semantic/Embedder on Engram still deletes the fact rows (facts-only).
+	Engram engram.Store
 	// Dir is the scratch directory for the NDJSON/Parquet artifacts; "" uses
 	// the OS temp dir. Each run gets its own subdir, removed afterward.
 	Dir string
@@ -100,7 +106,10 @@ func (c Coordinator) RunOnce(ctx context.Context) (Summary, error) {
 		byScope[sc] = append(byScope[sc], id)
 	}
 	for sc, ids := range byScope {
-		if err := c.Store.Delete(ctx, sc, ids); err != nil {
+		// Route the dedup cleanup through the engram facade, not a bare
+		// facts.Store.Delete, so the dropped fact's Fact-kind vector is
+		// removed in the same operation (ADR-0017 bug #2).
+		if err := c.Engram.Delete(ctx, sc, ids); err != nil {
 			return summary, fmt.Errorf("sleepcycle: cleanup delete: %w", err)
 		}
 	}

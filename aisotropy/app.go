@@ -24,6 +24,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/bitrate"
 	"github.com/Luum-Home/aisotropy/internal/consolidation"
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
+	"github.com/Luum-Home/aisotropy/internal/engram"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/health"
 	"github.com/Luum-Home/aisotropy/internal/llm"
@@ -248,6 +249,13 @@ func (a *App) Run(ctx context.Context) error {
 		bptSampler = bs
 	}
 
+	// The Fact-kind aggregate facade (ADR-0017 phase 2): the sole owner of
+	// "a fact and its Fact-kind vector live and die together". Every
+	// Fact-kind vector mutation — from consolidation's fact writes to the
+	// sleep cycle's dedup deletes below — routes through this facade, never
+	// semanticStore directly.
+	factEngram := engram.Store{Facts: factsStore, Semantic: semanticStore, Embedder: embedder}
+
 	// Consolidation sink (Phase 5 outbox): distils each drained event into the
 	// facts + semantic tiers idempotently.
 	sink := consolidation.Sink{
@@ -285,6 +293,7 @@ func (a *App) Run(ctx context.Context) error {
 	if bin := os.Getenv("AISOTROPY_SLEEPCYCLE_BIN"); bin != "" {
 		coordinator := sleepcycle.Coordinator{
 			Store:  factsStore,
+			Engram: factEngram,
 			Runner: sleepcycle.Worker{BinaryPath: bin, Tracer: tracer},
 		}
 		go coordinator.RunScheduler(workerCtx, sleepCycleInterval, func(s sleepcycle.Summary, serr error) { //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown

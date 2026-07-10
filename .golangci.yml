@@ -164,6 +164,8 @@ linters:
               desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
             - pkg: "github.com/Luum-Home/aisotropy/internal/consolidation"
               desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/engram"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
             - pkg: "github.com/Luum-Home/aisotropy/internal/llm"
               desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
             - pkg: "github.com/Luum-Home/aisotropy/internal/agentloop"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Luum-Home/aisotropy/internal/engram"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 )
 
@@ -42,6 +43,7 @@ func TestCoordinatorAppliesCleanup(t *testing.T) {
 	// The worker reports "drop" as the non-canonical duplicate.
 	c := Coordinator{
 		Store:  fs,
+		Engram: engram.Store{Facts: fs},
 		Runner: fakeRunner{summary: Summary{RowsIn: 3, RowsOut: 2, Dropped: 1, DroppedIDs: []string{"drop"}}},
 	}
 	got, err := c.RunOnce(ctx)
