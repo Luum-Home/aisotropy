@@ -92,15 +92,24 @@ limiter, the cost meter + `GET /costs`, `GET /healthz`, `api.Register`/`Register
 the primitives friction consolidation loop, and `SIGINT`/`SIGTERM` graceful shutdown that closes
 every store. The env-var contract is identical to the pre-Phase-8 binary.
 
-## The example proves the guarantee mechanically
+## The examples prove the guarantee mechanically
 
-[`examples/weatherbot`](../../examples/weatherbot) is a **nested module** — its own `go.mod` with
-`replace github.com/Luum-Home/aisotropy => ../..`. It defines a real `weatherExecutor` and imports
-**only** `…/aisotropy`. Because it is a separate module, Go's own `internal/` visibility rule
-*physically forbids* it from importing `internal/…` — so "public surface only" is enforced by the
-compiler, not by lint. `grep -rn internal/ examples/weatherbot` returns zero. The `cmd/x` dev
-console gained `example-build` / `example-vet` / `example` tasks (and `check` runs them) so CI
-exercises it.
+Two **nested modules** — each with its own `go.mod` and
+`replace github.com/Luum-Home/aisotropy => ../..` — import **only** `…/aisotropy`. Because they are
+separate modules, Go's own `internal/` visibility rule *physically forbids* them from importing
+`internal/…`, so "public surface only" is enforced by the compiler, not by lint
+(`grep -rn internal/ examples/…` returns zero):
+
+- [`examples/weatherbot`](../../examples/weatherbot) — the minimal case: one typed tool
+  (`WithTypedTool[getWeatherArgs]`, ADR-0016 lever #1) + a persona.
+- [`examples/helpdesk`](../../examples/helpdesk) — a realistic bot exercising **every** surface
+  together: declarative wiring from `helpdesk.yaml` (`OptionsFromConfigFile`, lever #5), two typed
+  tools with enum/pattern-constrained args, and an (optional, commented) MCP server (lever #2). It
+  runs against the reference `docker-compose.yml` memory tiers — verified booting on the public
+  surface with `GET /health` green against real rqlite + Qdrant.
+
+The `cmd/x` dev console gained `example-build` / `example-vet` / `example` tasks (and `check` runs
+them) so CI exercises the example(s).
 
 ## Honest limitations / follow-ups
 

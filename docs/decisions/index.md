@@ -27,6 +27,9 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0011](0011-tenant-scoped-statement-builder.md) | Tenant-scoped statement builder: isolation by construction for the pooled facts tier | **✅ accepted → `internal/tenancy`; an unscoped statement is a construction-time error** |
 | [0012](0012-gollem-native-tool-calling-vs-homegrown-agentloop.md) | Gollem native tool-calling vs. homegrown agentloop | 🟡 **proposed** |
 | [0013](0013-public-extension-surface-facade-vs-promote.md) | Public extension surface: façade package + builder vs. promoting `internal/` | **✅ accepted → façade `aisotropy/` + builder (B+C)** |
+| [0014](0014-bits-per-token-reference-scorer-boundary.md) | Bits-per-token reference scorer: Go↔subprocess boundary + staged Python→Rust (Bet 6) | **✅ accepted → offline scorer, staged** |
+| [0015](0015-bpt-eval-model-and-python-batch-runtime.md) | Pinned eval model + Python-torch batch runtime for Bet 6 (Phase 1) | **✅ accepted → distilgpt2 (Apache-2.0), env-gated** |
+| [0016](0016-dual-surface-sealed-runtime-composition-sdk.md) | Dual surface: sealed runtime kernel + composition SDK over ctx-scoped nodes (be both A runtime and B framework) | **✅ accepted → dual A+B, invariant "node never constructs a Scope"; levers #1 (typed tools) + #2 (MCP) delivered** |
 
 ## Decisions already made in the source conversations
 
@@ -141,6 +144,39 @@ These were closed in the original design and are documented as retroactive "acce
   ADR-0012's native tool-calling. Front-loaded open question: keep `ToolExecutor` args as
   `map[string]string` for 0.x (provisionally yes), revisit with ADR-0012.
 
+- **[ADR-0014 — Bits-per-token reference scorer](0014-bits-per-token-reference-scorer-boundary.md):**
+  ✅ **accepted (2026-07-09)**. Instruments [Bet 6](../research/bet-06-bits-per-token-metric.md) (the
+  compression North Star). Because no serving provider exposes log-probs, bpt is computed **offline by a
+  fixed reference model in a batch subprocess** (the ADR-0005 pattern), behind a stable Go
+  `internal/bitrate.Runner` contract. **Staged scorer:** Phase 1 = Python spike wrapped as an
+  `AISOTROPY_BITRATE_BIN` subprocess (ships the validated +1.469/+1.731 bits lift now), Phase 2 = Rust
+  candle behind the *identical* contract (sovereign, Bet 5 on-ramp). Rejects Option A-promote (nothing)
+  and defer-to-Bet-5. "With/without memory" reuses `hydrateSystemPrompt` (ADR-0002); a held-out sampler
+  prevents leakage; a durable tenant-scoped store (ADR-0011) holds the series; surfaced via `GET /bitrate`
+  + OTel `agent.compression.bpt`.
+- **[ADR-0015 — Pinned eval model + Python batch runtime](0015-bpt-eval-model-and-python-batch-runtime.md):**
+  ✅ **accepted (2026-07-09)**. The dependency gate for ADR-0014 Phase 1: ratifies a **contained,
+  time-boxed** Python/torch/transformers batch runtime (offline, optional, env-gated, subprocess-only —
+  the Go module and core binary gain nothing) and pins **`distilgpt2` (Apache-2.0)** as the shipped
+  eval model for license cleanliness and cross-time comparability; `DeepESP/gpt2-spanish` stays opt-in
+  pending a weight-license check. Superseded when the Phase-2 Rust scorer lands.
+- **[ADR-0016 — Dual surface: sealed kernel + composition SDK](0016-dual-surface-sealed-runtime-composition-sdk.md):**
+  ✅ **accepted (2026-07-09)**. Makes Aisotropy **both** (A) a hostable multi-tenant runtime **and**
+  (B) a composable agent framework — arbitrary tool topologies, graphs/workflows, multi-agent teams,
+  embeddable single-tenant bots — **without** the isolation regression that made ADR-0013 reject
+  promoting `internal/`. Reframes that single rejection into **two separable axes**: a **sealed
+  kernel** (tenancy/`Scope`/memory tiers, never public) and a **composition surface** (safely
+  public), held together by one load-bearing invariant — *a composed node receives an already-scoped
+  `ctx` and never constructs a `Scope`* (already realized by `internal/tenancy.FromContext`). Layers
+  the public surface: **L0** sealed kernel / **L1** façade (ADR-0013, unchanged) / **L2** composition
+  SDK **wrapping** the already-vendored Gollem `ext/{graph,orchestrator,team,mcp}` under scoped nodes.
+  Decides the **polyglot fork**: adopt MCP-backed tool *execution* (any language) + OpenAPI-generated
+  clients now; **defer** a TypeScript *authoring* SDK. Sequences 5 levers by leverage —
+  (1) typed tool args ([SDD](../roadmap/sdd/typed-tool-args.md)), (2) MCP tools, (3) `docker-compose`
+  reference (light the memory-tier moat by default), (4) L2 graphs/teams (only after 2–3 real
+  consumers), (5) wiring-only declarative config. Extends (does not reverse) ADR-0013; preserves
+  ADR-0011 isolation and ADR-0002 anti-magic. Implements [Phase 9](../roadmap/milestones.md#phase-9--composition-surface-dual-a--b).
+
 ## Next ADRs to write
 
-- New ones arising from the research phase (e.g., the codec format for [Bet 2](../research/bet-02-working-memory-codec.md), deterministic model versioning).
+- New ones arising from the research phase (e.g., the codec format for [Bet 2](../research/bet-02-working-memory-codec.md)).

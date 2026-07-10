@@ -65,7 +65,10 @@ Each objective is a *demonstrable* increment of the [walking skeleton](index.md)
 ## O8 — Compression as a cognitive layer (cross-cutting, Bellard)
 > *The [compression thesis](../vision/compression-thesis.md) made measurable. Start with the green bets.*
 
-- **KR8.1** — [Bet 6](../research/bet-06-bits-per-token-metric.md) instrumented: `bits/token/tenant` with and without memory, as an OTel attribute. Positive and measurable memory lift.
+- **KR8.1** — [Bet 6](../research/bet-06-bits-per-token-metric.md) instrumented: `bits/token/tenant` with and without memory. Positive and measurable memory lift.
+  - **Design accepted** ([ADR-0014](../decisions/0014-bits-per-token-reference-scorer-boundary.md) / [ADR-0015](../decisions/0015-bpt-eval-model-and-python-batch-runtime.md)): an **offline** fixed-reference-model scorer (`internal/bitrate`, [component](../components/bitrate-bpt-scorer.md)) — **not** a serving-span OTel attribute (no provider exposes log-probs). Lift = `bpt_without − bpt_with` over a held-out sample, surfaced via `GET /bitrate` + the OTel `agent.compression.bpt` span event. Scorer staged Python→Rust.
+  - **Spike-validated** offline: +1.469 / +1.731 bits/token lift (distilgpt2 / DeepESP-gpt2-spanish), see [spike](../../spikes/compression/README.md).
+  - **⏳ Pending:** a positive lift **and a downward curve on live tenant traffic** (the KR is met only when the runtime measurement — not just the spike — shows it).
 - **KR8.2** — [Bet 1](../research/bet-01-surprisal-gated-memory.md) in the sleep cycle: the surprisal gate reduces the facts store ≥ 30% without recall loss (quality vs. τ curve).
 - **KR8.3** — [Bet 2](../research/bet-02-working-memory-codec.md) PoC: history compressed with a local model + arithmetic coder to < 1 bit/char, 100% lossless reconstruction, beating gzip.
 - **KR8.4** — [Bet 4](../research/bet-04-compressibility-routing.md): the compressibility signal correlates with difficulty and lowers routing cost without lowering quality.

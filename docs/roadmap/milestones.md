@@ -157,6 +157,59 @@ runtime capability — it changes who can build on Aisotropy, not what Aisotropy
 
 ---
 
+## Phase 9 — Composition surface (dual A + B)
+**Objective:** make Aisotropy **both** a hostable multi-tenant runtime (A) **and** a composable
+agent framework (B) — arbitrary tool topologies, graphs/workflows, multi-agent teams, and
+embeddable single-tenant bots — **without regressing tenant isolation** (see
+[ADR-0016](../decisions/0016-dual-surface-sealed-runtime-composition-sdk.md)).
+**Context:** Phase 8 gave a narrow L1 façade (register a tool + executor + persona). ADR-0013
+rejected promoting `internal/` because it would leak `Scope`/`ExportAll`. ADR-0016 reframes that
+single rejection into two axes — a **sealed kernel** (never public) and a **composition surface**
+(safely public) — held together by one invariant: *a composed node receives an already-scoped
+`ctx` and never constructs a `Scope`*. The orchestration engine is already vendored
+(`external/gollem/ext/{graph,orchestrator,team,mcp}`); this phase **exposes it under scoping**, it
+does not build one.
+**Built (sequenced by leverage, ADR-0016):**
+1. ✅ **Typed tool args (delivered)** — `WithTypedTool[T]`: the args struct drives the tool schema +
+   **server-side validation** (type + `enum`/`min`/`max`/`required`, via a compiled JSON-Schema
+   validator) + a fail-closed reflection loop on *inputs* (completes struct-as-contract). SDD:
+   [typed-tool-args](sdd/typed-tool-args.md).
+2. ✅ **MCP-backed tools (delivered)** — `WithMCPServer(scope, command, args...)`: a stdio MCP server's
+   tools become scope-gated Aisotropy tools carrying the server's schema (validated/reflected like any
+   typed tool), dispatched via `ext/mcp`; tool *behavior* in any language while the core stays Go.
+   (OpenAPI-generated TS/Python *client* SDKs for polyglot callers remain a follow-up.)
+3. ✅ **`docker-compose` reference deployment (delivered)** — `docker-compose.yml` boots aisotropyd
+   with rqlite (facts) + Qdrant (semantic) ACTIVE so the tiered-memory moat runs, not the in-process
+   fallback; `GET /health` probes become real network readiness checks. Sleep-cycle is an opt-in
+   overlay (`docker-compose.sleepcycle.yml` + `deploy/Dockerfile.sleepcycle`, bundles the Rust
+   worker). Guide: [docker-compose](../deployment/docker-compose.md).
+4. **L2 composition SDK** — graph/workflow/team composition wrapping the Gollem `ext/*`, every node
+   run under a runtime-injected scoped ctx; plus embeddable `App.Turn(ctx, req)` +
+   `WithDefaultTenant` (single-tenant = N=1, Aisotropy-as-library). Built **after** 2–3 real
+   consumers shape it.
+5. ✅ **Wiring-only declarative config (delivered)** — `aisotropy.Config` + `LoadConfigFile` /
+   `OptionsFromConfig`: a YAML/JSON file wires `addr`, `rate_limit`, `cost_pricing`, literal
+   `personas`, and `mcp_servers` into builder options that compose with the Go-only options.
+   Behavior (Go executors, LLM client) stays code — anti-magic (ADR-0002). Sample:
+   `examples/aisotropy.example.yaml`.
+**Definition of done:**
+- [ ] A consumer registers a typed tool (`WithTypedTool[T]`) from another module; invalid model args
+  are repaired by the reflection loop, never silently coerced (SDD R1–R4).
+- [ ] A tool can be backed by an MCP server the consumer wrote in a non-Go language; scope-gate still
+  enforced.
+- [ ] `docker-compose up` boots the runtime with Qdrant + rqlite + sleep-cycle active (moat runs by
+  default), verified by `GET /health` = ok with networked probes.
+- [ ] A consumer composes a multi-step graph / multi-agent team against the public L2 surface, and a
+  test proves an L2 node cannot obtain a `Scope` (the ADR-0016 invariant is machine-enforced).
+- [ ] Aisotropy runs embedded via `App.Turn` in single-tenant mode with no HTTP server.
+
+**Touches:** `aisotropy/` (façade + new L2), `internal/llm` (ToolSpec/ToolCall), `internal/tools`,
+`internal/agentloop`, `internal/api`, `external/gollem/ext/*` (wrapped), packaging (compose).
+**Depends on:** Phase 8 (L1 façade), ADR-0016. **Note:** unlike Phase 8 (pure adoption), this phase
+*adds* a runtime capability — composition — while keeping the kernel sealed.
+
+---
+
 ## Cross-cutting — O8: compression (Bellard)
 Not a sequential phase: the green bets get instrumented as soon as their substrate exists.
 - **[Bet 6](../research/bet-06-bits-per-token-metric.md)** (bits/token/tenant) → from Phase 2.
