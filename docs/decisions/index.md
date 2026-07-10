@@ -35,6 +35,7 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0019](0019-tenant-wide-document-sharing.md) | Tenant-wide document sharing: tenant-only scope + merged retrieval, KindDocument only | **✅ accepted → `NewTenantScope` + `IngestTenantKnowledge` + `POST .../tenant/{id}/knowledge`; user-boundary relaxed for Documents only, never cross-tenant** |
 | [0020](0020-build-vs-adopt-lang-suite-mastra.md) | Build Aisotropy vs. adopt the LangChain suite or Mastra | **✅ accepted → build (positioning verdict + revisit triggers)** |
 | [0021](0021-compression-signal-small-lm-surprisal-ceiling.md) | Compression bets' signal ceiling: small-LM surprisal ≠ semantic/difficulty | **✅ accepted → route semantic bets (1/4) via embedding-density/Bet 5; Bet 2 codec is a scale question; soft-weight not hard-gate** |
+| [0022](0022-agent-config-standards-import-surfaces.md) | Agent-config standards (AGENTS.md / Agent Skills / OKF / MCP) as import & packaging surfaces | **✅ accepted → embrace per layer; Skills → typed primitives + literal personas; anti-magic boundary** |
 
 ## Decisions already made in the source conversations
 
@@ -226,6 +227,18 @@ These were closed in the original design and are documented as retroactive "acce
   which this measurement promotes from far-🔴 to the next-invest substrate; keep Bet 2 (codec) and Bet 6
   (measurement) on the small-LM track. Preserves the negative results as evidence so the ceiling is a
   decision, not a re-discovered dead end.
+
+- **[ADR-0022 — Agent-config standards as import & packaging surfaces](0022-agent-config-standards-import-surfaces.md):**
+  ✅ **accepted (2026-07-10)**. Answers "do we support agents.md / Agent Skills / others, and how are
+  primitives added?" by separating three layers: **AGENTS.md** is dev-time (a README for coding agents —
+  added to the repo, generalizes `CLAUDE.md`); **Agent Skills/`SKILL.md`** is capability *packaging* that
+  carries behavior; **OKF** is knowledge-as-data (already dogfooded, ADR-0018); **MCP** is the runtime
+  tool standard (already supported, ADR-0016). Load-bearing rule: **a standard is an import/packaging
+  convention that maps to aisotropy's TYPED primitives + LITERAL personas — behavior stays explicit, no
+  silent runtime prompt-injection** (the anti-magic gate, ADR-0002). So a Skill imports as: `scripts/` →
+  MCP/typed tools, `references/` → ingested knowledge, `SKILL.md` instructions → an operator-visible
+  literal persona (never auto-injected). Rejects both ignoring the standards and adopting opaque
+  progressive-disclosure injection. Importer itself is scoped future work.
 
 ## Next ADRs to write
 
