@@ -1,3 +1,11 @@
+---
+type: Concept
+title: Distroless deployment — measured against Phase 7 DoD item 4
+description: The two-stage distroless build for the aisotropyd binary and the MEASURED results against the Phase 7 Definition-of-Done target (binary < 50 MB, startup < 1 s, idle RAM < 50 MB). Records the actual numbers, not a claim — per the "measure it or it's not a claim" discipline.
+tags: [deployment, distroless, docker, binary-size, startup, footprint, phase-7, definition-of-done]
+timestamp: 2026-07-09T00:00:00Z
+---
+
 # Distroless deployment — measured against Phase 7 DoD item 4
 
 DoD target: "Distroless binary < 50 MB, startup < 1 s, idle RAM < 50 MB

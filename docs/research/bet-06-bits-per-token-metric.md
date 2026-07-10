@@ -42,8 +42,14 @@ bpt(tenant, t) = − (1/N) Σ log₂ P(token_i | hydrated_context, memory(tenant
 
 ## Architectural fit
 
-- Instrumented as an [OTel](../architecture/observability.md) attribute per interaction, alongside
-  `gen_ai.usage.*`. It's a cheap derivative of log-probs already computed.
+- Computed **offline, in batch** — NOT as a live serving-span attribute. No major serving provider
+  exposes the log-probs this metric needs, so a pinned reference model
+  ([ADR-0015](../decisions/index.md): `distilgpt2`) re-scores exported turns during the sleep cycle,
+  and the result is attached as a **derived** attribute to a dashboard/report, not to the
+  request-path [OTel](../architecture/observability.md) span. This is the ADR-0014 decision — the
+  "cheap derivative of serving log-probs" framing was the original design and was **rejected**
+  because serving providers don't surface them. See
+  [bitrate/bpt scorer](../components/bitrate-bpt-scorer.md).
 - It's the **fitness function** for the other bets: [Bet 1](bet-01-surprisal-gated-memory.md),
   [Bet 2](bet-02-working-memory-codec.md), and [Bet 3](bet-03-rate-distortion-context.md) are validated by
   their effect on `bpt`.
@@ -58,7 +64,10 @@ same solution).
 
 ## Dependencies
 
-Access to log-probs from a fixed reference model. Nothing else.
+A pinned **offline** reference model that yields log-probs over exported text
+([ADR-0015](../decisions/index.md): `distilgpt2`, env-gated Python runtime) — **not**
+serving-provider log-probs, which no major provider exposes. That absence is precisely why `bpt`
+is an offline-batch metric ([ADR-0014](../decisions/index.md)), not a live serving-span attribute.
 
 ## Next experiment
 
