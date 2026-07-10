@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -104,6 +105,21 @@ type App struct {
 	burst         float64
 	inPricePer1M  float64
 	outPricePer1M float64
+
+	// embedder / chunkSize / chunkOverlap back WithEmbedder / WithChunkSize
+	// (ADR-0018, aisotropy/knowledge.go). chunkSize <= 0 means "unset": the
+	// façade falls back to semantic.DefaultChunkOptions().
+	embedder     semantic.Embedder
+	chunkSize    int
+	chunkOverlap int
+
+	// semanticOnce/semanticStore/semanticErr memoize ensureSemantic's
+	// lazily-built embedder+store pair, shared between Run and
+	// IngestKnowledge (aisotropy/knowledge.go) so the two surfaces never
+	// build two independently evolving semantic indices for the same App.
+	semanticOnce  sync.Once
+	semanticStore semantic.Store
+	semanticErr   error
 }
 
 // Option configures an App at construction time. Options are applied in order;
@@ -231,10 +247,12 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	factsExtractor := facts.HeuristicExtractor{}
 
-	// Semantic memory (Phase 4): deterministic HashEmbedder + in-memory/Qdrant by
-	// env. Resolve the embedder first, since the store dimension derives from it.
-	embedder := semantic.NewHashEmbedder(0)
-	semanticStore, err := openSemanticStore(ctx, tierRouter, dedicatedTenants, embedder.Dimension())
+	// Semantic memory (Phase 4): deterministic HashEmbedder (or a BYO
+	// WithEmbedder) + in-memory/Qdrant by env, built through ensureSemantic
+	// (ADR-0018) so IngestKnowledge shares exactly this store/embedder pair
+	// whether it was called before Run (and already built them) or is
+	// called later, alongside the running server.
+	semanticStore, embedder, err := a.ensureSemantic(ctx)
 	if err != nil {
 		_ = wm.Close()
 		_ = factsStore.Close()
@@ -477,6 +495,10 @@ func (a *App) Run(ctx context.Context) error {
 
 	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry, persona)
 	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient, semanticStore, embedder, persona, a.inPricePer1M, a.outPricePer1M, bptSampler)
+	// Knowledge ingestion (ADR-0018): the HTTP arm of the dual-surface
+	// capability, sharing the exact same semantic store/embedder pair the
+	// chat routes' RAG hydration reads from above.
+	api.RegisterKnowledge(humaAPI, semanticStore, embedder, a.chunkOptions())
 
 	// Per-user primitives (Phase 6 behavioral memory).
 	primStore := primitives.NewStore()
