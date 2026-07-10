@@ -102,14 +102,20 @@ func targetSet() map[string]bool {
 func run(pass *analysis.Pass) (interface{}, error) {
 	want := targetSet()
 	if len(want) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // analyzer contract: no Result, no error when there is nothing to check
 	}
 
-	insp := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+	insp, ok := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+	if !ok {
+		return nil, fmt.Errorf("scopecheck: missing inspect.Analyzer result")
+	}
 	nodeFilter := []ast.Node{(*ast.CompositeLit)(nil)}
 
 	insp.Preorder(nodeFilter, func(n ast.Node) {
-		lit := n.(*ast.CompositeLit)
+		lit, ok := n.(*ast.CompositeLit)
+		if !ok {
+			return
+		}
 
 		named, qualified, ok := namedTargetType(pass, lit, want)
 		if !ok {
@@ -135,7 +141,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			qualified, named.Obj().Pkg().Name(), named.Obj().Pkg().Name())
 	})
 
-	return nil, nil
+	return nil, nil //nolint:nilnil // analyzer contract: diagnostics are reported via pass.Reportf, not returned
 }
 
 // namedTargetType resolves lit's type through the type checker and reports

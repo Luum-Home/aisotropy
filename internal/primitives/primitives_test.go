@@ -140,10 +140,10 @@ func TestStoreConcurrentFrictionRecording(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < perGoroutine; j++ {
+			for range perGoroutine {
 				if _, err := s.RecordFriction("t1", "u1", "search", delta); err != nil {
 					t.Errorf("RecordFriction error: %v", err)
 				}
@@ -178,7 +178,7 @@ func TestStoreConcurrentTenantUserIsolation(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < perPair; j++ {
+			for range perPair {
 				if _, err := s.RecordFriction(tenantID(i), userID(i), "search", 1.0); err != nil {
 					t.Errorf("RecordFriction error: %v", err)
 				}
@@ -187,7 +187,7 @@ func TestStoreConcurrentTenantUserIsolation(t *testing.T) {
 	}
 	wg.Wait()
 
-	for i := 0; i < pairs; i++ {
+	for i := range pairs {
 		got, ok := s.Get(tenantID(i), userID(i), "search")
 		if !ok {
 			t.Fatalf("primitive for pair %d missing", i)

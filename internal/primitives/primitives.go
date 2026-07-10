@@ -32,6 +32,7 @@ package primitives
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -334,10 +335,10 @@ func correctiveExample(name string, revision int) string {
 // live traffic on the same primitive.
 func Consolidate(ctx context.Context, store *Store, rewriter Rewriter, threshold float64) (int, error) {
 	if store == nil {
-		return 0, fmt.Errorf("primitives: Consolidate requires a non-nil store")
+		return 0, errors.New("primitives: Consolidate requires a non-nil store")
 	}
 	if rewriter == nil {
-		return 0, fmt.Errorf("primitives: Consolidate requires a non-nil rewriter")
+		return 0, errors.New("primitives: Consolidate requires a non-nil rewriter")
 	}
 	rewritten := 0
 	for _, p := range store.Snapshot() {
