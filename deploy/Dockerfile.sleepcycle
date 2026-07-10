@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+#
+# OPT-IN aisotropyd image variant that bundles the Rust sleep-cycle worker
+# (crates/sleep-cycle, ADR-0005) INTO the runtime image, so the offline
+# DataFusion consolidation runs as a subprocess (AISOTROPY_SLEEPCYCLE_BIN).
+#
+# Used via the compose overlay:
+#   docker compose -f docker-compose.yml -f docker-compose.sleepcycle.yml up --build
+#
+# Trade-off vs. the default distroless Dockerfile: this adds a full Rust/
+# DataFusion build (minutes, large) and a debian-slim base (libc, a shell) —
+# because the Rust binary is dynamically linked against glibc, it cannot run on
+# distroless/static. This is a REFERENCE/dev image, not the minimal production
+# one; keep the root Dockerfile for production.
+
+# --- Rust worker build -------------------------------------------------------
+FROM rust:1-bookworm AS rust-builder
+WORKDIR /crate
+# Cargo.lock is committed, so the build is reproducible.
+COPY crates/sleep-cycle/ ./
+RUN cargo build --release --bin sleep-cycle
+
+# --- Go build (same static binary as the root Dockerfile) --------------------
+FROM golang:1.26 AS go-builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /aisotropyd ./cmd/aisotropyd
+
+# --- Final image (debian-slim: has the glibc the Rust binary needs) ----------
+FROM debian:bookworm-slim
+RUN useradd --uid 65532 --create-home nonroot
+COPY --from=go-builder /aisotropyd /usr/local/bin/aisotropyd
+COPY --from=rust-builder /crate/target/release/sleep-cycle /usr/local/bin/sleep-cycle
+# The runtime spawns this binary each sleep cycle when the var is set (app.go).
+ENV AISOTROPY_SLEEPCYCLE_BIN=/usr/local/bin/sleep-cycle
+USER nonroot
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/aisotropyd"]

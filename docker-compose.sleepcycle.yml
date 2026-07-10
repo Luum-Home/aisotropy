@@ -1,0 +1,15 @@
+# OPT-IN overlay: rebuilds aisotropyd from deploy/Dockerfile.sleepcycle so the
+# Rust DataFusion sleep-cycle worker (ADR-0005) is bundled and active. Compose
+# merges this over docker-compose.yml (context stays the repo root; only the
+# Dockerfile changes). AISOTROPY_SLEEPCYCLE_BIN is baked into the image.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.sleepcycle.yml up --build
+#
+# Adds a full Rust/DataFusion build to the first `up` — expect several minutes.
+
+name: aisotropy
+
+services:
+  aisotropyd:
+    build:
+      dockerfile: deploy/Dockerfile.sleepcycle

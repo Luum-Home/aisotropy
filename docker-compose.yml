@@ -1,0 +1,93 @@
+# Reference deployment for Aisotropy (ADR-0016 lever #3).
+#
+# `docker compose up` boots the runtime with its tiered-memory moat ACTIVE — the
+# networked facts tier (rqlite, FTS5) and semantic tier (Qdrant, HNSW with
+# per-tenant payload filtering) — instead of the in-process fallbacks the bare
+# binary uses. This is the deployment the project's differentiation is measured
+# against: the same code, but the memory tiers are real networked services.
+#
+# What runs:
+#   - qdrant       semantic memory (vectors)          — Apache-2.0
+#   - rqlite       facts memory (SQLite + FTS5, Raft)  — MIT
+#   - aisotropyd   the runtime, wired to both          — MIT
+#
+# Verify the moat is live once up:
+#   curl -s localhost:8080/health | jq          # facts + semantic probes hit the
+#                                                # REAL services -> {"status":"ok"}
+#   curl -s localhost:8080/healthz              # liveness
+#
+# LLM: set OPENROUTER_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY in your shell
+# (or a .env file) before `up`; unset -> the keyless stub (canned responses), so
+# the stack still boots and the memory tiers are exercisable without a provider.
+#
+# Working memory (BadgerDB) runs in-process/in-memory here by design (the "RAM"
+# tier); the PERSISTENT moat is rqlite + Qdrant, both volume-backed below. To
+# also persist working memory, see docs/deployment/docker-compose.md.
+#
+# Sleep-cycle (offline DataFusion consolidation, ADR-0005) is an OPT-IN overlay
+# because it adds a Rust build:
+#   docker compose -f docker-compose.yml -f docker-compose.sleepcycle.yml up
+
+name: aisotropy
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    restart: unless-stopped
+    ports:
+      - "6333:6333" # REST + dashboard
+      - "6334:6334" # gRPC (the port the Go client uses)
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+  rqlite:
+    image: rqlite/rqlite:8.36.3
+    restart: unless-stopped
+    command: ["-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002"]
+    ports:
+      - "4001:4001" # HTTP API (RQLITE_URL points here)
+    volumes:
+      - rqlite-data:/rqlite/file
+    healthcheck:
+      # rqlite's alpine image ships busybox wget; /readyz is 200 once the node
+      # has an elected leader and can serve reads/writes.
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4001/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  aisotropyd:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped # tolerate the Qdrant readiness gap: if the gRPC port
+    # is not accepting yet at first boot, the process exits and Docker restarts
+    # it until Qdrant is up (Qdrant's distroless image has no in-container tool
+    # for a healthcheck, so it is gated by service_started + this restart).
+    ports:
+      - "8080:8080"
+    environment:
+      AISOTROPY_ADDR: ":8080"
+      # Semantic tier -> Qdrant (gRPC). Collection is created by the runtime.
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6334"
+      QDRANT_COLLECTION: aisotropy_knowledge
+      # Facts tier -> rqlite (HTTP API).
+      RQLITE_URL: "http://rqlite:4001"
+      # LLM provider (unset -> keyless stub). Passed through from the host env.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Optional OTel trace export (unset -> no-op tracer).
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      rqlite:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+volumes:
+  qdrant-data:
+  rqlite-data:
