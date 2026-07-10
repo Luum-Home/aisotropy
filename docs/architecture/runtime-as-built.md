@@ -189,10 +189,11 @@ All five knobs are constructed in `main.go` and threaded through the handlers:
   is wired on the **streaming** path only (the non-streaming `chat` passes a nil semantic store).
   Hydration is still **sequential** (working memory → facts → semantic), not the goroutine-parallel
   hydration the aspirational [request lifecycle](request-lifecycle.md) describes.
-- **Non-streaming chat never consolidates.** It uses `wm.Append`, not `AppendWithOutbox`, so its
-  turns never produce facts or vectors. Only the `chat/stream` path feeds long-term memory. (It can
-  still *read* facts — `main.go` passes the real facts store to `Register`, despite a stale comment
-  in `chat.go` suggesting a nil store is passed.)
+- **Both chat routes consolidate; only `chat/agent` does not.** `chat/stream` and `chat` both call
+  `AppendWithOutbox` (the non-streaming route since commit `85caf46`), so both feed the outbox →
+  facts/semantic pipeline. `chat/agent` is the only route that neither hydrates nor consolidates
+  memory. (Historical note: non-streaming `chat` previously used plain `wm.Append` and never
+  consolidated — that gap is now closed.)
 - **The routing seam is not adopted.** [`internal/routing`](../../internal/routing/router.go)
   (ADR-0007 Shared/Dedicated tenant tiering) exists but **nothing outside the package imports it** —
   the facts and semantic stores still use fixed resource names. It is a designed seam awaiting

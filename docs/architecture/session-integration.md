@@ -74,11 +74,11 @@ reflection path's spend is invisible to it.
 ### 2.3 Consolidation now on both chat routes (recently closed gap)
 
 An earlier state had `/chat` read facts but persist via plain `Append`, so its turns never fed the
-outbox → facts/semantic pipeline (still described that way in `runtime-as-built.md §6`, now stale).
-Commit `85caf46` closed it: `/chat` now calls `AppendWithOutbox`, so **both** chat routes grow
-long-term memory. Only `/chat/agent` remains non-consolidating (folds into the §2.1 asymmetry). This
-row is kept as a worked example of a cross-session seam that was found *and* closed — and of
-`runtime-as-built.md §6` needing a refresh on this point.
+outbox → facts/semantic pipeline. Commit `85caf46` closed it: `/chat` now calls `AppendWithOutbox`,
+so **both** chat routes grow long-term memory. Only `/chat/agent` remains non-consolidating (folds
+into the §2.1 asymmetry). Kept as a worked example of a cross-session seam that was found *and*
+closed: this integration pass caught the stale claim in `runtime-as-built.md §6` (verified against
+code) and corrected it there — the two docs now agree.
 
 ### 2.4 Built-but-unwired seams
 
