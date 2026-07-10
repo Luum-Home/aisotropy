@@ -38,7 +38,7 @@ func TestQdrantLive(t *testing.T) {
 
 	mk := func(scope Scope, msg, content string) Point {
 		return Point{ID: PointID(scope, KindTurn, msg), TenantID: scope.Tenant(), UserID: scope.User(),
-			Kind: KindTurn, Content: content, Vector: mustEmbed(emb, content)}
+			Kind: KindTurn, Content: content, Vector: mustEmbed(ctx, emb, content)}
 	}
 
 	if err := st.Upsert(ctx, sc, []Point{mk(sc, "m1", "postgres database migration plan")}); err != nil {
@@ -49,7 +49,7 @@ func TestQdrantLive(t *testing.T) {
 	}
 
 	// Payload-filtered search scoped to alice must not see bob's vector.
-	got, err := st.Search(ctx, sc, mustEmbed(emb, "migrate database to postgres"), 10)
+	got, err := st.Search(ctx, sc, mustEmbed(ctx, emb, "migrate database to postgres"), 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestQdrantLive(t *testing.T) {
 	if err := st.Upsert(ctx, sc, []Point{mk(sc, "m1", "postgres database migration plan v2")}); err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
-	got, err = st.Search(ctx, sc, mustEmbed(emb, "postgres migration"), 10)
+	got, err = st.Search(ctx, sc, mustEmbed(ctx, emb, "postgres migration"), 10)
 	if err != nil {
 		t.Fatalf("Search after re-upsert: %v", err)
 	}
