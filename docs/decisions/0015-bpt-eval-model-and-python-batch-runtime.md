@@ -76,7 +76,7 @@ time series is meaningless.
 | `torch` (CPU) | BSD-3-Clause | ✅ SAFE |
 | `transformers` | Apache-2.0 | ✅ SAFE |
 | `distilgpt2` weights (shipped default) | Apache-2.0 | ✅ SAFE |
-| `DeepESP/gpt2-spanish` weights (opt-in) | ⚠️ verify before shipping as default | opt-in only until confirmed |
+| `DeepESP/gpt2-spanish` weights (opt-in) | **MIT** (verified 2026-07-10, HF model card) | ✅ SAFE — now eligible as default |
 
 ## Consequences
 
@@ -90,8 +90,15 @@ time series is meaningless.
 
 ## Open questions
 
-1. **`DeepESP/gpt2-spanish` weight license** — confirm before ever promoting it from opt-in to default
-   (it yields a higher lift in the spike, so there is an incentive to).
+1. **`DeepESP/gpt2-spanish` weight license — RESOLVED (2026-07-10): MIT** (confirmed on the HF model
+   card, https://huggingface.co/DeepESP/gpt2-spanish). It is now license-clean (✅ SAFE) and therefore
+   **eligible as the shipped default**. Given the product's Spanish-speaking target users and its higher
+   spike lift (+1.731 vs distilgpt2's +1.469), DeepESP is the *better* default — and since no live bpt
+   series exists yet (Bet 6 just shipped), switching the pinned model now carries **zero comparability
+   cost** (no historical curve to invalidate). **Recommended follow-up:** flip the pinned default from
+   `distilgpt2` to `DeepESP/gpt2-spanish` in `spikes/compression/bitrate_scorer.py` **and** the Phase-2
+   Rust scorer together, so both implementations pin the same model (golden-vector parity stays
+   meaningful). Not done in-place here to avoid diverging from the in-flight Rust port mid-parallel-work.
 2. **CI weight caching** — cache the HF weights in CI or bundle a small safetensors to avoid a network
    fetch, once the opt-in integration test is wired into CI.
 
