@@ -37,8 +37,8 @@ func TestQdrantLive(t *testing.T) {
 	other := Scope{tenant: tenant, user: "bob"}
 
 	mk := func(scope Scope, msg, content string) Point {
-		return Point{ID: PointID(scope, msg), TenantID: scope.Tenant(), UserID: scope.User(),
-			Content: content, Vector: mustEmbed(emb, content)}
+		return Point{ID: PointID(scope, KindTurn, msg), TenantID: scope.Tenant(), UserID: scope.User(),
+			Kind: KindTurn, Content: content, Vector: mustEmbed(emb, content)}
 	}
 
 	if err := st.Upsert(ctx, sc, []Point{mk(sc, "m1", "postgres database migration plan")}); err != nil {

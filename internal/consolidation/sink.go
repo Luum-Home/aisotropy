@@ -95,9 +95,10 @@ func (s Sink) consolidateSemantic(ctx context.Context, e memory.OutboxEvent) err
 		return fmt.Errorf("consolidation: invalid semantic scope: %w", err)
 	}
 	point := semantic.Point{
-		ID:       semantic.PointID(scope, e.ID),
+		ID:       semantic.PointID(scope, semantic.KindTurn, e.ID),
 		TenantID: e.Tenant,
 		UserID:   e.User,
+		Kind:     semantic.KindTurn,
 		Content:  e.Content,
 		Vector:   vecs[0],
 	}

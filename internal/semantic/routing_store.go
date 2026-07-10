@@ -199,12 +199,23 @@ func (rs *RoutingStore) Upsert(ctx context.Context, sc Scope, points []Point) er
 // Search dispatches to the physical Store for sc's tenant. See Store.Search.
 // The mutex is only held long enough to resolve/provision that Store inside
 // storeFor; it is never held across the underlying Search call.
-func (rs *RoutingStore) Search(ctx context.Context, sc Scope, query []float32, limit int) ([]ScoredPoint, error) {
+func (rs *RoutingStore) Search(ctx context.Context, sc Scope, query []float32, limit int, kinds ...Kind) ([]ScoredPoint, error) {
 	st, err := rs.storeFor(sc.Tenant())
 	if err != nil {
 		return nil, err
 	}
-	return st.Search(ctx, sc, query, limit)
+	return st.Search(ctx, sc, query, limit, kinds...)
+}
+
+// Delete dispatches to the physical Store for sc's tenant. See Store.Delete.
+// The mutex is only held long enough to resolve/provision that Store inside
+// storeFor; it is never held across the underlying Delete call.
+func (rs *RoutingStore) Delete(ctx context.Context, sc Scope, ids []string) error {
+	st, err := rs.storeFor(sc.Tenant())
+	if err != nil {
+		return err
+	}
+	return st.Delete(ctx, sc, ids)
 }
 
 // Close closes every provisioned physical Store (the shared pool plus every

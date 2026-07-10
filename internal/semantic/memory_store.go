@@ -42,8 +42,9 @@ func (s *InMemoryStore) Upsert(_ context.Context, sc Scope, points []Point) erro
 
 // Search returns the limit most cosine-similar points within sc. The
 // (tenant,user) filter is applied inside the scan loop, so another tenant's
-// vectors are never even scored. See Store.Search.
-func (s *InMemoryStore) Search(_ context.Context, sc Scope, query []float32, limit int) ([]ScoredPoint, error) {
+// vectors are never even scored; the optional kind filter is applied in that
+// same pass. See Store.Search.
+func (s *InMemoryStore) Search(_ context.Context, sc Scope, query []float32, limit int, kinds ...Kind) ([]ScoredPoint, error) {
 	if len(query) != s.dim {
 		return nil, ErrDimensionMismatch
 	}
@@ -57,6 +58,9 @@ func (s *InMemoryStore) Search(_ context.Context, sc Scope, query []float32, lim
 	for _, p := range s.points {
 		if p.TenantID != sc.Tenant() || p.UserID != sc.User() {
 			continue // isolation filter during the scan, not after
+		}
+		if !kindAllowed(kinds, p.Kind) {
+			continue
 		}
 		out = append(out, ScoredPoint{Point: p, Score: cosine(query, p.Vector)})
 	}
@@ -72,6 +76,27 @@ func (s *InMemoryStore) Search(_ context.Context, sc Scope, query []float32, lim
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// Delete removes the given ids from the index, but only when the stored
+// point's (tenant,user) matches sc — checked before every delete, so a
+// colliding id belonging to a different tenant/user is left untouched even
+// though InMemoryStore's map is keyed by id alone. Unknown ids are ignored.
+// See Store.Delete.
+func (s *InMemoryStore) Delete(_ context.Context, sc Scope, ids []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		p, ok := s.points[id]
+		if !ok {
+			continue // unknown id: no-op
+		}
+		if p.TenantID != sc.Tenant() || p.UserID != sc.User() {
+			continue // scope mismatch: never delete another tenant's point
+		}
+		delete(s.points, id)
+	}
+	return nil
 }
 
 // Close is a no-op for the in-memory index.

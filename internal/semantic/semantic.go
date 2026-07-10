@@ -88,6 +88,30 @@ func ScopeFromContext(ctx context.Context) (Scope, error) {
 	return Scope{tenant: ts.Tenant(), user: user}, nil
 }
 
+// Kind classifies what a Point represents, per ADR-0017
+// (docs/decisions/0017-semantic-tier-multi-kind-memory.md): the semantic tier
+// is a multi-kind associative memory, and each kind carries its own
+// lifecycle, bound, and retrieval weight. Every Point MUST carry a Kind — see
+// the ADR's "Mandatory going forward."
+type Kind string
+
+const (
+	// KindDocument is curated tenant knowledge ingested through a dedicated
+	// path (a follow-up feature this model enables). Persists until explicitly
+	// removed; unbounded; high retrieval weight.
+	KindDocument Kind = "document"
+	// KindFact is a distilled fact's own content, dual-indexed and keyed by
+	// the fact id. Its lifecycle is tied to the fact: superseding or deleting
+	// the fact deletes its vector too (owned by the MemoryStore facade, a
+	// later phase — ADR-0017 phase 2). High retrieval weight.
+	KindFact Kind = "fact"
+	// KindTurn is a raw conversational turn embedded by consolidation.
+	// Ephemeral: bounded by a TTL/per-(tenant,user) cap and evicted by the
+	// sleep cycle (a later phase — ADR-0017 phase 3). Low retrieval weight
+	// (fallback only).
+	KindTurn Kind = "turn"
+)
+
 // Point is one embedded chunk of tenant knowledge. Content is the payload
 // text; Vector is its embedding.
 type Point struct {
@@ -97,6 +121,8 @@ type Point struct {
 	ID       string
 	TenantID string
 	UserID   string
+	// Kind classifies this point per ADR-0017; see the Kind type doc.
+	Kind Kind
 	// Content is the chunk text kept as payload so retrieval returns usable
 	// text (and the reranker can read it), not just an id.
 	Content string
@@ -114,7 +140,8 @@ type ScoredPoint struct {
 }
 
 // Store is the semantic-memory engine. Implementations MUST filter every
-// Search by (tenant_id, user_id) and MUST make Upsert idempotent on Point.ID.
+// Search and Delete by (tenant_id, user_id) and MUST make Upsert idempotent
+// on Point.ID.
 type Store interface {
 	// Upsert inserts or replaces points by ID. Every point's TenantID/UserID
 	// must match sc, else ErrScopeMismatch. Vectors must match the store
@@ -124,10 +151,35 @@ type Store interface {
 	// Search returns up to limit points for sc most similar to query, ranked by
 	// cosine similarity, highest first. The (tenant,user) filter is applied
 	// during the scan; another tenant's vectors are structurally unreachable.
-	Search(ctx context.Context, sc Scope, query []float32, limit int) ([]ScoredPoint, error)
+	// When kinds is non-empty, only points whose Kind is one of kinds are
+	// scored/returned — applied in the same scan as the isolation filter, not
+	// as a post-filter. An empty kinds (the zero-arg call) means "all kinds",
+	// preserving the pre-ADR-0017 behavior for existing callers.
+	Search(ctx context.Context, sc Scope, query []float32, limit int, kinds ...Kind) ([]ScoredPoint, error)
+
+	// Delete removes the points identified by ids, scoped to sc: a point is
+	// only removed if it belongs to sc's (tenant,user) — applied during the
+	// same lookup, never as a post-filter — so a colliding id belonging to a
+	// different tenant/user is left untouched. Unknown ids are ignored (no
+	// error).
+	Delete(ctx context.Context, sc Scope, ids []string) error
 
 	// Close releases resources (index / gRPC client).
 	Close() error
+}
+
+// kindAllowed reports whether k passes the kind filter kinds. An empty kinds
+// (the common case: no filter requested) allows every kind.
+func kindAllowed(kinds []Kind, k Kind) bool {
+	if len(kinds) == 0 {
+		return true
+	}
+	for _, want := range kinds {
+		if want == k {
+			return true
+		}
+	}
+	return false
 }
 
 // Embedder maps text to vectors. Phase 4 ships a deterministic HashEmbedder for
@@ -149,10 +201,13 @@ type Reranker interface {
 }
 
 // PointID derives the deterministic UUIDv5 idempotency key for a knowledge
-// chunk, from (tenant_id, user_id, messageID) exactly as
-// docs/components/qdrant-semantic-memory.md specifies. Reprocessing the same
-// message yields the same id, so the upsert is a true no-op.
-func PointID(sc Scope, messageID string) string {
-	name := sc.tenant + "\x00" + sc.user + "\x00" + messageID
+// chunk, from (tenant_id, user_id, kind, sourceID) per ADR-0017
+// (docs/decisions/0017-semantic-tier-multi-kind-memory.md): encoding kind
+// into the id means a Fact-kind vector and a Turn-kind (or Document-kind)
+// vector derived from the same sourceID never collide, so each can be
+// addressed and deleted independently. Reprocessing the same (kind, sourceID)
+// yields the same id, so the upsert is a true no-op.
+func PointID(sc Scope, kind Kind, sourceID string) string {
+	name := sc.tenant + "\x00" + sc.user + "\x00" + string(kind) + "\x00" + sourceID
 	return uuid.NewSHA1(pointNamespace, []byte(name)).String()
 }

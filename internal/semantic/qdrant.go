@@ -107,6 +107,7 @@ const (
 	payloadUser    = "user_id"
 	payloadContent = "content"
 	payloadSource  = "source"
+	payloadKind    = "kind"
 )
 
 // Upsert writes points, keyed by their UUIDv5 ID (a re-upsert replaces in
@@ -131,6 +132,7 @@ func (s *QdrantStore) Upsert(ctx context.Context, sc Scope, points []Point) erro
 				payloadUser:    qdrant.NewValueString(p.UserID),
 				payloadContent: qdrant.NewValueString(p.Content),
 				payloadSource:  qdrant.NewValueString(p.Source),
+				payloadKind:    qdrant.NewValueString(string(p.Kind)),
 			},
 		})
 	}
@@ -147,8 +149,11 @@ func (s *QdrantStore) Upsert(ctx context.Context, sc Scope, points []Point) erro
 
 // Search runs an ANN query filtered to (tenant,user). The filter is a must
 // condition evaluated during the scan — another tenant's vectors are
-// structurally unreachable. See Store.Search.
-func (s *QdrantStore) Search(ctx context.Context, sc Scope, query []float32, limit int) ([]ScoredPoint, error) {
+// structurally unreachable. When kinds is non-empty, an additional must
+// condition restricts the scan to points whose kind payload matches one of
+// kinds (a match-any, evaluated in the same filtered scan, not a
+// post-filter). See Store.Search.
+func (s *QdrantStore) Search(ctx context.Context, sc Scope, query []float32, limit int, kinds ...Kind) ([]ScoredPoint, error) {
 	if len(query) != s.dim {
 		return nil, ErrDimensionMismatch
 	}
@@ -156,17 +161,23 @@ func (s *QdrantStore) Search(ctx context.Context, sc Scope, query []float32, lim
 		return nil, nil
 	}
 	lim := uint64(limit)
+	must := []*qdrant.Condition{
+		qdrant.NewMatch(payloadTenant, sc.Tenant()),
+		qdrant.NewMatch(payloadUser, sc.User()),
+	}
+	if len(kinds) > 0 {
+		keywords := make([]string, len(kinds))
+		for i, k := range kinds {
+			keywords[i] = string(k)
+		}
+		must = append(must, qdrant.NewMatchKeywords(payloadKind, keywords...))
+	}
 	res, err := s.client.Query(ctx, &qdrant.QueryPoints{
 		CollectionName: s.collection,
 		Query:          qdrant.NewQuery(query...),
-		Filter: &qdrant.Filter{
-			Must: []*qdrant.Condition{
-				qdrant.NewMatch(payloadTenant, sc.Tenant()),
-				qdrant.NewMatch(payloadUser, sc.User()),
-			},
-		},
-		Limit:       &lim,
-		WithPayload: qdrant.NewWithPayload(true),
+		Filter:         &qdrant.Filter{Must: must},
+		Limit:          &lim,
+		WithPayload:    qdrant.NewWithPayload(true),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("semantic: qdrant query: %w", err)
@@ -180,6 +191,7 @@ func (s *QdrantStore) Search(ctx context.Context, sc Scope, query []float32, lim
 				ID:       r.GetId().GetUuid(),
 				TenantID: payload[payloadTenant].GetStringValue(),
 				UserID:   payload[payloadUser].GetStringValue(),
+				Kind:     Kind(payload[payloadKind].GetStringValue()),
 				Content:  payload[payloadContent].GetStringValue(),
 				Source:   payload[payloadSource].GetStringValue(),
 			},
@@ -187,6 +199,38 @@ func (s *QdrantStore) Search(ctx context.Context, sc Scope, query []float32, lim
 		})
 	}
 	return out, nil
+}
+
+// Delete removes the points identified by ids, scoped to sc. Deletion selects
+// by a filter — has_id(ids) AND tenant_id AND user_id — rather than a bare id
+// selector, so the isolation filter applies during the same delete operation:
+// an id that collides with a different tenant/user's point is structurally
+// unreachable by this call, mirroring Search's isolation guarantee. Ids that
+// do not match (unknown, or belonging to a different scope) are silently
+// unaffected. See Store.Delete.
+func (s *QdrantStore) Delete(ctx context.Context, sc Scope, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	pointIDs := make([]*qdrant.PointId, len(ids))
+	for i, id := range ids {
+		pointIDs[i] = qdrant.NewIDUUID(id)
+	}
+	wait := true
+	if _, err := s.client.Delete(ctx, &qdrant.DeletePoints{
+		CollectionName: s.collection,
+		Points: qdrant.NewPointsSelectorFilter(&qdrant.Filter{
+			Must: []*qdrant.Condition{
+				qdrant.NewHasID(pointIDs...),
+				qdrant.NewMatch(payloadTenant, sc.Tenant()),
+				qdrant.NewMatch(payloadUser, sc.User()),
+			},
+		}),
+		Wait: &wait,
+	}); err != nil {
+		return fmt.Errorf("semantic: qdrant delete: %w", err)
+	}
+	return nil
 }
 
 // Close closes the gRPC connection.

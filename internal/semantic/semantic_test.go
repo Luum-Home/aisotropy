@@ -16,12 +16,13 @@ func embedOne(t *testing.T, emb Embedder, text string) []float32 {
 	return vs[0]
 }
 
-// helper: build a scoped Point with a UUIDv5 id derived from messageID.
-func point(ctx context.Context, sc Scope, emb Embedder, messageID, content string) Point {
+// helper: build a scoped Point with a UUIDv5 id derived from (kind, messageID).
+func point(ctx context.Context, sc Scope, emb Embedder, kind Kind, messageID, content string) Point {
 	return Point{
-		ID:       PointID(sc, messageID),
+		ID:       PointID(sc, kind, messageID),
 		TenantID: sc.Tenant(),
 		UserID:   sc.User(),
+		Kind:     kind,
 		Content:  content,
 		Vector:   mustEmbed(ctx, emb, content),
 	}
@@ -34,15 +35,29 @@ func mustEmbed(ctx context.Context, emb Embedder, text string) []float32 {
 
 func TestPointIDDeterministicAndScoped(t *testing.T) {
 	sc := Scope{tenant: "acme", user: "alice"}
-	a := PointID(sc, "msg-1")
-	if a != PointID(sc, "msg-1") {
+	a := PointID(sc, KindTurn, "msg-1")
+	if a != PointID(sc, KindTurn, "msg-1") {
 		t.Fatal("PointID not deterministic")
 	}
-	if a == PointID(sc, "msg-2") {
+	if a == PointID(sc, KindTurn, "msg-2") {
 		t.Fatal("different messages share an id")
 	}
-	if a == PointID(Scope{tenant: "globex", user: "alice"}, "msg-1") {
+	if a == PointID(Scope{tenant: "globex", user: "alice"}, KindTurn, "msg-1") {
 		t.Fatal("id collides across tenants — isolation risk in the idempotency key")
+	}
+}
+
+// TestPointIDDistinctPerKind is the ADR-0017 phase-1 DoD: the same sourceID
+// under different Kinds must never collide, so a Fact-kind vector and a
+// Turn-kind (or Document-kind) vector derived from the same source id can be
+// addressed and deleted independently.
+func TestPointIDDistinctPerKind(t *testing.T) {
+	sc := Scope{tenant: "acme", user: "alice"}
+	turn := PointID(sc, KindTurn, "same-source-id")
+	fact := PointID(sc, KindFact, "same-source-id")
+	doc := PointID(sc, KindDocument, "same-source-id")
+	if turn == fact || turn == doc || fact == doc {
+		t.Fatalf("PointID collided across kinds for the same sourceID: turn=%s fact=%s doc=%s", turn, fact, doc)
 	}
 }
 
@@ -76,7 +91,7 @@ func TestUpsertAndSearchCosineRanking(t *testing.T) {
 	}
 	pts := make([]Point, 0, len(docs))
 	for id, c := range docs {
-		pts = append(pts, point(ctx, sc, emb, id, c))
+		pts = append(pts, point(ctx, sc, emb, KindTurn, id, c))
 	}
 	if err := st.Upsert(ctx, sc, pts); err != nil {
 		t.Fatalf("Upsert: %v", err)
@@ -107,7 +122,7 @@ func TestTenantAndUserIsolation(t *testing.T) {
 
 	mk := func(tenant, user, msg string) {
 		sc := Scope{tenant: tenant, user: user}
-		if err := st.Upsert(ctx, sc, []Point{point(ctx, sc, emb, msg, content)}); err != nil {
+		if err := st.Upsert(ctx, sc, []Point{point(ctx, sc, emb, KindTurn, msg, content)}); err != nil {
 			t.Fatalf("Upsert %s/%s: %v", tenant, user, err)
 		}
 	}
@@ -136,12 +151,12 @@ func TestUpsertIsIdempotent(t *testing.T) {
 	sc := Scope{tenant: "acme", user: "alice"}
 	ctx := context.Background()
 
-	p1 := point(ctx, sc, emb, "msg-42", "first version of the chunk")
+	p1 := point(ctx, sc, emb, KindTurn, "msg-42", "first version of the chunk")
 	if err := st.Upsert(ctx, sc, []Point{p1}); err != nil {
 		t.Fatal(err)
 	}
 	// Same message id, updated content — must replace, not duplicate.
-	p2 := point(ctx, sc, emb, "msg-42", "updated version of the chunk")
+	p2 := point(ctx, sc, emb, KindTurn, "msg-42", "updated version of the chunk")
 	if err := st.Upsert(ctx, sc, []Point{p2}); err != nil {
 		t.Fatal(err)
 	}
@@ -209,5 +224,117 @@ func TestUpsertErrorPaths(t *testing.T) {
 	// Query dimension mismatch.
 	if _, err := st.Search(ctx, sc, []float32{1, 2, 3}, 5); !errors.Is(err, ErrDimensionMismatch) {
 		t.Fatalf("search err = %v, want ErrDimensionMismatch", err)
+	}
+}
+
+// TestDeleteRemovesPointsScopeIsolated is the ADR-0017 phase-1 DoD: Delete
+// removes points it owns and is scope-isolated — a delete call scoped to a
+// different tenant/user must never remove a point with a colliding id that
+// belongs to someone else.
+func TestDeleteRemovesPointsScopeIsolated(t *testing.T) {
+	emb := NewHashEmbedder(0)
+	st := NewInMemoryStore(emb.Dimension())
+	ctx := context.Background()
+	acme := Scope{tenant: "acme", user: "alice"}
+	globex := Scope{tenant: "globex", user: "bob"}
+
+	acmePoint := point(ctx, acme, emb, KindFact, "shared-id", "acme's fact")
+	if err := st.Upsert(ctx, acme, []Point{acmePoint}); err != nil {
+		t.Fatalf("Upsert acme: %v", err)
+	}
+
+	// A delete scoped to a DIFFERENT tenant, targeting the SAME id, must be a
+	// no-op: the point is not owned by globex/bob.
+	if err := st.Delete(ctx, globex, []string{acmePoint.ID}); err != nil {
+		t.Fatalf("Delete (wrong scope): %v", err)
+	}
+	got, err := st.Search(ctx, acme, embedOne(t, emb, "acme's fact"), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("scope-isolated delete removed a point it did not own: got %d points, want 1", len(got))
+	}
+
+	// Unknown id: no error, no-op.
+	if err := st.Delete(ctx, acme, []string{"does-not-exist"}); err != nil {
+		t.Fatalf("Delete (unknown id): %v", err)
+	}
+
+	// Delete scoped to the OWNING tenant actually removes the point.
+	if err := st.Delete(ctx, acme, []string{acmePoint.ID}); err != nil {
+		t.Fatalf("Delete (owning scope): %v", err)
+	}
+	got, err = st.Search(ctx, acme, embedOne(t, emb, "acme's fact"), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Delete did not remove the point: got %d, want 0", len(got))
+	}
+}
+
+// TestSearchKindFilter is the ADR-0017 phase-1 DoD: Search with a kind filter
+// returns only points of that kind, while the (tenant,user) isolation filter
+// still applies.
+func TestSearchKindFilter(t *testing.T) {
+	emb := NewHashEmbedder(0)
+	st := NewInMemoryStore(emb.Dimension())
+	ctx := context.Background()
+	acme := Scope{tenant: "acme", user: "alice"}
+	globex := Scope{tenant: "globex", user: "bob"}
+
+	const content = "database migration runbook"
+	turnPt := point(ctx, acme, emb, KindTurn, "turn-1", content)
+	factPt := point(ctx, acme, emb, KindFact, "fact-1", content)
+	otherTenantFact := point(ctx, globex, emb, KindFact, "fact-1", content)
+	if err := st.Upsert(ctx, acme, []Point{turnPt, factPt}); err != nil {
+		t.Fatalf("Upsert acme: %v", err)
+	}
+	if err := st.Upsert(ctx, globex, []Point{otherTenantFact}); err != nil {
+		t.Fatalf("Upsert globex: %v", err)
+	}
+
+	q := embedOne(t, emb, content)
+
+	// No kind filter (zero-arg call): both of acme's points come back, never
+	// globex's — preserves the pre-ADR-0017 "all kinds" behavior.
+	all, err := st.Search(ctx, acme, q, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("unfiltered search = %d points, want 2", len(all))
+	}
+
+	// Kind filter to Fact only: exactly acme's Fact point, still isolated from
+	// globex's colliding-content Fact point.
+	factsOnly, err := st.Search(ctx, acme, q, 10, KindFact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(factsOnly) != 1 || factsOnly[0].ID != factPt.ID {
+		t.Fatalf("Fact-filtered search = %+v, want exactly acme's fact point", factsOnly)
+	}
+	if factsOnly[0].TenantID != "acme" {
+		t.Fatalf("kind filter leaked another tenant's point: %+v", factsOnly[0])
+	}
+
+	// Kind filter to Turn only: exactly the turn point.
+	turnsOnly, err := st.Search(ctx, acme, q, 10, KindTurn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turnsOnly) != 1 || turnsOnly[0].ID != turnPt.ID {
+		t.Fatalf("Turn-filtered search = %+v, want exactly the turn point", turnsOnly)
+	}
+
+	// Kind filter to Document (none exist): empty result, not an error.
+	docsOnly, err := st.Search(ctx, acme, q, 10, KindDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docsOnly) != 0 {
+		t.Fatalf("Document-filtered search = %d points, want 0", len(docsOnly))
 	}
 }
