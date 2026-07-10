@@ -1,7 +1,20 @@
 # golangci-lint v2 configuration for Aisotropy.
 # Run via the dev console: `go run ./cmd/x lint` (or `golangci-lint run ./...`).
-# The vendored external/ Gollem clone is a separate Go module and is not part
-# of `./...`, so it is excluded automatically.
+# examples/weatherbot is its own Go module (separate go.mod/go.sum) and is not
+# part of `./...` from the repo root, so it is excluded automatically.
+#
+# This config is intentionally more aggressive than a "keep the build green"
+# baseline: it targets three things the codebase does not yet have systematic
+# coverage for — duplicate logic, unbounded complexity, and the layer
+# boundaries documented in .claude/rules/architecture.md and
+# docs/architecture/consistency.md. It does NOT fix any of the findings it
+# surfaces; a follow-up track consumes `golangci-lint run ./...` output to
+# clean up package-by-package.
+#
+# Every linter deliberately left disabled is documented below (discipline
+# borrowed from the reference config at
+# an internal reference config) so a reviewer never has to
+# wonder "why isn't X on".
 version: "2"
 
 run:
@@ -11,17 +24,235 @@ linters:
   # "standard" = errcheck, govet, ineffassign, staticcheck, unused.
   default: standard
   enable:
+    # --- kept from the original minimal config ---
     - misspell   # common English typos in comments/strings
     - unconvert  # redundant type conversions
     - bodyclose  # HTTP response bodies must be closed (relevant to the LLM SSE clients)
+
+    # --- dedup / repetition ---
+    - dupl     # duplicate code blocks across the ~13 internal packages -> extract a helper
+    - goconst  # repeated string/number literals -> named constants
+
+    # --- complexity ---
+    - cyclop    # cyclomatic complexity ceiling
+    - gocognit  # cognitive complexity ceiling (catches nested-but-"simple" functions cyclop misses)
+    - funlen    # function length ceiling (lines + statements)
+
+    # --- correctness / cleanliness ---
+    - errorlint     # %w wrapping, error comparison/assertion correctness (Go 1.13+ idioms)
+    - unparam       # unused function parameters
+    - prealloc      # slices that could be pre-allocated
+    - nilnil        # func returns (nil, nil) -- ambiguous for callers
+    - nilerr        # func returns nil error on a non-nil-error path
+    - contextcheck  # context.Context propagated correctly, not re-derived/lost across the ctx-cancellation
+                     # boundary the constitutional gates require for SSE (chat_stream.go)
+    - noctx         # HTTP requests built without a context (same SSE-cancellation concern as contextcheck)
+
+    # --- modernization (Go 1.25+ / project conventions) ---
+    - intrange   # for-range over int (Go 1.22+)
+    - perfsprint # fmt.Sprintf -> cheaper alternatives where semantically identical
+    - sloglint   # slog best practices; key-naming-case below matches the project's existing
+                 # snake_case attribute convention (tenant_id, user_id, err -- see internal/api/chat*.go)
+    - spancheck  # OTel span misuse (missing End()/RecordError/SetStatus) -- internal/llm/otel.go
+                 # is the primary span-producing file today
+
+    # --- architecture ---
+    - depguard  # layer-boundary enforcement, see settings.depguard below
+
   settings:
     errcheck:
+      check-type-assertions: true
       # Writes to stdout/stderr in the CLI console are best-effort; a failed
       # terminal write is not actionable, so we do not check their errors.
       exclude-functions:
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
+
+    errorlint:
+      errorf: true      # fmt.Errorf must use %w to wrap, not %s/%v
+      asserts: true      # error type assertions must use errors.As
+      comparison: true    # error comparisons must use errors.Is
+
+    dupl:
+      # Threshold in tokens: blocks >= N tokens are flagged as duplicates.
+      # 150 is the golangci-lint default; aisotropy is a young, single-module
+      # codebase (~13 internal packages) so we start at the strict default
+      # rather than the 200 the larger reference monorepo uses to dodge
+      # boilerplate-constructor noise -- we want the signal here.
+      threshold: 150
+
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+
+    cyclop:
+      max-complexity: 15
+      package-average: 0.0 # do not additionally cap the package-wide average
+
+    gocognit:
+      min-complexity: 20
+
+    funlen:
+      lines: 80
+      statements: 50
+
+    sloglint:
+      key-naming-case: snake # matches gen_ai/OTel snake_case attribute convention already in use
+
+    perfsprint:
+      int-conversion: true
+      err-error: true
+      errorf: true
+      sprintf1: true
+
+    spancheck:
+      checks:
+        - end          # span.End() must be called (deferred or otherwise)
+        - record-error # errors observed on a span must be recorded on it
+        - set-status   # span status must reflect success/failure
+
+    depguard:
+      rules:
+        # ==================================================================
+        # RULE 1: working-memory tier isolation.
+        #
+        # internal/memory (BadgerDB, L1/RAM tier) must never import
+        # internal/facts (rqlite) or internal/semantic (Qdrant) directly.
+        # The consolidation sink (internal/consolidation) is the ONLY
+        # package documented to sit above all three tiers and read/write
+        # across them -- see docs/architecture/consistency.md ("Phase 2 --
+        # The asynchronous Sleep Cycle": a worker outside the tiers
+        # synchronizes BadgerDB's outbox to Qdrant/rqlite) and
+        # .claude/rules/architecture.md ("internal/memory must NOT import
+        # internal/facts or internal/semantic (the consolidation sink lives
+        # above the tiers, keeping the memory package free of facts/semantic
+        # imports)"). Verified against the current import graph
+        # (go list ./internal/memory/...) as already true -- this rule
+        # locks it in so it cannot regress.
+        memory-tier-isolation:
+          list-mode: lax
+          deny:
+            - pkg: "github.com/Luum-Home/aisotropy/internal/facts"
+              desc: "internal/memory must stay free of the facts tier; consolidation is the only package allowed to bridge tiers (docs/architecture/consistency.md)"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/semantic"
+              desc: "internal/memory must stay free of the semantic tier; consolidation is the only package allowed to bridge tiers (docs/architecture/consistency.md)"
+          files:
+            - "internal/memory/**/*.go"
+            - "!internal/memory/**/*_test.go"
+
+        # ==================================================================
+        # RULE 2: cmd/aisotropyd is wiring-only.
+        #
+        # Per .claude/rules/architecture.md: "Post-Phase-8 (ADR-0013),
+        # cmd/aisotropyd/main.go is a thin ~51-line consumer of the public
+        # builder aisotropy.App; the actual wiring lives in the importable
+        # package aisotropy/ (app.go)." main.go's own doc comment reiterates:
+        # "All runtime wiring ... lives in aisotropy.App.Run, not here."
+        # The binary may import the public façade (aisotropy) and
+        # internal/api only for the demo executor/tool types it wires up
+        # (api.DemoExecutor{}); every other internal/* package is business
+        # logic that belongs behind the façade, not in the binary.
+        cmd-wiring-only:
+          list-mode: lax
+          deny:
+            - pkg: "github.com/Luum-Home/aisotropy/internal/memory"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd (see the file's own doc comment)"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/facts"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/semantic"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/consolidation"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/llm"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/agentloop"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/tools"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/primitives"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/routing"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/costmeter"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/sleepcycle"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/tenancy"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+            - pkg: "github.com/Luum-Home/aisotropy/internal/health"
+              desc: "wiring belongs in aisotropy.App.Run, not cmd/aisotropyd"
+          files:
+            - "cmd/aisotropyd/**/*.go"
+            - "!cmd/aisotropyd/**/*_test.go"
+
+        # ==================================================================
+        # RULE 3: internal/llm stays provider-agnostic (no OpenAI SDK).
+        #
+        # ADR-0009 (docs/decisions/0009-provider-agnostic-llm-layer.md):
+        # "The interface carries zero OpenAI-isms. It is
+        # StreamChat(ctx, system, prompt) -> <-chan Token". The package
+        # already implements its OpenAI-compatible route (OpenAICompatClient,
+        # openai_compat.go) over raw net/http + JSON rather than a vendor
+        # SDK, precisely so the Client seam and Registry (ADR-0009) are never
+        # subordinated to one provider's vocabulary -- reaffirmed by
+        # ADR-0012 rejecting any change that "re-introduces OpenAI-isms into
+        # the seam". This rule is preventive (no such SDK is a dependency
+        # today, confirmed via go.mod) and locks in the existing pattern
+        # rather than fixing a violation.
+        llm-provider-agnostic:
+          list-mode: lax
+          deny:
+            - pkg: "github.com/sashabaranov/go-openai"
+              desc: "internal/llm must stay provider-agnostic (ADR-0009); use the existing raw-HTTP OpenAICompatClient pattern instead of a vendor SDK"
+            - pkg: "github.com/openai/openai-go"
+              desc: "internal/llm must stay provider-agnostic (ADR-0009); use the existing raw-HTTP OpenAICompatClient pattern instead of a vendor SDK"
+          files:
+            - "internal/llm/**/*.go"
+            - "!internal/llm/**/*_test.go"
+
+  # -------------------------------------------------------------------------
+  # Linters considered and deliberately left OFF, with why (discipline kept
+  # from the reference config so nobody re-litigates these one by one):
+  #
+  #   gocritic      - overlaps heavily with staticcheck's SA* checks and is
+  #                    materially slower on `run` (the reference config
+  #                    dropped it for the same reason); revisit if a specific
+  #                    gocritic-only check becomes worth the cost.
+  #   revive        - would need per-rule tuning (see the reference config's
+  #                    30-line revive.rules block) to avoid drowning in
+  #                    style-only findings; staticcheck+govet already cover
+  #                    the correctness subset. Deferred, not rejected.
+  #   wsl / wsl_v5  - whitespace-after-block enforcement is a large-blast-
+  #                    radius reformat across every existing file; not worth
+  #                    it mid-reconstruction-phase without a dedicated pass.
+  #   gofumpt       - stricter-than-gofmt formatter that also strips
+  #                    intentional readability whitespace; gofmt (below) is
+  #                    the project's chosen formatting bar.
+  #   ireturn       - conflicts with this codebase's constructor pattern
+  #                    (e.g. llm.Registry, tools.Registry return interfaces
+  #                    by design for the public extension surface, ADR-0013).
+  #   exhaustive    - no enum-style switch inventory has been done yet; adopt
+  #                    once a package with real sum-type switches is
+  #                    identified, to avoid drive-by noise.
+  #   wrapcheck     - the reference config's monorepo has many "external"
+  #                    package boundaries worth wrapping across; aisotropy is
+  #                    one module and errorlint already enforces %w wrapping
+  #                    discipline where it matters.
+  #   testifylint / thelper / paralleltest
+  #                 - the project does not use testify as its primary
+  #                    assertion style; revisit if that changes.
+  #   containedctx / interfacebloat / lll / mirror / testableexamples /
+  #   protogetter   - no evidence in this codebase of the anti-pattern each
+  #                    one targets (no ctx-in-struct, no huge interfaces, no
+  #                    protobuf getters, etc.); adding them now would be
+  #                    speculative rather than targeted.
+  #   gosec         - security scanning is a deliberately separate track
+  #                    (see .claude/rules/constitutional-gates.md secrets
+  #                    handling); out of scope for this dedup/complexity/
+  #                    architecture-focused pass.
+  # -------------------------------------------------------------------------
+
   exclusions:
     generated: lax
     rules:
@@ -30,6 +261,33 @@ linters:
         linters:
           - errcheck
 
+      # Tests legitimately repeat setup/assertion shapes (table-driven tests,
+      # fixture construction) and are long by nature (many cases per func) --
+      # none of that is the kind of duplication/complexity this config hunts.
+      - path: _test\.go
+        linters:
+          - dupl
+          - funlen
+          - goconst
+          - cyclop
+          - gocognit
+          - unparam
+
 formatters:
   enable:
     - gofmt
+    - gci        # deterministic import grouping/ordering
+    - goimports  # adds/removes imports to match gofmt+gci expectations
+
+  settings:
+    gci:
+      sections:
+        - standard                                        # stdlib
+        - default                                          # third-party (huma, gollem, badger, qdrant, rqlite, otel...)
+        - prefix(github.com/Luum-Home/aisotropy)            # this module
+        - blank                                             # blank imports (_ "package")
+        - dot                                               # dot imports (. "package")
+      custom-order: true
+
+  exclusions:
+    generated: lax
