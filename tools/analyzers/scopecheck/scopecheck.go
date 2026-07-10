@@ -26,6 +26,7 @@
 package scopecheck
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -107,7 +108,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 
 	insp, ok := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 	if !ok {
-		return nil, fmt.Errorf("scopecheck: missing inspect.Analyzer result")
+		return nil, errors.New("scopecheck: missing inspect.Analyzer result")
 	}
 	nodeFilter := []ast.Node{(*ast.CompositeLit)(nil)}
 
