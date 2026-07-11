@@ -22,11 +22,11 @@ experiment**. The Bellard rule: nothing is declared "better" without a number in
 
 | # | Bet | Maturity | Success criterion (summary) |
 |---|---|---|---|
-| 1 | [Surprisal-gated memory](bet-01-surprisal-gated-memory.md) | 🟠 re-run done — mechanism partial: profile-conditioning +0.10 AUC on 2 models; rarity-norm-alone refuted; best 0.72 AUC (no clean gap) → **soft weight yes, hard gate not yet** | ↓ memory size at equal retrieval quality |
-| 2 | [Working memory as a codec](bet-02-working-memory-codec.md) | 🟢 method confirmed in-repo — lossless + beats gzip ~42% (2.34 vs 4.06 bits/char, distilgpt2); < 1 bit/char needs a larger model (capacity ceiling, not method failure) | < 1 bit/char, 100% lossless reconstruction |
-| 3 | [Context as rate-distortion](bet-03-rate-distortion-context.md) | 🟡 solid framework — not yet spiked (builds on Bets 2/4) | lower distortion at fixed token budget |
-| 4 | [Compressibility routing](bet-04-compressibility-routing.md) | 🟡 speculative — **refuted as a length-independent proxy**: bits/tok ρ=0.41 (weak); every ρ≥0.6 signal is raw length in disguise (length ρ=0.94) | bits↔difficulty correlation; ↓ cost without ↓ quality |
-| 5 | [Sovereign NN core](bet-05-sovereign-nn-core.md) | 🔴 ambitious — **promoted to next-invest substrate** (ADR-0021): the *semantic* signal Bets 1/4 need lives here (embedding-density), not in small-LM surprisal | cognitive hot path in µs, 0 network calls |
+| 1 | [Surprisal-gated memory](bet-01-surprisal-gated-memory.md) | 🟠 mechanism partial via surprisal (0.72 AUC, no clean gap) — but **embedding-density separates it far better (AUC 0.89, d=1.61)**; the viable gate is the *semantic* soft-weight (Bet 5), not surprisal | ↓ memory size at equal retrieval quality |
+| 2 | [Working memory as a codec](bet-02-working-memory-codec.md) | 🟢 method confirmed — lossless + beats gzip (−42%→−54%); model ladder **2.34→1.88 bits/char (82M→774M)**, monotonic but plateaus **~1.9 ≫ 1.0** (partly an English-GPT-2-on-Spanish tokenizer penalty). < 1 bit/char needs nncp-scale and/or a language-matched tokenizer | < 1 bit/char, 100% lossless reconstruction |
+| 3 | [Context as rate-distortion](bet-03-rate-distortion-context.md) | 🟡 **first support measured**: smart selection beats naive by **+0.47/+0.68 bpt** at constrained budgets (B=64–256); gap→noise once budget ≥ total content. Selection > volume in the budget-bound regime | lower distortion at fixed token budget |
+| 4 | [Compressibility routing](bet-04-compressibility-routing.md) | 🟡 **refuted under every cheap signal** — compressibility ρ=0.41, embedding-density ρ=−0.52, cascade output-entropy ρ=0.56 (all length in disguise; raw length ρ=0.94 wins). Difficulty is computational, not textual; a real cascade needs an *instruct* model (off-thesis) | bits↔difficulty correlation; ↓ cost without ↓ quality |
+| 5 | [Sovereign NN core](bet-05-sovereign-nn-core.md) | 🔴 ambitious — **next-invest substrate with evidence** (ADR-0021): embedding-density (borrowed MIT model) separates Bet-1 novelty at **AUC 0.89**; the `embed()`-first path is now measured, not just a vision | cognitive hot path in µs, 0 network calls |
 | 6 | [Bits-per-token-per-tenant](bet-06-bits-per-token-metric.md) | 🟢 solid | downward curve over time per tenant |
 
 **Legend:** 🟢 start now · 🟡 research phase · 🟠 spiked, inconclusive (needs a re-run with a

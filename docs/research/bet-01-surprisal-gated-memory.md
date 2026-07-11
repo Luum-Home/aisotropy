@@ -14,8 +14,11 @@ timestamp: 2026-07-08T00:00:00Z
 > (DeepESP 0.61→0.72, distilgpt2 0.73→0.83; gap +1.14 bits/tok, d≈1.0) — but the best is only
 > **0.72 AUC / 15-of-20** on the definitive Spanish model (no clean gap), and **rarity-normalization
 > alone is refuted** (AUC 0.49/0.34). Verdict: **soft importance-weight yes, hard binary gate not
-> yet** — do NOT build the sleep-cycle gate on this. See "Risk and maturity" below and the
-> [spike results](../../spikes/compression/README.md).
+> yet** — do NOT build the sleep-cycle gate on this. **Follow-up (2026-07-10):
+> `bet05_embedding_density_probe.py` shows the *semantic* signal beats surprisal for this bet —
+> embedding cosine to the profile separates redundant-vs-surprising at AUC 0.89 (d=1.61) vs surprisal's
+> 0.72.** So the viable instrument is a soft *semantic* weight (the Bet-5 `embed()` substrate), not
+> surprisal. See "Risk and maturity" below and the [spike results](../../spikes/compression/README.md).
 > **One line:** store bits, not text. An engram enters memory only if the model didn't already know it.
 
 ## Hypothesis

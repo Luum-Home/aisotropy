@@ -8,11 +8,14 @@ timestamp: 2026-07-08T00:00:00Z
 
 # Bet 4 — Compressibility routing
 
-> **Maturity:** 🟡 plausible, elegant — but **refuted as a length-independent proxy (2026-07-10)**.
-> `spikes/compression/bet04_compressibility_routing.py` (30 labeled prompts, DeepESP): the
-> length-free signal (bits/tok) correlates with difficulty only **ρ=0.41** (below the ρ≥0.6 bar);
-> every signal that clears 0.6 (bits_total, gzip) is **raw length in disguise** — plain byte-length
-> scores ρ=0.94, beating them all. Compressibility-per-token does **not** cleanly proxy difficulty.
+> **Maturity:** 🟡 plausible, elegant — but **refuted under EVERY cheap signal (2026-07-10)**.
+> Difficulty vs: compressibility bits/tok **ρ=0.41** (`bet04_compressibility_routing.py`),
+> embedding-density **ρ=−0.52** (`bet05_embedding_density_probe.py`), cascade output-entropy
+> **ρ=0.56** (`bet04b_cascade_uncertainty.py`) — all length-confounded; plain byte-length **ρ=0.94**
+> beats them all. **Difficulty is computational, not textual:** no prompt-intrinsic bits signal
+> (lexical, semantic, or output-entropy) is a length-independent difficulty proxy. **Carve-out:** an
+> *instruction-tuned* cheap model's answer-confidence cascade is untested (base LMs ramble at constant
+> entropy) — a distinct, off-compression-thesis bet, not refuted here.
 > **One line:** what's hard is what's incompressible. Measure bits, don't train a classifier.
 
 ## Hypothesis

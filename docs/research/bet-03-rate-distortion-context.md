@@ -8,7 +8,12 @@ timestamp: 2026-07-08T00:00:00Z
 
 # Bet 3 — Context as rate-distortion
 
-> **Maturity:** 🟡 solid theoretical framework, non-trivial engineering.
+> **Maturity:** 🟡 solid framework — **first empirical support (2026-07-10)**.
+> `spikes/compression/bet03_rate_distortion.py` (DeepESP, M=22): choosing *what* to inject beats naive
+> inclusion by **+0.47 bpt** (cheap lexical ranker) / **+0.68 bpt** (oracle) at constrained token
+> budgets (B=64–256) — selection > volume where the budget binds. The gap collapses to noise once the
+> budget exceeds total content; the deployable cheap-distortion-proxy (embedding, per Bet 5) is the
+> open piece. Not promoted to 🟢 on one probe.
 > **One line:** context isn't "surgically concatenated"; it's optimized against a budget.
 
 ## Hypothesis

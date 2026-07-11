@@ -112,13 +112,27 @@ Separate the bets by *what signal they need*:
 
 ## Open questions
 
-1. **Does embedding-density actually separate redundant vs. surprising / easy vs. hard?** That is the
-   Bet-5-substrate spike this ADR implies but does not run — the next minimum experiment (semantic
-   distance to a profile/coverage manifold), before any Bet-5 build.
-2. **Which larger model** clears Bet 2's `< 1 bit/char` and sharpens Bet 1's signal, within the
-   sovereignty/MIT-Apache constraint (ADR-0001).
-3. **Bet 3 (rate-distortion)** is still un-spiked; it builds on 2/4 and should be sequenced after the
-   embedding-density probe.
+1. **Does embedding-density separate redundant vs. surprising / easy vs. hard? — RESOLVED (2026-07-10),
+   SPLIT** (`spikes/compression/bet05_embedding_density_probe.py`, MIT `multilingual-e5-small`):
+   - **Bet 1 (novelty): YES.** Embedding cosine to the profile separates redundant-vs-surprising at
+     **AUC 0.89 / d=1.61**, well above surprisal's 0.72 → the semantic soft-weight is the viable gate.
+   - **Bet 4 (difficulty): NO.** Semantic novelty ρ=−0.52 (wrong-signed, length-confounded); a
+     cascade output-entropy variant (`bet04b_cascade_uncertainty.py`) also fails (ρ=0.56 ≈ length).
+     Difficulty is computational, not textual — no cheap prompt/base-model bits signal beats `len()`.
+     **Carve-out:** an *instruction-tuned* cheap model's answer-confidence cascade is untested (a
+     distinct, off-compression-thesis bet).
+   So the Bet-5 embedding substrate is validated for the **memory/novelty axis (Bet 1)**, not the
+   difficulty axis (Bet 4).
+2. **Which larger model** clears Bet 2's `< 1 bit/char`? — **Partially answered (2026-07-10)**: the
+   GPT-2 ladder (`bet02_model_ladder.py`) descends monotonically **2.34→1.88 bits/char (82M→774M)**,
+   all lossless, but plateaus **~1.9 ≫ 1.0**; extrapolation needs nncp/ts_zip-scale models. A confound:
+   the ladder is *English* GPT-2 on *Spanish* text (tokenizer penalty) — a language-matched model
+   should land lower. Scale is the right axis (method not saturating); `< 1.0` is plausible-but-unproven
+   and needs scale **and/or** a matched tokenizer, within the MIT/Apache constraint (ADR-0001).
+3. **Bet 3 (rate-distortion) — first support measured (2026-07-10)** (`bet03_rate_distortion.py`):
+   smart selection beats naive by +0.47/+0.68 bpt at constrained budgets; gap → noise once the budget
+   exceeds total content. The cheap-hot-path distortion-proxy (embedding vs the weak lexical ranker)
+   remains the open piece.
 
 ## References
 
