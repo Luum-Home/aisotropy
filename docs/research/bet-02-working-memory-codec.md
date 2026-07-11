@@ -13,9 +13,11 @@ timestamp: 2026-07-08T00:00:00Z
 > **byte-for-byte lossless**, **beating gzip** (4.06 bits/char). The GPT-2 ladder
 > (`bet02_model_ladder.py`) descends monotonically **2.34 → 2.21 → 1.98 → 1.88 bits/char**
 > (82M→124M→355M→774M; margin over gzip widens −42%→−54%). The **< 1 bit/char target is NOT reached** —
-> it plateaus ~1.9, extrapolating to nncp-scale models. A confound: the ladder is **English GPT-2 on
-> Spanish text** (tokenizer penalty); a language-matched model should land lower. Method validated,
-> target is a scale-and-tokenizer question, not a method failure.
+> it plateaus ~1.9, extrapolating to nncp-scale models. Tokenizer confound **quantified**: DeepESP
+> (124M, Spanish) reaches **1.97 bits/char ≈ gpt2-medium (355M, English)** on the same text — a
+> language-matched tokenizer buys ~1.5 param-doublings. But 1.97 is still ~2× the target, so `< 1
+> bit/char` needs nncp-scale models **even with** a matched tokenizer. Method validated; the target is a
+> scale-and-tokenizer question, not a method failure.
 > **One line:** history isn't lossily summarized; it's compressed against the model and reconstructed.
 
 ## Hypothesis
