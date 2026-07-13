@@ -166,18 +166,26 @@ A new `semantic.LocalEmbedder` implements `Embedder` by writing an NDJSON reques
 `embed` binary (`--input`/`--output`, ctx-cancellable via `exec.CommandContext`, retry/backoff on
 non-zero exit exactly like `bitrate.Worker`), and reading back the vectors. It is selected only when both
 `AISOTROPY_EMBED_BIN` (the built binary) and `AISOTROPY_EMBED_MODEL_DIR` (the weights) are set — dormant
-by default, like `AISOTROPY_BITRATE_BIN`/`AISOTROPY_SLEEPCYCLE_BIN`. Wiring it into `EmbedderFromEnv`'s
-selection order (local → BYO API → hash) is a **follow-up** left out of this brick so the change stays
-additive; the illustrative constructor lands in `internal/semantic/local_embedder.go` (compiles, but not
-yet referenced by `EmbedderFromEnv`).
+by default, like `AISOTROPY_BITRATE_BIN`/`AISOTROPY_SLEEPCYCLE_BIN`. **`EmbedderFromEnv` now selects it**
+(the wiring, deferred at first-brick time, landed 2026-07-13 alongside the warm-daemon path): the
+sovereign local embedder outranks the BYO API and the hash placeholder when its env is set.
 
-Sketch of the selection order a follow-up would install in `EmbedderFromEnv`:
+Selection order now installed in `EmbedderFromEnv`:
 
 ```
-AISOTROPY_EMBED_BIN + AISOTROPY_EMBED_MODEL_DIR set  -> LocalEmbedder (sovereign, no network)   [NEW]
+AISOTROPY_EMBED_BIN + AISOTROPY_EMBED_MODEL_DIR set  -> local sovereign embedder (no network)     [NEW]
+    AISOTROPY_EMBED_MODE = "" | "daemon"  -> DaemonEmbedder   (one warm process, ~18.8× faster)
+    AISOTROPY_EMBED_MODE = "subprocess"   -> LocalEmbedder    (fresh process per call, panic-isolated)
 AISOTROPY_EMBED_URL set                              -> APIEmbedder  (BYO /embeddings, ADR-0018)
 otherwise                                            -> HashEmbedder (deterministic placeholder)
 ```
+
+The daemon (`internal/semantic/daemon_embedder.go`) starts the binary once in `--serve` mode, serializes
+calls over its stdin/stdout pipe under a mutex, and tears down + respawns on any I/O error or ctx
+cancellation so a shared pipe is never left half-drained. Throughput is bounded by one daemon; a daemon
+**pool** is the documented next follow-up for high concurrency. Verified live: `EmbedderFromEnv` selects
+`DaemonEmbedder`, real e5-small embeddings with cos(similar)=0.897 > cos(dissimilar)=0.819
+(`TestDaemonEmbedderLiveWiring`, `//go:build manual`).
 
 ### Contract (NDJSON/stdio — identical shape to `bitrate-scorer`)
 

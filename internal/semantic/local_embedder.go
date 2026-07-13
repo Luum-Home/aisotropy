@@ -21,10 +21,13 @@ import (
 //
 // It sits on the ADR-0005 boundary exactly like bitrate.Worker: a value type,
 // ctx-cancellable via exec.CommandContext, a non-zero exit (how a Rust panic
-// surfaces) becomes a returned error. It is env-gated and dormant by default —
-// EmbedderFromEnv does not select it yet (that wiring is the ADR-0023
-// follow-up); construct it explicitly via NewLocalEmbedder or LocalEmbedder
-// FromEnv when both AISOTROPY_EMBED_BIN and AISOTROPY_EMBED_MODEL_DIR are set.
+// surfaces) becomes a returned error. It is env-gated and dormant by default.
+// EmbedderFromEnv now selects the sovereign local embedder when
+// AISOTROPY_EMBED_BIN + AISOTROPY_EMBED_MODEL_DIR are set; this per-call form is
+// chosen with AISOTROPY_EMBED_MODE=subprocess, while the default ("" or
+// "daemon") uses the warm DaemonEmbedder — ~18.8× faster (ADR-0023,
+// cmd/embed-bench), since this form pays process spawn + model load on every
+// call. Prefer the daemon unless per-call panic-isolation is worth the cost.
 type LocalEmbedder struct {
 	binPath  string
 	modelDir string

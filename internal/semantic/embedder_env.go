@@ -32,10 +32,28 @@ import (
 //     Unset or non-positive falls back to defaultEmbedDim with a warning
 //     logged (never blocking — see the "falls back" note below).
 //
-// With AISOTROPY_EMBED_URL unset (the default), it returns NewHashEmbedder(0)
-// — the deterministic, credential-less placeholder that wires the ingestion/
-// retrieval path without a real backend (see embed.go's HashEmbedder doc).
+// Selection precedence (first match wins):
+//
+//  1. AISOTROPY_EMBED_BIN set -> the sovereign LOCAL embedder (Bet 5, ADR-0023):
+//     a candle subprocess that keeps tenant text on-machine (zero network). This
+//     is the thesis default and outranks the API path when both are configured.
+//     AISOTROPY_EMBED_MODE selects the form: "daemon" (default — one warm
+//     process, ~18.8× faster per cmd/embed-bench) or "subprocess" (a fresh
+//     process per call, panic-isolated). Requires AISOTROPY_EMBED_MODEL_DIR and
+//     AISOTROPY_EMBED_DIM; a config error logs a warning and falls through.
+//  2. AISOTROPY_EMBED_URL set -> APIEmbedder (BYO /embeddings endpoint, below).
+//  3. neither -> NewHashEmbedder(0), the deterministic credential-less
+//     placeholder that wires the ingestion/retrieval path without a real backend
+//     (see embed.go's HashEmbedder doc).
 func EmbedderFromEnv() Embedder {
+	if bin := os.Getenv("AISOTROPY_EMBED_BIN"); bin != "" {
+		if emb := localEmbedderFromEnv(bin); emb != nil {
+			return emb
+		}
+		// Config error already logged; fall through to the API/Hash path rather
+		// than fail closed on a misconfigured local embedder.
+	}
+
 	baseURL := os.Getenv("AISOTROPY_EMBED_URL")
 	if baseURL == "" {
 		return NewHashEmbedder(0)
@@ -55,6 +73,41 @@ func EmbedderFromEnv() Embedder {
 		slog.Warn("semantic: failed to build API embedder from env, falling back to HashEmbedder", "error", err)
 		return NewHashEmbedder(0)
 	}
+	return emb
+}
+
+// localEmbedderFromEnv builds the sovereign local embedder (ADR-0023) from env,
+// or returns nil (with a warning) on a config error so EmbedderFromEnv can fall
+// through to the API/Hash path. AISOTROPY_EMBED_MODE picks the form: "" or
+// "daemon" -> DaemonEmbedder (one warm process); "subprocess" -> LocalEmbedder
+// (a fresh process per call). Dimension comes from AISOTROPY_EMBED_DIM and MUST
+// match both the model's hidden size and the semantic Store's dimension.
+func localEmbedderFromEnv(bin string) Embedder {
+	modelDir := os.Getenv("AISOTROPY_EMBED_MODEL_DIR")
+	if modelDir == "" {
+		slog.Warn("AISOTROPY_EMBED_BIN set without AISOTROPY_EMBED_MODEL_DIR; ignoring local embedder",
+			"bin", bin)
+		return nil
+	}
+	dim := embedDimFromEnv()
+	mode := os.Getenv("AISOTROPY_EMBED_MODE")
+
+	if mode == "subprocess" {
+		emb, err := NewLocalEmbedder(LocalEmbedderConfig{BinPath: bin, ModelDir: modelDir, Dimension: dim})
+		if err != nil {
+			slog.Warn("semantic: failed to build local (subprocess) embedder from env, falling through", "error", err)
+			return nil
+		}
+		slog.Info("semantic embedder selected", "type", "semantic.LocalEmbedder", "mode", "subprocess", "dimension", dim)
+		return emb
+	}
+
+	emb, err := NewDaemonEmbedder(DaemonEmbedderConfig{BinPath: bin, ModelDir: modelDir, Dimension: dim})
+	if err != nil {
+		slog.Warn("semantic: failed to build local (daemon) embedder from env, falling through", "error", err)
+		return nil
+	}
+	slog.Info("semantic embedder selected", "type", "semantic.DaemonEmbedder", "mode", "daemon", "dimension", dim)
 	return emb
 }
 

@@ -237,6 +237,7 @@ func TestAPIEmbedderEmbedEmptyInputIsNoOp(t *testing.T) {
 // default, mirroring llm.FromEnv's stub fallback.
 func TestEmbedderFromEnvDefaultsToHashEmbedder(t *testing.T) {
 	t.Setenv("AISOTROPY_EMBED_URL", "")
+	t.Setenv("AISOTROPY_EMBED_BIN", "") // the local embedder outranks Hash/API; isolate this test from ambient env
 
 	emb := EmbedderFromEnv()
 	if _, ok := emb.(HashEmbedder); !ok {
@@ -263,6 +264,7 @@ func TestEmbedderFromEnvBuildsAPIEmbedderWhenURLSet(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	t.Setenv("AISOTROPY_EMBED_BIN", "") // local embedder outranks API; isolate from ambient env
 	t.Setenv("AISOTROPY_EMBED_URL", srv.URL)
 	t.Setenv("AISOTROPY_EMBED_MODEL", "my-embed-model")
 	t.Setenv("AISOTROPY_EMBED_API_KEY", "env-key")
@@ -298,6 +300,7 @@ func TestEmbedderFromEnvFallsBackToDefaultDimWhenUnset(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	t.Setenv("AISOTROPY_EMBED_BIN", "") // local embedder outranks API; isolate from ambient env
 	t.Setenv("AISOTROPY_EMBED_URL", srv.URL)
 	t.Setenv("AISOTROPY_EMBED_DIM", "")
 
