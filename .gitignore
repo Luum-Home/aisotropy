@@ -11,6 +11,9 @@ agent-tooling.yaml
 # ── Go (producto) ──
 # Binarios compilados y artefactos de build.
 /aisotropyd
+# Dev-tool binaries dropped by `go build ./cmd/X` without -o (run these via `go run`).
+/bitrate-harness
+/skill-import
 /bin/
 *.exe
 *.out
