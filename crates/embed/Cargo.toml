@@ -1,0 +1,27 @@
+[package]
+name = "embed"
+version = "0.1.0"
+edition = "2021"
+description = "Aisotropy sovereign local embedder (Bet 5, first brick — ADR-0023). Loads a pinned MIT BERT-class sentence-embedding model (default BAAI/bge-small-en-v1.5, MIT) via candle, tokenizes with the model's own tokenizer, runs the encoder, mean-pools over tokens and L2-normalizes, emitting embeddings over an NDJSON/stdio subprocess contract (ADR-0005 pattern, mirroring crates/bitrate-scorer). Invoked by the Go core (internal/semantic LocalEmbedder). No network: text never leaves the process tree."
+license = "Apache-2.0"
+
+[[bin]]
+name = "embed"
+path = "src/main.rs"
+
+[dependencies]
+# All MIT/Apache-2.0 (verified — see ADR-0023 license table):
+# candle-core + candle-nn are dual MIT/Apache-2.0; candle-transformers is dual
+# MIT/Apache-2.0 (it ships a maintained BERT encoder — unlike GPT-2, which was
+# absent and hand-rolled in crates/bitrate-scorer; here we reuse the maintained
+# implementation per ADR-0002 anti-magic); tokenizers is Apache-2.0;
+# serde/serde_json MIT/Apache-2.0.
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
+tokenizers = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 2

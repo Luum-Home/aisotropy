@@ -36,6 +36,7 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0020](0020-build-vs-adopt-lang-suite-mastra.md) | Build Aisotropy vs. adopt the LangChain suite or Mastra | **✅ accepted → build (positioning verdict + revisit triggers)** |
 | [0021](0021-compression-signal-small-lm-surprisal-ceiling.md) | Compression bets' signal ceiling: small-LM surprisal ≠ semantic/difficulty | **✅ accepted → route semantic bets (1/4) via embedding-density/Bet 5; Bet 2 codec is a scale question; soft-weight not hard-gate** |
 | [0022](0022-agent-config-standards-import-surfaces.md) | Agent-config standards (AGENTS.md / Agent Skills / OKF / MCP) as import & packaging surfaces | **✅ accepted → embrace per layer; Skills → typed primitives + literal personas; anti-magic boundary** |
+| [0023](0023-sovereign-local-embedder-semantic-tier.md) | Sovereign local embedder for the semantic tier (Bet 5, first brick) | 🟡 **proposed** → Rust candle crate (`crates/embed`, pinned MIT bge/e5-small) as an ADR-0005 subprocess behind a new env-gated `semantic.LocalEmbedder`; `embed()` only, subprocess not yet in-process-µs |
 
 ## Decisions already made in the source conversations
 
