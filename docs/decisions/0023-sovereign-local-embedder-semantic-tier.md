@@ -72,7 +72,15 @@ paths do we reuse for `embed()`."
 - **NOT** the in-process-µs NN core. This first brick runs the model as a **subprocess** (ms-scale
   process spawn + inference), not in-process µs. Closing the subprocess→in-process-µs gap (cgo candle, a
   long-lived embedder daemon, or an embedded runtime à la Bellard's libnc) is deferred to a later Bet-5
-  phase — exactly as ADR-0014/`bitrate-scorer` staged Python→Rust before optimizing.
+  phase — exactly as ADR-0014/`bitrate-scorer` staged Python→Rust before optimizing. **The path options
+  for that phase are now researched** ([bet5 sovereign-nn-core report](../06-Daily/reports/bet5-sovereign-nn-core-inference-and-weights-2026-07-13.md),
+  2026-07-13, 27 primary sources, adversarially verified): all four candidates (cgo→candle, ONNX
+  `onnxruntime_go`, pure-Rust `tract`, llama.cpp/ggml) are license-clean; **cgo→candle ranks first**
+  (reuses this ADR's exact crate/weights; vLLM's Apache-2.0 `candle_binding` is a working reference),
+  with a **cgo-free long-lived candle daemon** as the pragmatic middle path. Caveat: **no latency numbers
+  survived verification — the µs target must be benchmarked, not assumed**. The report also corrected a
+  standing assumption: Bellard's NNCP is **MIT** (not GPL) but ships a **binary-only** `libnc`, so it is
+  redistributable-patterns-only, not modifiable-from-source.
 - **NOT** `logprob()` or `generate()`. Bet 5 is incremental: embeddings first (this ADR), then logprob,
   then generation.
 - **NOT** replacing Qdrant/Gollem/the BYO client. `APIEmbedder` stays for callers who want a hosted model;
