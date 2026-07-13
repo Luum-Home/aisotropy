@@ -119,8 +119,13 @@ Separate the bets by *what signal they need*:
    - **Bet 4 (difficulty): NO.** Semantic novelty ρ=−0.52 (wrong-signed, length-confounded); a
      cascade output-entropy variant (`bet04b_cascade_uncertainty.py`) also fails (ρ=0.56 ≈ length).
      Difficulty is computational, not textual — no cheap prompt/base-model bits signal beats `len()`.
-     **Carve-out:** an *instruction-tuned* cheap model's answer-confidence cascade is untested (a
-     distinct, off-compression-thesis bet).
+     **Carve-out TESTED and also refuted (2026-07-11, `bet04c_instruct_cascade.py`, Qwen2.5-0.5B-Instruct):**
+     an instruct model's answer-confidence (entropy/neg-logprob/self-consistency) lands at ρ 0.42–0.50 —
+     the same weak, length-driven band, *below* the base-model cascade (0.56). Switching from a base to
+     an answering model did **not** rescue routing (the one >0.6 signal was a generation-cap truncation
+     artifact, caught and refuted). Cheap self-confidence — base or instruct — is not a difficulty proxy;
+     a viable router needs a **trained classifier** or a measured **frontier-vs-cheap answer-quality gap**,
+     not the cheap model's own certainty (a distinct, off-compression-thesis bet).
    So the Bet-5 embedding substrate is validated for the **memory/novelty axis (Bet 1)**, not the
    difficulty axis (Bet 4).
 2. **Which larger model** clears Bet 2's `< 1 bit/char`? — **Partially answered (2026-07-10)**: the

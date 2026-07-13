@@ -13,10 +13,13 @@ timestamp: 2026-07-08T00:00:00Z
 > embedding-density **ρ=−0.52** (`bet05_embedding_density_probe.py`), cascade output-entropy
 > **ρ=0.56** (`bet04b_cascade_uncertainty.py`) — all length-confounded; plain byte-length **ρ=0.94**
 > beats them all. **Difficulty is computational, not textual:** no prompt-intrinsic bits signal
-> (lexical, semantic, or output-entropy) is a length-independent difficulty proxy. **Carve-out:** an
-> *instruction-tuned* cheap model's answer-confidence cascade is untested (base LMs ramble at constant
-> entropy) — a distinct, off-compression-thesis bet, not refuted here.
-> **One line:** what's hard is what's incompressible. Measure bits, don't train a classifier.
+> (lexical, semantic, or output-entropy) is a length-independent difficulty proxy. **Carve-out now
+> tested & refuted (2026-07-11, `bet04c_instruct_cascade.py`, Qwen2.5-0.5B-Instruct):** an instruct
+> model's answer-confidence measures **ρ 0.42–0.50** (entropy/neg-logprob/self-consistency) — same weak
+> length-driven band, *below* the base cascade (0.56); the one >0.6 signal was a token-cap truncation
+> artifact (caught, refuted). Cheap self-confidence, base *or* instruct, is not a difficulty router at
+> 0.5B scale — a viable one needs a trained classifier or a measured frontier-vs-cheap answer-quality gap.
+> **One line:** what's hard is computational, not textual — you can't read difficulty off the prompt *or* the cheap model's certainty.
 
 ## Hypothesis
 
