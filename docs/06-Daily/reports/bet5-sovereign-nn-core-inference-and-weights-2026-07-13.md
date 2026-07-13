@@ -40,12 +40,37 @@ the sovereign-stack decision). The differentiator is **reuse + maturity + cgo co
 3. ONNX (b) / llama.cpp (c) — clean but no reuse advantage over candle and add a second
    engine/toolchain.
 
-> ⚠️ **CRITICAL GAP — no latency numbers survived verification.** The entire µs-vs-ms
-> premise of Q4 is **unquantified** by this research. The ranking rests on license +
-> maturity + reuse, *not* measured speed. Whether cgo-candle (or a warm daemon) actually
-> reaches the µs target vs. the current ms subprocess is an **empirical benchmark**, not a
-> literature question — it must be measured on arm64-mac + linux-x86 before the path is
-> locked. Do not claim "µs" until benchmarked.
+> ⚠️ **The research produced no latency numbers** — the µs-vs-ms premise of Q4 was
+> unquantified by the literature. So it was **benchmarked directly** (see below): the ranking's
+> license + maturity + reuse basis is now backed by a measured cold-vs-warm ratio.
+
+### Latency — measured (`cmd/embed-bench`, 2026-07-13, e5-small, arm64-mac CPU, MIT weights)
+
+The 2-point decisive benchmark: today's **cold subprocess** per embedding (spawn + model load +
+infer, exactly `LocalEmbedder`'s path) vs. a **warm `--serve` daemon** (same crate, model loaded once,
+one call over a stdin/stdout pipe).
+
+| | p50 | p95 | min | note |
+|---|---|---|---|---|
+| **COLD subprocess** (per call) | **423.6 ms** | 484 ms | 382 ms | spawn + load + infer every time (n=30) |
+| **WARM daemon** (per call) | **22.5 ms** | 59 ms | 17 ms | model loaded once (n=200) |
+| daemon cold-start | — | — | 307 ms | one-time (first call incl. load) |
+
+**Speedup 18.8×; spawn+load tax removed by staying warm = 401 ms.** So the subprocess millisecond is
+**~95% process-spawn + model-load, ~5% inference.** Two conclusions:
+
+1. **The next brick is the cgo-free warm daemon (path d), not cgo.** The daemon captures essentially
+   the entire win. cgo→candle would only remove the local-pipe IPC (µs) on top of a 22 ms inference
+   floor — a marginal further gain that does not justify the cgo build/cross-compile tax as the *next*
+   step. cgo becomes worthwhile only if the pipe IPC ever dominates, which at 22 ms/call it does not.
+2. **"µs" is not reachable for a BERT-class embedder on CPU.** The inference floor *itself* is ~22 ms
+   (min 17 ms). No transport (daemon, cgo, ONNX, GGUF) beats that on this model/hardware — the levers
+   for µs are a much smaller/quantized model, a cheaper op, or a GPU, not the binding. The honest
+   in-process target is **~20 ms warm, zero spawn/load tax.** (Docs corrected: ADR-0023, KR8.5, bet-05.)
+
+*Caveat:* single machine (arm64-mac), CPU, one model (e5-small). Absolute numbers are machine-specific;
+the **cold-vs-warm ratio** is the transferable finding. linux-x86 + the default `bge-small-en-v1.5`
+remain unmeasured.
 
 ## Q2 — sovereign weights: one assumption corrected, one trap confirmed
 

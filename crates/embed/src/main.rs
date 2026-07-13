@@ -211,13 +211,60 @@ fn model_id() -> String {
     format!("{name}@{rev}")
 }
 
+/// Embed one NDJSON request line into one NDJSON result-row string. Shared by
+/// the batch and serve paths so both produce byte-identical rows.
+fn embed_row_json(embedder: &Embedder, raw: &str) -> Result<String, String> {
+    let req: Request = serde_json::from_str(raw).map_err(|e| format!("parse request: {e}"))?;
+    let vec = embedder.embed(&req.text)?;
+    let row = EmbeddingRow {
+        id: req.id,
+        dim: vec.len(),
+        embedding: vec,
+        model_id: embedder.model_id.clone(),
+        normalized: true,
+    };
+    serde_json::to_string(&row).map_err(|e| format!("encode result: {e}"))
+}
+
+/// Long-lived daemon mode (`--serve`, ADR-0023 in-process-latency path (d)):
+/// load the model ONCE, then read NDJSON requests from stdin line-by-line and
+/// write one result row per line to stdout, flushing after each so a Go caller
+/// can round-trip synchronously over the pipe. This is the *warm* half of the
+/// Bet-5 latency benchmark: it isolates inference-only cost from process spawn +
+/// model load, answering whether the subprocess ms is spawn/load tax (which a
+/// warm process removes) or the model's own inference floor (which no binding
+/// fixes). The batch `--input/--output` path is unchanged.
+fn serve(embedder: &Embedder) -> Result<(), String> {
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    for line in stdin.lock().lines() {
+        let line = line.map_err(|e| format!("read stdin: {e}"))?;
+        let raw = line.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let js = embed_row_json(embedder, raw)?;
+        writeln!(out, "{js}").map_err(|e| format!("write stdout: {e}"))?;
+        out.flush().map_err(|e| format!("flush stdout: {e}"))?;
+    }
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
-    let input = flag("--input").ok_or_else(|| "missing --input".to_string())?;
-    let output = flag("--output").ok_or_else(|| "missing --output".to_string())?;
+    // The model load is common to both modes; do it once up front so `--serve`
+    // pays it exactly once (the whole point of the daemon path).
     let dir = resolve_model_dir()?;
     let mid = model_id();
-
     let embedder = Embedder::new(&dir, mid.clone())?;
+
+    // Serve mode is mutually exclusive with batch --input/--output.
+    if env::args().any(|a| a == "--serve") {
+        return serve(&embedder);
+    }
+
+    let input = flag("--input").ok_or_else(|| "missing --input".to_string())?;
+    let output = flag("--output").ok_or_else(|| "missing --output".to_string())?;
 
     let fin = File::open(&input).map_err(|e| format!("open input {input}: {e}"))?;
     let fout = File::create(&output).map_err(|e| format!("create output {output}: {e}"))?;
@@ -231,17 +278,8 @@ fn run() -> Result<(), String> {
         if raw.is_empty() {
             continue;
         }
-        let req: Request =
-            serde_json::from_str(raw).map_err(|e| format!("input line {}: {e}", lineno + 1))?;
-        let vec = embedder.embed(&req.text)?;
-        let row = EmbeddingRow {
-            id: req.id,
-            dim: vec.len(),
-            embedding: vec,
-            model_id: embedder.model_id.clone(),
-            normalized: true,
-        };
-        let js = serde_json::to_string(&row).map_err(|e| format!("encode result: {e}"))?;
+        let js = embed_row_json(&embedder, raw)
+            .map_err(|e| format!("input line {}: {e}", lineno + 1))?;
         writeln!(writer, "{js}").map_err(|e| format!("write result: {e}"))?;
         embedded += 1;
     }

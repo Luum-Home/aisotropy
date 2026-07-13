@@ -39,7 +39,13 @@ doesn't depend on third parties even to *think*.
 
 ## Success criterion (in µs, MB, bits)
 
-- **Latency:** cognitive hot-path operations (logprob/embed/rerank) in **µs–ms**, in-process.
+- **Latency:** cognitive hot-path operations (logprob/embed/rerank) in-process, **without the
+  process-spawn + model-load tax**. *Measured reality* (`cmd/embed-bench`, 2026-07-13, e5-small on
+  arm64-mac CPU): a warm in-process `embed()` floor is **~22 ms p50 (min 17 ms)** — an 18.8× win over the
+  423 ms per-call subprocess, but **not µs**: for a BERT-class embedder on CPU the inference itself is
+  tens of ms, so "µs" is unreachable by transport alone (it needs a smaller/quantized model, or GPU, or a
+  cheaper op). The honest target is **low-tens-of-ms warm, zero spawn/load tax**; µs stays a per-op
+  aspiration for the smallest ops, not a blanket claim. See [ADR-0023](../decisions/0023-sovereign-local-embedder-semantic-tier.md).
 - **Footprint:** core + small model in a few MB of RAM; consistent with the Distroless binary from the
   [overview](../architecture/overview.md).
 - **Network:** **zero** network calls for scoring/routing/rerank/summary.

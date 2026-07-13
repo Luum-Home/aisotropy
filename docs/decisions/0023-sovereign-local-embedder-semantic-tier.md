@@ -101,7 +101,11 @@ same NDJSON/stdio contract as `bitrate-scorer`. A new `semantic.LocalEmbedder` e
 - **+** Sovereign by construction: no network, weights are a local artifact.
 - **+** Panic isolation for free (subprocess → non-zero exit → Go retry/backoff), per ADR-0005.
 - **−** Subprocess spawn + batch I/O is **ms, not µs** — an intentional first-brick compromise, not the
-  Bet-5 end state.
+  Bet-5 end state. **Now measured** (`cmd/embed-bench`, 2026-07-13, e5-small on arm64-mac CPU, MIT
+  weights): the current per-embedding cost is **p50 423.6 ms** — and it is **~95% process-spawn +
+  model-load, not inference**. A `--serve` warm daemon (same crate, model loaded once) drops it to
+  **p50 22.5 ms (min 17 ms), an 18.8× speedup**, with a one-time 306 ms cold start. **Two decisions fall
+  out:** (1) the next brick is the **cgo-free warm daemon** (path (d) in the [research report](../06-Daily/reports/bet5-sovereign-nn-core-inference-and-weights-2026-07-13.md)) — it captures essentially the whole win; cgo→candle would only shave the local-pipe IPC (µs) on top of a 22 ms inference floor, a marginal further gain. (2) **The "µs" target in the Bet-5 vision is not physically reachable for a BERT-class embedder on CPU** — the inference floor itself is ~22 ms; µs would require a much smaller/quantized model or a different op, not a different transport. The honest in-process target is **~20 ms warm, zero spawn/load tax**, not µs.
 
 ### Option B — Go-native ONNX runtime (onnxruntime_go / cgo)
 
