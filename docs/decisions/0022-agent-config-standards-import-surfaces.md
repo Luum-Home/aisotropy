@@ -11,7 +11,9 @@ timestamp: 2026-07-10T00:00:00Z
 ## Status
 
 ✅ **Accepted (2026-07-10).** Decides the *boundary and posture* toward the open agent-config
-standards; the concrete Skill-import mapping is scoped future work (like ADR-0016 lever #4). Governed
+standards. A **spec + compiling PoC** now exists — [`docs/guides/importing-agent-skills.md`](../guides/importing-agent-skills.md)
++ `cmd/skill-import` (parses a `SKILL.md` folder → prints the mapped wiring; a full generator/importer
+is still future work). Governed
 by the anti-magic gate ([ADR-0002](0002-anti-framework-magic-struct-as-contract.md)); extends the
 extension surface ([ADR-0013](0013-public-extension-surface-facade-vs-promote.md) /
 [ADR-0016](0016-dual-surface-sealed-runtime-composition-sdk.md)) and the knowledge-ingestion surface

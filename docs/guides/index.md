@@ -16,3 +16,6 @@ concepts and the [decisions](../decisions/index.md) log).
 - [Build your own agent](build-your-own-agent.md) — Define a bot on top of Aisotropy from your own
   Go module, without forking: register a tool, a real executor, and a persona against the public
   `aisotropy` package (Phase 8 / [ADR-0013](../decisions/0013-public-extension-surface-facade-vs-promote.md)).
+- [Importing Agent Skills](importing-agent-skills.md) — Map an open `SKILL.md` skill folder to
+  Aisotropy's typed primitives + a **literal** persona (no hidden injection), with the `cmd/skill-import`
+  PoC ([ADR-0022](../decisions/0022-agent-config-standards-import-surfaces.md)).
