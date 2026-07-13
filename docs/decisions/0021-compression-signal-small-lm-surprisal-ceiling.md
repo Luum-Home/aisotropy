@@ -126,8 +126,19 @@ Separate the bets by *what signal they need*:
      artifact, caught and refuted). Cheap self-confidence — base or instruct — is not a difficulty proxy;
      a viable router needs a **trained classifier** or a measured **frontier-vs-cheap answer-quality gap**,
      not the cheap model's own certainty (a distinct, off-compression-thesis bet).
-   So the Bet-5 embedding substrate is validated for the **memory/novelty axis (Bet 1)**, not the
-   difficulty axis (Bet 4).
+   **Competence ladder + trained-classifier both now run (2026-07-13):** the instruct competence ladder
+   (`bet04d_instruct_ladder.py`, 0.5B→1.5B; 3B excluded — Qwen Research License ≠ Apache-2.0) shows
+   self-confidence stays sub-usable as competence triples (greedy entropy ρ 0.50→0.51 FLAT, neg-logprob
+   0.42→0.49 FLAT, self-consistency 0.25→0.42 RISE but <0.6; no rung clears ρ≥0.6 gap≥0.20) → a
+   *mechanism* failure, not just a 0.5B ceiling. **The trained-classifier hatch, however, is now MEASURED
+   and holds** (`bet04e_trained_router.py`): a supervised model on the e5 embedding, after regressing
+   length out, recovers difficulty at **length-residual ρ 0.672, p<1e-4** — exactly the length-independent
+   signal no raw intrinsic signal produced. The **answer-quality-gap** hatch (0.5B vs 1.5B) is refuted at
+   this scale (ρ 0.330 n.s.); only a true frontier gap is untested. **Net for Bet 4:** refuted for all
+   *intrinsic/self-confidence* signals at every tested rung, but the escape hatch this ADR named — a
+   *trained* classifier — is validated in principle (supervised, off-thesis, embedding-based).
+   So the Bet-5 embedding substrate is validated for the **memory/novelty axis (Bet 1)** *and*, when a
+   supervised head is trained on it, for the **difficulty axis (Bet 4)** — but not as a raw unsupervised signal.
 2. **Which larger model** clears Bet 2's `< 1 bit/char`? — **Partially answered (2026-07-10)**: the
    GPT-2 ladder (`bet02_model_ladder.py`) descends monotonically **2.34→1.88 bits/char (82M→774M)**,
    all lossless, but plateaus **~1.9 ≫ 1.0**; extrapolation needs nncp/ts_zip-scale models. A confound:

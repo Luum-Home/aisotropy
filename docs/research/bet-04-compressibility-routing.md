@@ -19,7 +19,19 @@ timestamp: 2026-07-08T00:00:00Z
 > length-driven band, *below* the base cascade (0.56); the one >0.6 signal was a token-cap truncation
 > artifact (caught, refuted). Cheap self-confidence, base *or* instruct, is not a difficulty router at
 > 0.5B scale — a viable one needs a trained classifier or a measured frontier-vs-cheap answer-quality gap.
-> **One line:** what's hard is computational, not textual — you can't read difficulty off the prompt *or* the cheap model's certainty.
+> **Competence ladder now run (2026-07-13, `bet04d_instruct_ladder.py`, 0.5B→1.5B; 3B excluded —
+> Qwen Research License ≠ Apache-2.0):** self-confidence stays sub-usable as competence triples —
+> greedy entropy ρ 0.50→0.51, neg-logprob 0.42→0.49 (both FLAT, gap −0.17/−0.18 *under* length),
+> self-consistency-by-embedding 0.25→0.42 (RISES +0.16 but still <0.6). **No signal at any rung
+> clears ρ≥0.6 with a gap≥0.20 over length** → self-confidence is a *mechanism* failure, not merely a
+> 0.5B competence ceiling (only a frontier rung stays untested). **But the trained-classifier hatch is
+> now MEASURED and holds (2026-07-13, `bet04e_trained_router.py`):** a supervised model on the e5
+> embedding, after regressing length out, recovers difficulty at **length-residual ρ 0.672, p<1e-4** —
+> the length-independent signal no *raw* intrinsic signal produced. The **answer-quality-gap** hatch
+> (cheap 0.5B vs strong 1.5B) is **refuted at this scale** (ρ 0.330, n.s., length-driven); only a true
+> frontier gap is untested.
+> **One line:** what's hard is computational, not textual — you can't read difficulty off the prompt *or*
+> the cheap model's certainty, but a *trained* classifier on the embedding can (off-thesis, supervised).
 
 ## Hypothesis
 

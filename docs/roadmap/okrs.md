@@ -77,6 +77,8 @@ Each objective is a *demonstrable* increment of the [walking skeleton](index.md)
 - **KR8.2** — [Bet 1](../research/bet-01-surprisal-gated-memory.md) in the sleep cycle: the surprisal gate reduces the facts store ≥ 30% without recall loss (quality vs. τ curve).
 - **KR8.3** — [Bet 2](../research/bet-02-working-memory-codec.md) PoC: history compressed with a local model + arithmetic coder to < 1 bit/char, 100% lossless reconstruction, beating gzip.
 - **KR8.4** — [Bet 4](../research/bet-04-compressibility-routing.md): the compressibility signal correlates with difficulty and lowers routing cost without lowering quality.
+  - **Refuted for every intrinsic/self-confidence signal** (2026-07-10→13): compressibility ρ=0.41, embedding ρ=−0.52, base-cascade ρ=0.56, instruct-cascade + competence ladder 0.5B→1.5B all sub-0.6 — a plain `len()` router (ρ=0.94) beats them; it's a *mechanism* failure, not a 0.5B ceiling (only a frontier rung is untested).
+  - **Off-thesis escape hatch validated in principle:** a **trained** classifier on the e5 embedding, with length regressed out, recovers difficulty at **residual ρ=0.672, p<1e-4** (`bet04e_trained_router.py`) — supervised, N=30 caveat. The cheap-vs-cheap answer-quality gap (0.5B vs 1.5B) is refuted (ρ=0.330 n.s.). So Bet 4's *cost* payoff, if pursued, is a small trained head on Bet 5's embedding, not a raw bits signal.
 - **KR8.5** *(vision)* — [Bet 5](../research/bet-05-sovereign-nn-core.md): first sovereign NN core operation (`embed()`) in-process, in µs, zero network — validated against the external API.
 
 ## Cross-cutting guiding metrics (North Star)
