@@ -16,6 +16,15 @@ with an LLM reading whatever it can. Every memory component ([BadgerDB](../compo
 [request lifecycle](request-lifecycle.md) depend on the contract described here. It's the
 architectural **keystone** of Aisotropy.
 
+> **Freshness note (2026-07-14):** audited against the code (`internal/memory/outbox.go`,
+> `internal/consolidation/sink.go`, `internal/api/chat*.go`, `aisotropy/app.go`). The pattern is
+> **implemented and wired**. Corrections applied where the prose drifted from the code — flagged
+> inline with *(status note 2026-07-14)*. The main drifts fixed: the outbox event carries a **copy**
+> of the turn text (not a bare reference); only the **user turn** is enqueued (assistant replies and
+> held-out bitrate samples take a plain `Append`); the outbox drainer is **Go-only** (DataFusion does
+> not scan the outbox); and per-event sink failures retry on the **poll interval**, with exponential
+> backoff reserved for store-level errors.
+
 ## The golden rule
 
 > **There is no synchronous consistency while the user waits.** Writing to rqlite and Qdrant
@@ -26,7 +35,7 @@ architectural **keystone** of Aisotropy.
 | Phase | When it runs | What it guarantees | Where it lives |
 |---|---|---|---|
 | **1. Isolated synchronous operation** | Within the request, while the user waits on SSE | *Local* atomicity: the message and the intent to consolidate are recorded together or neither is | [BadgerDB](../components/badgerdb-working-memory.md), a single `Txn` |
-| **2. Asynchronous consolidation** | After responding, in the background (sleep cycle) | *Eventual* consistency between BadgerDB → rqlite/Qdrant, with retries until success | Go workers + [DataFusion](../components/datafusion-sleep-cycle.md) for cold batch |
+| **2. Asynchronous consolidation** | After responding, in the background (sleep cycle) | *Eventual* consistency between BadgerDB → rqlite/Qdrant, with retries until success | Go workers (`RunOutboxWorker`, `internal/memory/outbox.go`). *(status note 2026-07-14: the outbox drainer is Go-only; [DataFusion](../components/datafusion-sleep-cycle.md) is a separate, dormant-by-default cold batch that dedups already-consolidated facts — it does not scan the outbox.)* |
 
 This is the literal application of the [honest eventual consistency](../vision/principles.md#derived-operating-principles)
 principle: staleness between phases is not a hidden bug, it's an explicit and bounded contract.
@@ -38,16 +47,24 @@ queue**, in the same embedded engine. This is what makes Phase 1 possible withou
 network:
 
 - Within the **same ACID transaction** (`Txn.Commit()`, serializable snapshot isolation via MVCC)
-  two things are written:
-  1. The chat message, under `chat:{tenant}:{user}:{session}`.
+  two things are written (`WorkingMemory.AppendWithOutbox`):
+  1. The chat message, under `tenant:{tenant}:user:{user}:session:{session}:chat:{seq}` (the active
+     buffer's per-message key; see `internal/memory/key.go`).
   2. A **pending consolidation event**, under the key `outbox:pending:{tenant}:{ts}:{id}`.
 - **Hard guarantee:** if the Go process dies at that exact instant (panic, OOM, kill -9, power
   outage), BadgerDB guarantees that **either both were saved, or neither was**. There is no
   intermediate state where the message exists but the consolidation event was lost (or vice
-  versa). This is the property that lets Phase 2 blindly trust that "everything that happened has
-  a pending event somewhere."
-- The event payload is minimal: a reference to the message/fact, not a full copy — BadgerDB
-  doesn't duplicate the content, it points to it.
+  versa). This is the property that lets Phase 2 blindly trust that the enqueued turn has a pending
+  event somewhere. *(status note 2026-07-14: only the **user turn** is enqueued this way. The
+  assistant reply is written with a plain `Append` — no outbox event — and is therefore not
+  consolidated into the long-term tiers; held-out bitrate samples (Bet 6) also take a plain
+  `Append` and are deliberately reserved rather than enqueued. See `internal/api/chat.go` /
+  `chat_stream.go`.)*
+- *(status note 2026-07-14: the event is **self-contained**, not a bare reference — `OutboxEvent`
+  carries a copy of the turn text (`OutboxEvent.Content`) so a worker can consolidate it even after
+  the source message has been pruned from the active buffer. It intentionally does not carry the
+  full message record, but it is not a pointer-only payload as an earlier draft of this doc
+  claimed.)*
 
 There is no write to rqlite or Qdrant at this point. The request ends (SSE closed) without ever
 touching the consolidation network — the latency perceived by the user is the LLM's, not
@@ -55,12 +72,15 @@ long-term memory's.
 
 ## Phase 2 — The asynchronous Sleep Cycle
 
-Background workers (goroutines or the [sleep cycle](../components/datafusion-sleep-cycle.md)'s
-batch process, depending on volume) scan `outbox:pending:*` continuously or in windows:
+A background Go worker (`RunOutboxWorker`, one goroutine started in `aisotropy/app.go`) scans
+`outbox:pending:*` continuously (default 1s poll). *(status note 2026-07-14: the
+[sleep cycle](../components/datafusion-sleep-cycle.md)'s DataFusion batch is a separate, downstream
+process that dedups already-consolidated facts — it is not an alternate outbox drainer, and it is
+dormant unless `AISOTROPY_SLEEPCYCLE_BIN` is set.)*
 
 ```
 1. Worker reads an event from outbox:pending:{tenant}:{ts}:{id}
-2. Resolves the reference → builds the consolidation payload
+2. The event is self-contained (carries the turn text) → builds the consolidation payload
 3. Synchronizes to both sinks IN PARALLEL:
      a) Qdrant  → upsert the embedding (if semantic RAG applies)
      b) rqlite  → upsert the distilled fact/task (Engram-style)
@@ -84,9 +104,13 @@ If Qdrant or rqlite fail (timeout, service down, network partition, Raft leader 
 
 - The event **is not deleted** from `outbox:pending:*`. Isolated point of failure — the work
   doesn't disappear, it's only delayed.
-- The worker retries with **exponential backoff** until the sink recovers. There's no retry cap
-  that silently discards the event: the philosophy is *"the fact eventually gets in, even if
-  late,"* not *"if it fails three times, it's lost."*
+- The worker retries until the sink recovers. There's no retry cap that silently discards the
+  event: the philosophy is *"the fact eventually gets in, even if late,"* not *"if it fails three
+  times, it's lost."* *(status note 2026-07-14: a per-event sink failure leaves the event in place
+  and it is re-attempted on the next **poll interval** (default 1s). The capped **exponential
+  backoff** (`outboxInitialBackoff` → `outboxMaxBackoff`, 200ms → 30s) is reserved for store-level
+  errors — a BadgerDB read/delete failure — not for downstream sink failures. See `RunOutboxWorker`
+  in `internal/memory/outbox.go`.)*
 - A partial failure (Qdrant OK, rqlite down, or vice versa) does **not** delete the key: the
   criterion is success on **both** sinks. The next attempt may write again to the sink that had
   already succeeded — hence idempotency is mandatory, not an optimization.
@@ -114,17 +138,22 @@ worker finished draining, those events **are not lost** — they remain persiste
 themselves either — someone needs to pick them up again.
 
 ```
-main() [Go]
+aisotropy.App build [Go]  (cmd/aisotropyd/main.go is a thin consumer of this)
   │
-  ├─ 1. Initializes Huma (contracts, router, security handlers)
+  ├─ 1. Runs the startup reconciliation process (wm.RecoverOutbox):
+  │        - Scans outbox:pending:* in full (all tenants)
+  │        - Any event found is, by definition, an "orphan from a previous shutdown"
+  │        - Drains those events synchronously via the same sink as steady state
+  │        - Same idempotency path as normal draining (Phase 2) — there is no
+  │          special "recovery" code: it's drainOutboxOnce, just with more accumulated work
+  │      then starts the steady-state goroutine (go wm.RunOutboxWorker)
   │
-  └─ 2. Launches the startup reconciliation process:
-           - Scans outbox:pending:* in full (all tenants)
-           - Any event found is, by definition, an "orphan from a previous shutdown"
-           - Relaunches the sleep-cycle workers on those events
-           - Same idempotency path as normal draining (Phase 2) — there is no
-             special "recovery" code: it's the same worker, just with more accumulated work
+  └─ 2. Builds Huma (humachi.New, api.Register*) and starts the HTTP server
 ```
+
+*(status note 2026-07-14: reconciliation runs at `aisotropy/app.go:326` — **before** the Huma API
+is registered (`app.go:395`+) and before the server listens, not after. It happens inside the
+`aisotropy.App` builder, not literally in `main()`, which is a thin ~51-line consumer.)*
 
 This closes the Outbox's full lifecycle: nothing ever written to `outbox:pending:*` is left
 floating indefinitely, even if the shutdown was abrupt.
@@ -160,8 +189,8 @@ HOT PATH (synchronous, the user waits)
         │
         ▼
   ┌───────────────────────────────┐
-  │          BadgerDB              │   1 single ACID Txn (SSI/MVCC):
-  │  chat:{t}:{u}:{s}      ◄───────┼── - chat message
+  │          BadgerDB              │   1 single ACID Txn (SSI/MVCC), user turn only:
+  │  ...:session:{s}:chat:{seq} ◄──┼── - chat message (user turn)
   │  outbox:pending:{t}:{ts}:{id} ◄┼── - pending consolidation event
   └───────────────┬────────────────┘
                   │  (if the process dies here: both or neither — never halfway)
@@ -190,9 +219,9 @@ HOT PATH (synchronous, the user waits)
           no              yes
            │              │
            ▼              ▼
-   exponential backoff   deletes outbox:pending:{id}
-   (retries, event        from BadgerDB
-   stays alive)           (end of cycle for that event)
+   retried on next poll  deletes outbox:pending:{id}
+   (event stays alive;    from BadgerDB
+   ~1s interval)          (end of cycle for that event)
 ```
 
 ## Guarantees summary table
@@ -203,7 +232,7 @@ HOT PATH (synchronous, the user waits)
 | Delivery | At-least-once (never at-most-once) | The `outbox:pending:*` key isn't deleted until success is confirmed on both sinks |
 | Idempotency | Reprocessing an event doesn't duplicate data | Deterministic UUID v5 (Qdrant) · `INSERT OR REPLACE` over a stable PK (rqlite) |
 | Sink durability | The sink's ACK is trustworthy, cannot be reverted | rqlite's Raft quorum (see [ADR-0004](../decisions/0004-facts-memory-rqlite-vs-litefs.md)) |
-| Crash recovery | No event remains orphaned indefinitely | Cold-boot reconciliation, after initializing Huma in `main()` |
+| Crash recovery | No event remains orphaned indefinitely | Cold-boot reconciliation (`wm.RecoverOutbox`) during `aisotropy.App` build, before the Huma API is registered and the server listens |
 | Consistency perceived by the user | No additional wait on the hot path | All of Phase 2 runs after the SSE, in the background |
 
 ## Gotchas and what this document doesn't resolve

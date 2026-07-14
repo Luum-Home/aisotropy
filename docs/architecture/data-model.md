@@ -31,8 +31,10 @@ Every stored shape is partitioned by identity. There is exactly one identity mod
   identity component, so composite keys can never be forged by injection.
 - **Working-memory composite key**: `tenant:{tenant}:user:{user}:session:{session}`; a chat message
   key appends a zero-padded sequence (`…%020d`) for lexical ordering.
-- **`facts.Scope`** / **`semantic.Scope`**: `{TenantID, UserID}` — the value every store method
-  requires; a facts statement built without it is a **compile error** (ADR-0011).
+- **`facts.Scope`** / **`semantic.Scope`**: a `(tenant, user)` value object with **unexported**
+  fields (obtained only via `NewScope`/`ScopeFromContext`) — the value every store method requires;
+  because a bare `Scope{…}` literal cannot be built outside the package, a facts statement built
+  without it is a **compile error** (ADR-0011).
 
 ## 2. HTTP contract shapes (`internal/api`)
 
@@ -70,14 +72,16 @@ Every stored shape is partitioned by identity. There is exactly one identity mod
 ### Facts (`internal/facts`, SQLite+FTS5 or rqlite)
 
 `Fact`: `{ ID, TenantID, UserID, Content, Importance float64, CreatedAt, UpdatedAt,
-SupersededBy string, Score float64 }`. Persisted with an FTS5 virtual table; `Search` ranks by
-**bm25 × Importance × Recency**. `SupersededBy` implements Engram-style contradiction handling (an
-old fact is archived, not deleted). `Score` is a query-time output, not stored.
+SupersededBy string }`. Persisted with an FTS5 virtual table; `Search` ranks by
+**bm25 × Importance × Recency** and returns `ScoredFact` (embeds `Fact`, adds `Score float64`) —
+the score is a query-time output, not a stored column. `SupersededBy` implements Engram-style
+contradiction handling (an old fact is archived, not deleted).
 
 ### Semantic (`internal/semantic`, Qdrant or in-process cosine) — multi-kind (ADR-0017)
 
-`Point`: `{ ID, TenantID, UserID, Kind, Content, Source, Citation, Vector []float32, CreatedAt,
-Score float32 }`.
+`Point`: `{ ID, TenantID, UserID, Kind, Content, Source, Citation, Vector []float32, CreatedAt }`;
+`Search` returns `ScoredPoint` (embeds `Point`, adds `Score float32` — the cosine similarity, a
+query-time output, not stored).
 
 | `Kind` | value | Origin | Lifecycle |
 |---|---|---|---|

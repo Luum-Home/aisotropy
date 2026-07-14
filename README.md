@@ -112,7 +112,7 @@ Other environment variables:
 
 ```bash
 go run ./cmd/x          # interactive TUI: fmt / vet / lint / test / build / bench / run / check
-go run ./cmd/x check    # non-interactive: run the quality gates (build + fmt + vet + test); CI-friendly
+go run ./cmd/x check    # non-interactive: run the quality gates (build + fmt + vet + test); suitable for CI or a local pre-commit gate
 go run ./cmd/x list     # list all tasks
 ```
 `lint` uses `golangci-lint` (config in `.golangci.yml`); install it with

@@ -15,7 +15,12 @@ then thicken each layer.
 ## Documents
 
 - [OKRs](okrs.md) — Measurable Objectives and Key Results by phase.
-- [Milestones](milestones.md) — Breakdown by phase with "done" criteria. *(pending)*
+- [Milestones](milestones.md) — Breakdown by phase with "done" criteria.
+
+> **Global status (2026-07-14):** Phases 0–7 implemented and Phase 8 (public adoption surface)
+> shipped; Phase 9 (composition surface) partially delivered. The per-phase "done" criteria and
+> what is actually **running vs dormant vs aspirational** live in
+> [Milestones](milestones.md) and the [reality ledger](../architecture/reality-ledger.md).
 
 ## The phases at a glance
 
@@ -30,5 +35,6 @@ then thicken each layer.
 | 6 | Sleep cycle | + DataFusion (dedup, contradictions, noise) | Offline self-improvement. |
 | 7 | Granular control | Quotas, circuit breaker, scope-based tools, OTel | Ready for multi-tenant enterprise. |
 | 8 | Adoption surface | Public API / SDK: register tools/executors/personas without editing `main.go` | A third party can build their bot on top **without forking**. |
+| 9 | Composition surface | Both a hostable multi-tenant runtime **and** a composable framework (graphs/workflows/teams, embeddable bots) | Composition without regressing tenant isolation (sealed kernel). |
 
-Detail and metrics in [OKRs](okrs.md).
+Detail and metrics in [OKRs](okrs.md); per-phase "done" criteria in [Milestones](milestones.md).
