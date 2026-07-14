@@ -240,6 +240,93 @@ Mastra's forced ELv2→Apache reversal is the market proof.
    ByteDance ownership (Eino), and ADK carries a GCP gradient. A Go-native, self-hosted,
    permissively-licensed memory-OS sits in the gap between them.
 
+## Isolation deep-dive — adversarial re-verification (2026-07-14)
+
+> **Added 2026-07-14.** A focused follow-up that stress-tested the four claimed
+> differentiators (P1 token efficiency, P2 fail-closed structured output, P3 cost
+> observability, P4 multi-tenant isolation) against primary sources, and re-examined the two
+> Go-native competitors specifically on isolation. Net effect: it **downgrades** three of the
+> four claims and **refines** — does not overturn — the fourth. The 2026-07-09 analysis above
+> stands; this section corrects its sharper edges.
+
+### The headline correction: "strongest / most uniform," not "only in kind"
+
+The earlier framing risked implying aisotropy is *categorically the only* framework with any
+structural tenant isolation. That is **wrong** — Google's **adk-python** is close-in-kind (see
+below). The defensible claim is narrower and survives scrutiny:
+
+- aisotropy is the **strongest and most uniform** on isolation — *every* memory tier is scoped
+  by construction, with no tier left as convention.
+- aisotropy is **uniquely alone in one specific lane**: **Go + self-hostable + permissively
+  licensed (MIT/Apache) OSS** with isolation as an invariant. No competitor occupies that
+  intersection.
+
+What "by construction" means here — stated precisely so it is not oversold: **no code path
+issues an unscoped read** (internal scoping is unbypassable), and Qdrant applies a `Must`
+filter *during* the HNSW scan, not a post-filter. It is **not** authenticated-principal
+binding: `tenant_id` is a trusted, validated Huma path param — structurally the *same* trust
+ADK places in its caller-supplied `user_id`. The advantage is that the scoping is
+unbypassable internally, not that the principal is cryptographically authenticated.
+
+### Eino (correction): an orchestration library, not a runtime
+
+The 2026-07-09 section credited Eino with "serious session memory." On isolation specifically,
+the verdict is blunter: **Eino is an Apache-2.0 Go *orchestration* library (a LangGraph-for-Go),
+not a multi-tenant runtime, and has zero tenant isolation by construction.**
+
+- Its `CheckpointStore` is a bare `string -> []byte` keyed by a **developer-supplied**
+  `WithCheckPointID` string, with **"no default implementation"** — the developer owns the key
+  and therefore owns (or forgets) any scoping.
+- The `adk-go` subpackage carries state only as an untyped `map[string]any` — **no typed
+  scoping primitive at all**.
+- Conclusion: a **same-language peer** (Go) but **no isolation model**. It competes on
+  orchestration, not on the tenancy invariant.
+
+### Google ADK (correction): the closest structural competitor — but by discipline, not construction
+
+ADK is the one framework whose isolation is close-in-kind, and it deserves an honest, precise
+treatment because the difference is subtle:
+
+- **adk-python bakes `user_id` into the storage key.** `InMemorySessionService` uses a nested
+  dict (`app_name -> user_id -> session_id`); `DatabaseSessionService` makes `user_id` part of
+  a **composite primary key**; `InMemoryMemoryService` keys entries `{app_name}/{user_id}`. This
+  is genuinely structural keying — closer to aisotropy than any convention-only competitor.
+- **But it is discipline, not construction.** Bug
+  [google/adk-python#1641](https://github.com/google/adk-python/issues/1641) was a **real
+  cross-user event disclosure through v1.4.2**: the events sub-query **omitted the
+  `user_id` filter**, leaking one user's events to another. That is proof isolation lived at the
+  **query layer as filter discipline a maintainer could (and did) omit** — not as an invariant.
+  aisotropy's construction makes that exact failure *unrepresentable*, because no unscoped read
+  path exists. **Cite this as `google/adk-python#1641` — it is a Google ADK issue, NOT an
+  aisotropy issue.**
+- **Three further caveats blunt ADK as a competitor in aisotropy's lane:** (1) `user_id` is
+  unauthenticated, dev-supplied — the same trust posture as aisotropy's `tenant_id`, so ADK's
+  keying is not "more authenticated"; (2) `VertexAiSessionService` fetches by `session_id` then
+  validates client-side; (3) all of this keying lives in **adk-python** — **adk-go has no
+  scoping**, and the keyed backends are **GCP-managed (Vertex), not self-hostable OSS**.
+- **Time-box:** the moat is real but perishable. Google maintains adk-go and could port the
+  keyed backends into it; that would put a structural competitor into the Go lane.
+
+### The four "differentiators," re-scored against primary sources
+
+| Claim | Prior framing | 2026-07-14 verdict |
+|---|---|---|
+| **P1 — token efficiency** | Incumbents "sabotage" token budgets | **WEAK / strawman as a blanket accusation.** Modern frameworks ship context trimming/summarization; no evidence of systemic waste. Drop the accusation. |
+| **P2 — fail-closed structured-output reflection loop** | Unique differentiator | **NOT unique.** Pydantic AI already has it (`raise ModelRetry` feeds the validation error back to the model; fail-closed `UnexpectedModelBehavior` on retry exhaustion — pydantic.dev/docs/ai). aisotropy's own docs cite "FastAPI + Pydantic AI" as its model. The claim holds **only vs LangChain.js** (`createAgent` throws `StructuredOutputParsingError` immediately, no re-feed — langchainjs#9426) **and Mastra** (`errorStrategy` throw/warn/fallback, no self-repair loop). |
+| **P3 — cost observability per token/tenant** | Differentiator | **Refine.** LangSmith computes cost automatically but is **observability-only** (no pre-spend gate) and **not per-tenant native** (metadata is DIY). Pydantic AI `UsageLimits` has a pre-spend `check_before_request()` but **per-run, not per-tenant**. aisotropy's real edge is the **pre-spend quota *gate* + per-tenant *by construction***, not "seeing" cost. |
+| **P4 — multi-tenant isolation by construction** | Differentiator | **The one surviving differentiator** — with the "strongest/most-uniform, not only-in-kind" refinement above. None of LangChain/LangGraph (namespace convention; prefix search scans across tenants), Mastra (`resourceId`/`threadId` convention; `listMessages` threadId-only bug mastra#11856), Pydantic AI (no tenant memory model), Letta (LLM-self-managed memory), or Eino enforce isolation by construction. ADK-python is close-in-kind but query-discipline (see #1641). |
+
+### Net takeaway (2026-07-14)
+
+- **Only P4 is a genuine, standalone differentiator.** P1 should be dropped as framed; P2 and
+  P3 survive only in *refined, narrowed* forms (P2: vs LangChain.js/Mastra, not vs Pydantic AI;
+  P3: pre-spend *gate* + per-tenant, not cost *visibility*).
+- **P4's moat is real but time-boxed and lane-specific:** strongest-and-most-uniform isolation,
+  uniquely alone in the **Go + self-hostable + permissive-OSS** lane, with Google's adk-go the
+  most plausible future entrant. The proof point that isolation-by-construction matters is
+  `google/adk-python#1641` — the closest structural competitor shipped a real cross-user leak
+  precisely because it relied on per-query filter discipline.
+
 ## Sources & caveats
 
 Every dated claim above cites a primary or clearly-labeled secondary source inline. Items
