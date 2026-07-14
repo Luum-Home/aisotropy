@@ -88,8 +88,8 @@ const (
 	circuitCooldown         = 30 * time.Second
 )
 
-// Default rate-limit values used when WithRateLimit is not supplied. They mirror
-// the AISOTROPY_RATE_PER_SEC / AISOTROPY_BURST fallbacks in the original binary.
+// Default rate-limit values used when neither WithRateLimit nor the
+// AISOTROPY_RATE_PER_SEC / AISOTROPY_BURST env vars supply an override.
 const (
 	defaultRatePerSec = 10
 	defaultBurst      = 30
@@ -108,6 +108,7 @@ type App struct {
 	llmClient     llm.Client
 	ratePerSec    float64
 	burst         float64
+	rateLimitSet  bool
 	inPricePer1M  float64
 	outPricePer1M float64
 
@@ -190,6 +191,7 @@ func WithRateLimit(perSec, burst float64) Option {
 	return func(a *App) {
 		a.ratePerSec = perSec
 		a.burst = burst
+		a.rateLimitSet = true
 	}
 }
 
@@ -392,8 +394,14 @@ func (a *App) Run(ctx context.Context) error {
 
 	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy", "0.1.0"))
 
-	// Per-tenant rate limiting (Phase 7 / constitutional gate).
-	rateLimiter := wm.NewLimiter(a.ratePerSec, a.burst)
+	// Per-tenant rate limiting (Phase 7 / constitutional gate). An explicit
+	// WithRateLimit wins; otherwise AISOTROPY_RATE_PER_SEC / AISOTROPY_BURST
+	// override the built-in defaults.
+	ratePerSec, burst := a.ratePerSec, a.burst
+	if !a.rateLimitSet {
+		ratePerSec, burst = ratePerSecFromEnv(), burstFromEnv()
+	}
+	rateLimiter := wm.NewLimiter(ratePerSec, burst)
 
 	// Connect any MCP servers (ADR-0016 lever #2: polyglot tool execution):
 	// discover each server's tools and merge them into the consumer's toolset +
@@ -722,6 +730,33 @@ func factMinImportanceFromEnv() float64 {
 		slog.Warn("invalid AISOTROPY_FACT_MIN_IMPORTANCE; using default", "value", v, "default", defaultFactMinImportance)
 	}
 	return defaultFactMinImportance
+}
+
+// ratePerSecFromEnv parses AISOTROPY_RATE_PER_SEC (a float, requests/sec) for
+// the per-tenant token-bucket rate limiter (Phase 7). Falls back to
+// defaultRatePerSec when unset, unparsable, or non-positive, so the limiter is
+// never constructed with a zero or negative rate from a bad env value.
+func ratePerSecFromEnv() float64 {
+	if v := os.Getenv("AISOTROPY_RATE_PER_SEC"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			return f
+		}
+		slog.Warn("invalid AISOTROPY_RATE_PER_SEC; using default", "value", v, "default", defaultRatePerSec)
+	}
+	return defaultRatePerSec
+}
+
+// burstFromEnv parses AISOTROPY_BURST (an integer bucket capacity) for the
+// per-tenant token-bucket rate limiter (Phase 7). Falls back to defaultBurst
+// when unset, unparsable, or non-positive.
+func burstFromEnv() float64 {
+	if v := os.Getenv("AISOTROPY_BURST"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return float64(n)
+		}
+		slog.Warn("invalid AISOTROPY_BURST; using default", "value", v, "default", defaultBurst)
+	}
+	return defaultBurst
 }
 
 // openBitrateStore builds the Bet 6 bpt store: on-disk SQLite under
