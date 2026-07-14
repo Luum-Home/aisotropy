@@ -3,7 +3,7 @@ type: Reference
 title: API reference — every endpoint the runtime serves
 description: The first-class endpoint reference for aisotropyd — method, path, request/response/error contract, and streaming/SSE semantics for each route, plus which routes are inside the auto-generated OpenAPI 3.1 contract and which are operational side-channels. The payload shapes live in the data model; this documents the routes that carry them.
 tags: [architecture, reference, api, endpoints, openapi, sse, http]
-timestamp: 2026-07-10T00:00:00Z
+timestamp: 2026-07-14T00:00:00Z
 ---
 
 # API reference — every endpoint the runtime serves
@@ -24,7 +24,78 @@ is **no authentication in-process** today — see the [threat model](threat-mode
 | `GET /healthz` | Liveness only | `200 {"status":"ok"}` — no dependency checks |
 | `GET /health` | Readiness | Parallel, read-only, `_health`-scoped probes of the facts + semantic tiers (no LLM spend). `200 {"status":"ok",checks:[…]}` when all respond, **`503 degraded`** when any fails |
 | `GET /costs` | Per-tenant cost view | JSON array of `costMeter.Snapshot()` — per-tenant token totals + estimated USD, sorted by tenant. In-process, non-durable (not a billing system of record) |
+| `GET /bitrate` | Per-tenant bits-per-token ops view (Bet 6) | JSON array of per-tenant bpt summaries. **Conditionally registered**: only when `AISOTROPY_BITRATE_BIN` is set; otherwise the route does not exist (404) |
 | `GET /openapi.json` · `/openapi.yaml` · `GET /docs` | The contract itself + Stoplight docs UI | auto-generated |
+
+### Operational response schemas (as built, 2026-07-14)
+
+These four routes are plain `chi` handlers registered in [`aisotropy/app.go`](../../aisotropy/app.go)
+— **outside** the Huma/OpenAPI contract, so `/openapi.json` does not describe them. Their exact
+shapes, verified against the Go structs:
+
+**`GET /healthz`** — always `200` with the literal body (no struct, hardcoded in `app.go`):
+
+```json
+{"status":"ok"}
+```
+
+**`GET /health`** — `health.Report` (`internal/health/health.go`), `200` when every probe passes,
+`503` when any is degraded. Two probes are wired (`facts`, `semantic`), each a read-only search
+scoped to the reserved `_health` tenant, bounded by a 2s per-probe timeout, run in parallel.
+`status` is `"ok"` or `"degraded"` (both top-level and per-check); `detail` is omitted when the
+check passes (`omitempty`):
+
+```json
+{
+  "status": "ok",
+  "checks": [
+    { "name": "facts",    "status": "ok", "latency_ms": 1 },
+    { "name": "semantic", "status": "ok", "latency_ms": 0 }
+  ]
+}
+```
+
+**`GET /costs`** — `200` with a JSON array of `costmeter.TenantStats`
+(`internal/costmeter/costmeter.go`), sorted by tenant id ascending; `[]` when no usage has been
+recorded. ⚠️ The struct has **no `json` tags**, so the fields serialize under their Go names
+(PascalCase), unlike every other route:
+
+```json
+[
+  {
+    "TenantID": "acme",
+    "Requests": 12,
+    "InputTokens": 5321,
+    "OutputTokens": 987,
+    "CostUSD": 0.030766
+  }
+]
+```
+
+`Requests`/`InputTokens`/`OutputTokens` are integers (`int64`), `CostUSD` a float. Per-process and
+in-memory only: totals reset on restart and are not aggregated across replicas.
+
+**`GET /bitrate`** — `200` with a JSON array of `bitrate.TenantSummary`
+(`internal/bitrate/bitrate.go`), one aggregate per tenant (`[]` when no measurements exist);
+`500 {"error":"bitrate summary failed"}` if the store read fails. Only registered when
+`AISOTROPY_BITRATE_BIN` is set (the durable bpt store is gated on the scorer binary):
+
+```json
+[
+  {
+    "tenant_id": "acme",
+    "latest_lift": 0.42,
+    "latest_bpt_with": 3.1,
+    "trend_slope": -0.05,
+    "model_id": "DeepESP/gpt2-spanish@pinned",
+    "n_measurements": 8
+  }
+]
+```
+
+`latest_lift` is `BptWithout − BptWith` for the newest measurement (positive = hydrated memory made
+the tenant's own text less surprising); `trend_slope` is the linear trend over the tenant's whole
+lift series; `n_measurements` an integer count.
 
 ## Contract endpoints (in the OpenAPI schema)
 

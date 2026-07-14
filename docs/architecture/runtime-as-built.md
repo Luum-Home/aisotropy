@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: Runtime as built — what aisotropyd actually wires and runs
-description: A code-grounded description of the aisotropyd runtime as it is actually assembled in cmd/aisotropyd/main.go — the HTTP surface, the streaming request lifecycle, the async outbox/sleep-cycle side, the memory tiers, the Phase 7 granular-control machinery, and an honest ledger of what is not yet wired.
+description: A code-grounded description of the aisotropyd runtime as it is actually assembled in aisotropy/app.go (App.Run) — the HTTP surface, the streaming request lifecycle, the async outbox/sleep-cycle side, the memory tiers, the Phase 7 granular-control machinery, and an honest ledger of what is not yet wired.
 tags: [architecture, as-built, runtime, request-lifecycle, outbox, quota, circuit-breaker, cost-meter, phase-7]
 timestamp: 2026-07-10T00:00:00Z
 ---
@@ -19,7 +19,7 @@ describe the *intended* design: [overview](overview.md), [request lifecycle](req
 Everything below is anchored in the composition root. **As of Phase 8 (ADR-0013) that root moved**:
 the wiring now lives in the importable builder [`aisotropy/app.go`](../../aisotropy/app.go)
 (`App.Run` constructs every tier, decorator, and route), and
-[`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go) is a ~50-line thin consumer of it. Read
+[`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go) is a 51-line thin consumer of it. Read
 this doc together with the one-screen [reality ledger](reality-ledger.md) (REAL vs dormant vs
 aspirational) and the [data model](data-model.md) / [API reference](api-reference.md).
 
@@ -32,25 +32,45 @@ aspirational) and the [data model](data-model.md) / [API reference](api-referenc
 > tabled below; (4) the semantic tier is multi-kind (Document/Fact/Turn, ADR-0017). Where a detail
 > here still lags the code, the [reality ledger](reality-ledger.md) is the arbiter.
 
+> **Freshness note (2026-07-14):** second reconciliation pass, all claims re-verified against
+> `aisotropy/app.go` at HEAD: (1) the §1 route table is now exhaustive — it adds `GET /health`,
+> the conditional `GET /bitrate` (Bet 6), and the four knowledge routes that were previously only
+> mentioned in prose; (2) every wiring attribution now points at `App.Run` in `aisotropy/app.go`
+> (with verified line references) instead of `main.go`; (3) the LLM client selection is now the
+> multi-provider registry (`internal/llm/registry.go`), precedence
+> `OPENROUTER_API_KEY > OPENAI_API_KEY > ANTHROPIC_API_KEY > stub` — not Anthropic-or-stub;
+> (4) `AISOTROPY_RATE_PER_SEC` / `AISOTROPY_BURST` are read by `ratePerSecFromEnv` /
+> `burstFromEnv` in `app.go` and only apply when `WithRateLimit` was not used; (5) the outbox
+> description now covers the Bet 6 held-out bitrate sampling exception and the fact that
+> assistant turns never carry an outbox event; (6) per-user primitive friction consolidation is
+> wired (no longer "fully un-wired") — see the amended §6 bullet for what still isn't closed.
+
 ## 1. The HTTP surface (every route actually registered)
 
-The binary builds a `chi` router (`middleware.RequestID`, `middleware.Recoverer`), mounts a Huma v2
+`App.Run` builds a `chi` router (`middleware.RequestID`, `middleware.Recoverer`), mounts a Huma v2
 API on it via the `humachi` adapter (`huma.DefaultConfig("Aisotropy", "0.1.0")`), and registers the
 following — nothing else:
 
 | Route | Where registered | In OpenAPI contract? | What it does |
 |---|---|---|---|
-| `GET /healthz` | `main.go` (raw chi handler) | No | Liveness only. Writes `{"status":"ok"}` with HTTP 200. No dependency checks. |
-| `GET /costs` | `main.go` (raw chi handler) | No | JSON-encodes `costMeter.Snapshot()` — the per-tenant token/cost aggregate (see [`internal/costmeter`](../../internal/costmeter/costmeter.go)). Sorted by tenant id. |
+| `GET /healthz` | `app.go:390` (raw chi handler) | No | Liveness only. Writes `{"status":"ok"}` with HTTP 200. No dependency checks. |
+| `GET /health` | `app.go:507` (raw chi handler, [`internal/health`](../../internal/health/health.go)) | No | Readiness. Cheap, read-only, `_health`-tenant-scoped probes of the facts + semantic tiers (2s per-probe timeout). 200 `ok` / 503 `degraded`. Deliberately never probes the LLM (no tokens spent on polling). |
+| `GET /costs` | `app.go:459` (raw chi handler) | No | JSON-encodes `costMeter.Snapshot()` — the per-tenant token/cost aggregate (see [`internal/costmeter`](../../internal/costmeter/costmeter.go)). Sorted by tenant id. |
+| `GET /bitrate` | `app.go:491` (raw chi handler) — **only when `AISOTROPY_BITRATE_BIN` is set** | No | Bet 6 ops view: JSON-encodes `bitrateStore.AllSummaries()` — per-tenant bits-per-token memory-lift summaries. Absent (404) when the bitrate path is disabled. |
 | `GET /openapi.json`, `/openapi.yaml`, `GET /docs` | Huma `DefaultConfig` | n/a (they *are* the contract) | Auto-generated OpenAPI 3.1 schema + Stoplight docs UI. The Go struct is the single source of truth. |
 | `POST /v1/tenant/{tenant_id}/user/{user_id}/chat` | `api.Register` ([`chat.go`](../../internal/api/chat.go)) | Yes (`operationID: chat`) | Non-streaming, structured-output chat. Runs the reflection loop and **fails closed** with 502 on a persistent schema violation. |
 | `POST /v1/tenant/{tenant_id}/user/{user_id}/chat/stream` | `api.RegisterStream` ([`chat_stream.go`](../../internal/api/chat_stream.go)) | Yes (`operationID: chat-stream`) | SSE streaming chat, token by token. The full memory + outbox + cost path. Emits `token` / `done` / `error` events. |
 | `POST /v1/tenant/{tenant_id}/user/{user_id}/chat/agent` | `api.RegisterAgent` ([`chat_agent.go`](../../internal/api/chat_agent.go)) | Yes (`operationID: chat-agent`) | Bounded structured-output tool loop over scope-permitted tools. Returns the ordered list of tool decisions + results. |
+| `POST /v1/tenant/{tenant_id}/user/{user_id}/knowledge` | `api.RegisterKnowledge` ([`knowledge.go`](../../internal/api/knowledge.go)) | Yes (`operationID: ingest-knowledge`) | User-scoped knowledge ingestion (ADR-0018): chunks + embeds a document into `KindDocument` vectors, sharing the exact store/embedder pair chat RAG reads. |
+| `DELETE /v1/tenant/{tenant_id}/user/{user_id}/knowledge/{doc_id}` | `api.RegisterKnowledgeDelete` ([`knowledge.go`](../../internal/api/knowledge.go)) | Yes (`operationID: delete-knowledge`) | Removes a user-scoped document's chunks by id. |
+| `POST /v1/tenant/{tenant_id}/knowledge` | `api.RegisterTenantKnowledge` ([`knowledge.go`](../../internal/api/knowledge.go)) | Yes (`operationID: ingest-tenant-knowledge`) | Tenant-shared knowledge ingestion (ADR-0019): a corpus ingested once, retrievable by every user of that tenant via the merged RAG search. |
+| `DELETE /v1/tenant/{tenant_id}/knowledge/{doc_id}` | `api.RegisterTenantKnowledgeDelete` ([`knowledge.go`](../../internal/api/knowledge.go)) | Yes (`operationID: delete-tenant-knowledge`) | Removes a tenant-shared document's chunks by id. |
 
-`tenant_id` and `user_id` are **path params** on all three `/v1/...` routes, charset-constrained at
-the contract level (`pattern:"^[a-zA-Z0-9_-]{1,64}$"`, Huma rejects with 422 before the handler
-runs). `session_id` and `scopes` travel in the request body (`ChatRequest`): a session id carries no
-authorization meaning, and scopes are the JWT-derived permissions stand-in.
+`tenant_id` is a **path param** on every `/v1/...` route, and `user_id` on every user-scoped one
+(the two tenant-shared knowledge routes carry only `tenant_id`), charset-constrained at the
+contract level (`pattern:"^[a-zA-Z0-9_-]{1,64}$"`, Huma rejects with 422 before the handler
+runs). On the chat routes, `session_id` and `scopes` travel in the request body (`ChatRequest`): a
+session id carries no authorization meaning, and scopes are the JWT-derived permissions stand-in.
 
 ### Contract shapes
 
@@ -92,7 +112,13 @@ in exact execution order:
    ([`internal/memory/outbox.go`](../../internal/memory/outbox.go)). The event id is a stable
    sha256-derived `outboxRef(key, prompt)` so re-sending the identical prompt consolidates onto the
    same fact/vector. This happens *before* the LLM call, because the user's message already
-   happened.
+   happened. **Bet 6 exception:** when `AISOTROPY_BITRATE_BIN` is set, a deterministic ~5% of user
+   turns (`bitrate.ShouldSample` — FNV-1a hash of the outbox ref, 1 in 20) are reserved as held-out
+   bitrate samples instead ([`chat_stream.go:210-228`](../../internal/api/chat_stream.go)): the
+   user message still enters working memory via plain `wm.Append`, but **no outbox event is
+   enqueued** — the turn is `Reserve`d in the bitrate store and deliberately kept out of the
+   facts/semantic consolidation pipeline, so the later memory-lift measurement is not contaminated
+   by leakage.
 6. **Quota-pressure model degradation.** If a cheap client *and* a limiter are both configured,
    `limiter.Pressure(ctx, tenant)` peeks the bucket and `llm.DegradeAt(pressure, 0.95, primary,
    cheap)` decides whether to route this turn to the cheaper model instead of a hard rejection
@@ -106,18 +132,20 @@ in exact execution order:
    - `ctx.Done()` (client disconnect / expiry) → stop immediately; the partial reply is **not**
      persisted. Token spend is cut by the producer observing the same `ctx.Done()`.
    - `tok.Err != nil` → emit SSE `error`, stop; partial reply not persisted.
-   - `tok.Done` → **persist the assistant turn** via `wm.Append` (only a clean, complete stream is
-     stored), **record cost** via `meter.Record` from `tok.Usage` (real provider token counts, if
-     supplied), then emit `done`.
+   - `tok.Done` → **persist the assistant turn** via plain `wm.Append` (only a clean, complete
+     stream is stored; assistant turns carry **no outbox event** on either chat route — only user
+     turns are consolidated), **record cost** via `meter.Record` from `tok.Usage` (real provider
+     token counts, if supplied), then emit `done`.
    - otherwise → accumulate text and forward the `token` event.
 
 The non-streaming `chat` handler ([`chat.go`](../../internal/api/chat.go)) is similar but:
 - it uses the reflection loop `llm.ReflectAuto[chatStructuredReply]` (Gollem backend by default with
   a homegrown `Reflect[T]` fallback, ADR-0008) and **fails closed with HTTP 502** if no valid
   structured reply is produced after `chatMaxReflectionRetries = 3` attempts;
-- it persists via plain `wm.Append` (user turn before the call, assistant turn only on success) —
-  **it does not enqueue an outbox event**, so non-streaming turns never reach the facts/semantic
-  consolidation pipeline;
+- it persists the user turn via `AppendWithOutbox` before the call ([`chat.go:223`](../../internal/api/chat.go)),
+  so non-streaming turns feed the same consolidation pipeline, and the assistant turn via plain
+  `wm.Append` on success only (`chat.go:246`) — assistant turns never enqueue an outbox event. It
+  does **not** apply the Bet 6 held-out sampling branch (that lives on the streaming route only);
 - it uses the breaker-wrapped client **without** the OTel decorator (per ADR-0010 the reflection
   path is meant to use Gollem's own `ext/otel`, not yet adopted).
 
@@ -125,8 +153,9 @@ The non-streaming `chat` handler ([`chat.go`](../../internal/api/chat.go)) is si
 
 ### Outbox worker (at-least-once drain)
 
-At boot, `main.go` builds a `consolidation.Sink` ([`internal/consolidation/sink.go`](../../internal/consolidation/sink.go))
-over the facts store + `HeuristicExtractor` and the semantic store + `HashEmbedder`, then:
+At boot, `App.Run` builds a `consolidation.Sink` ([`app.go:315`](../../aisotropy/app.go),
+[`internal/consolidation/sink.go`](../../internal/consolidation/sink.go)) over the facts store +
+`HeuristicExtractor` and the semantic store + `HashEmbedder`, then:
 
 1. **Cold-boot reconciliation:** `wm.RecoverOutbox(ctx, sink)` drains every event orphaned by a
    previous shutdown *before* the server starts serving — same drain path, no special recovery mode.
@@ -145,8 +174,9 @@ deployments are allowed).
 
 ### Sleep-cycle worker (DataFusion, Rust subprocess)
 
-Only wired when `AISOTROPY_SLEEPCYCLE_BIN` is set. `main.go` builds a `sleepcycle.Coordinator`
-(facts store + `sleepcycle.Worker{BinaryPath, Tracer}`) and runs `RunScheduler(workerCtx, 1h, …)`.
+Only wired when `AISOTROPY_SLEEPCYCLE_BIN` is set. `App.Run` builds a `sleepcycle.Coordinator`
+([`app.go:349`](../../aisotropy/app.go), facts store + `factEngram` facade +
+`sleepcycle.Worker{BinaryPath, Tracer}`) and runs `RunScheduler(workerCtx, 1h, …)`.
 Each pass ([`internal/sleepcycle/coordinator.go`](../../internal/sleepcycle/coordinator.go)):
 `ExportAll` (a reviewed cross-tenant read) → write NDJSON to a scratch dir → invoke the Rust binary
 as a subprocess (`--input`/`--output`, ADR-0005) → parse the JSON `Summary` from stdout → `Delete`
@@ -171,13 +201,17 @@ gate lives in each key/statement, never in an intermediate layer.
 
 ## 5. Phase 7 granular control as built
 
-All five knobs are constructed in `main.go` and threaded through the handlers:
+All five knobs are constructed in `App.Run` ([`aisotropy/app.go`](../../aisotropy/app.go)) and
+threaded through the handlers:
 
-- **Rate limiter** — `wm.NewLimiter(AISOTROPY_RATE_PER_SEC=10, AISOTROPY_BURST=30)`: a per-tenant
-  token bucket persisted in the working-memory BadgerDB, serialized per tenant by an in-process
-  mutex (BadgerDB runs with `DetectConflicts=false`). Checked on `chat` and `chat/stream` **before**
-  the LLM call. (The `chat/agent` route does **not** rate-limit — no limiter is passed to
-  `RegisterAgent`.)
+- **Rate limiter** — `wm.NewLimiter(rate, burst)`: a per-tenant token bucket persisted in the
+  working-memory BadgerDB, serialized per tenant by an in-process mutex (BadgerDB runs with
+  `DetectConflicts=false`). The `rate`/`burst` inputs come from the `WithRateLimit` builder option
+  when set; otherwise `App.Run` reads `AISOTROPY_RATE_PER_SEC` / `AISOTROPY_BURST` via
+  `ratePerSecFromEnv` / `burstFromEnv`, each falling back to the built-in defaults (10 / 30) when
+  unset, unparsable, or non-positive ([`app.go:400-404`](../../aisotropy/app.go)). Checked on `chat`
+  and `chat/stream` **before** the LLM call. (The `chat/agent` route does **not** rate-limit — no
+  limiter is passed to `RegisterAgent`.)
 - **Circuit breaker** — `llm.WithCircuitBreaker(client, 5, 30s)`: 5 consecutive `StreamChat` start
   failures open the breaker; calls then fail fast with `ErrCircuitOpen` for a 30s cooldown, then a
   half-open trial. Wraps both the primary and the cheap client. Shared by streaming, non-streaming,
@@ -217,10 +251,19 @@ All five knobs are constructed in `main.go` and threaded through the handlers:
   (ADR-0007 Shared/Dedicated tenant tiering) exists but **nothing outside the package imports it** —
   the facts and semantic stores still use fixed resource names. It is a designed seam awaiting
   adoption.
-- **Primitive self-improvement is fully un-wired.** [`internal/primitives`](../../internal/primitives/primitives.go)
-  (friction-driven per-user rewriting) is referenced only by a comment in `main.go`; no friction
-  source feeds it and the sleep cycle never calls `primitives.Consolidate`. The sleep cycle only
-  does **facts dedup**, not primitive rewriting — contrary to the package's own docstring.
+- **Primitive self-improvement writes but is never read back (open loop).**
+  [`internal/primitives`](../../internal/primitives/primitives.go) (friction-driven per-user
+  rewriting) is now **wired on the write side**: `App.Run` builds a `primitives.Store` +
+  `FrictionDetector` ([`app.go:542-544`](../../aisotropy/app.go)) and passes the detector to
+  `RegisterAgent`, so a failed tool call on the `chat/agent` route records `SignalFailure` friction
+  against that user's primitive ([`chat_agent.go:62`](../../internal/api/chat_agent.go)). A separate
+  hourly `runPrimitiveConsolidation` goroutine ([`app.go:622`](../../aisotropy/app.go)) calls
+  `primitives.Consolidate` with the `HeuristicRewriter`, rewriting primitives whose accrued friction
+  crossed `primitiveFrictionThreshold` (3.0). The gap: **nothing reads the rewritten primitives
+  back** — no hydration path calls `Store.Get`/`ListForUser`, so an improved primitive never
+  re-enters a prompt. The self-improvement loop is closed on the write half only; the read-back that
+  would make it behavioral memory is not adopted. (This is distinct from the DataFusion sleep cycle
+  above, which does facts dedup, not primitive rewriting.)
 - **Model degradation needs `AISOTROPY_CHEAP_MODEL`.** Without it `CheapClientFromEnv()` returns
   `nil` and every near-quota tenant gets the primary model (the degradation branch is skipped).
 - **The agent loop has TWO dispatch paths (ADR-0012).** When the LLM client implements
@@ -248,21 +291,23 @@ All five knobs are constructed in `main.go` and threaded through the handlers:
 
 | Variable | Consumed in | Effect |
 |---|---|---|
-| `AISOTROPY_ADDR` | `main.go` | HTTP listen address (default `:8080`) |
-| `ANTHROPIC_API_KEY` | `llm.FromEnv` | Selects the real Anthropic client; unset → canned stub |
+| `AISOTROPY_ADDR` | `App.Run` (`aisotropy/app.go`) | HTTP listen address; the `WithAddr` option wins over it, and both fall back to `:8080` |
+| `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | `llm.RegistryFromEnv` (via `llm.FromEnv`) | Select the default LLM client by precedence `OPENROUTER_API_KEY > OPENAI_API_KEY > ANTHROPIC_API_KEY > stub` ([`internal/llm/registry.go`](../../internal/llm/registry.go)). Every provider with a key set is registered; the highest-precedence one becomes the default. With none set, the credential-less `stub` client is the default (`ChatOutput.stub = true`). |
 | `AISOTROPY_DATA_DIR` | working memory + facts | On-disk BadgerDB dir; also default `facts.db` location |
 | `AISOTROPY_FACTS_DB` | `facts.OpenFromEnv` | Explicit SQLite file path |
 | `RQLITE_URL` | `facts.OpenFromEnv` | Networked rqlite facts store |
 | `QDRANT_HOST` (+ `QDRANT_PORT`/`QDRANT_API_KEY`/`QDRANT_USE_TLS`/`QDRANT_COLLECTION`) | `semantic.OpenFromEnv` | Qdrant semantic store |
 | `AISOTROPY_CHEAP_MODEL` | `llm.CheapClientFromEnv` | Enables quota-pressure degradation |
-| `AISOTROPY_SLEEPCYCLE_BIN` | `main.go` | Enables the DataFusion sleep-cycle worker |
-| `AISOTROPY_RATE_PER_SEC` / `AISOTROPY_BURST` | `wm.NewLimiter` | Token-bucket rate + burst (defaults 10 / 30) |
+| `AISOTROPY_SLEEPCYCLE_BIN` | `App.Run` (`aisotropy/app.go`) | Enables the DataFusion sleep-cycle worker |
+| `AISOTROPY_BITRATE_BIN` | `App.Run` (`aisotropy/app.go`) | Enables the Bet 6 bitrate path: the durable bpt store, the held-out request-path sampler, the offline scorer, and the `GET /bitrate` route. Unset → the whole path is off and turn ingestion is byte-for-byte unchanged. |
+| `AISOTROPY_RATE_PER_SEC` / `AISOTROPY_BURST` | `ratePerSecFromEnv` / `burstFromEnv` (`aisotropy/app.go`) | Per-tenant token-bucket rate (requests/sec) + burst capacity, feeding `wm.NewLimiter`. Read **only when `WithRateLimit` was not used** — an explicit builder option wins. Defaults 10 / 30 when unset, unparsable, or non-positive. |
 | `AISOTROPY_REFLECTION_BACKEND` | `llm.ReflectionBackendFromEnv` | `own` forces the homegrown loop; anything else → Gollem |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `llm.NewTracerProvider` | Enables OTLP/HTTP trace export; unset → no-op tracer |
 
 ## References
 
-- Wiring: [`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go)
+- Wiring (composition root): [`aisotropy/app.go`](../../aisotropy/app.go) (`App.Run`);
+  [`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go) is the 51-line thin consumer of it
 - Handlers: [`internal/api/chat.go`](../../internal/api/chat.go),
   [`chat_stream.go`](../../internal/api/chat_stream.go),
   [`chat_agent.go`](../../internal/api/chat_agent.go)

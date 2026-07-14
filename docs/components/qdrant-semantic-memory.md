@@ -53,8 +53,10 @@ filter on every call. **There is no global state or tenant session cache** betwe
 filter is rebuilt per request from the `ctx`.
 
 Typical integration point in the [request lifecycle](../architecture/overview.md#lifecycle-of-a-request):
-parallel memory hydration (step 3) fires the Qdrant query as one more goroutine,
-alongside BadgerDB and rqlite, only when the prompt requires RAG over unstructured knowledge.
+memory hydration (step 3) fires the semantic query alongside BadgerDB and rqlite. *(Status note
+2026-07-14: the goroutine-parallel hydration drawn in the lifecycle diagram is aspirational — as
+built, hydration runs sequentially, and the semantic RAG step is wired on the streaming route;
+see [runtime-as-built](../architecture/runtime-as-built.md).)*
 
 ## Key configuration/patterns
 
@@ -63,7 +65,7 @@ alongside BadgerDB and rqlite, only when the prompt requires RAG over unstructur
 | **Rigid payload filtering** | The `tenant_id`/`user_id` filter is applied *during* the HNSW graph traversal (single-pass), not as a post-filter after fetching the k-nearest-neighbors. This gives multi-tenancy by design: it is structurally impossible for a scan to cross another tenant's data, and it's faster than filtering afterward because it doesn't waste ANN candidates on discardable results. |
 | **Per-collection vs. per-payload multi-tenancy** | Qdrant supports both separate collections per tenant and a shared collection with an indexed payload filter. Aisotropy uses the second model (shared collection + payload index on `tenant_id`/`user_id`) to avoid exploding the collection count with many small tenants *(to verify whether recent Qdrant versions' "tiered multitenancy" model is worthwhile for large vs. small tenants)*. |
 | **Quantization** | Binary/scalar quantization reduces RAM by up to ~90% (Qdrant's documentation reports even larger reductions in recent versions) in exchange for tunable precision — a configurable trade-off per collection. |
-| **Idempotency** | Point IDs are generated as **deterministic UUID v5** from `tenant_id + user_id + chat_message_id`. So if the worker consuming the [BadgerDB Outbox](../architecture/consistency.md) reprocesses an event (retries, at-least-once), the upsert is a true no-op and doesn't duplicate vectors. |
+| **Idempotency** | Point IDs are generated as **deterministic UUID v5** from `tenant_id`, `user_id`, `kind`, and `source_id` (NUL-joined; `semantic.PointID`, `internal/semantic/semantic.go`). The `kind` component was added per [ADR-0017](../decisions/0017-semantic-tier-multi-kind-memory.md): a Fact-kind vector and a Turn-kind (or Document-kind) vector derived from the same source never collide, so each can be addressed and deleted independently. If the worker consuming the [BadgerDB Outbox](../architecture/consistency.md) reprocesses an event (retries, at-least-once), the upsert is a true no-op and doesn't duplicate vectors. |
 | **Reranking** | The ANN result passes through a reranker before entering Gollem's context — provider decision (Cohere SaaS vs. local BGE) still open, see [ADRs](../decisions/index.md). |
 
 ## Gotchas and risks

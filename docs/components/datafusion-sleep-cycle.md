@@ -24,57 +24,80 @@ layer (see [decisions already made](../decisions/index.md#decisions-already-made
 ## Responsibilities
 
 Per the flow described in [tiered memory](../architecture/memory-tiers.md#4-batch-consolidation--the-sleep-cycle)
-and step 7 of the [request lifecycle](../architecture/overview.md#lifecycle-of-a-request):
+and step 7 of the [request lifecycle](../architecture/overview.md#lifecycle-of-a-request).
+
+> **Status note (2026-07-14):** of the responsibilities below, only **deduplication is
+> implemented**. The worker at `crates/sleep-cycle/src/main.rs` runs a single
+> `ROW_NUMBER()` dedup partitioned by `(tenant_id, user_id, lower(content))` (keeping the
+> highest-importance, most-recently-updated row), and the Go coordinator
+> (`internal/sleepcycle/coordinator.go`) deletes the dropped ids from the live facts store
+> (through the engram facade, so the Fact-kind vector goes too) and prunes Turn-kind vectors.
+> Everything else in this list is **aspirational**.
 
 - **Deduplicate** repeated records (the user said the same thing 3 times → 1 clean record).
-- **Update contradictions** — reconcile stale facts with new ones (complements, at the
-  batch level, the *supersede* mechanism that already runs on the hot path in
-  [facts memory](rqlite-facts-memory.md)).
+  **Implemented** — the exact scope of the current worker.
+- **Update contradictions** — reconcile stale facts with new ones. **Aspirational.** The seam
+  exists: the facts store implements `Supersede` (`internal/facts/sqlite.go` /
+  `internal/facts/rqlite.go`, exposed via the engram facade), which archives the old fact and
+  saves its replacement atomically — but **nothing calls it yet**, neither on the hot path nor
+  from this batch worker.
 - **Scrub noise** — discard trivial chatter with no cognitive value ("hi," "thanks").
+  **Aspirational** — not part of the worker's SQL today.
 - **Detect patterns/friction** — input for
   [primitive self-improvement](../architecture/memory-tiers.md#primitive-self-improvement-behavioral-memory):
   measures reflection loop retries and explicit user corrections so an optimizer agent can
-  adjust tool metadata.
+  adjust tool metadata. **Aspirational.**
 - Reinject refined conclusions into [Qdrant](qdrant-semantic-memory.md) (updated
-  vectors) and [rqlite](rqlite-facts-memory.md) (consolidated facts).
+  vectors) and [rqlite](rqlite-facts-memory.md) (consolidated facts). **Partially implemented:**
+  today the "reinjection" is cleanup — deleting the dropped duplicates (fact rows + their
+  Fact-kind vectors) and pruning Turn-kind vectors; no refined conclusions are written back yet.
 
-## Integration surface: FFI boundary with Go
+## Integration surface: the Go↔Rust boundary
 
 Unlike Qdrant (a network service via gRPC), DataFusion is a **library embedded in Rust**,
 meant to run in-process within whoever invokes it — it doesn't expose its own service. This
-makes it ideal for short batch compute spikes (spins up, processes, shuts down), but it raises a
+makes it ideal for short batch compute spikes (spins up, processes, shuts down), but it raised a
 real architectural question: **how does a worker written in Go cross into it?**
 
-There are no official Go bindings for DataFusion (there are Python and Java bindings via FFI). The
-options under evaluation, still unresolved:
+That question is **resolved and implemented**
+([ADR-0005](../decisions/0005-datafusion-go-rust-boundary.md), accepted 2026-07-08): the boundary
+is a **separate Rust worker invoked as a batch subprocess** — not CGO/FFI, not WASM. As built
+*(status note 2026-07-14)*:
 
-| Option | Description | Tension |
-|---|---|---|
-| **Direct CGO / FFI** | The Go worker links against a C library compiled from the Rust crate (DataFusion exposes a C-compatible surface for cases like this) and crosses the boundary within the same process. | Lower startup latency, but CGO complicates cross-compilation, reproducible builds, and the "distroless" binary that is currently a stack goal. |
-| **Separate Rust worker** | A dedicated Rust binary/process that the Go orchestrator launches or invokes (local RPC, exec, or a work queue) only during the sleep cycle. | Keeps language separation clean and doesn't contaminate the Go binary, but adds a second binary to operate/deploy — a direct tension with the [golden rule of the stack](../architecture/overview.md#the-stack-closed-100-mitapache-20) of minimizing separate pieces. |
-| **WASM** | Compile DataFusion (or the needed portion) to WASM and invoke it from Go with an embedded WASM runtime. | Sandboxing and portability are attractive, but performance and toolchain maturity for heavy analytical workloads are uncertain *(to verify)*. |
+- `crates/sleep-cycle` is the Rust binary: `--input <facts.ndjson> --output <deduped.parquet>`,
+  a one-line JSON summary (`rows_in`, `rows_out`, `dropped`, `dropped_ids`) on stdout, and a
+  non-zero exit code (stderr carries the reason) on any failure, including a panic — a Rust
+  crash never becomes an in-process crash of the Go core.
+- `internal/sleepcycle` is the Go side: the `Worker` spawns the subprocess and parses the
+  summary; the `Coordinator` exports the live facts to NDJSON, runs the worker, then deletes the
+  `dropped_ids` from the live store and prunes Turn-kind vectors.
+- The path is **dormant by default**: it runs only when the Rust binary is built and
+  `AISOTROPY_SLEEPCYCLE_BIN` points at it (`aisotropy/app.go`).
 
-This tension is exactly the subject of **[ADR-0005](../decisions/index.md)**, currently **open**:
-"Rust↔Go boundary for DataFusion (FFI vs. worker vs. WASM)." This document doesn't resolve it —
-it only sizes the problem. Any implementation decision must wait for the ADR to close.
+The rejected alternatives (CGO/FFI, WASM) and the full trade-off table live in
+[ADR-0005](../decisions/0005-datafusion-go-rust-boundary.md).
 
 ## Configuration/key patterns
 
 | Pattern | Detail |
 |---|---|
 | **Cold activation, not 24/7** | Workers spin up DataFusion during idle windows (night, or low tenant load) — there's no resident DataFusion process waiting for hot queries. |
-| **Read sources** | Reads [rqlite](rqlite-facts-memory.md)/LiteFS's `.db` files directly, or compacted Parquet if a prior columnar export step exists *(exact SQLite→Parquet export pipeline to verify, if applicable)*. |
+| **Read sources** | As built *(2026-07-14)*: the Go coordinator exports the current facts to a scratch **NDJSON** file (`internal/sleepcycle/record.go`), which the worker registers as a DataFusion table — it does not read `.db` files directly. A direct-`.db` or compacted-Parquet input remains a possible evolution. |
 | **Embedded columnar SQL** | Used as a SQL query engine over in-memory Arrow — not as a database service; the lifecycle is "instantiate → execute plan → discard." |
-| **Output** | Conclusions (deduplication, resolved contradictions, friction patterns) are written back to rqlite and Qdrant, never served directly to a user request. |
+| **Output** | As built *(2026-07-14)*: the worker writes the deduplicated set as **Parquet** and emits the dropped ids in its stdout summary; the Go coordinator applies the cleanup (deleting those facts and their Fact-kind vectors, pruning Turn-kind vectors). Writing back resolved contradictions or friction patterns is aspirational. Nothing here is ever served directly to a user request. |
 
 ## Gotchas and risks
 
 - **The stack's central architectural friction point.** It's the only Rust component that needs
   to cross a process/language boundary with Go non-trivially (Qdrant solves this with
-  standard gRPC; DataFusion doesn't have that luxury, being an embedded library rather than a service).
-- **Operational negligence risk.** If ADR-0005 doesn't close and the team picks the "easiest to
-  get started" option without evaluating the maintenance trade-off, it could end up with fragile
-  CGO in production or a poorly integrated second Rust binary in the Go binary's deployment pipeline.
+  standard gRPC; DataFusion doesn't have that luxury, being an embedded library rather than a
+  service). ADR-0005 resolved this with the batch-subprocess boundary, but the Go↔Rust I/O
+  contract (paths, NDJSON/Parquet schema, exit codes) must stay explicit and tested as the
+  worker's scope grows.
+- **Scope gap vs. the pitch.** The doc-level pitch is "dedup + contradictions + noise +
+  patterns"; the shipped worker does dedup only *(2026-07-14)*. Until the remaining
+  responsibilities land, the sleep cycle removes exact-duplicate facts but does not reconcile
+  contradictory ones (the `Supersede` seam is unwired) or filter noise.
 - **Staleness window.** While the sleep cycle hasn't run, Qdrant/rqlite serve data that is
   potentially duplicated or noisy — this is honest eventual consistency by design (see
   [principles](../vision/principles.md#derived-operating-principles) and
@@ -87,8 +110,9 @@ it only sizes the problem. Any implementation decision must wait for the ADR to 
 
 ## Related decisions
 
-- [ADR-0005](../decisions/index.md) — Rust↔Go boundary for DataFusion (FFI vs. worker vs. WASM):
-  **open**, blocks the actual implementation of the sleep cycle.
+- [ADR-0005](../decisions/0005-datafusion-go-rust-boundary.md) — Rust↔Go boundary for DataFusion
+  (FFI vs. worker vs. WASM): **accepted (2026-07-08) and implemented** as the batch-subprocess
+  worker (`crates/sleep-cycle` + `internal/sleepcycle`).
 - Decision already made (retroactively) — discard GlareDB due to abandonment at the end of 2025 and adopt
   Apache DataFusion, its core engine, directly (see
   [decisions already made](../decisions/index.md#decisions-already-made-in-the-source-conversations)).

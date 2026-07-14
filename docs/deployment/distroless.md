@@ -44,13 +44,16 @@ dev machine, darwin/arm64), not fabricated. Commands and output below.
 $ CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/aisotropyd-darwin ./cmd/aisotropyd
 $ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/aisotropyd-linux ./cmd/aisotropyd
 $ ls -lh /tmp/aisotropyd-darwin /tmp/aisotropyd-linux
--rwxr-xr-x  30M  /tmp/aisotropyd-darwin   (darwin/arm64, native toolchain)
--rwxr-xr-x  31M  /tmp/aisotropyd-linux    (linux/amd64, matches the container target)
+-rwxr-xr-x  32M  /tmp/aisotropyd-darwin   (darwin/arm64, native toolchain)
+-rwxr-xr-x  33M  /tmp/aisotropyd-linux    (linux/amd64, matches the container target)
 ```
 
-Exact byte counts: darwin/arm64 = 32,653,474 bytes (30.49 MiB); linux/amd64
-(the OS/arch that actually ships in the distroless image) = 31,969,442 bytes
-(**31.14 MiB**).
+Exact byte counts (re-measured 2026-07-14 at HEAD): darwin/arm64 =
+33,678,434 bytes (32.12 MiB); linux/amd64 (the OS/arch that actually ships
+in the distroless image) = 34,468,002 bytes (**32.87 MiB**). The original
+2026-07-09 measurement was 31,969,442 bytes (31.14 MiB); the ~2.5 MB growth
+from features landed since then still leaves the binary well under the
+50 MB target.
 
 Static-ness confirmed on the linux/amd64 build (the one relevant to the
 container image):
@@ -64,7 +67,7 @@ $ go version -m /tmp/aisotropyd-linux | grep -i cgo
 	build	CGO_ENABLED=0
 ```
 
-**Result: 31.14 MiB vs 50 MB target — PASS** (37% headroom before the
+**Result: 32.87 MiB vs 50 MB target — PASS (2026-07-14)** (~31% headroom before the
 limit). The distroless final image adds only the `static-debian12:nonroot`
 base layer (CA certs, `/etc/passwd`, `nonroot` user — a few hundred KB), so
 the packaged image size is expected to stay close to the raw binary size;
@@ -121,14 +124,14 @@ container because the Docker daemon was unavailable in this sandbox.
 
 | Target | Threshold | Measured | Status |
 |---|---|---|---|
-| Binary size (linux/amd64, static) | < 50 MB | 31.14 MiB (31,969,442 bytes) | PASS |
+| Binary size (linux/amd64, static) | < 50 MB | 32.87 MiB (34,468,002 bytes, re-measured 2026-07-14) | PASS |
 | Startup latency | < 1 s | ~0.085 s | PASS |
 | Idle RAM | < 50 MB | ~30.3 MB (process RSS) | PASS |
 
 All three DoD item 4 targets are met with the current dependency set. The
 qdrant/grpc + sqlite + badger stack does not push the binary over budget —
-static linking with `-ldflags="-s -w"` keeps it at ~31 MB, well under the
-50 MB ceiling.
+static linking with `-ldflags="-s -w"` keeps it at ~33 MB (2026-07-14),
+well under the 50 MB ceiling.
 
 ## Known gap / honesty note
 

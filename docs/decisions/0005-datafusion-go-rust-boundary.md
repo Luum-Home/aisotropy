@@ -13,6 +13,16 @@ timestamp: 2026-07-08T00:00:00Z
 **✅ Accepted (ratified by the user, 2026-07-08).** The boundary is a **separate Rust worker**
 (batch subprocess with Parquet/Arrow IPC as the exchange format).
 
+> **Implementation note (2026-07-14):** sub-variant **A1 is implemented**. The Rust worker lives
+> at `crates/sleep-cycle` (NDJSON in via `--input`, Parquet out via `--output`, one-line JSON
+> summary on stdout, non-zero exit on failure — a panic surfaces to Go as an exit code); the Go
+> side is `internal/sleepcycle` (subprocess invocation with retry/backoff in `worker.go`, the
+> export→run→cleanup loop in `coordinator.go`). The path is dormant unless
+> `AISOTROPY_SLEEPCYCLE_BIN` points at the built binary. Scope so far is **deduplication only**
+> — the contradiction-reconciliation, noise-scrubbing, and pattern-detection parts of the sleep
+> cycle described in the Context below remain aspirational (see
+> [the component doc](../components/datafusion-sleep-cycle.md)).
+
 ## Context
 
 Aisotropy's core is a native **Go** binary (Huma + Gollem + BadgerDB + rqlite) that compiles

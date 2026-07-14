@@ -15,23 +15,38 @@ the direct application of the [zero magic](../vision/thesis.md#the-stance-zero-m
 
 ## The mechanism: ctx as a process descriptor
 
-[Huma](../components/huma-api.md) is the **only** layer authorized to *write* identity into the
-`ctx`: it decodes the request's JWT and extracts `tenant_id`, `user_id`, and `scopes`, injecting
-them into the `context.Context` that Go natively propagates through the entire call chain —
-handlers, memory-hydration goroutines, [Gollem](../components/gollem-orchestrator.md), tools. No
-downstream component parses auth headers on its own or re-resolves identity: everyone *reads*
-from the same `ctx`, never reconstructs it.
+The [Huma](../components/huma-api.md) handler boundary is the **only** layer authorized to
+*write* identity into the `ctx`. As built *(status note 2026-07-14)*, identity arrives
+**unauthenticated**: `tenant_id` and `user_id` are validated **path parameters** (Huma rejects
+anything outside `^[a-zA-Z0-9_-]{1,64}$` with a 422 before the handler runs), and `scopes` is a
+**client-asserted body field** (`ChatRequest.Scopes` — see `internal/api/chat.go`, whose own
+comments state this plainly). There is no JWT decoding or auth middleware in the runtime today.
+This is a **deliberate integration point**, not an oversight: aisotropy is an importable runtime
+(see [adoption surface](adoption-surface.md)), and adopters are expected to put authentication in
+front of it — a reverse proxy, or middleware at the `aisotropy.App` builder seam — that derives
+`tenant_id`/`user_id`/`scopes` from a verified credential such as a JWT. The path params are the
+walking-skeleton stand-in for that layer.
+
+What **is** real and enforced today is the propagation invariant: identity is injected into the
+`context.Context` exactly once at the handler boundary (`withIdentity`/`chatIdentity`,
+`internal/api/chat.go`) and Go natively propagates it through the entire call chain — handlers,
+memory hydration, [Gollem](../components/gollem-orchestrator.md), tools. No downstream component
+parses request data on its own or re-resolves identity: everyone *reads* from the same `ctx`,
+never reconstructs it.
 
 ```
-JWT → [Huma: security handler] → ctx{tenant_id, user_id, scopes}
+path {tenant_id, user_id} + body {scopes}       (production: an authn layer in
+      │                                          front derives these from a
+      ▼                                          verified credential, e.g. a JWT)
+[Huma: contract validation + handler boundary] → ctx{tenant_id, user_id}
                                          │
                     native Go propagation (no global state)
                                          │
         ┌────────────────┬──────────────┼──────────────┬────────────────┐
         ▼                ▼              ▼              ▼                ▼
     BadgerDB          rqlite         Qdrant          Gollem          Tools/primitives
-  (chat:tenant:      (WHERE          (payload        (surgical        (injection
-   user:session)      tenant_id=?     filter in        context)         conditioned
+  (tenant:…:user:    (WHERE          (payload        (surgical        (injection
+   …:session:…)       tenant_id=?     filter in        context)         conditioned
                        AND user_id=?)  HNSW)                            by scopes)
 ```
 
@@ -57,8 +72,9 @@ tenant_id:product_id:session_id
 ```
 
 (in BadgerDB, see [working memory](../components/badgerdb-working-memory.md#data-model--keys),
-the concrete form is `tenant:user:session`; `product_id` applies when the same tenant operates
-multiple products/modules on the same framework). The composite key serves a dual purpose: it
+the concrete as-built form is `tenant:{tenant_id}:user:{user_id}:session:{session_id}` per
+`internal/memory/key.go`; `product_id` applies when the same tenant operates multiple
+products/modules on the same framework). The composite key serves a dual purpose: it
 isolates *and* documents the scope of each piece of data in the identifier itself, without relying
 on whoever reads the data to remember to apply the correct filter.
 
@@ -72,7 +88,7 @@ its own most efficient mechanism:
 |---|---|---|
 | [Qdrant](../components/qdrant-semantic-memory.md) (semantic) | **Rigid payload filter during the HNSW scan** | The `tenant_id`/`user_id` filter is applied *during* the graph traversal, not as a post-filter over already-fetched k-nearest-neighbors. It is structurally impossible for a scan to cross into another tenant's data, and it's faster than filtering afterward. |
 | [rqlite](../components/rqlite-facts-memory.md) (facts) | **Mandatory `WHERE tenant_id=? AND user_id=?`, enforced by construction** | Every FTS5 read or write query carries the explicit filter in the statement — never trusting an implicit filter from an intermediate layer, and never left to a coding discipline someone has to remember: [`internal/tenancy`](../decisions/0011-tenant-scoped-statement-builder.md) makes an unscoped statement impossible to construct (see [ADR-0011](../decisions/0011-tenant-scoped-statement-builder.md)). Applies the same way under the single-filtered-DB strategy; under DB-per-tenant the filter becomes implicit via the connection string, see below. |
-| [BadgerDB](../components/badgerdb-working-memory.md) (working) | **Composite keys `tenant:user:session`** | Isolation lives in the key itself, not in a query filter — BadgerDB has no query language, so the key *is* the scoping mechanism. It also leverages the LSM-tree's lexicographic ordering to iterate by prefix without scanning the rest of the keyspace. |
+| [BadgerDB](../components/badgerdb-working-memory.md) (working) | **Composite keys `tenant:{t}:user:{u}:session:{s}`** | Isolation lives in the key itself, not in a query filter — BadgerDB has no query language, so the key *is* the scoping mechanism. Reserved characters (`:`, NUL, newline) are rejected in every component so a crafted id can never forge a cross-tenant prefix (`internal/memory/key.go`). It also leverages the LSM-tree's lexicographic ordering to iterate by prefix without scanning the rest of the keyspace. |
 
 ## What this document does NOT decide: the physical topology
 
@@ -107,8 +123,11 @@ applied within a shared `WHERE` or is implicit in which physical database it con
 - **Free observability**: since `tenant_id`/`user_id` travel in the `ctx`, every OTel span can be
   attributed to a tenant with no additional instrumentation — see [observability](observability.md).
 
-*(Patterns described at a conceptual level; exact Huma security-handler function names and the
-exact shape of the Qdrant filter — to be verified against the real implementation before coding.)*
+*(Status note 2026-07-14: the ctx-injection point and the per-layer keys/filters above are
+verified against the real implementation — `internal/api/chat.go`, `internal/memory/key.go`,
+`internal/tenancy`, `internal/semantic`. The authentication layer that will derive identity from
+a verified credential — e.g. a JWT via a Huma security handler or front proxy — is not built;
+it is the adopter-facing integration point described above.)*
 
 ## References
 

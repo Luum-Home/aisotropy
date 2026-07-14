@@ -37,8 +37,14 @@ go run ./cmd/x <task>          # dev console / CI dispatcher: build|fmt|vet|lint
    you see every token. Behavior lives in **Go** (typed), never in a declarative file. Config (YAML) is
    **wiring/deployment values only** (`aisotropy/config.go`), never behavior.
 2. **Tenant isolation by construction (ADR-0011).** `tenant_id`/`user_id` travel only via
-   `context.Context`, injected once at the Huma boundary. A memory `Scope` is obtained **only** through
-   `…FromContext(ctx)` — never constructed from raw strings. A composed node never mints a `Scope`.
+   `context.Context`, injected once at the Huma boundary from the **validated** path params
+   (`in.TenantID`/`in.UserID`). A memory `Scope` is minted exactly once per request at that boundary
+   through a **blessed constructor that re-validates identity through `internal/tenancy`** — either
+   `tenancy.FromContext(ctx)` (the sole `tenancy.Scope` constructor) or the per-tier
+   `facts.NewScope`/`semantic.NewScope`, which wrap the same `tenancy.WithTenant`/`WithUser` +
+   `FromContext` validation before returning their VO. Composed nodes and internal packages receive
+   identity via `context.Context` or an injected `Scope`; they never mint one from arbitrary or
+   client-supplied strings.
 3. **Sovereignty / license (ADR-0001).** 100% MIT/Apache-2.0 — no GPL/AGPL/BSL/source-available deps,
    ever, without an ADR. Secrets via env vars only; never committed, never logged.
 4. **Fail-closed structured output & SSE ctx-cancellation** on the LLM path (constitutional gates).

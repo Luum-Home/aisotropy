@@ -92,6 +92,31 @@ func main() {
 `app.Run` boots the full runtime and blocks until `SIGINT`/`SIGTERM`, draining in-flight requests
 and flushing memory on shutdown.
 
+### Typed variant (2026-07-14)
+
+`WithTool` + `WithToolExecutor` (string-map args) still works, but the surface now also ships
+`WithTypedTool[T]` (ADR-0016 lever #1): your tool's arguments become a Go struct whose
+`json`/`jsonschema` tags drive both the schema the model is shown and the decode/validation of what
+it returns — no executor switch, no string-map parsing:
+
+```go
+type getWeatherArgs struct {
+	City  string `json:"city" jsonschema:"description=the city to look up"`
+	Units string `json:"units" jsonschema:"enum=c,enum=f,description=temperature units"`
+}
+
+func getWeather(ctx context.Context, args getWeatherArgs) (string, error) { /* ... */ }
+
+app := aisotropy.New(
+	aisotropy.WithTypedTool("get_weather", "get the current weather for a city", "read:weather", getWeather),
+	// ...
+)
+```
+
+The repo's [`examples/weatherbot`](../../examples/weatherbot) uses this typed form. Tools whose
+behavior lives in an external process can instead be wired with
+`WithMCPServer(requiredScope, command, args...)` (ADR-0016 lever #2) — no Go handler at all.
+
 ## 4. Talk to your bot
 
 The HTTP contract is the runtime's, unchanged. Persona is selected by `product_id`:
@@ -129,16 +154,29 @@ Defaults are env-driven (same variables as the stock `aisotropyd` binary — `AI
 | `WithLLM(client)` | Inject an `aisotropy.LLMClient` instead of the env-selected one |
 | `WithRateLimit(perSec, burst)` | Per-tenant token bucket |
 | `WithCostPricing(inPer1M, outPer1M)` | Cost-meter pricing |
+| `WithEmbedder(e)` | Swap the semantic-tier embedder (default: deterministic hash placeholder; ADR-0018) |
+| `WithChunkSize(size, overlap)` | Tune knowledge-ingestion chunking, in runes (default 512/64) |
 
-Memory backends (facts/semantic) are selected by environment only — there is no in-process
-backend-injection option in the public surface (exposing `facts.Store` would leak the
+Deployment *values* (addr, rate limit, pricing, literal personas, MCP server references — never Go
+behavior) can also come from a YAML file via `OptionsFromConfigFile(path)` /
+`OptionsFromConfig(cfg)` (ADR-0016 lever #5); see
+[`examples/aisotropy.example.yaml`](../../examples/aisotropy.example.yaml) and
+[`examples/helpdesk`](../../examples/helpdesk), which composes a config file with Go-side
+`WithTypedTool` handlers.
+
+Memory backends (facts/semantic stores) are selected by environment only — there is no in-process
+store-injection option in the public surface (exposing `facts.Store` would leak the
 cross-tenant `ExportAll`; see [ADR-0013](../decisions/0013-public-extension-surface-facade-vs-promote.md)).
+`WithEmbedder` swaps the embedding function used by the semantic tier, not the store itself.
 
 ## A working example lives in the repo
 
 See [`examples/weatherbot`](../../examples/weatherbot) — a nested module (its own `go.mod`) built
-**only** against the public surface. Because it's a separate module, Go itself forbids it from
-importing `internal/…`, which is exactly the guarantee this guide relies on.
+**only** against the public surface, registering its tool via `WithTypedTool` (the typed variant
+above). Because it's a separate module, Go itself forbids it from importing `internal/…`, which is
+exactly the guarantee this guide relies on. A second worked example,
+[`examples/helpdesk`](../../examples/helpdesk), shows the config-file wiring path
+(`OptionsFromConfigFile` + typed tools).
 
 ## References
 

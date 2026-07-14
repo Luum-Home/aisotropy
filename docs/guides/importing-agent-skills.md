@@ -98,7 +98,7 @@ The importer never emits hidden injection. Concretely it refuses / holds when:
 ```
 skill/ (SKILL.md + scripts/ + references/)
    │
-   ▼  skill-import (reads, never writes; never injects)
+   ▼  skill-import (preview mode writes nothing; -out writes a NEW module; never injects)
    ├─ frontmatter name/description  ─────────────►  registration metadata
    ├─ markdown instructions         ─────────────►  WithPersona(product_id, {BasePrompt: <literal>})
    ├─ scripts/ (schema declared)    ─────────────►  WithTypedTool[T](name, desc, scope, handler)
@@ -110,10 +110,15 @@ skill/ (SKILL.md + scripts/ + references/)
    ▼  aisotropy.New(opts...) + IngestTenantKnowledge(...)   ← explicit, hand-owned wiring
 ```
 
-The importer is a code-generator **preview**, deliberately not an auto-applier.
-The operator reads the generated persona string and the scope gates, writes the
-tool handler that bridges to the script, and stands the bot up. That review step
-is the anti-magic tax ADR-0022 accepts.
+The importer has two modes (2026-07-14): a **preview** that prints the report
+and illustrative wiring without writing anything, and a `-out <dir>` **generate**
+mode that writes a compilable consumer Go module (its own `go.mod`, the literal
+persona, scope-gated typed tools with subprocess exec bridges for
+schema-declared scripts, `WithMCPServer` wiring for unschematized ones, and a
+knowledge-loading helper for `references/`). Neither mode is an auto-applier:
+the operator reads the generated persona string, the scope gates, and the exec
+bridges before standing the bot up. That review step is the anti-magic tax
+ADR-0022 accepts.
 
 ## Worked example
 
@@ -135,7 +140,7 @@ The resolved wiring it emits (against the public
 // fill_pdf_form: typed args derived from the skill's declared script inputs.
 type FillPdfFormArgs struct {
     SourcePath  string `json:"source_path"  jsonschema:"description=Path to the blank fillable PDF.,required"`
-    AnswersJSON string `json:"answers_json" jsonschema:"description=JSON object of AcroForm field name -> value.,required"`
+    AnswersJson string `json:"answers_json" jsonschema:"description=JSON object of AcroForm field name -> value.,required"`
     Flatten     bool   `json:"flatten"      jsonschema:"description=Flatten the form so fields are no longer editable."`
 }
 
@@ -150,7 +155,7 @@ You fill fillable (AcroForm) PDF forms. Follow this procedure exactly.
         "fill_pdf_form",
         "Fill AcroForm fields in a fillable PDF ...", // from SKILL.md description
         "write:pdf",                                   // Tool.RequiredScope
-        fillPdfFormArgsHandler,                        // operator-written bridge to the script
+        fillPdfFormHandler,                            // bridge to the script (generated in -out mode)
     ),
 )
 
@@ -160,10 +165,20 @@ You fill fillable (AcroForm) PDF forms. Follow this procedure exactly.
 //     ID: "pdf-form-filler/acroform-fields", Content: string(content), Source: "references/acroform-fields.md"})
 ```
 
-`fillPdfFormArgsHandler` is the operator-written bridge that shells out to
-`scripts/fill_form.py` with the decoded, schema-validated `FillPdfFormArgs`. The
-importer does **not** generate execution glue: running third-party code is an
-explicit, reviewed step (see Trust & security below).
+`fillPdfFormHandler` is the bridge that shells out to `scripts/fill_form.py`
+with the decoded, schema-validated `FillPdfFormArgs` (convention: args are
+marshaled to JSON on the script's stdin; stdout is the tool result). In preview
+mode the importer only *prints* this wiring; in `-out` generate mode it writes
+the bridge into the generated module, alongside a self-contained copy of the
+script:
+
+```
+go run ./cmd/skill-import -out /tmp/pdfbot examples/skills/pdf-form-filler
+```
+
+The generated module builds (`go build ./...`), but running third-party code
+remains an explicit, reviewed step (see Trust & security below) — the importer
+aborts generation rather than emit an ungated script tool.
 
 If the same skill shipped `fill_form.py` **without** a declared arg schema, it
 would instead map to `WithMCPServer("write:pdf", "python3", ".../fill_form.py")`
@@ -197,12 +212,15 @@ any dependency apply:
 
 ## Status
 
-Per [ADR-0022](../decisions/0022-agent-config-standards-import-surfaces.md), the
+(2026-07-14) Per
+[ADR-0022](../decisions/0022-agent-config-standards-import-surfaces.md), the
 **boundary and mapping are decided**, and `cmd/skill-import` is a working PoC
-that prints the wiring. It is a *preview generator*, not yet an
-`aisotropy import-skill` that writes a wired module — that, and the producer
-direction (exporting Aisotropy's own tools *as* Skills), remain the ADR's open
-questions.
+with two modes: a preview that prints the wiring, and a `-out <dir>` generate
+mode that writes a compilable, self-contained consumer module (persona, typed
+tools with exec bridges, MCP wiring, embedded knowledge). It is still a
+standalone PoC command, not yet a packaged `aisotropy import-skill`
+subcommand — that packaging, and the producer direction (exporting Aisotropy's
+own tools *as* Skills), remain the ADR's open questions.
 
 ## References
 

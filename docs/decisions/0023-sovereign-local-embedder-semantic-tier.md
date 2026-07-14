@@ -10,7 +10,13 @@ timestamp: 2026-07-13T00:00:00Z
 
 ## Status
 
-🟡 **Proposed (2026-07-13).** First brick of [Bet 5 — Sovereign NN core](../research/bet-05-sovereign-nn-core.md),
+✅ **Accepted — implemented and wired (status updated 2026-07-14).** Proposed 2026-07-13; the first
+brick (`crates/embed` + `semantic.LocalEmbedder`) and the `EmbedderFromEnv` wiring both landed
+2026-07-13 alongside the warm-daemon path (`DaemonEmbedder`, selected by default under
+`AISOTROPY_EMBED_BIN` + `AISOTROPY_EMBED_MODEL_DIR`; verified live via
+`TestDaemonEmbedderLiveWiring`, `//go:build manual` — see "The Go seam" below). Still dormant by
+default: without those env vars the runtime falls back to the API/hash embedders.
+First brick of [Bet 5 — Sovereign NN core](../research/bet-05-sovereign-nn-core.md),
 which [ADR-0021](0021-compression-signal-small-lm-surprisal-ceiling.md) promoted to the next-invest
 substrate: the compression round measured that small-LM subword surprisal is a *lexical*, not
 *semantic*, signal, so the viable path for the semantic bets (1/4) runs through **embedding-density /

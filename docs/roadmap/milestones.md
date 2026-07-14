@@ -13,8 +13,8 @@ module. The rule: a phase is *done* when its criterion can be **verified with a 
 test, curl, benchmark) — never "by vibes" (per the [observability](../architecture/observability.md)
 discipline and the [OKRs](okrs.md)). Each phase leaves the system **running**, just more capable.
 
-> **Global status (2026-07-10):** Phases 0–7 implemented and Phase 8 (public adoption surface)
-> shipped; Phase 9 (composition surface) partially delivered (ADR-0000..0020 accepted). The
+> **Global status (2026-07-14):** Phases 0–7 implemented and Phase 8 (public adoption surface)
+> shipped; Phase 9 (composition surface) partially delivered (ADR-0000..0023 accepted). The
 > per-phase checkboxes below are the intended-scope definition; for what is actually **running vs
 > dormant vs aspirational** the authoritative node is the
 > [reality ledger](../architecture/reality-ledger.md). Phases are numbered the same as in the
@@ -112,7 +112,7 @@ exponential backoff; cold-boot reconciliation.
 noise cleanup; primitive self-improvement.
 **Definition of done:**
 - [x] DataFusion runs in the sleep cycle (Rust subprocess, ADR-0005), produces dedup + cleanup, and the dropped rows are deleted from the live store.
-- [ ] Friction detection triggers a rewrite of a primitive per `user_id`. *(Deferred — needs a per-user primitives store that does not exist yet.)*
+- [x] Friction detection triggers a rewrite of a primitive per `user_id` (the per-user store is `internal/primitives`; a failing agent tool records friction and `primitives.Consolidate` rewrites over-threshold primitives on the sleep-cycle interval — wired in `aisotropy/app.go`). *(Status updated 2026-07-14.)*
 - [x] An `agent.optimization.*` OTel event per mutation (auditable).
 
 **Touches:** DataFusion, rqlite, Qdrant. **Covers:** [OKR O6](okrs.md#o6--offline-self-improvement-phase-6).

@@ -36,12 +36,31 @@ Compression margin over gzip *widens* with size (-42% → -54%).
   params) — i.e. nncp/ts_zip territory, not GPT-2 family. < 1.0 is **plausible with scale but NOT
   demonstrated here**.
 
+## Tokenizer-confound follow-up — DeepESP/gpt2-spanish (2026-07-11)
+
+The ladder above is *English* GPT-2 on Spanish text (caveat 1 below). The pending language-matched
+datapoint was closed on 2026-07-11 via `bet02_lm_arithmetic_codec.py` (whose default model is
+`DeepESP/gpt2-spanish`, MIT — see ADR-0015) on the same `CHAT_SAMPLE`:
+
+| model                | params | bits/char (LM+AC, packed) | lossless | note |
+|----------------------|-------:|--------------------------:|:--------:|------|
+| DeepESP/gpt2-spanish |  124M  | 1.97                      | YES      | language-matched tokenizer |
+
+**Provenance:** the raw run log was not preserved; the number is as recorded in commit
+`f6766c3` ("research(bet2): quantify the codec tokenizer confound — DeepESP 124M ≈ gpt2-medium
+355M", 2026-07-11), which reports 1.97 bits/char, byte-for-byte lossless, on the same Spanish chat.
+
+**Reading:** a 124M language-matched model lands where the 355M English model does (1.9770) —
+a matched tokenizer is worth ~1.5 param-doublings. But 1.97 is still ~2× the < 1.0 target, so the
+target needs nncp-scale models even with a matched tokenizer.
+
 ## Caveats (do not over-read the curve)
 
 1. **Tokenizer/language mismatch inflates the floor.** The sample is Spanish; the ladder is *English*
    GPT-2. Fit is poor (2.85 chars/token → 1158 tokens for 3298 chars). A Spanish/multilingual or modern
    LM of equal size would likely land materially lower, so part of the >1.0 plateau is tokenizer penalty,
    not pure capacity. The absolute numbers here are a **lower bound on how good same-size models can do**.
+   *Quantified 2026-07-11 — see the DeepESP follow-up section above.*
 2. **One synthetic sample.** Single ~3.3 KB chat; no variance estimate.
 3. **CPU cost is the binding constraint.** gpt2-large already takes ~24 min for one 3.3 KB sample
    (O(N) forwards × 2). gpt2-xl (1.5B) / modern LMs were not run — the trend is extrapolated, not measured,
