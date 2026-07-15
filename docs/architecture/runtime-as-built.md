@@ -69,6 +69,25 @@ aspirational) and the [data model](data-model.md) / [API reference](api-referenc
 > The HS256 verifier also gained a 32-byte-minimum secret (fail-fast at boot), optional `aud`/`iss`
 > binding, and a max-TTL cap — see the env table. All stdlib, no new dependency.
 
+> **Freshness note (2026-07-15, capabilities integration — [ADR-0028](../decisions/0028-capabilities-integration.md)):**
+> the three book-gap capability packages ADR-0027 shipped as standalone/CODE-ONLY are now wired (or
+> deliberately not), reflected in §2, §5, §6 and the env table below: (1) **guardrails**
+> ([`internal/guardrails`](../../internal/guardrails), bundled as `api.Guard` in
+> [`internal/api/guard.go`](../../internal/api/guard.go)) run on **all three** chat routes — input
+> redaction + injection/output **detection ALWAYS**, but **blocking is OPT-IN** behind
+> `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` / `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` (default **off** =
+> annotate + log); streaming output is annotate-only (a stream can't be un-sent). (2) The
+> **model-selection gateway** ([`internal/gateway`](../../internal/gateway), `selectClient` in
+> `guard.go`) is wired on the `chat` and `chat/stream` routes: its **cost-budget** policy is live when
+> `AISOTROPY_COST_BUDGET_USD` **and** a cheap client are set, its request-shape rules are
+> **ready-but-inert** (no image/UI-selector signal on `ChatInput` yet), it is **not** the refuted
+> Bet-4 difficulty router (ADR-0021), and the streaming quota-pressure degrade still applies as an
+> override on top of the gateway pick. (3) The **response cache**
+> ([`internal/responsecache`](../../internal/responsecache)) is **deliberately NOT wired** into the
+> per-user-hydrated chat path (a prompt-keyed cache over a memory-hydrated response is a
+> staleness/isolation footgun) and stays CODE-ONLY, a standalone primitive for stateless flows.
+> Guardrails + gateway move CODE-ONLY → REAL; the cache stays CODE-ONLY.
+
 ## 1. The HTTP surface (every route actually registered)
 
 `App.Run` builds a `chi` router (`middleware.RequestID`, `middleware.Recoverer`, plus — **only when
@@ -154,63 +173,100 @@ the request 401/403 so the handler is never reached. This is the `chat/stream` h
    tenant)` takes one token from the per-tenant bucket **before any LLM call**. A denied request
    emits an SSE `error` ("rate limit exceeded…") and returns — no tokens spent. (See
    [`internal/memory/quota.go`](../../internal/memory/quota.go).)
-3. **System-prompt hydration.** `hydrateSystemPrompt` assembles the system prompt *sequentially*:
+3. **Input guardrail (redact + detect ALWAYS; block OPT-IN, ADR-0028).** If an `api.Guard` is wired
+   (it is, in `App.Run`), `guard.checkInput` runs `guardrails.CheckInput(prompt)`
+   ([`internal/api/guard.go`](../../internal/api/guard.go),
+   [`internal/guardrails`](../../internal/guardrails)). The **redacted** text it returns
+   (`forwarded`) — never the raw prompt — is what every downstream step uses (hydration, the outbox /
+   held-out sample, and the model call), so a secret in the prompt never reaches the model nor
+   persists in any memory tier. A `Suspicious` injection verdict is **annotated + logged** by default
+   and only **rejected** (SSE `error`) when `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` is truthy. Logging
+   is redaction types/counts + injection signal names only, never raw values.
+4. **System-prompt hydration.** `hydrateSystemPrompt` assembles the system prompt *sequentially* from
+   the **redacted** `forwarded` text:
    - base prompt from `product_id`;
    - working-memory `Summary(ctx, key)` (condensed buffer) and `Recent(ctx, key, 12)` (last 12
      active messages);
    - facts-memory `store.Search(ctx, scope, prompt, 4)` — FTS5 top-4 engrams ranked
      Relevance × Importance × Recency. **A facts failure is non-fatal** (logged, proceeds without
      facts); a working-memory failure *is* fatal (SSE error).
-4. **Scope-gated tool fragment.** If a `*tools.Registry` is present, `PromptFragment(...)` appends
+5. **Scope-gated tool fragment.** If a `*tools.Registry` is present, `PromptFragment(...)` appends
    only the tools the caller's scopes permit. The scopes are the **authoritative** ones resolved by
-   `effectiveScopes(ctx, in.Body.Scopes)` ([`chat_stream.go:200`](../../internal/api/chat_stream.go),
+   `effectiveScopes(ctx, in.Body.Scopes)` ([`chat_stream.go`](../../internal/api/chat_stream.go),
    [`internal/api/authn.go`](../../internal/api/authn.go)): the **verified principal's** scopes when a
    real authenticator vouched for them (`ScopesVerified`), so a client cannot escalate by smuggling
    extra scopes into the body; the client-asserted body scopes are honored only as the fallback under
    NoAuth (or no auth middleware, as in unit tests that call `Register` directly). A tool the scopes
    do not grant is never mentioned — governance by absence of information
    ([`internal/tools/tools.go`](../../internal/tools/tools.go)).
-5. **`AppendWithOutbox` (atomic message + consolidation intent).** The user turn and a pending
+6. **`AppendWithOutbox` (atomic message + consolidation intent).** The user turn and a pending
    consolidation event are written in **one BadgerDB transaction**
    ([`internal/memory/outbox.go`](../../internal/memory/outbox.go)). The event id is a stable
    sha256-derived `outboxRef(key, prompt)` so re-sending the identical prompt consolidates onto the
    same fact/vector. This happens *before* the LLM call, because the user's message already
    happened. **Bet 6 exception:** when `AISOTROPY_BITRATE_BIN` is set, a deterministic ~5% of user
    turns (`bitrate.ShouldSample` — FNV-1a hash of the outbox ref, 1 in 20) are reserved as held-out
-   bitrate samples instead ([`chat_stream.go:210-228`](../../internal/api/chat_stream.go)): the
+   bitrate samples instead: the
    user message still enters working memory via plain `wm.Append`, but **no outbox event is
    enqueued** — the turn is `Reserve`d in the bitrate store and deliberately kept out of the
    facts/semantic consolidation pipeline, so the later memory-lift measurement is not contaminated
    by leakage.
-6. **Quota-pressure model degradation.** If a cheap client *and* a limiter are both configured,
-   `limiter.Pressure(ctx, tenant)` peeks the bucket and `llm.DegradeAt(pressure, 0.95, primary,
-   cheap)` decides whether to route this turn to the cheaper model instead of a hard rejection
+7. **Model selection through the gateway seam (ADR-0028).** `selectClient(ctx, gw, client, meter,
+   tenant, user, forwarded)` ([`internal/api/guard.go`](../../internal/api/guard.go),
+   [`internal/gateway`](../../internal/gateway)) runs the routing policy to pick the client for this
+   turn, projecting the request down to a `gateway.Request` carrying the tenant's cumulative spend
+   (from the shared cost meter). The **cost-budget** policy shapes an over-budget tenant to the cheap
+   target — live only when `AISOTROPY_COST_BUDGET_USD` **and** a cheap client are configured;
+   otherwise the gateway is a clean pass-through to `primary`. Request-shape rules
+   (image/UI-override) are **present-but-inert** (no such signal on `ChatInput` yet), and there is
+   **no** prompt-length/difficulty rule (Bet-4 refuted, ADR-0021). A routing miss falls back to the
+   passed client — a decision never drops a request.
+8. **Quota-pressure model degradation (OVERRIDE on the gateway pick).** If a cheap client *and* a
+   limiter are both configured, `limiter.Pressure(ctx, tenant)` peeks the bucket and
+   `llm.DegradeAt(pressure, 0.95, active, cheap)` may override the gateway-chosen client with the
+   cheaper model instead of a hard rejection
    ([`internal/llm/degrade.go`](../../internal/llm/degrade.go),
-   [`internal/memory/quota_pressure.go`](../../internal/memory/quota_pressure.go)). Absent a cheap
-   client, the primary is always used.
-7. **LLM stream (circuit-breakered + OTel).** `active.StreamChat(ctx, system, prompt)` opens a token
+   [`internal/memory/quota_pressure.go`](../../internal/memory/quota_pressure.go)). The gateway
+   **complements**, never replaces, this Phase-7 degrade. Absent a cheap client, the gateway pick
+   stands.
+9. **LLM stream (circuit-breakered + OTel).** `active.StreamChat(ctx, system, prompt)` opens a token
    channel. The client is `WithOTel(WithCircuitBreaker(primary))` — one `gen_ai` span per call, and
    fast-fail once the breaker is open (see steps below).
-8. **Drain loop.** For each token:
+10. **Drain loop.** For each token:
    - `ctx.Done()` (client disconnect / expiry) → stop immediately; the partial reply is **not**
      persisted. Token spend is cut by the producer observing the same `ctx.Done()`.
    - `tok.Err != nil` → emit SSE `error`, stop; partial reply not persisted.
    - `tok.Done` → **persist the assistant turn** via plain `wm.Append` (only a clean, complete
      stream is stored; assistant turns carry **no outbox event** on either chat route — only user
-     turns are consolidated), **record cost** via `meter.Record` from `tok.Usage` (real provider
-     token counts, if supplied), then emit `done`.
+     turns are consolidated), run the **output guardrail annotate-only** on the assembled reply
+     (`guard.annotateOutput` — a streamed response is already sent token by token and cannot be
+     un-sent, so this logs a tripped toxicity/leak verdict but never blocks; hard blocking here is an
+     ADR-0028 follow-on needing response buffering), **record cost** via `meter.Record` from
+     `tok.Usage` (real provider token counts, if supplied), then emit `done`.
    - otherwise → accumulate text and forward the `token` event.
 
 The non-streaming `chat` handler ([`chat.go`](../../internal/api/chat.go)) is similar but:
 - it uses the reflection loop `llm.ReflectAuto[chatStructuredReply]` (Gollem backend by default with
   a homegrown `Reflect[T]` fallback, ADR-0008) and **fails closed with HTTP 502** if no valid
   structured reply is produced after `chatMaxReflectionRetries = 3` attempts;
-- it persists the user turn via `AppendWithOutbox` before the call ([`chat.go:223`](../../internal/api/chat.go)),
+- it runs the **same input guardrail** (redact + detect; reject with 400 only when
+  `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` is on) and routes through the **same gateway seam**
+  (`selectClient`), but has **no** quota-pressure degrade override — the gateway pick is final on this
+  route (ADR-0028);
+- it applies the **output guardrail with hard-blocking capability**: after the reflection loop and
+  **before** persisting/returning, `guard.checkOutput` may — when `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT`
+  is on and the reply trips a toxicity/leak check — replace the flagged reply with a safe refusal,
+  which is then what both persists to memory and returns to the client (default posture: annotate +
+  log, reply unchanged). This is the enforcement asymmetry with the streaming route, which is
+  annotate-only;
+- it persists the user turn via `AppendWithOutbox` before the call,
   so non-streaming turns feed the same consolidation pipeline, and the assistant turn via plain
-  `wm.Append` on success only (`chat.go:246`) — assistant turns never enqueue an outbox event. It
+  `wm.Append` on success only — assistant turns never enqueue an outbox event. It
   does **not** apply the Bet 6 held-out sampling branch (that lives on the streaming route only);
 - it uses the breaker-wrapped client **without** the OTel decorator (per ADR-0010 the reflection
-  path is meant to use Gollem's own `ext/otel`, not yet adopted).
+  path is meant to use Gollem's own `ext/otel`, not yet adopted) — though routing through the gateway
+  whose `primary` is the OTel-wrapped `streamClient` incidentally re-adds OTel when the gateway
+  resolves to that target.
 
 ## 3. The async / offline side
 
@@ -296,6 +352,30 @@ threaded through the handlers:
   on each streamed `done`, exposed at `GET /costs`. Per-process and non-durable — a live
   observability aggregate, not a billing system of record.
 
+The two book-gap capability seams wired by **ADR-0028** are constructed in the same `App.Run` and
+threaded through the handlers:
+
+- **Guardrails** — `api.Guard{G: guardrails.Default(), BlockInjection: …, BlockOutput: …}`
+  ([`internal/api/guard.go`](../../internal/api/guard.go),
+  [`internal/guardrails`](../../internal/guardrails)). Input redaction + injection detection run on
+  **all three** chat routes; output toxicity/leak detection runs on `chat` (hard-block-capable) and
+  `chat/stream` (annotate-only). **Detection is always on; blocking is opt-in** via
+  `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` / `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` (default off). Every
+  detector is advisory: it classifies, the handler decides. Logs types/counts/signal names only,
+  never raw values or the response body.
+- **Model-selection gateway** — `buildModelGateway(streamClient, cheapStreamClient,
+  costBudgetFromEnv())` ([`internal/gateway`](../../internal/gateway)), consulted via `selectClient`
+  on `chat` and `chat/stream` (not `chat/agent`). Registers `primary` (the OTel-wrapped stream
+  client) as the default; enables the `CostAwarePolicy` cost-budget rule **only** when
+  `AISOTROPY_COST_BUDGET_USD > 0` **and** a cheap client exists, else a pure pass-through. Deliberately
+  no prompt-length/difficulty rule (Bet-4 refuted, ADR-0021); image/UI-override rules are inert for
+  lack of a `ChatInput` signal. On the streaming route the quota-pressure degrade above still applies
+  as an override on top of the gateway pick.
+- **Response cache** — [`internal/responsecache`](../../internal/responsecache) is **deliberately NOT
+  constructed on the chat path** (ADR-0028): a prompt-keyed cache over a per-user memory-hydrated
+  response is a staleness/isolation footgun. It stays a standalone, tested primitive for stateless
+  flows — see §6.
+
 ## 6. Honest "not yet wired / limitations"
 
 - **Semantic tier is multi-kind (ADR-0017/0018/0019), read AND written.** Every vector carries a
@@ -353,6 +433,22 @@ threaded through the handlers:
   only `TenantID`" and that wiring memory into chat needs a contract change first — but the contract
   already carries `tenant_id`/`user_id` path params + `session_id` body, and the streaming path is
   fully wired. The comment predates the current wiring.
+- **Guardrails default to annotate, not block (ADR-0028).** On a fresh deployment, redaction +
+  detection run but neither injection nor output verdicts reject anything until
+  `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` / `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` are set. Do not read
+  "guardrails wired" as "guardrails enforcing."
+- **Streaming output-guardrail is annotate-only.** `chat/stream` cannot replace a flagged reply with
+  a refusal (a token-by-token stream can't be un-sent); only non-streaming `chat` can hard-block
+  output. Hard blocking on the streaming route needs response buffering — an ADR-0028 follow-on.
+- **The gateway's advertised policy surface exceeds what fires.** Only the cost-budget rule can route
+  today; the image/UI-override rules are present-but-inert because `ChatInput` carries no such signal
+  (an ADR-0028 follow-on: add request-shape fields to the contract). There is deliberately no
+  length/difficulty rule (Bet-4 refuted, ADR-0021).
+- **The response cache is CODE-ONLY by decision, not by omission (ADR-0028).**
+  [`internal/responsecache`](../../internal/responsecache) is tested and isolation-correct by
+  construction, but it is **not** on the chat path: the chat response depends on per-user hydrated
+  working/facts/semantic memory that a prompt-keyed cache excludes, so a hit would serve a
+  context-wrong or stale answer. It remains a standalone primitive for a future stateless surface.
 
 ## Environment variables (as consumed by the code)
 
@@ -364,6 +460,9 @@ threaded through the handlers:
 | `AISOTROPY_JWT_AUDIENCE` / `AISOTROPY_JWT_ISSUER` / `AISOTROPY_JWT_MAX_TTL` | `aisotropy.AuthenticatorFromEnv` ([`aisotropy/authenv.go`](../../aisotropy/authenv.go)) | **Optional** HS256 hardening (ADR-0025), applied only when the JWT authenticator is selected. `AUDIENCE` → require the `aud` claim (string/array) to contain it (token-confusion defence); `ISSUER` → require `iss` to equal it; `MAX_TTL` (a Go duration) → cap `(exp - iat)` token lifetime — a malformed value is a fatal boot fault. Each unset = not checked, so existing tokens keep verifying. `exp` is always required, `nbf`/`iat` always validated when present ([`internal/auth/jwt.go`](../../internal/auth/jwt.go)). |
 | `AISOTROPY_OPS_TOKEN` | `api.OpsTokenFromEnv` → `api.OpsAuthGate` ([`internal/api/ops_gate.go`](../../internal/api/ops_gate.go)), wired in `App.Run` | Gates the operator endpoints `GET /costs` and `GET /bitrate` (all-tenant aggregates), default-closed (ADR-0025). Unset → both return **503**; set → the request must carry a matching `Authorization: Bearer <token>` (constant-time compare, `crypto/subtle`; generic 401 on miss). The token is never logged (only its presence). |
 | `AISOTROPY_REQUIRE_TLS` | `requireTLSFromEnv` → pre-route chi middleware ([`aisotropy/app.go`](../../aisotropy/app.go)) | Truthy (`strconv.ParseBool`) → reject any non-TLS request (`r.TLS == nil`) with **HTTP 400**, so a bearer token can never be sent in plaintext (ADR-0025). **Off** by default — most deployments terminate TLS at a proxy and forward plain HTTP; enable only when aisotropyd terminates TLS itself. |
+| `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` | `guardrailsBlockFromEnv` → `api.Guard.BlockInjection` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/api/guard.go`](../../internal/api/guard.go)) | Truthy (`strconv.ParseBool`) → a `Suspicious` **input** injection verdict **rejects** the request (400 on `chat`/`chat/agent`, SSE `error` on `chat/stream`) instead of merely annotating it (ADR-0028). Unset/off (default) → redaction + detection still run, but nothing is blocked. |
+| `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` | `guardrailsBlockFromEnv` → `api.Guard.BlockOutput` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/api/guard.go`](../../internal/api/guard.go)) | Truthy → a flagged (toxicity/leak) **non-streaming** `chat` reply is replaced with a safe refusal (which then persists + returns) instead of merely annotating it (ADR-0028). **No effect on `chat/stream`** (annotate-only — a stream can't be un-sent) or `chat/agent` (no output guardrail). Unset/off (default) → annotate + log only. |
+| `AISOTROPY_COST_BUDGET_USD` | `costBudgetFromEnv` → `buildModelGateway` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/gateway`](../../internal/gateway)) | A positive USD budget enables the gateway's `CostAwarePolicy` cost-budget shaping — an over-budget tenant (by cumulative spend from the cost meter) is routed to the cheap target (ADR-0028). **Requires a cheap client** (`AISOTROPY_CHEAP_MODEL`) too; with either unset, the rule is skipped and the gateway is a pass-through to `primary`. Unset/non-positive → shaping disabled. |
 | `AISOTROPY_DATA_DIR` | working memory + facts | On-disk BadgerDB dir; also default `facts.db` location |
 | `AISOTROPY_FACTS_DB` | `facts.OpenFromEnv` | Explicit SQLite file path |
 | `RQLITE_URL` | `facts.OpenFromEnv` | Networked rqlite facts store |
