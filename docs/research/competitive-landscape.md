@@ -385,11 +385,16 @@ longer literally true.
 
 **Two honest bounds on this claim:**
 
-1. **The guarantee is conditional on a correct identity.** aisotropy's scoping is structural
-   *given* a `(tenant_id, user_id)`; those arrive today as trusted-but-unauthenticated path
-   params (no authn middleware wired). The by-construction guarantee begins one layer above an
-   authn seam that is not yet built — a real, closeable gap, not a refutation. See
-   [thesis → the authentication gap](../vision/thesis.md#the-authentication-gap-be-honest-about-it).
+1. **The guarantee is conditional on a correct identity — and the authn seam now ships
+   (ADR-0024, 2026-07-14).** aisotropy's scoping is structural *given* a `(tenant_id, user_id)`.
+   Those are now bound to a verified principal by a **default-deny `Authenticator` middleware**
+   that must-agree-binds the credential to the path identity (401 missing/invalid, 403 mismatch)
+   before any handler runs — so the by-construction guarantee is now end-to-end *when a real
+   authenticator is configured*. Residual honesty gap: `NoAuth()` (and the default-deny posture
+   until you configure an authenticator) does not activate the guarantee, and verified
+   `Principal.Scopes` do not yet replace client-asserted scopes for tool-gating (tracked
+   follow-on). See [thesis → the authentication seam](../vision/thesis.md#the-authentication-seam-shipped--adr-0024-2026-07-14)
+   and [ADR-0024](../decisions/0024-authenticated-identity-seam.md).
 2. **The isolation is uniform call-site discipline, not DB-level RLS.** aisotropy applies the
    tenant filter on *every* storage op — BadgerDB key-prefix (no unscoped read *method* exists),
    facts SQL `WHERE tenant+user` on every statement, Qdrant `Must`-filter during the scan —

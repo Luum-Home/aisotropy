@@ -46,6 +46,14 @@ routes; a chat turn is validated by a Go struct, run through a **real Gollem ref
 per-tenant rate-limited, circuit-broken, cost-metered, and scope-gated, with the canned stub LLM
 answering when no key is set.
 
+One honesty nuance the seam adds (2026-07-14, ADR-0024): the `./aisotropyd` binary reaches those
+`/v1` routes only because it **explicitly opts into `NoAuth()`** (path `tenant_id`/`user_id` trusted
+verbatim, with a loud insecure-mode `slog.Warn` at boot). The **library** default
+(`aisotropy.New` with no `WithAuthenticator`) is **default-deny** — every `/v1` request is rejected
+401 until an authenticator is configured, so shipping insecure is an explicit choice, not an
+accident. The end-to-end isolation guarantee is active only under a configured, non-`NoAuth`
+Authenticator (e.g. `NewJWTAuthenticator`), which is verified in `aisotropy/isolation_e2e_test.go`.
+
 What does **not** engage with zero config is precisely the heaviest part of the pitch: the
 **Qdrant gRPC tier, the networked rqlite tier, the DataFusion/Rust sleep cycle, and provider
 native tool-calling** are all real code but dormant. The runtime is a legitimately well-architected
@@ -64,6 +72,7 @@ step behind the code.
 | **Native tool-calling agent** (Gollem `Agent[T]` + `FuncTool`, ADR-0012) | **CODE-ONLY** | falls back to homegrown `agentloop` | needs a `ToolCaller` provider (**only** `OpenAICompatClient`/OpenRouter today) | unit tests via fake ToolCaller (local suite); live only under `manual` |
 | **Sleep cycle** (DataFusion Rust subprocess, ADR-0005) | **CODE-ONLY** | disabled (only the pure-Go turn-vector pruner runs) | build the crate + set `AISOTROPY_SLEEPCYCLE_BIN` | the default suite uses a **bash stub**; real binary only under `manual` |
 | **Granular control** (per-tenant rate limit, circuit breaker, cost meter, scope-gated tools, `/health`, `/costs`) | **REAL** | all wired | same | local suite |
+| **Authenticated-identity seam** (ADR-0024: default-deny Authenticator middleware, must-agree bind, `NoAuth` opt-out, stdlib-HS256 `JWTBearer` ref impl) | **REAL** (seam + middleware + must-agree bind) · gap: verified scopes not yet used for tool-gating | library default is **default-deny** (401 all `/v1`); the `./aisotropyd` binary opts into `NoAuth()` (insecure, loudly warned) to stay zero-config | pass `aisotropy.WithAuthenticator(NewJWTAuthenticator(secret))` for a real credential check | `internal/auth` (9 JWT tests + `auth_test`), `internal/api/authn_test.go` (5), `aisotropy/isolation_e2e_test.go` regression anchor (local suite) — added 2026-07-14 |
 | **Public extension surface** (`aisotropy/` façade + builder + nested example modules) | **REAL** | `cmd/aisotropyd` is a thin consumer | third parties import `aisotropy/` | 15 façade tests + 2 nested example modules (local suite) |
 | **Physical tenant routing** (ADR-0007 Shared/Dedicated tiering) | **CODE-ONLY** | shared pool (`AISOTROPY_DEDICATED_TENANTS` empty → no routing) | set `AISOTROPY_DEDICATED_TENANTS`: [`aisotropy/app.go:247-248`](../../aisotropy/app.go) builds the router, injected into `facts.NewRoutingStore` (app.go:677) and `semantic.NewRoutingStore` (app.go:769) | `internal/routing` tests (local suite); wiring dormant by default (reclassified 2026-07-14) |
 | **Primitive self-improvement** (friction-driven per-user rewriting) | **REAL** | wired unconditionally: [`aisotropy/app.go:534-536`](../../aisotropy/app.go) builds the store + friction detector and starts the consolidation loop; a failing agent tool records friction (`internal/api/chat_agent.go:59-65`), and `primitives.Consolidate` rewrites over-threshold primitives on every sleep-cycle tick (app.go:614-624) | same | `internal/primitives` + `frictionExecutor` tests (local suite) (reclassified 2026-07-14) |
@@ -98,8 +107,10 @@ step behind the code.
 The things that are **REAL** are the things that are hardest to retrofit later and that the
 competitive analysis found genuinely superior: **struct-as-contract with no hidden prompts**,
 **µs in-process working memory**, **tenant isolation propagated by `context.Context` and enforced
-per statement/key**, **circuit-breaker + per-tenant rate limit + cost meter before any token is
-spent**, and a **binary-plus-one-service supply chain**. Those are running today. The dormant tiers
+per statement/key — now fronted by a default-deny Authenticator that must-agree-binds a verified
+principal to the path identity (ADR-0024), making the chain by-construction end-to-end given a
+configured, non-`NoAuth` authenticator**, **circuit-breaker + per-tenant rate limit + cost meter
+before any token is spent**, and a **binary-plus-one-service supply chain**. Those are running today. The dormant tiers
 do not weaken that core — they are the *scale* story (independent Rust services) layered on top of
 a sound in-process engine.
 

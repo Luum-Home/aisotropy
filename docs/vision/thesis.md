@@ -129,26 +129,44 @@ can issue an unscoped read.**
    anywhere" would be false — there is exactly one, deliberate and confined to the offline
    consolidator. (A separate telemetry store also has operator-aggregate reads that are not
    tenant-scoped; those are an ops view, not the tenant chat path.)
-2. **"By construction" describes the storage scoping, not an authenticated identity.** See
-   the next section — this is the single most important caveat in this document.
+2. **"By construction" now describes the storage scoping *and* — given a configured
+   Authenticator — the authenticated identity.** The authenticated-identity seam
+   (ADR-0024, 2026-07-14) shipped: see the next section. The residual caveat is narrower —
+   verified scopes do not yet drive tool-gating, and `NoAuth()`/default-deny postures do not
+   activate the end-to-end guarantee.
 
-## The authentication gap (be honest about it)
+## The authentication seam (shipped — ADR-0024, 2026-07-14)
 
-`tenant_id` and `user_id` are **trusted, validated path params — not authenticated
-principals.** They arrive as Huma path params constrained to `^[a-zA-Z0-9_-]{1,64}$`,
-re-validated for reserved characters, and then propagated. But **no authentication is wired
-into the current binary**: the only HTTP middleware is chi's `RequestID` + `Recoverer`.
-There is no JWT/Bearer/security-scheme middleware anywhere in the request path today; the
-handler code documents JWT auth explicitly as a future "walking-skeleton stand-in."
+`tenant_id` and `user_id` still arrive as Huma path params constrained to
+`^[a-zA-Z0-9_-]{1,64}$` and re-validated for reserved characters — but they are **no longer
+trusted verbatim**. The **authenticated-identity seam**
+([ADR-0024](../decisions/0024-authenticated-identity-seam.md)) closes the front-door gap this
+section used to admit. One fail-closed **Authenticator** middleware (`internal/api/authn.go`,
+wired in `aisotropy/app.go:404-417`) now sits in front of every `/v1` route:
 
-The consequence, stated plainly: the storage tiers correctly and unbypassably isolate
-*whatever* `(tenant_id, user_id)` they are handed — but the current binary trusts the caller
-to assert its own tenant and user in the URL. Any client can call
-`/v1/tenant/{any}/user/{any}/chat` today. **Binding `tenant_id` to an authenticated
-principal is the deploying operator's responsibility** (a JWT/auth middleware in front of
-these handlers). "By construction" is a claim about the internal storage scoping being
-unbypassable, **not** a claim of an authenticated identity chain — that part is not yet
-implemented. See [multi-tenancy](../architecture/multi-tenancy.md) and
+- **Default-deny (Option C):** with no authenticator configured, the runtime installs a
+  deny-all gate that rejects **every** `/v1` request with 401. Running insecure is unreachable
+  by accident — it requires an explicit opt-out (`aisotropy.NoAuth()`).
+- **Must-agree bind:** the configured `Authenticator` verifies the caller's credential and
+  returns a `Principal`; the middleware then requires the verified `TenantID`/`UserID` to
+  **equal** the URL path identity (403 on mismatch, 401 on missing/invalid) before it writes
+  identity into `ctx`. The ~8 downstream `NewScope` sites read the same path params unchanged —
+  now *proven equal to a verified principal*. The `Scope` is minted from a verified identity.
+- **Reference impls:** `NoAuth()` (named, opt-in, trusts the path verbatim — for local/dev or an
+  upstream gateway) and `NewJWTAuthenticator` (`internal/auth/jwt.go`: stdlib-only HS256 Bearer,
+  **no new dependency**, so the 100% MIT/Apache policy is untouched; RS256/JWKS is a follow-on).
+
+So `/v1/tenant/{any}/user/{any}/chat` is **no longer** served to any client: without a
+credential the request is denied, and with one the verified principal must match the path.
+"By construction" is now a claim about storage scoping **and** — given a configured, non-`NoAuth`
+Authenticator — an authenticated identity chain, end to end.
+
+**The remaining honest gap:** the *verified* `Principal.Scopes` do not yet replace the
+client-asserted `ChatRequest.Scopes` used for tool-gating; that switch is a tracked follow-on
+(the verified scopes are already exposed via `PrincipalFromContext`, `internal/api/authn.go`).
+And with `NoAuth()` — or before any authenticator is configured — the path param is still
+trusted, so the end-to-end guarantee is not active in that posture. See
+[multi-tenancy](../architecture/multi-tenancy.md) and
 [runtime as built](../architecture/runtime-as-built.md).
 
 ## How this actually compares (2026-07-14)
@@ -206,8 +224,13 @@ Postgres-RLS/schema-per-tenant guarantee: a *new* storage op that omits the filt
 the property is code-review/value-object-enforced, not DB-enforced (with one disclosed offline
 exception, `facts.ExportAll`). Cloudflare Agents' per-object isolation is structurally stronger on
 this axis; aisotropy's edge is *delivery* (self-hostable + permissive), not raw robustness. Second,
-"by construction" is a claim about storage scoping, **not authenticated-principal binding**:
-aisotropy trusts a validated path param the same way ADK trusts a caller-supplied `user_id`.
+authenticated-principal binding — historically the biggest caveat here — **now ships**
+(ADR-0024, 2026-07-14): a default-deny Authenticator middleware verifies the credential and
+must-agree-binds the principal to the path identity before any `Scope` is minted, so aisotropy no
+longer "trusts a validated path param the same way ADK trusts a caller-supplied `user_id`" *given a
+configured authenticator*. The narrower residual gap: verified `Principal.Scopes` do not yet
+replace client-asserted scopes for tool-gating, and the `NoAuth()`/default-deny postures do not
+activate the end-to-end guarantee.
 
 ## Sovereignty
 
@@ -229,5 +252,5 @@ isolation.
 | A typed, in-process, per-request agent runtime. | A declarative data pipeline (that would be [Bento](../decisions/index.md), a future radar item). |
 | Optimized for interactive chat (SSE, minimal TTFT, ctx cancellation). | Optimized for massive batch ingestion (for that, async workers / DataFusion). |
 | Adaptive per-user memory with self-improving primitives. | Per-user executable code cloning (only *metadata* is cloned: prompts, descriptions, few-shots). |
-| Isolated per storage operation, with a per-tenant pre-spend cost gate. | Authenticated by construction — auth middleware binding `tenant_id` to a principal is the operator's job (not yet in the binary). |
+| Isolated per storage operation, with a per-tenant pre-spend cost gate, behind a default-deny Authenticator that must-agree-binds a verified principal to the path identity (ADR-0024). | Fully closed on tool-gating — verified `Principal.Scopes` do not yet replace client-asserted scopes (tracked follow-on); and `NoAuth()`/default-deny postures do not activate the end-to-end guarantee. |
 | Purely sovereign and open source. | Dependent on a cloud or proprietary SDK. |

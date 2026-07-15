@@ -16,16 +16,47 @@ the direct application of the [zero magic](../vision/thesis.md#the-stance-zero-m
 ## The mechanism: ctx as a process descriptor
 
 The [Huma](../components/huma-api.md) handler boundary is the **only** layer authorized to
-*write* identity into the `ctx`. As built *(status note 2026-07-14)*, identity arrives
-**unauthenticated**: `tenant_id` and `user_id` are validated **path parameters** (Huma rejects
-anything outside `^[a-zA-Z0-9_-]{1,64}$` with a 422 before the handler runs), and `scopes` is a
-**client-asserted body field** (`ChatRequest.Scopes` — see `internal/api/chat.go`, whose own
-comments state this plainly). There is no JWT decoding or auth middleware in the runtime today.
-This is a **deliberate integration point**, not an oversight: aisotropy is an importable runtime
-(see [adoption surface](adoption-surface.md)), and adopters are expected to put authentication in
-front of it — a reverse proxy, or middleware at the `aisotropy.App` builder seam — that derives
-`tenant_id`/`user_id`/`scopes` from a verified credential such as a JWT. The path params are the
-walking-skeleton stand-in for that layer.
+*write* identity into the `ctx`, and — as of the **authenticated-identity seam**
+([ADR-0024](../decisions/0024-authenticated-identity-seam.md), shipped *2026-07-14*) — that write
+now happens **after** the identity has been verified and bound. `tenant_id` and `user_id` still
+arrive as validated **path parameters** (Huma rejects anything outside `^[a-zA-Z0-9_-]{1,64}$`
+with a 422 before the handler runs), and `scopes` is still a **client-asserted body field**
+(`ChatRequest.Scopes` — see `internal/api/chat.go`), but a single fail-closed **Authenticator**
+middleware now sits in front of every `/v1` route and closes the front-door gap.
+
+**How the seam works** (`internal/auth/auth.go`, `internal/api/authn.go`,
+`aisotropy/auth.go`, wired in `aisotropy/app.go:404-417`):
+
+- One Huma API middleware (`api.BindAuthMiddleware`) is registered via `humaAPI.UseMiddleware`
+  **before the first route**. It calls the configured `Authenticator.Authenticate`, which verifies
+  the caller's credential and returns a `Principal{TenantID, UserID, Scopes}`.
+- **Must-agree bind:** the verified `Principal.TenantID`/`UserID` MUST equal the URL path
+  `tenant_id`/`user_id`. A mismatch is a **403**; a missing/invalid credential is a **401**. Only
+  after the bind passes does the middleware inject identity into `ctx` (`withVerifiedPrincipal`),
+  so the ~8 downstream `NewScope` sites keep reading `in.TenantID`/`in.UserID` from the path
+  **unchanged** — those values are now *proven equal to a verified principal*, not a bare
+  assertion. The `Scope` is minted from a verified identity.
+- **Default-deny (Option C):** if no authenticator is registered, `app.go` installs
+  `api.DenyAllMiddleware`, which rejects **every** `/v1` request with 401. Running insecure is not
+  reachable by accident — it requires an explicit opt-out.
+- **`NoAuth()` opt-out (honest caveat):** `aisotropy.NoAuth()` (`internal/auth/auth.go`) is a named
+  Authenticator that performs **no verification** — it returns the path `tenant_id`/`user_id`
+  verbatim, so the must-agree bind is a tautology that never rejects. This reproduces the pre-seam
+  behavior (the path param is still *trusted*, not authenticated), but it is now an **explicit
+  deployment choice** for local/dev or an upstream gateway that already authenticates — never the
+  silent default.
+- **Reference JWT impl:** `aisotropy.NewJWTAuthenticator` (`internal/auth/jwt.go`) verifies an
+  `Authorization: Bearer <jwt>` credential — HS256 signature + `exp`, using **only the Go standard
+  library** (no `golang-jwt`, so the 100% MIT/Apache dependency policy is untouched). Claims map
+  `tenant_id|tid → TenantID`, `user_id|uid|sub → UserID`, `scope|scp|scopes → Scopes`. RS256/JWKS
+  is a documented follow-on.
+
+The net effect: **given a configured (non-`NoAuth`) Authenticator, isolation is by-construction
+end-to-end** — a verified principal is bound to the path identity before any `Scope` is minted, and
+the storage tiers isolate that now-verified `(tenant_id, user_id)` unbypassably. The one remaining
+honest gap is that `Principal.Scopes` (the *verified* scopes) do not yet replace the
+client-asserted `ChatRequest.Scopes` used for tool-gating — that switch is a tracked follow-on (see
+`PrincipalFromContext` in `internal/api/authn.go`).
 
 What **is** real and enforced today is the propagation invariant: identity is injected into the
 `context.Context` exactly once at the handler boundary (`withIdentity`/`chatIdentity`,
@@ -35,10 +66,12 @@ parses request data on its own or re-resolves identity: everyone *reads* from th
 never reconstructs it.
 
 ```
-path {tenant_id, user_id} + body {scopes}       (production: an authn layer in
-      │                                          front derives these from a
-      ▼                                          verified credential, e.g. a JWT)
-[Huma: contract validation + handler boundary] → ctx{tenant_id, user_id}
+path {tenant_id, user_id} + body {scopes}       (Authenticator middleware verifies
+      │                                          the credential and MUST-AGREE binds
+      ▼                                          the principal to the path identity
+[Huma: contract validation + handler boundary]   before ctx is written; ADR-0024)
+      │                                        → ctx{tenant_id, user_id}
+[Authenticator: verify + must-agree bind]
                                          │
                     native Go propagation (no global state)
                                          │
@@ -125,9 +158,14 @@ applied within a shared `WHERE` or is implicit in which physical database it con
 
 *(Status note 2026-07-14: the ctx-injection point and the per-layer keys/filters above are
 verified against the real implementation — `internal/api/chat.go`, `internal/memory/key.go`,
-`internal/tenancy`, `internal/semantic`. The authentication layer that will derive identity from
-a verified credential — e.g. a JWT via a Huma security handler or front proxy — is not built;
-it is the adopter-facing integration point described above.)*
+`internal/tenancy`, `internal/semantic`. The authenticated-identity seam that derives/verifies
+identity from a credential and must-agree-binds it to the path — `internal/auth/{auth,jwt}.go`,
+`internal/api/authn.go`, `aisotropy/auth.go`, wired in `aisotropy/app.go:404-417`
+(ADR-0024) — **is now built and tested** (9 `internal/auth` JWT tests + 5 `internal/api` middleware
+tests + the `aisotropy/isolation_e2e_test.go` regression anchor). With a configured, non-`NoAuth`
+Authenticator, the isolation chain is verified end-to-end; with `NoAuth()` — or before any
+authenticator is configured (default-deny rejects all `/v1` until one is) — the path param is
+trusted verbatim and the end-to-end guarantee is not active.)*
 
 ## References
 
@@ -136,5 +174,5 @@ it is the adopter-facing integration point described above.)*
 - [Granular control](granular-control.md) — how the same `ctx` feeds security, cost, and behavior decisions.
 - [Huma — Contracts and API layer](../components/huma-api.md) — who writes the ctx.
 - [Qdrant — Semantic Memory](../components/qdrant-semantic-memory.md) · [rqlite — Facts Memory](../components/rqlite-facts-memory.md) · [BadgerDB — Working Memory](../components/badgerdb-working-memory.md)
-- [ADR-0007](../decisions/0007-multitenancy-fisico-db-unica-vs-por-tenant.md) — physical multi-tenancy strategy (recommended: hybrid/tiered). [ADR-0004](../decisions/0004-facts-memory-rqlite-vs-litefs.md) — rqlite vs. LiteFS (accepted, intersects with 0007). [ADR-0011](../decisions/0011-tenant-scoped-statement-builder.md) — the tenant-scoped statement builder (`internal/tenancy`) that enforces the rqlite row above by construction, ahead of any Phase 3 facts-tier code.
+- [ADR-0007](../decisions/0007-multitenancy-fisico-db-unica-vs-por-tenant.md) — physical multi-tenancy strategy (recommended: hybrid/tiered). [ADR-0004](../decisions/0004-facts-memory-rqlite-vs-litefs.md) — rqlite vs. LiteFS (accepted, intersects with 0007). [ADR-0011](../decisions/0011-tenant-scoped-statement-builder.md) — the tenant-scoped statement builder (`internal/tenancy`) that enforces the rqlite row above by construction, ahead of any Phase 3 facts-tier code. [ADR-0024](../decisions/0024-authenticated-identity-seam.md) — the authenticated-identity seam (default-deny Authenticator + must-agree bind) that verifies the identity *before* the ctx is written, making isolation by-construction end-to-end given a configured authenticator.
 - [Thesis](../vision/thesis.md) — multi-tenancy with real isolation as one of the four enterprise requirements.
