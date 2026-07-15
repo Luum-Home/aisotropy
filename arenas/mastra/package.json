@@ -1,0 +1,11 @@
+{
+  "name": "mastra-arena",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Adversarial isolation test arena for Mastra",
+  "scripts": {
+    "smoke": "node scripts/smoke.js",
+    "serve": "echo 'Mastra live serve requires full project setup. See README.md for instructions.'",
+    "test": "npm run smoke"
+  }
+}
