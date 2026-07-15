@@ -44,7 +44,7 @@ func newChatOnlyRouterWithMeter(t *testing.T, client llm.Client, wm *memory.Work
 			t.Errorf("facts store close: %v", err)
 		}
 	})
-	Register(humaAPI, client, wm, store, nil, nil, nil, meter)
+	Register(humaAPI, client, wm, store, nil, nil, nil, meter, nil, nil)
 	return router
 }
 

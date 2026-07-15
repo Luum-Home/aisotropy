@@ -82,7 +82,14 @@ func (f frictionExecutor) Execute(ctx context.Context, name string, args map[str
 // tracer instruments the native-tool Gollem agent (ADR-0012 follow-up) with
 // hierarchical OTel spans; it may be nil (the tracing hook then falls back to
 // the global OTel provider, a no-op unless one is configured).
-func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, typed *TypedToolExecutor, detector *primitives.FrictionDetector, tracer oteltrace.TracerProvider, maxSteps int) {
+//
+// guard applies the INPUT guardrail (redact + detect ALWAYS; block opt-in): the
+// prompt is redacted before it reaches the tool loop or the model, so a secret
+// never reaches the provider, and a suspicious injection verdict is annotated
+// (or rejected when BlockInjection is enabled). The agent route does not run the
+// output guardrail — its response is a structured list of tool decisions, not
+// free-form model prose. A nil guard disables guardrails entirely.
+func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, typed *TypedToolExecutor, detector *primitives.FrictionDetector, tracer oteltrace.TracerProvider, maxSteps int, guard *Guard) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat-agent",
 		Method:      httpMethodPost,
@@ -100,6 +107,16 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 		}
 		if client == nil || registry == nil || executor == nil {
 			return nil, huma.Error503ServiceUnavailable("agent mode is not configured")
+		}
+
+		// Input guardrail (redact + detect ALWAYS; block opt-in). forwarded is
+		// the REDACTED prompt: it — never the raw prompt — drives the tool loop
+		// and reaches the model, so a secret never leaves the process. A
+		// suspicious injection verdict is annotated by default and only rejected
+		// when BlockInjection is enabled.
+		forwarded, blocked := guard.checkInput(ctx, in.TenantID, in.UserID, in.Body.Prompt)
+		if blocked {
+			return nil, huma.Error400BadRequest("request blocked by input guardrail (possible prompt injection)")
 		}
 
 		// Per-request executor so friction is scoped to this (tenant, user): the
@@ -125,7 +142,7 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 
 		var steps []AgentStep
 		if tc, ok := client.(llm.ToolCaller); ok {
-			steps, err = runNativeToolAgent(ctx, tc, tracer, registry, exec, typed, scopes, in.Body.Prompt, maxSteps)
+			steps, err = runNativeToolAgent(ctx, tc, tracer, registry, exec, typed, scopes, forwarded, maxSteps)
 		} else {
 			// Fallback (no native tool-calling): the combined executor routes
 			// typed tools through the typed dispatcher (best-effort over the
@@ -133,7 +150,7 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 			loopExec := agentloop.ToolExecutor(combinedMapExecutor{typed: typed, fallback: exec})
 			loop := &agentloop.Loop{Client: client, Registry: registry, Executor: loopExec, MaxSteps: maxSteps}
 			var loopSteps []agentloop.StepResult
-			loopSteps, err = loop.Run(ctx, scopes, in.Body.Prompt)
+			loopSteps, err = loop.Run(ctx, scopes, forwarded)
 			steps = agentStepsFromLoop(loopSteps)
 		}
 		if err != nil {

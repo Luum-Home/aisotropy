@@ -30,6 +30,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/bitrate"
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
+	"github.com/Luum-Home/aisotropy/internal/gateway"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
@@ -114,8 +115,20 @@ const (
 // (leakage). This is the request-side half of the anti-leakage contract; the
 // other half is bitrate.ShouldSample.
 //
+// gw is the model-selection gateway seam (internal/gateway): when non-nil the
+// per-turn client is chosen by its routing policy (selectClient) instead of the
+// passed client; the quota-pressure degrade (llm.DegradeAt) below still applies
+// as an OVERRIDE on top of that pick. A nil gw resolves to the passed client,
+// preserving pre-gateway behavior. guard bundles the input/output guardrails:
+// the user prompt is redacted before it reaches memory or the model (secrets
+// never persist or reach the model), a suspicious injection verdict is
+// annotated (or rejected when BlockInjection is enabled), and the ASSEMBLED
+// final response is inspected after the stream completes (annotate-only — a
+// streamed response can't be un-sent; hard output-blocking on this route is a
+// documented follow-on). A nil guard disables guardrails entirely.
+//
 //nolint:gocognit,cyclop,funlen // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
-func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, inPricePer1M, outPricePer1M float64, bptSampler bitrate.SampleRecorder) {
+func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, inPricePer1M, outPricePer1M float64, bptSampler bitrate.SampleRecorder, gw *gateway.Gateway, guard *Guard) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
 		Method:      httpMethodPost,
@@ -175,6 +188,19 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			}
 		}
 
+		// Input guardrail (redact + detect ALWAYS; block opt-in). forwarded is
+		// the REDACTED prompt: it — never the raw prompt — hydrates the system
+		// prompt, persists to working memory (and the consolidation outbox /
+		// bitrate held-out sample), and reaches the model, so a secret in the
+		// prompt never leaks into the model or any memory tier. A suspicious
+		// injection verdict is annotated by default and only rejected when
+		// BlockInjection is enabled.
+		forwarded, blocked := guard.checkInput(ctx, in.TenantID, in.UserID, in.Body.Prompt)
+		if blocked {
+			_ = send.Data(StreamErrorEvent{Message: "request blocked by input guardrail (possible prompt injection)"})
+			return
+		}
+
 		slog.InfoContext(ctx, "chat stream request",
 			"tenant_id", in.TenantID,
 			"user_id", in.UserID,
@@ -184,7 +210,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			"llm", client.Name(),
 		)
 
-		system, err := hydrateSystemPrompt(ctx, wm, store, semStore, embedder, persona, key, scope, in.Body.ProductID, in.Body.Prompt)
+		system, err := hydrateSystemPrompt(ctx, wm, store, semStore, embedder, persona, key, scope, in.Body.ProductID, forwarded)
 		if err != nil {
 			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("failed to hydrate working memory: %v", err)})
 			return
@@ -209,7 +235,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 		// (internal/consolidation). The two writes are atomic — a crash cannot
 		// keep one without the other — and this happens before the LLM call
 		// because the user's message is real input that already happened.
-		ref := outboxRef(key, in.Body.Prompt)
+		ref := outboxRef(key, forwarded)
 		if bptSampler != nil && bitrate.ShouldSample(ref) {
 			// Held-out bitrate sample (Bet 6): reserve this turn for offline
 			// surprisal measurement and DO NOT enqueue it for facts/semantic
@@ -217,28 +243,33 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			// really happened); replacing the consolidation enqueue with the
 			// reservation is what keeps the scored text out of the tenant's
 			// long-term memory, so the later lift is not spurious (leakage).
-			if err := wm.Append(ctx, key, memory.Message{Role: roleUser, Content: in.Body.Prompt}); err != nil {
+			if err := wm.Append(ctx, key, memory.Message{Role: roleUser, Content: forwarded}); err != nil {
 				slog.ErrorContext(ctx, "failed to append held-out user message", "err", err)
 			}
-			if err := bptSampler.Reserve(ctx, in.TenantID, in.UserID, in.Body.SessionID, ref, in.Body.Prompt); err != nil {
+			if err := bptSampler.Reserve(ctx, in.TenantID, in.UserID, in.Body.SessionID, ref, forwarded); err != nil {
 				slog.ErrorContext(ctx, "failed to reserve bitrate held-out sample", "err", err)
 			}
 		} else {
-			event := memory.NewOutboxEvent(key, ref, in.Body.Prompt, time.Now().UTC())
-			if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: roleUser, Content: in.Body.Prompt}, event); err != nil {
+			event := memory.NewOutboxEvent(key, ref, forwarded, time.Now().UTC())
+			if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: roleUser, Content: forwarded}, event); err != nil {
 				slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
 			}
 		}
 
-		// Quota-pressure degradation (Phase 7): when this tenant is near its
-		// limit, route to the cheaper model instead of the primary — graceful
-		// degradation rather than a hard 429. Requires a configured cheap model
-		// (AISOTROPY_CHEAP_MODEL); otherwise cheapClient is nil and the primary
-		// is always used.
-		active := client
+		// Model selection through the gateway seam first (nil gw -> the passed
+		// client). This is where routing policy (e.g. cost-budget shaping) picks
+		// the target.
+		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded)
+
+		// Quota-pressure degradation (Phase 7) applies as an OVERRIDE on top of
+		// the gateway pick: when this tenant is near its limit, route to the
+		// cheaper model instead of the gateway-chosen one — graceful degradation
+		// rather than a hard 429. Requires a configured cheap model
+		// (AISOTROPY_CHEAP_MODEL); otherwise cheapClient is nil and the gateway
+		// pick stands.
 		if cheapClient != nil && limiter != nil {
 			if pressure, perr := limiter.Pressure(ctx, in.TenantID); perr == nil {
-				if choice := llm.DegradeAt(pressure, llm.DefaultDegradeThreshold, client.Name(), cheapClient.Name()); choice.Degraded {
+				if choice := llm.DegradeAt(pressure, llm.DefaultDegradeThreshold, active.Name(), cheapClient.Name()); choice.Degraded {
 					active = cheapClient
 					slog.WarnContext(ctx, "degrading to cheap model under quota pressure",
 						"tenant_id", in.TenantID, "pressure", pressure, "model", cheapClient.Name())
@@ -246,7 +277,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			}
 		}
 
-		tokens, err := active.StreamChat(ctx, system, in.Body.Prompt)
+		tokens, err := active.StreamChat(ctx, system, forwarded)
 		if err != nil {
 			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("failed to start stream: %v", err)})
 			return
@@ -283,6 +314,11 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 						if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: assistantReply.String()}); err != nil {
 							slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
 						}
+						// Output guardrail on the ASSEMBLED final text (annotate-only:
+						// the stream has already been sent token by token, so a
+						// refusal can't replace it here — hard output-blocking on the
+						// streaming route is a documented follow-on needing buffering).
+						guard.annotateOutput(ctx, in.TenantID, in.UserID, forwarded, assistantReply.String(), system)
 					}
 					// Per-tenant cost accounting (Phase 7 observability): record the
 					// real provider token usage carried on the terminal token, so

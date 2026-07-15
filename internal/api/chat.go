@@ -35,6 +35,7 @@ import (
 
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
+	"github.com/Luum-Home/aisotropy/internal/gateway"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/tools"
@@ -199,8 +200,8 @@ func chatCheckQuota(ctx context.Context, limiter *memory.Limiter, tenantID strin
 // embedder are nil, that's the streaming path's job) and appends the
 // scope-gated tools fragment (Phase 7): a forbidden tool never enters the
 // payload (granular-control.md).
-func chatBuildSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, toolReg *tools.Registry, persona PersonaProvider, key memory.Key, scope facts.Scope, in *ChatInput) (string, error) {
-	system, err := hydrateSystemPrompt(ctx, wm, store, nil, nil, persona, key, scope, in.Body.ProductID, in.Body.Prompt)
+func chatBuildSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, toolReg *tools.Registry, persona PersonaProvider, key memory.Key, scope facts.Scope, in *ChatInput, prompt string) (string, error) {
+	system, err := hydrateSystemPrompt(ctx, wm, store, nil, nil, persona, key, scope, in.Body.ProductID, prompt)
 	if err != nil {
 		return "", err
 	}
@@ -229,25 +230,37 @@ func chatPersistUserTurn(ctx context.Context, wm *memory.WorkingMemory, key memo
 	}
 }
 
-// chatReflectAndRecord runs the reflection loop, persists the assistant's
-// validated reply, and records cost to the shared meter. A persistent
-// schema/business violation fails closed: the returned error is already a
-// huma.StatusError (502), never a silent fallback to unstructured text (the
-// constitutional "Structured-output / reflection loop" gate).
-func chatReflectAndRecord(ctx context.Context, client llm.Client, system string, in *ChatInput, wm *memory.WorkingMemory, key memory.Key, meter *costmeter.Meter) (chatStructuredReply, error) {
+// chatReflect runs the reflection loop over prompt and returns the validated
+// reply plus the provider-reported token usage. It does NOT persist or record
+// cost — that happens after the output guardrail runs, so a blocked response is
+// never persisted (see the Register handler). A persistent schema/business
+// violation fails closed: the returned error is already a huma.StatusError
+// (502), never a silent fallback to unstructured text (the constitutional
+// "Structured-output / reflection loop" gate).
+func chatReflect(ctx context.Context, client llm.Client, system string, in *ChatInput, prompt string) (chatStructuredReply, llm.Usage, error) {
 	reply, attempts, backend, usage, err := llm.ReflectAuto[chatStructuredReply](
-		ctx, client, system, in.Body.Prompt, decodeChatReply, validateChatReply, chatMaxReflectionRetries,
+		ctx, client, system, prompt, decodeChatReply, validateChatReply, chatMaxReflectionRetries,
 	)
 	if err != nil {
 		slog.ErrorContext(ctx, "chat reflection loop failed closed",
 			"tenant_id", in.TenantID, "user_id", in.UserID, "backend", backend, "attempts", attempts, "err", err)
-		return chatStructuredReply{}, huma.Error502BadGateway(
+		return chatStructuredReply{}, llm.Usage{}, huma.Error502BadGateway(
 			fmt.Sprintf("agent failed to produce a valid structured reply after %d attempt(s)", attempts), err)
 	}
 
-	// Only a successfully validated turn gets persisted — a failed/rejected
-	// attempt (handled above) never reaches this line.
-	if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: reply.Reply}); err != nil {
+	slog.InfoContext(ctx, "chat request completed",
+		"tenant_id", in.TenantID, "user_id", in.UserID, "backend", backend, "attempts", attempts)
+
+	return reply, usage, nil
+}
+
+// chatRecordTurn persists the assistant's final reply (after the output
+// guardrail has had its say) to working memory and records cost to the shared
+// meter. finalReply is the text actually returned to the client — so when the
+// output guardrail replaced a flagged response with a refusal, the refusal (not
+// the flagged text) is what persists in memory.
+func chatRecordTurn(ctx context.Context, wm *memory.WorkingMemory, key memory.Key, tenantID, finalReply string, usage llm.Usage, meter *costmeter.Meter) {
+	if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: finalReply}); err != nil {
 		slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
 	}
 
@@ -258,20 +271,15 @@ func chatReflectAndRecord(ctx context.Context, client llm.Client, system string,
 	// the request count/attempt is still real signal for /costs.
 	if meter != nil {
 		cost := costmeter.EstimateCostUSD(usage.InputTokens, usage.OutputTokens, costInputPricePer1M, costOutputPricePer1M)
-		meter.Record(in.TenantID, usage.InputTokens, usage.OutputTokens, cost)
+		meter.Record(tenantID, usage.InputTokens, usage.OutputTokens, cost)
 	}
-
-	slog.InfoContext(ctx, "chat request completed",
-		"tenant_id", in.TenantID, "user_id", in.UserID, "backend", backend, "attempts", attempts)
-
-	return reply, nil
 }
 
-// chatBuildOutput assembles the strict ChatOutput contract from a validated
-// reply.
-func chatBuildOutput(reply chatStructuredReply, tenantID string, client llm.Client) *ChatOutput {
+// chatBuildOutput assembles the strict ChatOutput contract from the final reply
+// text and the client that served the turn.
+func chatBuildOutput(replyText, tenantID string, client llm.Client) *ChatOutput {
 	out := &ChatOutput{}
-	out.Body.Reply = reply.Reply
+	out.Body.Reply = replyText
 	out.Body.TenantID = tenantID
 	out.Body.Stub = client.Name() == "stub"
 	return out
@@ -289,7 +297,16 @@ func chatBuildOutput(reply chatStructuredReply, tenantID string, client llm.Clie
 // reflection path's Gollem CostTracker has empty pricing and was never
 // surfaced here). A nil meter skips recording (keeps existing tests that
 // pass nil working unchanged).
-func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, persona PersonaProvider, meter *costmeter.Meter) {
+//
+// gw is the model-selection gateway seam (internal/gateway): when non-nil, the
+// client that serves the turn is chosen by its routing policy (selectClient);
+// nil selects the passed client directly, preserving pre-gateway behavior.
+// guard bundles the input/output guardrails with their opt-in blocking toggles:
+// when configured, the user prompt is redacted before it reaches memory or the
+// model, an injection verdict is annotated (or, if BlockInjection, rejected),
+// and the model response is inspected before it is returned (or, if BlockOutput,
+// replaced with a safe refusal). A nil guard disables guardrails entirely.
+func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, persona PersonaProvider, meter *costmeter.Meter, gw *gateway.Gateway, guard *Guard) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat",
 		Method:      httpMethodPost,
@@ -311,28 +328,53 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 			return nil, err
 		}
 
+		// Input guardrail (redact + detect ALWAYS; block opt-in). forwarded is
+		// the REDACTED prompt: it — never the raw prompt — is what hydrates the
+		// system prompt, persists to working memory, and reaches the model, so a
+		// secret in the prompt never leaks into the model or any memory tier. A
+		// suspicious injection verdict is annotated by default and only rejected
+		// when BlockInjection is enabled.
+		forwarded, blocked := guard.checkInput(ctx, in.TenantID, in.UserID, in.Body.Prompt)
+		if blocked {
+			return nil, huma.Error400BadRequest("request blocked by input guardrail (possible prompt injection)")
+		}
+
+		// Model selection through the gateway seam; nil gw resolves to the passed
+		// client. The non-streaming route has no quota-pressure degrade override
+		// (that is the streaming path's behavior) — the gateway pick is final here.
+		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded)
+
 		slog.InfoContext(ctx, "chat request",
 			"tenant_id", in.TenantID,
 			"user_id", in.UserID,
 			"session_id", in.Body.SessionID,
 			"product_id", in.Body.ProductID,
 			"prompt_len", len(in.Body.Prompt),
-			"llm", client.Name(),
+			"llm", active.Name(),
 		)
 
-		system, err := chatBuildSystemPrompt(ctx, wm, store, toolReg, persona, key, scope, in)
+		system, err := chatBuildSystemPrompt(ctx, wm, store, toolReg, persona, key, scope, in, forwarded)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to hydrate working memory", err)
 		}
 
-		chatPersistUserTurn(ctx, wm, key, in.Body.Prompt)
+		chatPersistUserTurn(ctx, wm, key, forwarded)
 
-		reply, err := chatReflectAndRecord(ctx, client, system, in, wm, key, meter)
+		reply, usage, err := chatReflect(ctx, active, system, in, forwarded)
 		if err != nil {
 			return nil, err
 		}
 
-		return chatBuildOutput(reply, in.TenantID, client), nil
+		// Output guardrail, AFTER the model returns and BEFORE persisting or
+		// returning. When BlockOutput is enabled and the reply tripped a
+		// guardrail (toxicity/leak), the flagged text is replaced with a safe
+		// refusal — which is what both persists to memory and returns to the
+		// client. Default posture: annotate + log, reply unchanged.
+		finalReply := guard.checkOutput(ctx, in.TenantID, in.UserID, forwarded, reply.Reply, system)
+
+		chatRecordTurn(ctx, wm, key, in.TenantID, finalReply, usage, meter)
+
+		return chatBuildOutput(finalReply, in.TenantID, active), nil
 	})
 }
 

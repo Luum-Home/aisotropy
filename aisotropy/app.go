@@ -27,6 +27,8 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/engram"
 	"github.com/Luum-Home/aisotropy/internal/facts"
+	"github.com/Luum-Home/aisotropy/internal/gateway"
+	"github.com/Luum-Home/aisotropy/internal/guardrails"
 	"github.com/Luum-Home/aisotropy/internal/health"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
@@ -572,8 +574,33 @@ func (a *App) Run(ctx context.Context) error {
 		}},
 	).Handler())
 
-	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry, persona, costMeter)
-	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient, semanticStore, embedder, persona, a.inPricePer1M, a.outPricePer1M, bptSampler)
+	// Guardrails (redact + detect ALWAYS; blocking OPT-IN per operator toggles,
+	// default off): one process-wide aggregator threaded into every chat handler.
+	// The two env toggles gate only whether a suspicious verdict rejects the
+	// request/response — redaction and detection run regardless.
+	guard := &api.Guard{
+		G:              guardrails.Default(),
+		BlockInjection: guardrailsBlockFromEnv("AISOTROPY_GUARDRAILS_BLOCK_INJECTION"),
+		BlockOutput:    guardrailsBlockFromEnv("AISOTROPY_GUARDRAILS_BLOCK_OUTPUT"),
+	}
+	slog.Info("guardrails wired (redact+detect always on)", "block_injection", guard.BlockInjection, "block_output", guard.BlockOutput)
+
+	// Model-selection gateway (the seam): default target -> primary; a
+	// cost-budget policy shapes an over-budget tenant to the cheap target when
+	// BOTH a budget (AISOTROPY_COST_BUDGET_USD) and a cheap client are
+	// configured — otherwise the rule is skipped cleanly and the gateway is a
+	// pass-through to primary. Deliberately NO prompt-length rule (Bet-4 refuted
+	// length as a routing predictor); request-shape rules (image/UI override)
+	// are ready policy but never fire because ChatInput carries no such signal
+	// yet. The gateway's primary is the OTel-instrumented streaming client, so
+	// routing the non-streaming reflection path through it additionally
+	// instruments that path (a no-op unless a tracer is configured). The
+	// streaming path's quota-pressure degrade (llm.DegradeAt) still applies as
+	// an override AFTER the gateway pick.
+	modelGateway := buildModelGateway(streamClient, cheapStreamClient, costBudgetFromEnv())
+
+	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry, persona, costMeter, modelGateway, guard)
+	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient, semanticStore, embedder, persona, a.inPricePer1M, a.outPricePer1M, bptSampler, modelGateway, guard)
 	// Knowledge ingestion (ADR-0018): the HTTP arm of the dual-surface
 	// capability, sharing the exact same semantic store/embedder pair the
 	// chat routes' RAG hydration reads from above.
@@ -598,7 +625,7 @@ func (a *App) Run(ctx context.Context) error {
 	// WithTypedTool[T]. Preferred over the map executor for any tool it owns; nil
 	// handlers => an executor that owns nothing, so behavior is unchanged.
 	typedExecutor := api.NewTypedToolExecutor(typedHandlers)
-	api.RegisterAgent(humaAPI, protectedClient, toolRegistry, executor, typedExecutor, frictionDetector, tracerProvider, agentMaxSteps)
+	api.RegisterAgent(humaAPI, protectedClient, toolRegistry, executor, typedExecutor, frictionDetector, tracerProvider, agentMaxSteps, guard)
 
 	server := &http.Server{
 		Addr:    addr,
@@ -864,6 +891,74 @@ func openSemanticStore(ctx context.Context, router routing.Router, dedicated []s
 		return factory(base)
 	}
 	return semantic.NewRoutingStore(router, base, dedicated, factory)
+}
+
+// gwPrimary / gwCheap are the gateway target NAMES the model-selection seam
+// registers its two clients under (internal/gateway resolves a policy Decision's
+// target name to a concrete llm.Client). Kept as constants so the registration
+// and the CostAwarePolicy.Cheap target can never drift apart.
+const (
+	gwPrimary = "primary"
+	gwCheap   = "cheap"
+)
+
+// buildModelGateway assembles the model-selection gateway seam. primary is
+// always registered as the default target; cheap is registered (and the
+// cost-budget shaping rule enabled) only when a cheap client exists AND a
+// positive USD budget is configured — otherwise the rule is skipped cleanly and
+// the gateway is a pure pass-through to primary. There is deliberately no
+// prompt-length/difficulty rule (Bet-4 refuted length as a routing predictor).
+func buildModelGateway(primary, cheap llm.Client, budgetUSD float64) *gateway.Gateway {
+	var policies []gateway.Policy
+	if cheap != nil && budgetUSD > 0 {
+		policies = append(policies, gateway.CostAwarePolicy{BudgetUSD: budgetUSD, Cheap: gwCheap})
+		slog.Info("model gateway cost-budget shaping enabled", "budget_usd", budgetUSD, "cheap_target", gwCheap)
+	}
+	gw := gateway.New(gateway.ChainPolicy{Policies: policies}, slog.Default())
+	// primary is streamClient (non-nil): Register also makes it the default.
+	if err := gw.Register(gwPrimary, primary); err != nil {
+		slog.Error("model gateway primary registration failed; gateway will pass through", "err", err)
+	}
+	if cheap != nil {
+		if err := gw.Register(gwCheap, cheap); err != nil {
+			slog.Error("model gateway cheap registration failed", "err", err)
+		}
+	}
+	if err := gw.SetDefault(gwPrimary); err != nil {
+		slog.Error("model gateway set-default failed", "err", err)
+	}
+	return gw
+}
+
+// guardrailsBlockFromEnv reports whether the named guardrail block toggle env
+// var is set to a truthy value (per strconv.ParseBool). Unset, empty, or
+// unparsable => false (off): the operator-fixed default posture is annotate +
+// log, never block.
+func guardrailsBlockFromEnv(name string) bool {
+	v := os.Getenv(name)
+	if v == "" {
+		return false
+	}
+	on, err := strconv.ParseBool(v)
+	if err != nil {
+		slog.Warn("invalid guardrail block toggle; treating as off", "var", name, "value", v)
+		return false
+	}
+	return on
+}
+
+// costBudgetFromEnv parses AISOTROPY_COST_BUDGET_USD (a float, USD) for the
+// gateway's cost-budget shaping rule. Falls back to 0 (rule disabled) when
+// unset, unparsable, or non-positive, so the seam stays a pass-through unless a
+// real budget is configured.
+func costBudgetFromEnv() float64 {
+	if v := os.Getenv("AISOTROPY_COST_BUDGET_USD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			return f
+		}
+		slog.Warn("invalid AISOTROPY_COST_BUDGET_USD; cost-budget shaping disabled", "value", v)
+	}
+	return 0
 }
 
 // newWorkingMemory opens on-disk BadgerDB-backed working memory when
