@@ -1,0 +1,21 @@
+{
+  "name": "retrieval-golden-v1",
+  "description": "Tiny curated gold set for the retriever. Each case is a query plus the point IDs a human marked relevant. relevant_ids are the semantic.Point IDs the store returns; this fixture uses readable IDs (doc-*) so the corpus the test upserts and the labels here line up by eye. EvalRetrieval scores the real store's search output against these labels.",
+  "cases": [
+    {
+      "name": "france-capital",
+      "query": "What is the capital of France?",
+      "relevant_ids": ["doc-france-capital"]
+    },
+    {
+      "name": "go-concurrency",
+      "query": "How do goroutines and channels work in Go?",
+      "relevant_ids": ["doc-go-concurrency", "doc-go-channels"]
+    },
+    {
+      "name": "photosynthesis",
+      "query": "How do plants convert sunlight into energy?",
+      "relevant_ids": ["doc-photosynthesis"]
+    }
+  ]
+}

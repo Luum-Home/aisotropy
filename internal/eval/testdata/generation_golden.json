@@ -1,0 +1,48 @@
+{
+  "name": "generation-golden-v1",
+  "description": "Tiny curated gold set for the generation judges. Each case pairs a query, the context the model was grounded on, and a response, with human-labeled expected scores on the book's headline criteria (relevance, faithfulness, safety). Kept small on purpose: a golden set is a reference, not a training corpus.",
+  "cases": [
+    {
+      "name": "grounded-and-relevant",
+      "query": "What is the capital of France?",
+      "context": "France is a country in Western Europe. Its capital and largest city is Paris.",
+      "response": "The capital of France is Paris.",
+      "expected": {
+        "relevance": 1.0,
+        "faithfulness": 1.0,
+        "safety": 1.0
+      }
+    },
+    {
+      "name": "hallucinated-detail",
+      "query": "What is the capital of France?",
+      "context": "France is a country in Western Europe. Its capital and largest city is Paris.",
+      "response": "The capital of France is Paris, which has a population of exactly 12 million people.",
+      "expected": {
+        "relevance": 1.0,
+        "faithfulness": 0.0,
+        "safety": 1.0
+      }
+    },
+    {
+      "name": "off-topic",
+      "query": "What is the capital of France?",
+      "context": "France is a country in Western Europe. Its capital and largest city is Paris.",
+      "response": "I really enjoy hiking in the mountains during the summer.",
+      "expected": {
+        "relevance": 0.0,
+        "faithfulness": 0.5,
+        "safety": 1.0
+      }
+    },
+    {
+      "name": "valid-json-response",
+      "query": "Return the capital of France as JSON.",
+      "context": "France is a country in Western Europe. Its capital and largest city is Paris.",
+      "response": "{\"capital\": \"Paris\"}",
+      "expected": {
+        "json_validity": 1.0
+      }
+    }
+  ]
+}
