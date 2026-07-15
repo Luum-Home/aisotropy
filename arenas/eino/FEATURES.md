@@ -72,17 +72,40 @@ Everything below was checked against the real source in the module cache
 - **Finding:** no built-in facts/journal store. DIY on top of any DB.
 - **AISOTROPY:** SQLite + FTS5 facts journal out of the box.
 
-## 8. Cost governance — **DIY / partial**
+## 8. Cost governance — **BUILT-IN visibility / DIY gate + aggregation**
 
-- **Finding:** token usage is observable via callbacks *after* the call (post-hoc). There is no
-  pre-spend quota gate primitive.
-- **AISOTROPY:** pre-spend quota gate + per-tenant cost meter (reject/degrade before spending).
+- **Real API:** `schema.Message.ResponseMeta.Usage` (`*schema.TokenUsage{PromptTokens,
+  CompletionTokens, TotalTokens, ...}`) is returned from every `ChatModel` call; the same usage is
+  surfaced to callbacks via `model.CallbackOutput.TokenUsage`.
+- **Finding (RUN-VERIFIED, `cmd/costobs/cost_obs_demo.go`):** per-call token usage is a **first-class
+  framework field** you read straight off the result — [BUILT-IN]. But there is **no tenant
+  dimension** (`callbacks.RunInfo` = Name/Type/Component only) and **no pre-spend gate primitive**
+  (no equivalent of Pydantic AI's `UsageLimits.check_before_request`); usage is only observable
+  *after* the call. So per-tenant **aggregation** and the **reject-before-spend** check are [DIY].
+- **Proof (exercised):** the demo runs 2 turns for `tenantA` + 2 for `tenantB` and prints per-tenant
+  token/cost totals from a DIY `costMeter`; then sets a tiny 20-token budget for `tenantC`, allows
+  turn 1 and **rejects turn 2 before `chain.Invoke`** — proven by a call-counter on the fake model
+  that does NOT advance on the rejected turn (`calls 1 -> 1`). Token counts are SYNTHETIC (runes/4),
+  clearly labelled; the framework wiring is real.
+- **AISOTROPY:** pre-spend quota gate + per-tenant cost meter wired in the runtime (reject/degrade
+  before spending) — here both are the developer's responsibility.
 
-## 9. Observability — **DIY / PAID**
+## 9. Observability — **BUILT-IN spans / DIY tenant + OTel / PAID backends**
 
-- **Finding:** integrations target APMPlus (ByteDance/Volcengine), CozeLoop, Langfuse, LangSmith.
-  No native OTel `gen_ai.*` semconv emitter in core. Some targets are proprietary/paid SaaS.
-- **AISOTROPY:** OTel gen_ai semconv compliant.
+- **Real API:** `callbacks.NewHandlerBuilder().OnStartFn/OnEndFn(...).Build()` + attach via
+  `compose.WithCallbacks(h)` (or `callbacks.AppendGlobalHandlers`). Eino fires OnStart/OnEnd/OnError
+  around every component (ChatModel, Tool, Graph/Chain); `model.ConvCallbackOutput(out)` yields the
+  message whose `ResponseMeta.Usage` carries token counts.
+- **Finding (RUN-VERIFIED, `cmd/costobs/cost_obs_demo.go`):** the callback/aspect mechanism is
+  **native** — one `chain.Invoke(..., WithCallbacks(h))` captured **2 spans** (`chat_model` /
+  `Chain`) with per-component **timings + token usage** into an in-memory exporter [BUILT-IN]. But
+  `tenant_id` is **NOT** on spans by construction: `RunInfo` has no tenant/user field. In the demo it
+  appears only because we stuffed tenant into `context.Context` and read it in the handler — that
+  attribution is [DIY]. Core Eino ships **no native OTel `gen_ai.*` semconv emitter**; turnkey
+  targets live in eino-ext (APMPlus/Volcengine, CozeLoop, Langfuse, LangSmith) and are external /
+  partly [PAID] SaaS.
+- **AISOTROPY:** OTel gen_ai semconv compliant, tenant on every span by ctx propagation — here the
+  span plumbing is BUILT-IN but the OTel-semconv + tenant attribution layer is DIY.
 
 ## 10. Sovereignty / licensing — Apache-2.0 (with caveat)
 

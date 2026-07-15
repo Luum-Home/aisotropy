@@ -17,6 +17,7 @@ import (
 
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
@@ -30,10 +31,16 @@ type Orbit struct {
 }
 
 // New builds Orbit on the real ADK stack with the offline FakeModel.
-func New(appName string) (*Orbit, error) {
+func New(appName string) (*Orbit, error) { return NewWithModel(appName, NewFakeModel()) }
+
+// NewWithModel builds Orbit on the real ADK stack with a caller-supplied
+// model.LLM. This is the seam the cost/observability demo uses to inject a
+// metered offline model (synthetic token usage + a call counter) while still
+// exercising the real llmagent + runner + session.Service.
+func NewWithModel(appName string, m model.LLM) (*Orbit, error) {
 	ag, err := llmagent.New(llmagent.Config{
 		Name:        "orbit_support",
-		Model:       NewFakeModel(),
+		Model:       m,
 		Description: "Multi-tenant customer-support assistant.",
 		Instruction: "You are Orbit, a concise, helpful multi-tenant support agent.",
 	})
@@ -78,6 +85,11 @@ func (o *Orbit) Reply(ctx context.Context, userID, sessionID, prompt string) (st
 	}
 	return final, nil
 }
+
+// Runner exposes the underlying real ADK runner so the cost/observability demo
+// can drive turns directly and read per-call usage metadata off the event
+// stream (event.UsageMetadata) — the framework's built-in per-call visibility.
+func (o *Orbit) Runner() *runner.Runner { return o.runner }
 
 // Sessions exposes the underlying real session.Service so tests can probe the
 // framework's raw state model directly (Create/Get with composite keys).

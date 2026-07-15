@@ -54,16 +54,42 @@ timestamp: 2026-07-15T00:00:00Z
 - **AISOTROPY COMPARISON:** aisotropy ships Engram-style SQLite+FTS5 facts journal out of the box.
 
 ### Cost governance
-- **Status:** Not built-in
-- **Pattern:** BYO token counting / budget management
-- **AISOTROPY COMPARISON:** aisotropy has pre-spend quota gate + per-tenant cost meter — rejects
-  or degrades before the LLM call.
+- **Status:** Partial — per-call usage is built-in; aggregation, dollars, and the gate are DIY
+- **Mechanism (RUN-VERIFIED, `scripts/cost_obs_demo.ts`, `npm run cost-obs`, exit 0):**
+  - Per-call token usage: **[BUILT-IN]** — `agent.generate()` returns
+    `result.usage = {inputTokens, outputTokens, totalTokens}` on every call (verified across 4 turns).
+  - Per-tenant aggregation: **[DIY]** — the framework returns per-call usage only; the tenant
+    ledger (`Map<tenantId, totals>`) is hand-rolled in the demo.
+  - Dollar cost: **[DIY]** — Mastra returns tokens, not `$`; the pricing table + math are ours.
+  - Pre-spend budget gate: **[DIY / NOT built-in]** — Mastra has **no** pre-spend/usage-limit
+    check (no equivalent of Pydantic AI `UsageLimits.check_before_request`); usage is known only
+    *after* the call. `grep` over `@mastra/core` for `usageLimit|checkBeforeRequest|budget` = 0 hits.
+    The demo implements the gate as a ledger check *before* `generate()` and **proves the model is
+    not invoked on a rejected turn** via a call-counter on the fake model (rejected turn Δ=0 calls,
+    CONFIRMED).
+- **AISOTROPY COMPARISON:** aisotropy has a **built-in** pre-spend quota gate + per-tenant cost
+  meter — rejects or degrades *before* the LLM call. Mastra gives you the raw usage number and
+  leaves the tenant ledger, the dollar conversion, and the reject-before-spend gate to you.
 
 ### Observability
-- **Status:** Not built-in
-- **Pattern:** BYO OpenTelemetry — no native integration
-- **AISOTROPY COMPARISON:** aisotropy ships OTel gen_ai semconv compliant tracing, `/costs` and
-  `/health` endpoints by default.
+- **Status:** Built-in (native Mastra AI tracing) — tenant tagging is DIY; hosted UI is PAID
+- **Mechanism (RUN-VERIFIED, `scripts/cost_obs_demo.ts`, exit 0):**
+  - Native tracing/spans: **[BUILT-IN]** — `@mastra/observability` `Observability({...})` on
+    `new Mastra()` emits `agent_run`, `model_generation`, `model_step`, `model_inference`,
+    `model_chunk` spans automatically (25 spans / 5 traces captured in one run).
+  - In-memory span capture: **[BUILT-IN]** — `TestExporter` collects + queries spans fully
+    offline. A real OTLP/console exporter (`OtelExporter`/`ConsoleExporter`) is a one-line swap.
+  - gen_ai usage on spans: **[BUILT-IN]** — the `model_generation` span carries
+    `usage.inputTokens/outputTokens` (GenAI semconv), verified in the captured span.
+  - tenant_id on spans: **[DIY]** — the metadata mechanism is built-in, but you must pass
+    `tracingOptions.metadata: { tenantId }` yourself; it is not auto-derived (25/25 spans carried
+    `metadata.tenantId` only because the demo stamps it).
+  - Hosted trace UI: **[PAID]** — Mastra Cloud / Langfuse / Braintrust exporters are optional paid
+    backends; not required for the offline in-memory path above.
+- **AISOTROPY COMPARISON:** aisotropy ships OTel gen_ai-semconv tracing plus `/costs` and `/health`
+  endpoints by default, and stamps tenant onto spans from the `context.Context` boundary (no
+  per-call opt-in). Mastra's tracing is genuinely built-in and semconv-aligned, but tenant tagging
+  is a per-call responsibility, and the cost/health surface is DIY.
 
 ### Multi-tenant isolation
 - **Status:** Convention (closest of the three)
@@ -76,8 +102,10 @@ timestamp: 2026-07-15T00:00:00Z
 ## Summary
 
 Mastra is the **most batteries-included** of the three — memory, vectors, tools, streaming,
-structured output all built-in. But it's still a **framework**, not a runtime. Facts memory,
-cost governance, and observability are DIY. The isolation model (`resourceId`/`threadId`) is
+structured output, and (run-verified) **native OTel-semconv observability** all built-in. But it's
+still a **framework**, not a runtime. Facts memory and cost governance are DIY; observability is
+built-in but tenant tagging is a per-call opt-in and the `/costs`/`/health` surface is DIY. The
+isolation model (`resourceId`/`threadId`) is
 the closest any competitor comes to construction, but mastra#11856 proves it's still convention.
 
 **vs. aisotropy:** Mastra wins on TS DX and built-in memory tiers; aisotropy wins on isolation-by-

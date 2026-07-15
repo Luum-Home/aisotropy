@@ -75,21 +75,63 @@ but by developer discipline), **PARTIAL**, **DIY**, **PAID**, **NOT-POSSIBLE**.
 
 - No FTS5/journal primitive. aisotropy ships SQLite+FTS5 facts.
 
-## #8 Cost governance — PARTIAL (post-hoc only)
+## #8 Cost governance — PARTIAL (post-hoc visibility; gate is DIY)
 
-- **Real mechanism:** OTel `gen_ai.usage.*` token attributes
-  (`output_tokens`, `cache_read.input_tokens`, `reasoning.output_tokens`) —
-  emitted **after** the call. No pre-spend quota gate.
+**RUN-VERIFIED** by `cmd/costobs/cost_obs_demo.go` (`go run ./cmd/costobs`,
+exit 0) against the real runner + session service.
+
+- **Per-call usage — BUILT-IN visibility.** `model.LLMResponse.UsageMetadata`
+  (`*genai.GenerateContentResponseUsageMetadata`: `PromptTokenCount`,
+  `CandidatesTokenCount`, `TotalTokenCount`, `ThoughtsTokenCount`,
+  `CachedContentTokenCount`) is a real ADK field, and `session.Event` **embeds
+  `model.LLMResponse`**, so `event.UsageMetadata` rides every event. The runner
+  also stamps it on the `generate_content` span as `gen_ai.usage.input_tokens`
+  / `gen_ai.usage.output_tokens` (see #9/#10). The demo reads it off the event
+  stream per call — no reflection, no wrapper. *(demo counts are synthetic
+  `len(text)/4`; the field plumbing is the real framework.)*
+- **Per-tenant aggregation — DIY.** ADK has **no tenant** and no cost meter;
+  the demo's `costMeter` (map keyed by tenant) is entirely developer-owned.
+  Verified: tenantA and tenantB each totalled 33 in / 27 out tok over 2 turns.
+- **Pre-spend budget gate — DIY (no ADK primitive).** ADK has no equivalent of
+  Pydantic AI `UsageLimits.check_before_request`; usage is **post-hoc** only.
+  The demo implements the gate and **proves the model does not run on rejection**
+  via a call-counter on the fake model: the allowed turn moves `Calls` 4→5, the
+  rejected (over-budget) turn leaves it 5→5 (unchanged) — the runner is never
+  invoked. This is the one aisotropy constitutional gate ADK cannot supply.
 - **AISOTROPY COMPARISON:** aisotropy rejects/degrades **before** spending
-  tokens (constitutional gate) + per-tenant meter. ADK measures, doesn't gate.
+  tokens (token-bucket, constitutional gate) + a per-tenant meter, all built-in.
+  ADK gives you the *numbers* (built-in, per call) but the *tenant dimension*,
+  *aggregation*, and *pre-spend gate* are all developer code. ADK measures;
+  aisotropy measures **and** gates.
 
-## #9 Observability — BUILT-IN
+## #9 Observability — BUILT-IN (OTel gen_ai spans; tenant_id is DIY)
 
-- **Real mechanism:** `internal/telemetry` emits OTel spans carrying `gen_ai.*`
-  attributes; OTLP exporters in the dep graph.
-- **AISOTROPY COMPARISON:** the one dimension where ADK ties aisotropy — both
-  emit OTel `gen_ai.*`. Differentiates ADK vs Eino (proprietary APM) and
-  Genkit (proprietary schema).
+**RUN-VERIFIED** by `cmd/costobs/cost_obs_demo.go` — installs an in-memory OTel
+`tracetest.SpanRecorder` on the **global** tracer provider and captures the
+spans ADK emits (ADK's `internal/telemetry` acquires its tracer from
+`otel.GetTracerProvider()`, a delegating global, so a runtime
+`otel.SetTracerProvider` captures it — no ADK config needed).
+
+- **Spans emitted — BUILT-IN.** One traced turn produced real ADK spans:
+  `invoke_agent orbit_support` and `generate_content <model>`, carrying
+  `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.agent.name/description`,
+  `gen_ai.conversation.id` (= the ADK sessionID), `gen_ai.response.finish_reasons`,
+  and the usage attributes `gen_ai.usage.input_tokens` /
+  `gen_ai.usage.output_tokens` / `gen_ai.usage.cache_read.input_tokens` /
+  `gen_ai.usage.reasoning.output_tokens`. Free, self-hostable (OTLP HTTP
+  exporters are already in the dep graph).
+- **tenant_id on spans — DIY.** ADK's own spans carry **no `tenant.id`** (the
+  demo confirms: `tenant.id present on ADK's own spans natively = false`) — ADK
+  has no tenant concept. The demo enriches DIY by wrapping the turn in an
+  `orbit.turn` parent span with a `tenant.id` attribute; only that developer
+  span carries it. `gen_ai.conversation.id` exposes the *session* key, not a
+  tenant, so per-tenant trace filtering is developer-added.
+- **Hosted APM (e.g. LangSmith) — PAID/optional.** Not required: the OTel path
+  is fully self-hostable.
+- **AISOTROPY COMPARISON:** the dimension where ADK ties aisotropy — both emit
+  OTel `gen_ai.*`. Differentiates ADK vs Eino (proprietary APM) and Genkit
+  (proprietary schema). aisotropy's spans carry `tenant_id` by construction
+  (it's in `context.Context`); on ADK it's a developer enrichment.
 
 ## #10 Sovereignty / licensing
 

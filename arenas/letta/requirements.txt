@@ -10,3 +10,9 @@ letta-client==1.12.1
 
 # Test runner (offline isolation matrix).
 pytest>=8.0.0
+
+# Observability demo (scripts/cost_obs_demo.py). The REAL OpenTelemetry SDK —
+# the same standard Letta's server exports traces with (Apache-2.0). Used offline
+# to capture a client-side span (with tenant_id) in an in-memory exporter,
+# clearly distinguished from Letta's server-side native tracing.
+opentelemetry-sdk>=1.20

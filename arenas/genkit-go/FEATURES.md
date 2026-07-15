@@ -61,16 +61,43 @@ paid/hosted service) · **NOT-POSSIBLE** (no path).
 - **Mechanism:** no equivalent journal/FTS abstraction.
 - **AISOTROPY:** Engram-style SQLite+FTS5 facts journal.
 
-### 8. Cost governance — DIY
-- **Mechanism:** `ModelResponse.Usage` reports tokens *after* the call. No pre-spend gate, no
-  per-tenant budget.
+### 8. Cost governance — split verdict: usage visibility BUILT-IN, everything else DIY
+- **Run-verified** offline against v1.10.0 in `cmd/costobs` (`go run ./cmd/costobs`):
+  - **Per-call usage — BUILT-IN visibility.** `genkit.Generate` returns `resp.Usage`
+    (`*ai.GenerationUsage` with `InputTokens`/`OutputTokens`/`TotalTokens`, plus characters,
+    images, cached, thoughts). The framework carries the field on every response — proven by
+    reading it back per turn (token counts in the demo are SYNTHETIC, `len(text)/4`; the point
+    is the framework surfaces the field, not the arithmetic).
+  - **Per-tenant aggregation — DIY.** `ai.GenerationUsage` is per-call and has *no* tenant
+    concept. The demo hand-rolls a `costLedger` keyed by `tenant_id` (2 turns tenantA + 2
+    tenantB → per-tenant token/cost totals). Nothing in Genkit does this for you.
+  - **Pre-spend gate — DIY (no framework API).** Re-verified: Genkit Go ships **no**
+    usage-limit/budget option. The only knob is `ai.WithMaxTurns`, a tool-loop *iteration* cap
+    that **errors after spending**, not a per-tenant token budget checked *before* the call. The
+    demo implements a DIY gate that checks a per-tenant token counter before `genkit.Generate`
+    and **proves the model is never invoked on a rejected turn** via a call-counter on the fake
+    model (`orbit.ModelCallCount()`: `calls 1->1, delta=0` on the over-budget turn).
+  - **Pricing (tokens → $) — DIY.** No price table in the framework.
+- **vs. Pydantic AI:** that framework's `UsageLimits` runs a check *before* the request; Genkit
+  Go has no equivalent.
 - **AISOTROPY:** pre-spend token-bucket quota gate (reject/degrade before spending) + per-tenant meter.
 
-### 9. Observability — BUILT-IN transport, PROPRIETARY schema
-- **Mechanism:** Genkit ships OpenTelemetry tracing out of the box, but the span attributes are
-  `genkit:*` / `genkit:metadata:*` (e.g. `genkit:metadata:flow:name`, `genkit:input`,
-  `genkit:output`). **Re-verified against v1.10.0 source: zero `gen_ai.*` semantic-convention
-  keys.**
+### 9. Observability — BUILT-IN transport, PROPRIETARY schema, DIY per-tenant tag
+- **Run-verified** offline in `cmd/costobs`: attach a plain
+  `tracetest.NewInMemoryExporter()` to `tracing.TracerProvider()` (the same
+  `*sdktrace.TracerProvider` Genkit writes to) — no framework patching — and run ONE turn. It
+  captured **7 real spans**: root `orbitChat`, two `generate`, two `fake/orbit` model-action
+  spans, and the `lookupOrder` tool span (plus our own `orbit.turn`).
+- **Schema is proprietary, not semconv.** Every captured attribute key is `genkit:*`:
+  `genkit:name`, `genkit:input`, `genkit:output`, `genkit:path`, `genkit:state`, `genkit:type`,
+  `genkit:isRoot`, `genkit:metadata:flow:name`, `genkit:metadata:subtype`. **Confirmed at
+  runtime: zero `gen_ai.*` semantic-convention keys.**
+- **tenant_id on spans — DIY.** Genkit puts **no** tenant attribute on its spans. Tenant identity
+  only survives as an opaque JSON blob buried inside `genkit:input` (the serialized flow input).
+  To get a queryable `tenant_id` dimension the demo sets it itself on a wrapping `orbit.turn`
+  span — labeled DIY.
+- **Hosted backend — PAID/OPTIONAL:** Firebase/Google Cloud telemetry (or any OTLP collector) is
+  a separate service; local in-memory capture needs none of it.
 - **AISOTROPY:** OTel `gen_ai.*` semconv-aligned (ADR-0010) — market-standard *and* ahead of Genkit.
 
 ### 10. Sovereignty / licensing — BUILT-IN (good)

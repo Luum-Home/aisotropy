@@ -38,6 +38,24 @@ go run ./scripts
 
 Runs the adversarial isolation matrix against the real runner + session service.
 
+## Cost + pre-spend gate + observability demo (offline, no API key)
+
+```bash
+go run ./cmd/costobs
+```
+
+Proves three things by executing against the real runner, printing a
+`[BUILT-IN]/[DIY]/[PAID]` verdict for each (synthetic token counts, labeled):
+
+1. **Per-tenant cost tracking** — usage is returned per call on
+   `event.UsageMetadata` (BUILT-IN visibility); per-tenant aggregation is DIY.
+2. **Pre-spend budget gate** — no ADK primitive (usage is post-hoc), so DIY; a
+   call-counter on the fake model proves the model is **not** invoked on a
+   rejected (over-budget) turn.
+3. **Observability** — an in-memory OTel span recorder captures ADK's real
+   `generate_content` / `invoke_agent` spans with `gen_ai.usage.*` attributes
+   (BUILT-IN); `tenant.id` is not on ADK spans natively (DIY enrichment).
+
 ## Tests
 
 ```bash
@@ -114,8 +132,8 @@ of that key entirely to developer discipline.
 | 5 | Working memory | BUILT-IN | `session.Service` (in-mem / sqlite / vertexai) |
 | 6 | Semantic memory | PARTIAL | `memory.Service` (in-mem search; vectors = VertexAI MemoryBank) |
 | 7 | Facts memory (journal) | DIY | none |
-| 8 | Cost governance | PARTIAL (post-hoc) | `gen_ai.usage.*` token metadata; no pre-spend gate |
-| 9 | Observability | BUILT-IN | OTel spans w/ `gen_ai.*` attributes |
+| 8 | Cost governance | PARTIAL — usage [BUILT-IN], aggregation + pre-spend gate [DIY] | `event.UsageMetadata` per call; no pre-spend gate (run-verified `cmd/costobs`) |
+| 9 | Observability | BUILT-IN (OTel `gen_ai.*`); tenant_id [DIY] | OTel spans w/ `gen_ai.usage.*`; no `tenant.id` natively (run-verified `cmd/costobs`) |
 | 10 | Sovereignty / licensing | Apache 2.0 (Google); rich memory Vertex-tethered | — |
 | 11 | Language | Go | — |
 

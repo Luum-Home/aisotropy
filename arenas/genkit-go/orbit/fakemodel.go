@@ -5,11 +5,47 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+	"sync/atomic"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/core"
 	"github.com/firebase/genkit/go/genkit"
 )
+
+// modelCalls counts how many times the fake model's infer function is actually
+// invoked. The cost/pre-spend demo reads this to PROVE that a budget-rejected
+// turn never reaches the model (the DIY gate short-circuits before Generate).
+var modelCalls atomic.Int64
+
+// ModelCallCount returns the number of times the fake model has run since the
+// last ResetModelCalls. Used by cmd/costobs to prove the pre-spend gate blocks
+// the model call, not just the response.
+func ModelCallCount() int64 { return modelCalls.Load() }
+
+// ResetModelCalls zeroes the fake-model invocation counter.
+func ResetModelCalls() { modelCalls.Store(0) }
+
+// fakeUsage fabricates a DETERMINISTIC, SYNTHETIC token count so the demo has a
+// non-zero ai.GenerationUsage to read. The number itself is fake (len(text)/4);
+// the point being proven is that the FRAMEWORK carries Usage on the response,
+// not that the count is accurate. Real providers fill these same fields.
+func fakeUsage(req *ai.ModelRequest, out *ai.Part) *ai.GenerationUsage {
+	inChars := len(allText(req))
+	var outChars int
+	if out.Text != "" {
+		outChars = len(out.Text)
+	} else {
+		b, _ := json.Marshal(out)
+		outChars = len(b)
+	}
+	inTok := inChars / 4
+	outTok := outChars / 4
+	return &ai.GenerationUsage{
+		InputTokens:  inTok,
+		OutputTokens: outTok,
+		TotalTokens:  inTok + outTok,
+	}
+}
 
 // FakeModelName is the id of the offline, deterministic model this arena
 // registers with Genkit. It lets the whole Orbit build run — real
@@ -34,6 +70,7 @@ func DefineFakeModel(g *genkit.Genkit) ai.Model {
 			Supports: &ai.ModelSupports{Multiturn: true, Tools: true, SystemRole: true},
 		},
 		func(ctx context.Context, req *ai.ModelRequest, cb core.StreamCallback[*ai.ModelResponseChunk]) (*ai.ModelResponse, error) {
+			modelCalls.Add(1) // observed by the pre-spend gate demo
 			part, finish := fakeInfer(req)
 
 			// Real streaming: if the caller asked for streaming (ai.WithStreaming),
@@ -51,6 +88,7 @@ func DefineFakeModel(g *genkit.Genkit) ai.Model {
 			return &ai.ModelResponse{
 				Message:      ai.NewMessage(ai.RoleModel, nil, part),
 				FinishReason: finish,
+				Usage:        fakeUsage(req, part), // SYNTHETIC tokens; framework carries the field
 			}, nil
 		},
 	)

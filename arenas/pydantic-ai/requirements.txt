@@ -2,3 +2,4 @@ pydantic-ai>=2.0.0
 fastapi>=0.115.0
 uvicorn>=0.34.0
 pydantic>=2.0.0
+logfire>=4.0.0            # native OTel gen_ai tracing (send_to_logfire=False for offline)
