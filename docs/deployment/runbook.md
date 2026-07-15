@@ -8,9 +8,10 @@ timestamp: 2026-07-14T00:00:00Z
 
 # Operations runbook — running aisotropyd in production
 
-Status (2026-07-14): written against the code as built — every behavior claim below
-carries a pointer to the file or package that implements it. The authoritative env-var
-table and the full "what actually boots" ledger live in
+Status (updated 2026-07-15, ADR-0029): written against the code as built — every behavior
+claim below carries a pointer to the file or package that implements it. The 2026-07-15 pass
+adds the RS256/JWKS auth modes (§6) and the output-safety / model-routing knobs (§7). The
+authoritative env-var table and the full "what actually boots" ledger live in
 [runtime-as-built.md](../architecture/runtime-as-built.md); this runbook covers the
 operational consequences.
 
@@ -207,17 +208,26 @@ override applies **per replica** — N replicas still multiply the effective per
 rate. The builder option is documented in
 [build-your-own-agent](../guides/build-your-own-agent.md).
 
-## 6. Security & authentication environment variables (ADR-0024 / ADR-0025)
+## 6. Security & authentication environment variables (ADR-0024 / ADR-0025 / ADR-0029)
 
 The shipped binary is **securable by config** — no fork, no library embedding. The
 defaults are chosen so that an unconfigured deployment is loud (a `NoAuth` warning) or
 safe (ops endpoints closed), never silently insecure. For any non-local deployment, set
-`AISOTROPY_JWT_SECRET` **and** `AISOTROPY_OPS_TOKEN`, and put TLS in front (or enable
-`AISOTROPY_REQUIRE_TLS`).
+**one** JWT mode (`AISOTROPY_JWT_SECRET` for HS256, or `AISOTROPY_JWT_PUBLIC_KEY[_FILE]` /
+`AISOTROPY_JWT_JWKS_URL` for RS256) **and** `AISOTROPY_OPS_TOKEN`, and put TLS in front (or
+enable `AISOTROPY_REQUIRE_TLS`).
+
+**Exactly one JWT mode may be set.** `AuthenticatorFromEnv` counts the configured mode
+families and **refuses to boot** if more than one is set (HS256 vs RS256-static vs
+RS256-JWKS). The **algorithm-confusion defence** is that the *configured* mode fixes the
+accepted `alg` — a token whose header `alg` differs is rejected before any signature check,
+so an RS256-configured verifier can never be steered onto the HMAC path (`internal/auth/jwt.go`).
 
 | Variable | Effect | Default when unset | Code pointer |
 |---|---|---|---|
-| `AISOTROPY_JWT_SECRET` | Enables HS256 bearer-JWT authentication on every `/v1` route (the must-agree bind: 401 missing/invalid, 403 tenant/user mismatch). Verified JWT scopes gate tools. **Must be ≥ 32 bytes** — a shorter secret is a fatal config fault: the binary **refuses to boot** (the error never contains the secret). | `NoAuth()` — path `tenant_id`/`user_id` trusted verbatim, logged as a **startup warning**. The secret value is never logged. | `aisotropy/authenv.go` (`AuthenticatorFromEnv`, `auth.ValidateHS256Secret`); wired at `cmd/aisotropyd/main.go` |
+| `AISOTROPY_JWT_SECRET` | Enables **HS256** bearer-JWT authentication on every `/v1` route (the must-agree bind: 401 missing/invalid, 403 tenant/user mismatch). Verified JWT scopes gate tools. **Must be ≥ 32 bytes** — a shorter secret is a fatal config fault: the binary **refuses to boot** (the error never contains the secret). | `NoAuth()` — path `tenant_id`/`user_id` trusted verbatim, logged as a **startup warning** (only when no RS256 mode is set either). The secret value is never logged. | `aisotropy/authenv.go` (`AuthenticatorFromEnv`, `auth.ValidateHS256Secret`); wired at `cmd/aisotropyd/main.go` |
+| `AISOTROPY_JWT_PUBLIC_KEY` / `AISOTROPY_JWT_PUBLIC_KEY_FILE` | Enables **RS256** verification against a **static RSA public key** (ADR-0029) — for tokens minted by an external IdP. `PUBLIC_KEY` is a PEM literal (PKIX or PKCS#1), `PUBLIC_KEY_FILE` a path to the same; the two are **mutually exclusive**. Pins the verifier to RS256 (HS256 tokens rejected). | Off. A parse/read failure is a fatal boot fault whose error **never contains key bytes**. | `aisotropy/authenv.go`, `internal/auth/jwt_rs256.go` (`ParseRSAPublicKeyPEM`, `WithRSAPublicKey`) |
+| `AISOTROPY_JWT_JWKS_URL` | Enables **RS256** verification against a **JWKS endpoint** (ADR-0029): the key set is fetched (`net/http`), parsed **stdlib-only** (`math/big`, no external JWK library), TTL-cached (5 min), and the token `kid` matched to a key (bounded refetch on unknown `kid`); response bounded to 1 MiB. **Fails CLOSED** — a fetch failure with no usable cached key rejects the request, never falls open. | Off. | `aisotropy/authenv.go`, `internal/auth/jwt_rs256.go` (`WithJWKS`, `jwksSource`) |
 | `AISOTROPY_OPS_TOKEN` | Gates the operator endpoints `GET /costs` and `GET /bitrate` (all-tenant aggregates) behind a shared bearer token, compared constant-time (`crypto/subtle`). Present → the request must carry `Authorization: Bearer <token>` (401 otherwise). The token is never logged. | **Endpoints closed**: every request to `/costs` and `/bitrate` gets **503** until the token is set (default-closed — no cross-tenant leak). | `internal/api/ops_gate.go` (`OpsAuthGate`, `OpsTokenFromEnv`); wired at `aisotropy/app.go` |
 | `AISOTROPY_JWT_AUDIENCE` | When set, requires the JWT `aud` claim (string or array, RFC 7519) to contain this value — closes token-confusion / cross-audience replay. **Optional.** | `aud` is not checked (existing tokens keep verifying). | `internal/auth/jwt.go` (`WithAudience`); re-export `aisotropy.WithJWTAudience` |
 | `AISOTROPY_JWT_ISSUER` | When set, requires the JWT `iss` claim to equal this value exactly. **Optional.** | `iss` is not checked. | `internal/auth/jwt.go` (`WithIssuer`); re-export `aisotropy.WithJWTIssuer` |
@@ -230,8 +240,9 @@ Notes independent of these levers, so the picture is honest:
   token with no expiry, or a far-future `iat`, is rejected) — this holds regardless of
   the optional `AISOTROPY_JWT_*` hardening above (`internal/auth/jwt.go`).
 - **Startup posture is logged, secrets are not.** `cmd/aisotropyd/main.go` logs the auth
-  mode (`jwt-hs256` vs the NoAuth warning), whether the ops token is set, and whether TLS
-  enforcement is on — presence only, never a value.
+  mode (`jwt-hs256`, `jwt-rs256`, `jwt-rs256-jwks`, or the `noauth` warning), whether the ops
+  token is set, and whether TLS enforcement is on — presence only, never a value (no HMAC
+  secret, RSA key, or JWKS URL).
 - **Library users get default-deny.** Building `aisotropy.App` with **no**
   `WithAuthenticator` rejects every `/v1` request with 401; the shipped binary avoids
   that by always passing `WithAuthenticator(AuthenticatorFromEnv())` (which is `NoAuth`
@@ -240,12 +251,37 @@ Notes independent of these levers, so the picture is honest:
 
 ### Secure-deployment checklist
 
-- [ ] `AISOTROPY_JWT_SECRET` set to a **≥ 32-byte** random secret (the binary refuses to
-  boot on a weaker one; unset means the insecure `NoAuth` mode with a warning).
+- [ ] **One** JWT mode configured: `AISOTROPY_JWT_SECRET` (HS256, **≥ 32 bytes** — the binary
+  refuses to boot on a weaker one) **or** `AISOTROPY_JWT_PUBLIC_KEY[_FILE]` / `AISOTROPY_JWT_JWKS_URL`
+  (RS256, for an external IdP). Setting more than one refuses to boot; setting none means the
+  insecure `NoAuth` mode with a warning.
+- [ ] For the **JWKS** mode, confirm the endpoint is reachable from the pod and served over
+  TLS — a fetch failure with no cached key **fails closed** (requests are rejected), which is
+  safe but will 401 everyone until the endpoint recovers.
 - [ ] `AISOTROPY_OPS_TOKEN` set to a random token if `/costs` / `/bitrate` are exposed
   (unset means those endpoints return 503 — also safe, just unavailable).
 - [ ] TLS terminated in front of aisotropyd (proxy/load balancer), or
   `AISOTROPY_REQUIRE_TLS=true` when the binary terminates TLS itself — bearer credentials
   must not travel in plaintext.
-- [ ] Consider `AISOTROPY_JWT_AUDIENCE` / `AISOTROPY_JWT_ISSUER` when the HS256 secret is
-  shared with other services, and `AISOTROPY_JWT_MAX_TTL` to bound token lifetime.
+- [ ] Consider `AISOTROPY_JWT_AUDIENCE` / `AISOTROPY_JWT_ISSUER` (they apply to **any** JWT
+  mode) when the token is shared with other services, and `AISOTROPY_JWT_MAX_TTL` to bound
+  token lifetime.
+
+## 7. Output-safety and model-routing knobs (ADR-0028 / ADR-0029)
+
+Guardrails run on every chat request — input redaction + injection/output **detection are
+ALWAYS on** — but **blocking is opt-in and default-off** (annotate + log). The model-selection
+gateway is likewise a pass-through until configured. The operationally-relevant knobs, all
+default-off:
+
+| Variable / signal | Effect | Operational note | Code pointer |
+|---|---|---|---|
+| `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` | Truthy → a suspicious **input** injection verdict **rejects** the request (400 on `chat`/`chat/agent`, SSE `error` on `chat/stream`) instead of annotating. | Heuristic detector — expect false positives. Default off: redaction + detection still run, nothing is blocked. | `aisotropy/app.go` (`guardrailsBlockFromEnv`), `internal/api/guard.go` |
+| `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` | Truthy → a flagged (toxicity/leak) reply is replaced with a safe refusal on **both** chat routes. On `chat/stream` this forces the response to be **BUFFERED** (no live token flush) so it can be inspected before any byte is sent. | **Latency trade-off (ADR-0029):** buffering sacrifices time-to-first-token on `chat/stream` — the client waits for the full reply. Non-streaming `chat` has no such cost. Default off → `chat/stream` streams live and only annotates. | `aisotropy/app.go`, `internal/api/guard.go`, `internal/api/chat_stream.go` |
+| `AISOTROPY_GUARDRAILS_LLM_JUDGE` | Truthy (and an LLM client set) → attaches an **LLM-as-a-judge** Safety check to the output guardrail (flags a reply scoring `< 0.5` safety). | **Adds a model call per response** (cost + latency). Driven by the **raw** LLM client, not the circuit-broken chat client, so a flaky judge can't trip the chat breaker. Its error posture tracks `BLOCK_OUTPUT` (fail-open when annotating, fail-closed when hard-blocking). Construction failure → falls back to built-in heuristics. Default off. | `aisotropy/app.go`, `internal/api/eval_output_check.go`, `internal/eval` |
+| `AISOTROPY_COST_BUDGET_USD` | A positive USD budget enables gateway cost-budget shaping — an over-budget tenant is routed to the cheap target. | **Requires `AISOTROPY_CHEAP_MODEL`** too, else skipped (pass-through). An explicit per-request `model_preference` overrides this rule. | `aisotropy/app.go` (`costBudgetFromEnv`, `buildModelGateway`) |
+| `model_preference` (request body field, not env) | An **optional** `ChatRequest` field naming a gateway target (e.g. `"cheap"`) the caller wants for that turn (ADR-0029). Wins over cost-budget routing. | A routing **preference, not authorization** — an unknown name falls back to the default, and quota-pressure degradation still overrides it. Additive/`omitempty`, so existing clients are unaffected. | `internal/api/chat.go` (`ChatRequest.ModelPreference`), `internal/api/guard.go` (`selectClient`) |
+
+The complete env-var table (all levers, not just the ops-critical subset) remains in
+[runtime-as-built.md](../architecture/runtime-as-built.md) → "Environment variables (as
+consumed by the code)".

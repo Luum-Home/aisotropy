@@ -88,6 +88,28 @@ aspirational) and the [data model](data-model.md) / [API reference](api-referenc
 > staleness/isolation footgun) and stays CODE-ONLY, a standalone primitive for stateless flows.
 > Guardrails + gateway move CODE-ONLY → REAL; the cache stays CODE-ONLY.
 
+> **Freshness note (2026-07-15, four named follow-ons — [ADR-0029](../decisions/0029-followons-rs256-streaming-signals-judge.md)):**
+> the follow-ons ADR-0024/0025 and ADR-0028 deferred are now built, all stdlib-only and default-off,
+> reflected in §1, §2, §6 and the env table: (1) **RS256/JWKS auth** — `AuthenticatorFromEnv`
+> ([`aisotropy/authenv.go`](../../aisotropy/authenv.go)) now selects a second, asymmetric verification
+> family from `AISOTROPY_JWT_PUBLIC_KEY[_FILE]` (static RSA key) or `AISOTROPY_JWT_JWKS_URL` (JWKS,
+> fetched/TTL-cached/`kid`-matched with `math/big`, fail-closed), with the **algorithm-confusion
+> defence** that the *configured* mode fixes the expected `alg` — never the token
+> ([`internal/auth/jwt.go`](../../internal/auth/jwt.go), [`jwt_rs256.go`](../../internal/auth/jwt_rs256.go)).
+> Exactly one mode may be configured. (2) **Streaming hard output-blocking** — with
+> `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` on, `chat/stream` now **buffers** the whole response (no live
+> flush) so a flagged reply can be replaced with a refusal before a byte is sent (latency-for-safety,
+> opt-in); off (default) keeps the live flush + annotate-only path. (3) **`ChatInput.model_preference`**
+> — an **additive `omitempty`** body field (existing clients byte-for-byte unaffected, ADR-0002 held)
+> mapped to `gateway.Request.UISelector`, so `gateway.OverridePolicy` (now first in the chain) honors an
+> explicit target over the cost-budget rule; it is a preference not authorization, an unknown name
+> resolves to the default, and the streaming quota-pressure `DegradeAt` still overrides it. (4) **eval
+> `LLMJudge` on the output guardrail** — opt-in behind `AISOTROPY_GUARDRAILS_LLM_JUDGE`, attached via the
+> `api.EvalOutputCheck` adapter over the `guardrails.OutputCheck` seam (`api → {eval, guardrails}`;
+> guardrails never imports eval), driven by the **raw** `llmClient` (not the circuit-broken chat client),
+> with judge-error posture tracking the blocking posture (fail-open when annotating, fail-closed when
+> hard-blocking). All four opt-in / default-off; no new dependency, no contract break.
+
 ## 1. The HTTP surface (every route actually registered)
 
 `App.Run` builds a `chi` router (`middleware.RequestID`, `middleware.Recoverer`, plus — **only when
@@ -134,9 +156,14 @@ Before any `/v1` operation runs, `App.Run` installs **one** Huma API middleware 
 - If **no** authenticator is registered, the gate is `api.DenyAllMiddleware`: every `/v1` request is
   rejected **401** (default-deny) — running unauthenticated is never the silent default; it is an
   explicit opt-in via `NoAuth()`. The shipped `aisotropyd` binary opts in through
-  `AuthenticatorFromEnv` (`AISOTROPY_JWT_SECRET` → HS256 JWT bearer verification; unset → `NoAuth()`
-  with a startup warning — see [`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go) and the env
-  table).
+  `AuthenticatorFromEnv`, which selects **exactly one** verification mode from the environment (more
+  than one refuses to boot): `AISOTROPY_JWT_SECRET` → **HS256** bearer verification;
+  `AISOTROPY_JWT_PUBLIC_KEY[_FILE]` → **RS256** against a static RSA public key;
+  `AISOTROPY_JWT_JWKS_URL` → **RS256** against a JWKS endpoint (ADR-0029); unset → `NoAuth()` with a
+  startup warning (see [`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go) and the env table). The
+  **algorithm-confusion defence**: the *configured* mode fixes the accepted `alg` and a mismatched
+  header is rejected before any signature check — the token can never steer an RS256-configured verifier
+  onto the HMAC path ([`internal/auth/jwt.go`](../../internal/auth/jwt.go)).
 
 The `GET /healthz`, `GET /health`, `GET /costs`, `GET /bitrate`, `/openapi.json` and `/docs` routes
 are registered directly on chi (or via the Huma adapter's `Handle` for openapi/docs), **outside** the
@@ -148,7 +175,9 @@ shared bearer token compared constant-time, 503 until the token is set (see §5 
 
 ### Contract shapes
 
-- **`ChatRequest`** (body): `prompt` (maxLength 2000), `product_id`, `session_id`, `scopes[]`.
+- **`ChatRequest`** (body): `prompt` (maxLength 2000), `product_id`, `session_id`, `scopes[]`, and
+  `model_preference` (optional, `omitempty`, ADR-0029 — an explicit gateway-target override; additive,
+  so existing clients are unaffected).
 - **`ChatOutput`** (non-streaming): `reply`, `tenant_id` (isolation echo), `stub` (true when the
   resolved LLM client is the credential-less stub).
 - **SSE events** (streaming): `token{text}`, `done{tenant_id}`, `error{message}`.
@@ -211,24 +240,29 @@ the request 401/403 so the handler is never reached. This is the `chat/stream` h
    enqueued** — the turn is `Reserve`d in the bitrate store and deliberately kept out of the
    facts/semantic consolidation pipeline, so the later memory-lift measurement is not contaminated
    by leakage.
-7. **Model selection through the gateway seam (ADR-0028).** `selectClient(ctx, gw, client, meter,
-   tenant, user, forwarded)` ([`internal/api/guard.go`](../../internal/api/guard.go),
-   [`internal/gateway`](../../internal/gateway)) runs the routing policy to pick the client for this
-   turn, projecting the request down to a `gateway.Request` carrying the tenant's cumulative spend
-   (from the shared cost meter). The **cost-budget** policy shapes an over-budget tenant to the cheap
-   target — live only when `AISOTROPY_COST_BUDGET_USD` **and** a cheap client are configured;
-   otherwise the gateway is a clean pass-through to `primary`. Request-shape rules
-   (image/UI-override) are **present-but-inert** (no such signal on `ChatInput` yet), and there is
-   **no** prompt-length/difficulty rule (Bet-4 refuted, ADR-0021). A routing miss falls back to the
-   passed client — a decision never drops a request.
+7. **Model selection through the gateway seam (ADR-0028 / ADR-0029).** `selectClient(ctx, gw, client,
+   meter, tenant, user, forwarded, in.Body.ModelPreference)`
+   ([`internal/api/guard.go`](../../internal/api/guard.go), [`internal/gateway`](../../internal/gateway))
+   runs the routing policy to pick the client for this turn, projecting the request down to a
+   `gateway.Request` carrying the tenant's cumulative spend (from the shared cost meter) **and the
+   caller's `model_preference` as `UISelector`** (ADR-0029). `gateway.OverridePolicy` — now **first** in
+   the chain — honors a non-empty preference as a hard target that **wins over** the cost-budget rule; it
+   abstains when the preference is empty, so preference-less requests route exactly as before. The
+   **cost-budget** policy then shapes an over-budget tenant to the cheap target — live only when
+   `AISOTROPY_COST_BUDGET_USD` **and** a cheap client are configured; otherwise the gateway is a clean
+   pass-through to `primary`. The image-override request-shape rule stays **present-but-inert** (no image
+   signal on `ChatInput` yet), and there is **no** prompt-length/difficulty rule (Bet-4 refuted,
+   ADR-0021). An unknown preference name resolves to the default and a routing miss falls back to the
+   passed client — a decision (or a bad client value) never drops a request.
 8. **Quota-pressure model degradation (OVERRIDE on the gateway pick).** If a cheap client *and* a
    limiter are both configured, `limiter.Pressure(ctx, tenant)` peeks the bucket and
    `llm.DegradeAt(pressure, 0.95, active, cheap)` may override the gateway-chosen client with the
    cheaper model instead of a hard rejection
    ([`internal/llm/degrade.go`](../../internal/llm/degrade.go),
    [`internal/memory/quota_pressure.go`](../../internal/memory/quota_pressure.go)). The gateway
-   **complements**, never replaces, this Phase-7 degrade. Absent a cheap client, the gateway pick
-   stands.
+   **complements**, never replaces, this Phase-7 degrade — and it overrides **even an explicit
+   `model_preference`** (the safety valve wins), because it is applied *after* the gateway pick. Absent a
+   cheap client, the gateway pick stands.
 9. **LLM stream (circuit-breakered + OTel).** `active.StreamChat(ctx, system, prompt)` opens a token
    channel. The client is `WithOTel(WithCircuitBreaker(primary))` — one `gen_ai` span per call, and
    fast-fail once the breaker is open (see steps below).
@@ -238,12 +272,22 @@ the request 401/403 so the handler is never reached. This is the `chat/stream` h
    - `tok.Err != nil` → emit SSE `error`, stop; partial reply not persisted.
    - `tok.Done` → **persist the assistant turn** via plain `wm.Append` (only a clean, complete
      stream is stored; assistant turns carry **no outbox event** on either chat route — only user
-     turns are consolidated), run the **output guardrail annotate-only** on the assembled reply
-     (`guard.annotateOutput` — a streamed response is already sent token by token and cannot be
-     un-sent, so this logs a tripped toxicity/leak verdict but never blocks; hard blocking here is an
-     ADR-0028 follow-on needing response buffering), **record cost** via `meter.Record` from
-     `tok.Usage` (real provider token counts, if supplied), then emit `done`.
-   - otherwise → accumulate text and forward the `token` event.
+     turns are consolidated), handle the **output guardrail** per the buffering mode (below), **record
+     cost** via `meter.Record` from `tok.Usage` (real provider token counts, if supplied), then emit
+     `done`.
+   - otherwise → accumulate text; forward the `token` event **only in live mode** (in buffered mode the
+     token is accumulated but not flushed).
+
+   The output-guardrail handling at `Done` has **two modes**, keyed on `guard.outputBlockingEnabled()`
+   (i.e. `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT`, ADR-0029):
+   - **Off (default) — live flush + annotate-only.** Tokens were flushed as they arrived; the assembled
+     reply is inspected with `guard.annotateOutput`, which logs a tripped toxicity/leak verdict but
+     **never blocks** — a streamed response is already sent and cannot be un-sent.
+   - **On — buffered + hard-block.** Tokens were **accumulated without flushing**; at `Done` the whole
+     assembled reply is inspected with `guard.checkOutput`, and **only** the resulting safe text (or a
+     safe refusal if it tripped a guardrail) is emitted **and** persisted — the toxic/leaky text never
+     reaches the wire nor memory, mirroring the non-streaming route. The trade-off is time-to-first-token
+     (the client waits for the full response); it is the operator's opt-in.
 
 The non-streaming `chat` handler ([`chat.go`](../../internal/api/chat.go)) is similar but:
 - it uses the reflection loop `llm.ReflectAuto[chatStructuredReply]` (Gollem backend by default with
@@ -437,13 +481,19 @@ threaded through the handlers:
   detection run but neither injection nor output verdicts reject anything until
   `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` / `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` are set. Do not read
   "guardrails wired" as "guardrails enforcing."
-- **Streaming output-guardrail is annotate-only.** `chat/stream` cannot replace a flagged reply with
-  a refusal (a token-by-token stream can't be un-sent); only non-streaming `chat` can hard-block
-  output. Hard blocking on the streaming route needs response buffering — an ADR-0028 follow-on.
-- **The gateway's advertised policy surface exceeds what fires.** Only the cost-budget rule can route
-  today; the image/UI-override rules are present-but-inert because `ChatInput` carries no such signal
-  (an ADR-0028 follow-on: add request-shape fields to the contract). There is deliberately no
-  length/difficulty rule (Bet-4 refuted, ADR-0021).
+- **Streaming output-guardrail is annotate-only BY DEFAULT — buffered hard-blocking is opt-in
+  (ADR-0029).** With `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` off (default), `chat/stream` flushes live and
+  can only annotate a flagged reply (a token-by-token stream can't be un-sent). Turning the toggle on
+  makes `chat/stream` **buffer** the whole response and hard-block (replace with a refusal before the
+  first byte), at the cost of time-to-first-token — closing the ADR-0028 follow-on. Non-streaming `chat`
+  hard-blocks under the same toggle without buffering (it already has the whole reply).
+- **The gateway's UI-override rule now fires on `model_preference`; the image rule is still inert
+  (ADR-0029).** The cost-budget rule and — new — the `OverridePolicy` (driven by the additive
+  `ChatRequest.model_preference` → `UISelector`) both route today; the **image** request-shape rule stays
+  present-but-inert because `ChatInput` still carries no image part (a further contract change). There is
+  deliberately no length/difficulty rule (Bet-4 refuted, ADR-0021). A `model_preference` is a routing
+  hint only (unknown names fall back to the default; quota-pressure `DegradeAt` still overrides it) — not
+  authorization.
 - **The response cache is CODE-ONLY by decision, not by omission (ADR-0028).**
   [`internal/responsecache`](../../internal/responsecache) is tested and isolation-correct by
   construction, but it is **not** on the chat path: the chat response depends on per-user hydrated
@@ -456,13 +506,16 @@ threaded through the handlers:
 |---|---|---|
 | `AISOTROPY_ADDR` | `App.Run` (`aisotropy/app.go`) | HTTP listen address; the `WithAddr` option wins over it, and both fall back to `:8080` |
 | `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | `llm.RegistryFromEnv` (via `llm.FromEnv`) | Select the default LLM client by precedence `OPENROUTER_API_KEY > OPENAI_API_KEY > ANTHROPIC_API_KEY > stub` ([`internal/llm/registry.go`](../../internal/llm/registry.go)). Every provider with a key set is registered; the highest-precedence one becomes the default. With none set, the credential-less `stub` client is the default (`ChatOutput.stub = true`). |
-| `AISOTROPY_JWT_SECRET` | `aisotropy.AuthenticatorFromEnv` ([`aisotropy/authenv.go`](../../aisotropy/authenv.go)) | Selects the `aisotropyd` binary's authenticator (ADR-0024). Set (non-empty) → `NewJWTAuthenticator([]byte(secret))`, verifying an `Authorization: Bearer <jwt>` **HS256** credential with the Go stdlib only (no dependency); the auth gate then enforces the must-agree bind (401 on missing/invalid, 403 on tenant/user mismatch). Unset → `NoAuth()` (path tenant/user trusted verbatim) with a startup **warning**. **Must be ≥ 32 bytes** (ADR-0025): a shorter secret is a fatal config fault — the binary refuses to boot (`auth.ValidateHS256Secret`). The secret value is never logged. |
-| `AISOTROPY_JWT_AUDIENCE` / `AISOTROPY_JWT_ISSUER` / `AISOTROPY_JWT_MAX_TTL` | `aisotropy.AuthenticatorFromEnv` ([`aisotropy/authenv.go`](../../aisotropy/authenv.go)) | **Optional** HS256 hardening (ADR-0025), applied only when the JWT authenticator is selected. `AUDIENCE` → require the `aud` claim (string/array) to contain it (token-confusion defence); `ISSUER` → require `iss` to equal it; `MAX_TTL` (a Go duration) → cap `(exp - iat)` token lifetime — a malformed value is a fatal boot fault. Each unset = not checked, so existing tokens keep verifying. `exp` is always required, `nbf`/`iat` always validated when present ([`internal/auth/jwt.go`](../../internal/auth/jwt.go)). |
+| `AISOTROPY_JWT_SECRET` | `aisotropy.AuthenticatorFromEnv` ([`aisotropy/authenv.go`](../../aisotropy/authenv.go)) | Selects the `aisotropyd` binary's **HS256** authenticator (ADR-0024) — **one of the mutually-exclusive JWT modes** (setting more than one JWT mode refuses to boot). Set (non-empty) → `NewJWTAuthenticator([]byte(secret))`, verifying an `Authorization: Bearer <jwt>` HS256 credential with the Go stdlib only (no dependency); the auth gate then enforces the must-agree bind (401 on missing/invalid, 403 on tenant/user mismatch). Unset (and no RS256 mode set) → `NoAuth()` (path tenant/user trusted verbatim) with a startup **warning**. **Must be ≥ 32 bytes** (ADR-0025): a shorter secret is a fatal config fault — the binary refuses to boot (`auth.ValidateHS256Secret`). The secret value is never logged. |
+| `AISOTROPY_JWT_PUBLIC_KEY` / `AISOTROPY_JWT_PUBLIC_KEY_FILE` | `aisotropy.AuthenticatorFromEnv` ([`aisotropy/authenv.go`](../../aisotropy/authenv.go), [`internal/auth/jwt_rs256.go`](../../internal/auth/jwt_rs256.go)) | Selects **RS256** verification against a **static RSA public key** (ADR-0029), for tokens minted by an external IdP. `PUBLIC_KEY` is a PEM literal (PKIX `PUBLIC KEY` or PKCS#1 `RSA PUBLIC KEY`); `PUBLIC_KEY_FILE` is a path to the same — the two are **mutually exclusive** (setting both refuses to boot). Mode label `jwt-rs256`. A parse/read failure is a fatal boot fault whose error **never contains key bytes**. The algorithm-confusion defence pins the verifier to RS256, so HS256 tokens are rejected outright ([`internal/auth/jwt.go`](../../internal/auth/jwt.go)). |
+| `AISOTROPY_JWT_JWKS_URL` | `aisotropy.AuthenticatorFromEnv` ([`aisotropy/authenv.go`](../../aisotropy/authenv.go), [`internal/auth/jwt_rs256.go`](../../internal/auth/jwt_rs256.go)) | Selects **RS256** verification against a **JWKS endpoint** (ADR-0029). The key set is fetched (`net/http`), parsed **stdlib-only** (`math/big` over the jwk `n`/`e` — no external JWK library), TTL-cached (default 5 min), and the token `kid` is matched to a key (bounded refetch, default 1 min, on an unknown `kid`); the response is bounded to 1 MiB. Mode label `jwt-rs256-jwks`. **Fails CLOSED**: a fetch failure with no usable cached key rejects the request (never falls open). |
+| `AISOTROPY_JWT_AUDIENCE` / `AISOTROPY_JWT_ISSUER` / `AISOTROPY_JWT_MAX_TTL` | `aisotropy.AuthenticatorFromEnv` ([`aisotropy/authenv.go`](../../aisotropy/authenv.go)) | **Optional** JWT hardening (ADR-0025), applied to **whichever** JWT mode (HS256 or RS256) is selected. `AUDIENCE` → require the `aud` claim (string/array) to contain it (token-confusion defence); `ISSUER` → require `iss` to equal it; `MAX_TTL` (a Go duration) → cap `(exp - iat)` token lifetime — a malformed value is a fatal boot fault. Each unset = not checked, so existing tokens keep verifying. `exp` is always required, `nbf`/`iat` always validated when present ([`internal/auth/jwt.go`](../../internal/auth/jwt.go)). |
 | `AISOTROPY_OPS_TOKEN` | `api.OpsTokenFromEnv` → `api.OpsAuthGate` ([`internal/api/ops_gate.go`](../../internal/api/ops_gate.go)), wired in `App.Run` | Gates the operator endpoints `GET /costs` and `GET /bitrate` (all-tenant aggregates), default-closed (ADR-0025). Unset → both return **503**; set → the request must carry a matching `Authorization: Bearer <token>` (constant-time compare, `crypto/subtle`; generic 401 on miss). The token is never logged (only its presence). |
 | `AISOTROPY_REQUIRE_TLS` | `requireTLSFromEnv` → pre-route chi middleware ([`aisotropy/app.go`](../../aisotropy/app.go)) | Truthy (`strconv.ParseBool`) → reject any non-TLS request (`r.TLS == nil`) with **HTTP 400**, so a bearer token can never be sent in plaintext (ADR-0025). **Off** by default — most deployments terminate TLS at a proxy and forward plain HTTP; enable only when aisotropyd terminates TLS itself. |
 | `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` | `guardrailsBlockFromEnv` → `api.Guard.BlockInjection` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/api/guard.go`](../../internal/api/guard.go)) | Truthy (`strconv.ParseBool`) → a `Suspicious` **input** injection verdict **rejects** the request (400 on `chat`/`chat/agent`, SSE `error` on `chat/stream`) instead of merely annotating it (ADR-0028). Unset/off (default) → redaction + detection still run, but nothing is blocked. |
-| `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` | `guardrailsBlockFromEnv` → `api.Guard.BlockOutput` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/api/guard.go`](../../internal/api/guard.go)) | Truthy → a flagged (toxicity/leak) **non-streaming** `chat` reply is replaced with a safe refusal (which then persists + returns) instead of merely annotating it (ADR-0028). **No effect on `chat/stream`** (annotate-only — a stream can't be un-sent) or `chat/agent` (no output guardrail). Unset/off (default) → annotate + log only. |
-| `AISOTROPY_COST_BUDGET_USD` | `costBudgetFromEnv` → `buildModelGateway` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/gateway`](../../internal/gateway)) | A positive USD budget enables the gateway's `CostAwarePolicy` cost-budget shaping — an over-budget tenant (by cumulative spend from the cost meter) is routed to the cheap target (ADR-0028). **Requires a cheap client** (`AISOTROPY_CHEAP_MODEL`) too; with either unset, the rule is skipped and the gateway is a pass-through to `primary`. Unset/non-positive → shaping disabled. |
+| `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` | `guardrailsBlockFromEnv` → `api.Guard.BlockOutput` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/api/guard.go`](../../internal/api/guard.go)) | Truthy → a flagged (toxicity/leak) reply is replaced with a safe refusal (which then persists + returns) instead of merely annotating it, on **both** chat routes (ADR-0028 + ADR-0029): the **non-streaming** `chat` substitutes the refusal after the reply is produced, and — new — the **streaming** `chat/stream` **BUFFERS** the whole response (no live token flush) so it, too, can inspect and refuse before emitting a byte (a **time-to-first-token** cost, opt-in). Also sets the LLM judge's error posture to **fail-closed** when the judge is attached (below). Unset/off (default) → annotate + log only; `chat/stream` keeps its live flush (no latency change). No effect on `chat/agent` (no output guardrail). |
+| `AISOTROPY_GUARDRAILS_LLM_JUDGE` | `guardrailsBlockFromEnv` → the output-inspector branch in `App.Run` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/api/eval_output_check.go`](../../internal/api/eval_output_check.go)) | Truthy (and an LLM client exists) → attaches an **LLM-as-a-judge Safety check** to the output guardrail via the `api.EvalOutputCheck` adapter over the `guardrails.OutputCheck` seam (ADR-0029; `internal/guardrails` still never imports `internal/eval`). Built on `eval.NewLLMJudge(llmClient, eval.Safety, …)` and flags a reply whose normalized safety score is **< 0.5** (`guardrailsJudgeSafetyThreshold`). Driven by the **raw** `llmClient` — deliberately not the circuit-broken chat client — so a flaky judge can't trip the chat breaker. Its **error posture tracks `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT`**: fail-open (annotate) when blocking is off, fail-closed (suspicious) when on. Construction failure → logged, falls back to the built-in output heuristics. Unset/off (default) → built-in heuristics only; keyless/stub runtimes unchanged. |
+| `AISOTROPY_COST_BUDGET_USD` | `costBudgetFromEnv` → `buildModelGateway` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/gateway`](../../internal/gateway)) | A positive USD budget enables the gateway's `CostAwarePolicy` cost-budget shaping — an over-budget tenant (by cumulative spend from the cost meter) is routed to the cheap target (ADR-0028). **Requires a cheap client** (`AISOTROPY_CHEAP_MODEL`) too; with either unset, the rule is skipped and the gateway is a pass-through to `primary`. An explicit `ChatRequest.model_preference` (`gateway.OverridePolicy`, ADR-0029) **wins over** this cost-budget rule. Unset/non-positive → shaping disabled. |
 | `AISOTROPY_DATA_DIR` | working memory + facts | On-disk BadgerDB dir; also default `facts.db` location |
 | `AISOTROPY_FACTS_DB` | `facts.OpenFromEnv` | Explicit SQLite file path |
 | `RQLITE_URL` | `facts.OpenFromEnv` | Networked rqlite facts store |
