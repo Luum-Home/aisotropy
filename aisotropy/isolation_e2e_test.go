@@ -26,7 +26,10 @@ package aisotropy
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -71,6 +74,12 @@ func startIsolationApp(t *testing.T) string {
 		WithAddr(addr),
 		WithLLM(fastStub()),
 		WithRateLimit(1e9, 1e9),
+		// NoAuth: these probes exercise cross-tenant HYDRATION isolation, a
+		// concern orthogonal to authentication. Opt out of the default deny-all
+		// gate so every /v1 request reaches a handler (the pre-seam behavior),
+		// keeping the leak assertions meaningful. The authn posture itself is
+		// covered by TestPathParamTrust... below.
+		WithAuthenticator(NoAuth()),
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -352,43 +361,143 @@ func TestIsolationConcurrencyNoCrossTenantLeak(t *testing.T) {
 	}
 }
 
-// TestPathParamTrustUnauthenticatedRequestIsAcceptedAuthnRegressionAnchor
-// documents CURRENT behavior and is the explicit regression anchor for the
-// future Authenticator.
-//
-// TODAY: tenant_id/user_id are TRUSTED, validated Huma path params (regex
-// ^[a-zA-Z0-9_-]{1,64}$, internal/api/chat.go). There is NO authentication
-// wired — aisotropy/app.go installs only chi middleware.RequestID + Recoverer
-// (see app.go's router.Use calls). So ANY caller may address ANY tenant/user in
-// the path with no credential and be served (200), as chat.go's package doc
-// admits ("the path param here is the walking-skeleton stand-in" for a JWT auth
-// middleware).
-//
-// This test asserts that "authless request is accepted" as the CURRENT truth.
-// When the Authenticator lands, this assertion MUST flip: an unauthenticated
-// request should then be REJECTED (401/403), and this test's failure is the
-// intended signal that the security posture changed. Do NOT delete it — invert
-// its expectation and rename the "IsAccepted" clause.
-func TestPathParamTrustUnauthenticatedRequestIsAcceptedAuthnRegressionAnchor(t *testing.T) {
-	base := startIsolationApp(t)
-
-	// No Authorization header, arbitrary tenant/user picked out of thin air.
-	status, reply := postChat(t, base, "any-unowned-tenant", "any-unowned-user", "s1", "hello with no credentials")
-
-	if status != http.StatusOK {
-		t.Fatalf("AUTHN POSTURE CHANGED: an unauthenticated request to an arbitrary tenant/user returned %d, not 200. "+
-			"If an Authenticator was intentionally wired, invert this anchor to assert rejection (401/403) and rename it. Reply: %q", status, reply)
+// startAuthApp boots a fresh isolation-style App with an explicitly chosen
+// authenticator (or nil to leave it UNconfigured, exercising the default
+// deny-all gate). Same fast-stub + unlimited-rate harness as startIsolationApp;
+// registers the same cleanup.
+func startAuthApp(t *testing.T, authn Authenticator) string {
+	t.Helper()
+	addr := freeAddr(t)
+	opts := []Option{WithAddr(addr), WithLLM(fastStub()), WithRateLimit(1e9, 1e9)}
+	if authn != nil {
+		opts = append(opts, WithAuthenticator(authn))
 	}
-	t.Logf("current behavior (no authn wired): unauthenticated request to arbitrary tenant/user accepted with 200; reply=%q", reply)
+	app := New(opts...)
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- app.Run(ctx) }()
 
-	// Also confirm the ONLY gate in front of the handler today is the identity
-	// charset regex (422), not authorization: a path param violating the regex
-	// is rejected pre-handler, proving the 200 above is not an auth check but
-	// mere input validation.
-	// "tenant.bad" is URL-safe (dots are legal path chars) but violates the
-	// ^[a-zA-Z0-9_-]{1,64}$ identity regex, so Huma rejects it pre-handler.
-	badStatus, _ := postChat(t, base, "tenant.bad", "userA", "s1", "hi")
-	if badStatus == http.StatusOK {
+	base := "http://" + addr
+	waitForServer(t, base+"/healthz")
+
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Errorf("Run returned error on shutdown: %v", err)
+			}
+		case <-time.After(15 * time.Second):
+			t.Error("Run did not return after ctx cancellation")
+		}
+	})
+	return base
+}
+
+// postChatBearer drives the non-streaming chat route with an optional
+// "Authorization: Bearer <bearer>" header (omitted when bearer is ""). Returns
+// the HTTP status. Used by the authn anchor to probe the gate directly.
+func postChatBearer(t *testing.T, base, tenant, user, bearer, prompt string) int {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"prompt": prompt, "product_id": "authn-test", "session_id": "s1"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, chatURL(base, tenant, user), bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST chat: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+// makeHS256 builds a minimal HS256 JWT (header.payload.signature, base64url, no
+// padding) so the anchor can mint valid/expired tokens without any external JWT
+// dependency — mirroring the stdlib-only verifier in internal/auth.
+func makeHS256(t *testing.T, secret []byte, claims map[string]any) string {
+	t.Helper()
+	enc := func(v any) string {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("marshal jwt segment: %v", err)
+		}
+		return base64.RawURLEncoding.EncodeToString(b)
+	}
+	signingInput := enc(map[string]any{"alg": "HS256", "typ": "JWT"}) + "." + enc(claims)
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(signingInput))
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// TestPathParamTrustUnauthenticatedRequestIsRejectedByDefaultAuthnRegressionAnchor
+// is the INVERTED anchor (formerly ...IsAccepted...): with the authenticated-
+// identity seam landed, path tenant/user are no longer trusted with no
+// credential. It pins three postures:
+//
+//  1. NO authenticator configured -> default-deny: every /v1 request is 401.
+//  2. NoAuth() explicitly configured -> the pre-seam behavior: an authless
+//     request to an arbitrary tenant/user is accepted (200).
+//  3. A JWT authenticator: a valid token binds must-agree (right tenant -> 200,
+//     wrong tenant -> 403); an expired or bad-signature token -> 401.
+//
+// If a future change weakens any of these, this anchor fails — that failure is
+// the intended signal that the security posture changed.
+func TestPathParamTrustUnauthenticatedRequestIsRejectedByDefaultAuthnRegressionAnchor(t *testing.T) {
+	// (1) Default-deny: no authenticator wired.
+	denyBase := startAuthApp(t, nil)
+	if status := postChatBearer(t, denyBase, "any-unowned-tenant", "any-unowned-user", "", "hello with no credentials"); status != http.StatusUnauthorized {
+		t.Fatalf("AUTHN POSTURE REGRESSED: an unauthenticated request under the default (no authenticator) returned %d, want 401 (deny-all). "+
+			"The runtime must default-deny /v1 when no WithAuthenticator is configured.", status)
+	}
+
+	// (2) NoAuth() opt-out: the pre-seam behavior is now an explicit choice.
+	noAuthBase := startAuthApp(t, NoAuth())
+	if status := postChatBearer(t, noAuthBase, "any-unowned-tenant", "any-unowned-user", "", "hello with no credentials"); status != http.StatusOK {
+		t.Fatalf("NoAuth() should accept an authless request to an arbitrary tenant/user (pre-seam behavior), got %d, want 200", status)
+	}
+	// Under NoAuth the ONLY pre-handler gate is still the identity charset regex
+	// (422/4xx), proving the 200 above is authorization opt-out, not a missing
+	// input check. "tenant.bad" is URL-safe but violates ^[a-zA-Z0-9_-]{1,64}$.
+	if status := postChatBearer(t, noAuthBase, "tenant.bad", "userA", "", "hi"); status == http.StatusOK {
 		t.Errorf("expected the identity charset regex to reject an invalid tenant_id pre-handler, but got 200")
+	}
+
+	// (3) JWT authenticator: must-agree bind + credential verification.
+	secret := []byte("anchor-hs256-secret")
+	jwtBase := startAuthApp(t, NewJWTAuthenticator(secret))
+	future := time.Now().Add(time.Hour).Unix()
+	past := time.Now().Add(-time.Hour).Unix()
+
+	// Valid token for tenantA on tenantA's path -> 200 (bind agrees).
+	validA := makeHS256(t, secret, map[string]any{"tenant_id": "tenantA", "user_id": "userA", "exp": future})
+	if status := postChatBearer(t, jwtBase, "tenantA", "userA", validA, "hi"); status != http.StatusOK {
+		t.Errorf("valid JWT for tenantA on tenantA's path: got %d, want 200", status)
+	}
+	// Valid token for tenantA on tenantB's path -> 403 (must-agree rejects).
+	if status := postChatBearer(t, jwtBase, "tenantB", "userA", validA, "hi"); status != http.StatusForbidden {
+		t.Errorf("valid JWT for tenantA on tenantB's path: got %d, want 403 (must-agree bind)", status)
+	}
+	// Expired token -> 401.
+	expiredA := makeHS256(t, secret, map[string]any{"tenant_id": "tenantA", "user_id": "userA", "exp": past})
+	if status := postChatBearer(t, jwtBase, "tenantA", "userA", expiredA, "hi"); status != http.StatusUnauthorized {
+		t.Errorf("expired JWT: got %d, want 401", status)
+	}
+	// Bad-signature token (minted with the wrong secret) -> 401.
+	badSig := makeHS256(t, []byte("wrong-secret"), map[string]any{"tenant_id": "tenantA", "user_id": "userA", "exp": future})
+	if status := postChatBearer(t, jwtBase, "tenantA", "userA", badSig, "hi"); status != http.StatusUnauthorized {
+		t.Errorf("bad-signature JWT: got %d, want 401", status)
+	}
+	// No credential at all against the JWT gate -> 401.
+	if status := postChatBearer(t, jwtBase, "tenantA", "userA", "", "hi"); status != http.StatusUnauthorized {
+		t.Errorf("missing credential against JWT gate: got %d, want 401", status)
 	}
 }

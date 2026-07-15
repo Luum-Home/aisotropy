@@ -112,6 +112,13 @@ type App struct {
 	inPricePer1M  float64
 	outPricePer1M float64
 
+	// authenticator backs WithAuthenticator: the single fail-closed gate the
+	// auth middleware invokes in front of every /v1 route. nil means no
+	// authenticator was registered — Run then installs a default-deny gate
+	// (Option C) that 401s every /v1 request. Use WithAuthenticator(NoAuth())
+	// to explicitly run without a credential check.
+	authenticator Authenticator
+
 	// embedder / chunkSize / chunkOverlap back WithEmbedder / WithChunkSize
 	// (ADR-0018, aisotropy/knowledge.go). chunkSize <= 0 means "unset": the
 	// façade falls back to semantic.DefaultChunkOptions().
@@ -393,6 +400,21 @@ func (a *App) Run(ctx context.Context) error {
 	})
 
 	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy", "0.1.0"))
+
+	// Authenticated-identity seam (the single fail-closed gate in front of every
+	// /v1 route): installed as ONE Huma API middleware BEFORE any route is
+	// registered below. Resolve the authenticator: nil -> default-deny (Option
+	// C) so an unconfigured runtime rejects every /v1 request rather than
+	// silently trusting path identity; else bind the authenticator with
+	// must-agree semantics. The health/liveness/costs/openapi/docs routes live
+	// on chi (or the Huma adapter's Handle), outside this middleware chain, so
+	// they stay open.
+	if a.authenticator == nil {
+		humaAPI.UseMiddleware(api.DenyAllMiddleware(humaAPI))
+		slog.Warn("no authenticator configured: all /v1 requests are rejected 401 (default-deny). Pass aisotropy.WithAuthenticator; use aisotropy.NoAuth() to explicitly disable.")
+	} else {
+		humaAPI.UseMiddleware(api.BindAuthMiddleware(humaAPI, a.authenticator))
+	}
 
 	// Per-tenant rate limiting (Phase 7 / constitutional gate). An explicit
 	// WithRateLimit wins; otherwise AISOTROPY_RATE_PER_SEC / AISOTROPY_BURST

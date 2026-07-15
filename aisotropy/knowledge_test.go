@@ -252,7 +252,10 @@ func TestApp_IngestKnowledge_BadIdentityRejected(t *testing.T) {
 // work.
 func TestApp_IngestKnowledge_SharesStoreAcrossRunAndSDK(t *testing.T) {
 	addr := freeAddr(t)
-	app := New(WithAddr(addr), WithLLM(llm.NewStubClient()))
+	// NoAuth: this test proves the HTTP knowledge route is live and shares the
+	// semantic store with the SDK path; authentication is orthogonal here, so
+	// opt out of the default deny-all gate to reach the handler over HTTP.
+	app := New(WithAddr(addr), WithLLM(llm.NewStubClient()), WithAuthenticator(NoAuth()))
 
 	ctx := context.Background()
 	if _, err := app.IngestKnowledge(ctx, "acme", "alice", Document{ID: "d", Content: "the secret onboarding password is hunter2"}); err != nil {

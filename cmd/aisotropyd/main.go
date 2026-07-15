@@ -42,7 +42,17 @@ func main() {
 		// Register the built-in default persona explicitly for the empty product
 		// id, so the binary's persona is self-documenting rather than implicit.
 		aisotropy.WithPersona("", aisotropy.Persona{BasePrompt: "You are the Aisotropy agent. Respond briefly and directly."}),
+		// Authentication: the demo binary explicitly opts OUT of credential
+		// verification via NoAuth so it still boots zero-config. This is the
+		// pre-seam behavior (path tenant/user trusted verbatim) — INSECURE for a
+		// real deployment, which must replace this with a real Authenticator
+		// (e.g. aisotropy.NewJWTAuthenticator(secret)). Without any
+		// WithAuthenticator the runtime would default-deny every /v1 request.
+		aisotropy.WithAuthenticator(aisotropy.NoAuth()),
 	)
+
+	slog.Warn("aisotropyd is running in NoAuth (insecure) mode: path tenant_id/user_id are trusted with no credential verification. " +
+		"Configure a real authenticator (e.g. aisotropy.NewJWTAuthenticator) for any non-local deployment.")
 
 	if err := app.Run(context.Background()); err != nil {
 		slog.Error("aisotropyd exited with error", "err", err)
