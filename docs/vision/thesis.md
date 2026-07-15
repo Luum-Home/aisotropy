@@ -184,20 +184,30 @@ So the precise, defensible claims are:
   has no tenant construct at all (LangChain core, Vercel AI SDK, AutoGen/AG2, Rig, langchaingo,
   Eino, DSPy) or isolates only by developer-passed convention (LlamaIndex, Haystack, CrewAI,
   Mastra, Spring AI, LangChain4j, Semantic Kernel, LangGraph Store, Letta OSS) — where a wrong
-  or omitted key silently cross-reads. The *only* by-construction isolation found anywhere else
-  is **Google Vertex Memory Bank**, and that lives inside a proprietary GCP service you rent,
-  not code you self-host. See the [full matrix](../research/competitive-landscape.md#cross-stack-survey--the-full-isolation-matrix-2026-07-14).
-- The moat is **time-boxed** and **bounded**: Google maintains `adk-go` and could port its
-  keyed backends; and this survey covered *frameworks/runtimes*, not self-hostable multi-tenant
-  *platforms* (Dify, Flowise, Langflow, Cloudflare Agents), whose isolation mechanism is not yet
-  verified. The differentiator is real *today*, in a precise lane, and worth defending — not
-  eternal, and not yet exhaustive of every self-hostable multi-tenant tool.
+  or omitted key silently cross-reads. Aisotropy is **not** literally "the only thing that
+  isolates by construction" — two others do, **Google Vertex Memory Bank** and **Cloudflare
+  Agents** (one Agent = one Durable Object + private SQLite, arguably *stronger* than aisotropy's
+  per-op filtering) — but both are **hosted/rented**, not self-hostable OSS. See the
+  [full matrix](../research/competitive-landscape.md#cross-stack-survey--the-full-isolation-matrix-2026-07-14).
+- The self-hostable multi-tenant *platforms* were surveyed too (Dify, Flowise, Langflow,
+  Cloudflare Agents) and **none is in the lane**: Dify's license forbids multi-tenant SaaS
+  without a paid key; Flowise gates multi-tenancy behind a commercial license; Langflow isolates
+  by construction nowhere; Cloudflare Agents is hosted-only. The moat is also **time-boxed**:
+  Google maintains `adk-go`, Cloudflare could ship self-hostable Durable Objects, Flowise could
+  move tenancy into its Apache core — any of these would flip a competitor into the lane. Real
+  *today*, in a precise lane, worth defending — not eternal.
 
-And the same caveat as above, because it bounds every claim here: "by construction" means
-**unbypassable internal storage scoping**, not authenticated-principal binding. Aisotropy
-trusts a validated path param the same way ADK trusts a caller-supplied `user_id`; the
-difference is that aisotropy's *storage layer* cannot be made to leak across whatever
-identities it is handed, whereas ADK's leak came from a forgettable per-query filter.
+Two caveats bound every claim here. First, **"by construction" is uniform per-op call-site
+discipline, not database-level RLS.** The filter is applied on every storage op — the working-memory
+key-prefix exposes no unscoped read *method* at all, and facts/semantic reads carry the tenant
+predicate on every current statement, behind value-object `Scope`s whose unexported fields cannot
+be forged. That is stronger than a filter a query can *forget* on today's surface — but it is not a
+Postgres-RLS/schema-per-tenant guarantee: a *new* storage op that omits the filter would leak, so
+the property is code-review/value-object-enforced, not DB-enforced (with one disclosed offline
+exception, `facts.ExportAll`). Cloudflare Agents' per-object isolation is structurally stronger on
+this axis; aisotropy's edge is *delivery* (self-hostable + permissive), not raw robustness. Second,
+"by construction" is a claim about storage scoping, **not authenticated-principal binding**:
+aisotropy trusts a validated path param the same way ADK trusts a caller-supplied `user_id`.
 
 ## Sovereignty
 

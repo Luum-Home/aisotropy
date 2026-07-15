@@ -366,13 +366,22 @@ The answer collapses to four categories. Only one of them is "by construction, i
 | AWS Bedrock AgentCore | Hosted boundary — namespace convention + IAM backstop | AWS: "doesn't automatically prevent cross-user access" |
 | OpenAI Assistants / Agents | Hosted boundary — coarse org/project only | Per-user isolation is your application code |
 | Letta Cloud | Hosted boundary — per-user API keys (paid tier only) | The Apache-2.0 self-hosted core is single-user |
+| **Dify** (self-hostable *platform*) | App-layer `WHERE tenant_id` (SQLAlchemy) — **and** license forbids multi-tenant SaaS without a paid license | License gate fails; a query omitting the filter cross-reads; UI app-builder, not a runtime |
+| **Flowise** (self-hostable *platform*) | Multi-tenancy is commercial-license-gated (`packages/server/src/enterprise/`); Apache core is single-tenant | No workspace/org tenancy in the OSS core at all |
+| **Langflow** (self-hostable *platform*) | MIT, but isolates by construction **nowhere** — delegates tenant isolation to infra; soft `WHERE user_id` only | Its own Security doc: "no isolation between users" in a process |
+| **Cloudflare Agents** (*platform*) | **By construction — but hosted-only** — one Agent = one Durable Object + private SQLite (stronger than per-op filtering) | Durable Objects is Cloudflare-proprietary; the isolation is rented, not self-hostable |
 
-**The moat is a three-way intersection:** `{self-hostable} ∩ {permissive OSS} ∩ {isolation by
-construction, not convention}`. Across the whole survey that cell is occupied by **aisotropy
-alone**. Every managed competitor is at most *"the vendor isolates your rented scope"*; every
-self-hostable OSS competitor is *"you isolate yourself and hope you never omit the filter."* The
-only by-construction isolation found *anywhere* is Google Vertex Memory Bank — inside a
-proprietary GCP service you rent, not code you operate.
+**The moat is a four-way conjunction:** `{self-hostable} ∩ {permissive OSS for commercial SaaS} ∩
+{isolation by construction} ∩ {embeddable runtime}`. Across the whole survey — ~30 frameworks plus
+the four self-hostable multi-tenant platforms — that intersection is occupied by **aisotropy
+alone**. Two competitors match aisotropy's isolation *strength* by construction — **Google Vertex
+Memory Bank** and **Cloudflare Agents** (one Agent = one Durable Object + private SQLite, arguably
+*stronger* than aisotropy's per-op filtering) — but both are **hosted/rented**, not self-hostable
+OSS. Every self-hostable OSS competitor either isolates only by developer-passed convention, gates
+multi-tenancy behind a commercial license (Dify, Flowise), or does not isolate at all (Langflow).
+aisotropy wins the intersection on **delivery** (self-hostable + permissive), not on raw isolation
+robustness — the honest correction to "the only one that isolates by construction," which is no
+longer literally true.
 
 **Two honest bounds on this claim:**
 
@@ -381,13 +390,26 @@ proprietary GCP service you rent, not code you operate.
    params (no authn middleware wired). The by-construction guarantee begins one layer above an
    authn seam that is not yet built — a real, closeable gap, not a refutation. See
    [thesis → the authentication gap](../vision/thesis.md#the-authentication-gap-be-honest-about-it).
-2. **Not-yet-surveyed peers.** This survey covered agent *frameworks/runtimes*. It did **not**
-   cover self-hostable multi-tenant *platforms* — **Dify** (built-in workspace multi-tenancy;
-   note its license carries commercial-use restrictions → a license gate applies), **Flowise**,
-   **Langflow**, **Cloudflare Agents** (Durable Objects, where per-object isolation could be
-   structural), nor CN-origin frameworks (AgentScope, Qwen-Agent) or durable-execution runtimes
-   (Temporal/Restack/Modal/Inngest). The "alone" claim is scoped to frameworks/runtimes and must
-   carry this footnote until those platforms are verified.
+2. **The isolation is uniform call-site discipline, not DB-level RLS.** aisotropy applies the
+   tenant filter on *every* storage op — BadgerDB key-prefix (no unscoped read *method* exists),
+   facts SQL `WHERE tenant+user` on every statement, Qdrant `Must`-filter during the scan —
+   backed by unforgeable value-object `Scope`s (unexported fields). That is stronger than a
+   filter a query can *forget* on the current surface, but it is **not** a database guarantee
+   like Postgres RLS or schema-per-tenant: a *new* storage op that omits the filter would leak.
+   It is code-review/value-object-enforced, not DB-enforced (the one documented exception,
+   `facts.ExportAll`, is offline-only). Same *class* as Dify/Flowise app-layer WHERE — but applied
+   uniformly per-op rather than retrofitted, and behind unforgeable scopes.
+3. **Self-hostable multi-tenant *platforms* — surveyed (2026-07-14), none in the lane.** **Dify** —
+   self-hostable, but its Apache-2.0 + additional terms verbatim *"you may not use the Dify source
+   code to operate a multi-tenant environment"* without a paid license (fails the permissive gate);
+   isolation is app-layer `WHERE tenant_id`; UI app-builder. **Flowise** — Workspace/Org
+   multi-tenancy is Commercial-License-gated (`packages/server/src/enterprise/` + `IdentityManager.ts`),
+   so the Apache core ships no multi-tenancy; UI builder. **Langflow** — MIT, but its Security doc
+   states it enforces no isolation between users in a process and delegates it to infra. **Cloudflare
+   Agents** — MIT SDK, same embeddable category, genuinely by-construction per-object isolation, but
+   **hosted-only** on Cloudflare's Durable Objects (rented, not self-hostable). Still uncovered:
+   CN-origin frameworks (AgentScope, Qwen-Agent) and durable-execution runtimes
+   (Temporal/Restack/Modal/Inngest).
 
 ## Sources & caveats
 
