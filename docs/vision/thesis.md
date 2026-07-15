@@ -159,9 +159,9 @@ rather than admired.
 | Property | Original claim | Honest verdict |
 |---|---|---|
 | **Token efficiency** | Frameworks *sabotage* it | Strawman as a blanket accusation — modern frameworks have context trimming/summarization. Aisotropy is explicit about the payload; that's a good property, not a unique sin of others. |
-| **Fail-closed structured output** | A differentiator | Pydantic AI already has it (`ModelRetry` → `UnexpectedModelBehavior`), and aisotropy cites Pydantic AI as its own model. Holds only *vs* LangChain.js / Mastra, which lack a self-repair loop. Shared strength, not a moat. |
-| **Cost observability** | A differentiator | LangSmith computes cost automatically. Aisotropy's real edge is the *pre-spend, per-tenant quota gate*, not the ability to *see* cost. |
-| **Multi-tenant isolation** | "Real isolation" | The surviving differentiator — but "strongest / most uniform," not "the only one." |
+| **Fail-closed structured output** | A differentiator | **Collapsed.** A cross-stack survey (~30 frameworks) shows fail-closed self-repair is common: Pydantic AI, **LangChain-Python** (`OutputFixingParser`), Spring AI 2.0, and CrewAI all have it. aisotropy's only residual nuance is that its loop is *default/runtime-wired* rather than an opt-in wrapper. A table row, not a moat. |
+| **Cost observability** | A differentiator | LangSmith computes cost automatically. Aisotropy's real edge is the *pre-spend, per-tenant quota gate*, not the ability to *see* cost — but this is a still-unproven-competitively claim, treated as supporting, not co-equal. |
+| **Multi-tenant isolation** | "Real isolation" | **The one surviving differentiator.** Across ~30 frameworks in every major stack, aisotropy is the *only* self-hostable, permissive-OSS runtime that isolates by construction — "strongest / most uniform," not "the only one *in kind*." |
 
 On multi-tenancy specifically, the closest structural competitor is **Google's Agent
 Development Kit**. `adk-python` bakes `user_id` into the storage key (nested
@@ -177,15 +177,21 @@ tenant path.
 So the precise, defensible claims are:
 
 - Aisotropy is **not** "categorically the only runtime with structural isolation" —
-  `adk-python` is close in kind.
-- Aisotropy **is** uniquely alone in the **Go + self-hostable, permissively-licensed OSS**
-  lane. The nearest Go options are orchestration libraries, not isolated runtimes: Eino
-  (Apache-2.0) exposes a checkpoint store keyed by a developer-supplied string with "no
-  default implementation"; its `adk-go` subpackage carries a bare `map[string]any` with zero
-  scoping. `adk-python`'s keyed backends live in Python, and its managed variants are
-  GCP-hosted, not self-hostable OSS.
-- The moat is **time-boxed**: Google maintains `adk-go` and could port the keyed backends.
-  The differentiator is real *today*, in a specific lane, and worth defending — not eternal.
+  `adk-python` is close in kind (it bakes `user_id` into the storage key).
+- Aisotropy **is** uniquely alone across a cross-stack survey of ~30 frameworks (Python,
+  TypeScript, Java, .NET, Go, Rust, hosted) as the *only* one that isolates by construction in
+  **self-hostable, permissively-licensed OSS**. Every other self-hostable OSS framework either
+  has no tenant construct at all (LangChain core, Vercel AI SDK, AutoGen/AG2, Rig, langchaingo,
+  Eino, DSPy) or isolates only by developer-passed convention (LlamaIndex, Haystack, CrewAI,
+  Mastra, Spring AI, LangChain4j, Semantic Kernel, LangGraph Store, Letta OSS) — where a wrong
+  or omitted key silently cross-reads. The *only* by-construction isolation found anywhere else
+  is **Google Vertex Memory Bank**, and that lives inside a proprietary GCP service you rent,
+  not code you self-host. See the [full matrix](../research/competitive-landscape.md#cross-stack-survey--the-full-isolation-matrix-2026-07-14).
+- The moat is **time-boxed** and **bounded**: Google maintains `adk-go` and could port its
+  keyed backends; and this survey covered *frameworks/runtimes*, not self-hostable multi-tenant
+  *platforms* (Dify, Flowise, Langflow, Cloudflare Agents), whose isolation mechanism is not yet
+  verified. The differentiator is real *today*, in a precise lane, and worth defending — not
+  eternal, and not yet exhaustive of every self-hostable multi-tenant tool.
 
 And the same caveat as above, because it bounds every claim here: "by construction" means
 **unbypassable internal storage scoping**, not authenticated-principal binding. Aisotropy

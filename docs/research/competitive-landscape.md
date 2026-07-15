@@ -312,20 +312,82 @@ treatment because the difference is subtle:
 | Claim | Prior framing | 2026-07-14 verdict |
 |---|---|---|
 | **P1 — token efficiency** | Incumbents "sabotage" token budgets | **WEAK / strawman as a blanket accusation.** Modern frameworks ship context trimming/summarization; no evidence of systemic waste. Drop the accusation. |
-| **P2 — fail-closed structured-output reflection loop** | Unique differentiator | **NOT unique.** Pydantic AI already has it (`raise ModelRetry` feeds the validation error back to the model; fail-closed `UnexpectedModelBehavior` on retry exhaustion — pydantic.dev/docs/ai). aisotropy's own docs cite "FastAPI + Pydantic AI" as its model. The claim holds **only vs LangChain.js** (`createAgent` throws `StructuredOutputParsingError` immediately, no re-feed — langchainjs#9426) **and Mastra** (`errorStrategy` throw/warn/fallback, no self-repair loop). |
+| **P2 — fail-closed structured-output reflection loop** | Unique differentiator | **COLLAPSED as a differentiator** (cross-stack survey, 2026-07-14). Fail-closed self-repair is common across the field: Pydantic AI (`raise ModelRetry` → `UnexpectedModelBehavior`), **LangChain-Python** (`OutputFixingParser`/`RetryOutputParser` re-invoke an LLM with `error=repr(e)`, re-raise on exhaustion — opt-in, not in `with_structured_output`), Spring AI 2.0 (`StructuredOutputValidationAdvisor`, 3 attempts), and CrewAI (`guardrail_max_retries`) all have it. Only LangChain.js (langchainjs#9426), LangChain4j, and Vercel AI SDK throw *without* self-repair. aisotropy's only residual nuance: its loop is **default/runtime-wired**, not an opt-in wrapper the developer must remember to attach — a "default posture" argument, not an "only one who has it" claim. |
 | **P3 — cost observability per token/tenant** | Differentiator | **Refine.** LangSmith computes cost automatically but is **observability-only** (no pre-spend gate) and **not per-tenant native** (metadata is DIY). Pydantic AI `UsageLimits` has a pre-spend `check_before_request()` but **per-run, not per-tenant**. aisotropy's real edge is the **pre-spend quota *gate* + per-tenant *by construction***, not "seeing" cost. |
 | **P4 — multi-tenant isolation by construction** | Differentiator | **The one surviving differentiator** — with the "strongest/most-uniform, not only-in-kind" refinement above. None of LangChain/LangGraph (namespace convention; prefix search scans across tenants), Mastra (`resourceId`/`threadId` convention; `listMessages` threadId-only bug mastra#11856), Pydantic AI (no tenant memory model), Letta (LLM-self-managed memory), or Eino enforce isolation by construction. ADK-python is close-in-kind but query-discipline (see #1641). |
 
 ### Net takeaway (2026-07-14)
 
-- **Only P4 is a genuine, standalone differentiator.** P1 should be dropped as framed; P2 and
-  P3 survive only in *refined, narrowed* forms (P2: vs LangChain.js/Mastra, not vs Pydantic AI;
-  P3: pre-spend *gate* + per-tenant, not cost *visibility*).
-- **P4's moat is real but time-boxed and lane-specific:** strongest-and-most-uniform isolation,
-  uniquely alone in the **Go + self-hostable + permissive-OSS** lane, with Google's adk-go the
-  most plausible future entrant. The proof point that isolation-by-construction matters is
-  `google/adk-python#1641` — the closest structural competitor shipped a real cross-user leak
-  precisely because it relied on per-query filter discipline.
+- **Only P4 is a genuine, standalone differentiator.** P1 should be dropped as framed; **P2 has
+  collapsed** (fail-closed self-repair is common — see the re-scored table and the cross-stack
+  survey below); P3 survives only in a *refined, narrowed* form (pre-spend *gate* + per-tenant,
+  not cost *visibility*).
+- **P4's moat is real but time-boxed and lane-specific:** the cross-stack survey below (~30
+  frameworks across Python/TS/Java/.NET/Go/Rust/hosted) shows aisotropy is the **only
+  self-hostable, permissive-OSS runtime that isolates by construction**. The proof point that
+  isolation-by-construction matters is `google/adk-python#1641` — the closest structural
+  competitor shipped a real cross-user leak precisely because it relied on per-query filter
+  discipline.
+
+## Cross-stack survey — the full isolation matrix (2026-07-14)
+
+A comprehensive, adversarially-verified survey of ~30 agent/LLM frameworks across **Python,
+TypeScript, Java, .NET, Go, Rust, and hosted APIs** — to test the isolation claim against the
+*whole* field, not a hand-picked few. The single question per tool: **when two tenants share a
+deployment, what stops tenant A's memory/vectors from being read for tenant B?**
+
+The answer collapses to four categories. Only one of them is "by construction, in code you run."
+
+| Framework (stack) | Isolation model | Failure mode of a wrong / omitted key |
+|---|---|---|
+| **aisotropy** (Go, MIT/Apache) | **By construction, self-hostable OSS** — BadgerDB key-prefix + facts SQL `WHERE tenant+user` + Qdrant `Must`-filter *during* the HNSW scan | A `Scope{}` cannot be built unscoped; no request-path unscoped read exists (one reviewed offline `ExportAll`) |
+| LangChain core (Python) | None — no tenant construct | n/a (single-tenant library) |
+| AutoGen / AG2 (Python) | None | n/a |
+| Vercel AI SDK (TS) | None — stateless primitives | n/a |
+| Rig (Rust) | None | n/a |
+| langchaingo (Go) | None | n/a |
+| Eino (Go) | None — `CheckpointStore` is a bare developer-keyed string | Wrong/reused checkpoint-id silently cross-reads |
+| DSPy (Python) | None — LM programming model | n/a |
+| Griptape (Python) | None | n/a |
+| LlamaIndex (Py/TS) | Convention — `MetadataFilters` attached at query time | Omit the filter → scans the whole shared index |
+| Haystack (Python) | Convention — filters at retrieval time | Omit → scans the whole DocumentStore |
+| CrewAI (Python) | Convention — developer-keyed memory | Wrong key cross-reads |
+| Agno (Python) | Convention — developer-passed keys | Wrong key cross-reads |
+| Genkit (JS/Go/Py) | Convention — developer-passed session | Wrong key cross-reads |
+| VoltAgent (TS) | Convention | Wrong key cross-reads |
+| Mastra (TS) | Convention — `resourceId`/`threadId` | `listMessages` threadId-only (mastra#11856) |
+| Spring AI (Java) | Convention — `conversationId` only | Wrong conversationId cross-reads |
+| LangChain4j (Java) | Convention — `ChatMemoryStore` keyed by `memoryId` | Wrong `memoryId` cross-reads |
+| Semantic Kernel (.NET/Py/Java) | Convention — developer-managed collections/keys | Omit → cross-reads |
+| Microsoft Agent Framework | Convention — developer-passed thread/state | Cross-reads |
+| LangGraph Store / Platform (Py) | Convention — "isolation not enforced by default"; `@auth.on` filters are developer-passed | Omit the auth handler → cross-reads |
+| Letta OSS (Python) | Convention — `Identities`/tags developer-passed | Cross-reads |
+| **Google Vertex Memory Bank** | **By construction — but hosted-managed (rented)** — "For each scope, Memory Bank maintains an isolated collection of memories" + IAM | Enforced *vendor-side* in closed-source GCP; not code you self-host |
+| AWS Bedrock AgentCore | Hosted boundary — namespace convention + IAM backstop | AWS: "doesn't automatically prevent cross-user access" |
+| OpenAI Assistants / Agents | Hosted boundary — coarse org/project only | Per-user isolation is your application code |
+| Letta Cloud | Hosted boundary — per-user API keys (paid tier only) | The Apache-2.0 self-hosted core is single-user |
+
+**The moat is a three-way intersection:** `{self-hostable} ∩ {permissive OSS} ∩ {isolation by
+construction, not convention}`. Across the whole survey that cell is occupied by **aisotropy
+alone**. Every managed competitor is at most *"the vendor isolates your rented scope"*; every
+self-hostable OSS competitor is *"you isolate yourself and hope you never omit the filter."* The
+only by-construction isolation found *anywhere* is Google Vertex Memory Bank — inside a
+proprietary GCP service you rent, not code you operate.
+
+**Two honest bounds on this claim:**
+
+1. **The guarantee is conditional on a correct identity.** aisotropy's scoping is structural
+   *given* a `(tenant_id, user_id)`; those arrive today as trusted-but-unauthenticated path
+   params (no authn middleware wired). The by-construction guarantee begins one layer above an
+   authn seam that is not yet built — a real, closeable gap, not a refutation. See
+   [thesis → the authentication gap](../vision/thesis.md#the-authentication-gap-be-honest-about-it).
+2. **Not-yet-surveyed peers.** This survey covered agent *frameworks/runtimes*. It did **not**
+   cover self-hostable multi-tenant *platforms* — **Dify** (built-in workspace multi-tenancy;
+   note its license carries commercial-use restrictions → a license gate applies), **Flowise**,
+   **Langflow**, **Cloudflare Agents** (Durable Objects, where per-object isolation could be
+   structural), nor CN-origin frameworks (AgentScope, Qwen-Agent) or durable-execution runtimes
+   (Temporal/Restack/Modal/Inngest). The "alone" claim is scoped to frameworks/runtimes and must
+   carry this footnote until those platforms are verified.
 
 ## Sources & caveats
 
@@ -334,4 +396,8 @@ marked **UNCERTAIN** (Eino's Feb–Aug 2025 release-tag gap; APMPlus gen_ai semc
 ADK Go's Go-native VertexAI RAG memory equivalent; exact per-project engineering headcounts;
 Restate's current server license; whether Genkit's Agents API preview covers Python/Dart) rest
 on thin or conflicting evidence and must be re-verified before being used as load-bearing
-facts. This landscape is a 2026-07-09 snapshot; agent frameworks change weekly.
+facts. This landscape is a 2026-07-09 snapshot (isolation deep-dives 2026-07-14); agent
+frameworks change weekly. The hosted-platform isolation verdicts (Vertex Memory Bank, Bedrock
+AgentCore) were adversarially verified but their docs rendered as JS shells to the fetcher, so
+quotes came from official search-index snippets + corroborating blogs rather than a live-HTML
+diff; the OSS convention verdicts rest on docs, issue trackers, and source reads.
