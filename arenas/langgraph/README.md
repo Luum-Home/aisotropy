@@ -41,27 +41,31 @@ curl -N -X POST http://localhost:4112/v1/tenant/acme/user/alice/chat/stream \
 
 ## Isolation model
 
-**Convention — namespace prefix match.**
+**Convention — namespace prefix match (element-wise).**
 
-LangGraph's `Store.search()` uses prefix matching on namespaces. If you search `('acme',)`, it
-matches ALL tenants whose namespace starts with `'acme'` — including `'acme-prod'`,
-`'acme-staging'`, etc. This is a **prefix-match leak**.
+LangGraph's `Store.search(namespace_prefix)` is an **element-wise** prefix scan over the
+namespace tuple: a stored namespace matches when the search tuple is a prefix of it. The leak
+is a **short prefix over a shared parent element** — a search tuple shallower than full scoping
+returns every tenant nested beneath it.
 
 ```python
-# The correct path:
+# The correct path — full-depth namespace, exact scoping:
 from langgraph.store.memory import InMemoryStore
 
 store = InMemoryStore()
-# Namespace is (tenant_id, user_id, session_id) — full tuple
-store.search(("tenantA", "userA", "session1"))
+# Namespace is (org, tenant_id, user_id) — full tuple
+store.put(("acme", "tenantA", "userA"), "msg-001", {"content": "secret"})
+store.search(("acme", "tenantA", "userA"))   # stays inside tenantA
 
-# THE LEAK: prefix match on partial namespace
-store.search(("acme",))  # ← matches acme, acme-prod, acme-staging, etc.
-# → scans across tenants whose namespace starts with "acme"
+# THE LEAK: one element short of full scoping
+store.search(("acme",))   # ← element-wise prefix → returns tenantA AND tenantB (all of org "acme")
 ```
 
-The leak is structural: `Store.search()` is a prefix scanner, not a key lookup. Even with
-namespaces, a short prefix scans across tenants.
+Note: the match is element-wise, **not** string-prefix. `store.search(("tenant",))` does *not*
+match `("tenantA", ...)` because `"tenant" != "tenantA"`. The real, reproducible leak is the
+shallow-prefix scan over a shared namespace root: `Store.search()` is a prefix scanner, not a
+key lookup, and the developer owns the prefix depth — the framework never checks it against the
+authenticated tenant.
 
 ## Features covered
 
@@ -75,7 +79,7 @@ namespaces, a short prefix scans across tenants.
 | Facts memory | DIY | Not provided |
 | Cost governance | DIY | `UsageLimits` per-run (via LangChain) |
 | Observability | Paid | LangSmith SaaS (sales-gated) |
-| Multi-tenant isolation | Convention (prefix-match) | `Store.search(('acme',))` is prefix-match → cross-tenant scan |
+| Multi-tenant isolation | Convention (prefix-match) | `Store.search(('acme',))` is an element-wise short-prefix scan → cross-tenant read of every tenant under `acme` |
 
 ## DX notes
 
@@ -86,8 +90,9 @@ namespaces, a short prefix scans across tenants.
 - LangGraph 1.0 shipped with stable API (after v0.x churn).
 
 **What's painful:**
-- Prefix-match `Store.search()` is a fundamental isolation weakness — a short namespace prefix
-  scans across tenants. This is the class of bug that aisotropy's exact-key scoping prevents.
+- Element-wise prefix-match `Store.search()` is a fundamental isolation weakness — a namespace
+  prefix shallower than full scoping scans across every tenant nested under it. This is the class
+  of bug that aisotropy's exact-key scoping prevents.
 - LangSmith (production tracing/persistence) is paid — the free tier is limited, full features
   are Enterprise-gated. This is a sovereignty concern for regulated deployments.
 - Python 3.14 compatibility wall — many packages (including some LangChain deps) don't have
@@ -96,9 +101,12 @@ namespaces, a short prefix scans across tenants.
 
 ## Adversarial isolation result
 
-**LEAK CONFIRMED (prefix-match).** The smoke test proves that `Store.search()` with a partial
-namespace prefix scans across tenants. A namespace like `('acme',)` matches all tenants
-starting with `'acme'` — `acme`, `acme-prod`, `acme-staging`, etc.
+**LEAK CONFIRMED (element-wise short-prefix scan).** The smoke test (`.venv/bin/python
+scripts/smoke.py`, exits 0) verifies the positive control (exact `store.get(ns_a, "msg-001")`
+reads tenantA's marker) and then reproduces the leak: with tenants namespaced as
+`(org, tenant, user)`, `store.search(("acme",))` — one element short of full scoping — returns
+items from **both** `("acme","tenantA","userA")` and `("acme","tenantB","userB")`, surfacing
+tenantA's marker in a cross-tenant scan.
 
-See `scripts/smoke.py` for the exact test — it creates tenants with overlapping namespace
-prefixes and proves the prefix-match leak.
+See `scripts/smoke.py` for the exact test. The match is element-wise, so the leak is the
+shallow-prefix scan over a shared namespace root — not a string-prefix match on the tenant name.

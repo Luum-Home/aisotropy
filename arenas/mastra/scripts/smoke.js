@@ -193,7 +193,7 @@ function testIsolation() {
     }
   }
 
-  return { passed: !leaked, details };
+  return { passed: leaked, details };
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -212,12 +212,14 @@ for (const d of details) {
 }
 console.log('-'.repeat(60));
 
+// PASS = positive control verified AND the expected convention leak reproduced
+// (consistent with the other 6 arenas: exit 0 = arena ran and demonstrated its finding).
 if (passed) {
-  console.log('\nResult: PASSED (no leak detected in this run)');
-} else {
-  console.log('\nResult: FAILED — cross-tenant isolation leak confirmed');
+  console.log('\nResult: PASS — positive control verified AND the expected cross-tenant leak reproduced');
   console.log('Root cause: resourceId is developer-passed convention, not');
   console.log('            framework-enforced construction.');
+} else {
+  console.log('\nResult: FAIL — could not reproduce the expected leak (or positive control failed); see details');
 }
 
 process.exit(passed ? 0 : 1);

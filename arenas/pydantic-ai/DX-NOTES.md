@@ -20,7 +20,7 @@ from pydantic_ai.models.test import TestModel
 
 agent = Agent('openai:gpt-4o', model=TestModel())
 result = agent.run_sync('hello')
-assert result.data == 'Hello!'
+assert result.output == 'success (no tool calls)'  # v2 API: result.output (not result.data)
 ```
 
 This makes prototyping and unit testing frictionless. aisotropy's equivalent is the credential-less
@@ -55,7 +55,7 @@ class WeatherResponse(BaseModel):
     city: str
     temp: float
 
-agent = Agent('openai:gpt-4o', response_type=WeatherResponse)
+agent = Agent('openai:gpt-4o', output_type=WeatherResponse)  # v2 API: output_type (not response_type)
 ```
 
 The fail-closed retry (`raise ModelRetry`) is elegant. aisotropy's Gollem reflection loop

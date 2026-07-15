@@ -24,8 +24,10 @@ export OPENROUTER_API_KEY=sk-or-...
 python scripts/smoke.py
 ```
 
-The smoke test uses Pydantic AI's `TestModel` to run a fully offline adversarial isolation
-exercise. No LLM API key needed.
+The smoke test runs a fully offline adversarial isolation exercise (no LLM API key needed). It
+asserts isolation deterministically at the memory-store layer, and additionally constructs a
+Pydantic AI `Agent` backed by `TestModel` to confirm the installed DI + structured-output wiring
+boots. Exits 0 when the positive control passes and the expected leak reproduces.
 
 ## Live serve
 
@@ -95,9 +97,15 @@ Both paths are one line apart. The framework doesn't prevent the leak.
 
 ## Adversarial isolation result
 
-**LEAK CONFIRMED.** The smoke test proves that passing a wrong `tenant_id` through `RunContext`
-results in silent cross-tenant data read. The correct path and the leaky path are equally easy
-to write — one variable assignment apart.
+**LEAK CONFIRMED.** The smoke test (`.venv/bin/python scripts/smoke.py`, exits 0) proves that a
+wrong developer-passed `tenant_id` results in a silent cross-tenant read. The correct path and
+the leaky path are one variable assignment apart.
 
-See `scripts/smoke.py` for the exact test — it seeds tenant A's secret, then reads from every
-cross-tenant identity. The marker appears in tenant B's response.
+The test is deterministic at the memory-store layer — the same DIY store the `get_context` tool
+reads via `get_recent_messages`, not a stub-LLM echo. It (1) seeds tenant A's secret, (2) verifies
+the positive control (tenant A reads its own key → marker present), (3) shows the exact-key store
+is safe when the key is right (tenant B with its own key → no marker), then (4) demonstrates the
+leak: a tenant B request served with tenant A's `deps.tenant_id` reads tenant A's marker. Pydantic
+AI has no built-in tenant isolation — the lookup key is developer-passed convention, never checked
+against the caller. (A live agent construction + `run_sync` also runs to confirm the installed
+`Agent(model=, output_type=)` + `RunContext` DI wiring, but isolation is asserted at the store.)

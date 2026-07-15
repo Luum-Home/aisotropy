@@ -2,22 +2,34 @@
 """
 Adversarial isolation smoke test for LangGraph.
 
-Proves that tenant-isolation-by-convention leaks via prefix-match:
-Store.search(('acme',)) matches ALL tenants starting with 'acme'.
+LangGraph's `BaseStore` scopes data by a developer-chosen namespace TUPLE.
+`store.get(namespace, key)` is an exact-key lookup (safe when the namespace is
+right). `store.search(namespace_prefix)` is a PREFIX scan over the namespace
+tuple, ELEMENT-WISE: a namespace matches when the search tuple is a prefix of it.
 
-Uses LangGraph's in-memory checkpointer — no LLM API key needed.
+The leak is a SHORT PREFIX over a shared parent element. If you namespace as
+`(org, tenant, user)` and then search with just `(org,)` — one element short of
+full scoping — you scan across EVERY tenant nested under that org. The framework
+never checks that the prefix matches the authenticated tenant; the developer owns
+the depth of the prefix.
 
-Pattern (mirrors aisotropy's isolation_e2e_test.go):
-  1. Seed tenantA with a unique marker in a shared session.
-  2. Positive control: tenantA reads its own session → marker MUST appear.
-  3. Negative probes: tenants with overlapping prefixes scan across tenants
-     → marker must NOT appear. If it does, the prefix-match leak is confirmed.
+(Note: the match is element-wise, NOT string-prefix. `search(("tenant",))` does
+NOT match `("tenantA", ...)` — "tenant" != "tenantA". The real, reproducible leak
+is the shallow-prefix scan over a shared namespace root, demonstrated below.)
+
+This test proves the finding DETERMINISTICALLY at the store layer — no LLM.
+
+Matrix (mirrors aisotropy's isolation_e2e_test.go):
+  1. Seed tenantA (namespaced under a shared org root) with a unique marker.
+  2. POSITIVE CONTROL: exact get() of tenantA's namespace -> marker MUST appear.
+  3. CORRECT SCOPING: exact search of tenantB's FULL namespace -> no marker.
+  4. PREFIX LEAK: search the SHORT org-only prefix -> tenantA's marker surfaces
+     alongside tenantB's data. The expected finding.
+
+A successful run = positive control verified AND the prefix-scan leak reproduced.
 """
 
-import asyncio
-import hashlib
 import random
-import string
 import sys
 
 try:
@@ -31,149 +43,85 @@ except ImportError:
 
 def random_marker(prefix: str) -> str:
     """Generate a distinctive alphanumeric token (mirrors aisotropy's marker())."""
-    raw = f"{prefix}{random.randbytes(10).hex()}"
-    return raw.lower()
+    return f"{prefix}{random.randbytes(10).hex()}".lower()
 
 
 # ── Adversarial test ──────────────────────────────────────────────────────
 
 def test_isolation():
-    """
-    Runs the full adversarial isolation matrix against LangGraph's InMemoryStore.
+    """Returns (passed: bool, details: list[str]).
 
-    Returns (passed: bool, details: list[str])
+    passed == True means: positive control verified AND the expected
+    short-prefix cross-tenant scan leak was reproduced.
     """
     details = []
-    leaked = False
 
     marker = random_marker("lga")
     print(f"[langgraph] Seeding tenantA with marker: {marker}")
 
-    # Create the store — this mirrors how LangGraph's Store works
     store = InMemoryStore()
 
-    # ── Seed tenantA's memory ──
-    # Namespace: (tenant_id, user_id, session_id)
-    # In LangGraph, this is how you'd scope a tenant's data
-    namespace_a = ("tenantA", "userA", "shared-session")
-    store.put(namespace_a, "msg-001", {
-        "role": "user",
-        "content": f"Store this: {marker}",
-    })
+    # Namespaces share an org root: (org, tenant, user). This is a common,
+    # reasonable-looking scoping scheme — and exactly where the leak lives.
+    ns_a = ("acme", "tenantA", "userA")   # secret marker
+    ns_b = ("acme", "tenantB", "userB")   # a different tenant under the same org
 
-    # ── Positive control: tenantA reads its own namespace ──
-    # InMemoryStore.get returns an iterable of Item objects
-    items = list(store.get(*namespace_a))
-    pos_ok = any(
-        marker in (item.val.get("content") if hasattr(item, "val") else str(item))
-        for item in items
-    ) if items else False
+    store.put(ns_a, "msg-001", {"role": "user", "content": f"Store this: {marker}"})
+    store.put(ns_b, "msg-002", {"role": "user", "content": "tenantB message"})
 
+    # ── 1. POSITIVE CONTROL: exact get() of tenantA's namespace ──
+    # Installed API: get(namespace: tuple, key: str) -> Item | None; item.value (not .val)
+    item = store.get(ns_a, "msg-001")
+    pos_ok = item is not None and marker in item.value.get("content", "")
     if pos_ok:
-        details.append("  ✓ Positive control: tenantA saw its own marker")
-        print("  ✓ Positive control: tenantA saw its own marker")
+        details.append("  [PASS] Positive control: exact get(ns_a, 'msg-001').value read tenantA's marker")
+        print("  [PASS] Positive control: tenantA read its own marker (exact get)")
     else:
-        # Fallback: the marker was stored, let's verify it's retrievable
-        # InMemoryStore.get returns an iterable of Item objects
-        stored_items = store.get(*namespace_a)
-        content_str = str(list(stored_items))
-        pos_ok = marker in content_str
-        if pos_ok:
-            details.append("  ✓ Positive control: tenantA saw its own marker (via string check)")
-            print("  ✓ Positive control: tenantA saw its own marker")
-        else:
-            details.append("  ✗ Positive control FAILED — aborting.")
-            print("  ✗ Positive control FAILED — aborting.")
-            return False, details
+        details.append("  [FAIL] Positive control: exact get() did NOT return tenantA's marker — aborting")
+        print("  [FAIL] Positive control FAILED — aborting")
+        return False, details
 
-    # ── The prefix-match leak demonstration ──
-    # This is the core vulnerability: Store.search() uses PREFIX matching
-    # on the first element of the namespace tuple.
+    # ── 2. CORRECT SCOPING: exact-depth search of tenantB's FULL namespace ──
+    # Searching the full (org, tenant, user) prefix stays inside one tenant.
+    b_full = list(store.search(ns_b))
+    b_leak = any(marker in i.value.get("content", "") for i in b_full)
+    if not b_leak:
+        details.append("  [PASS] Correct scoping: search(('acme','tenantB','userB')) saw NO marker (full-depth prefix stays in-tenant)")
+        print("  [PASS] Correct scoping: full-namespace search stayed in-tenant")
+    else:
+        details.append("  [FAIL] Unexpected: full-depth tenantB search saw tenantA's marker")
+        print("  [FAIL] Unexpected leak with full-depth search")
+        return False, details
 
+    # ── 3. PREFIX LEAK: short org-only prefix scans across tenants ──
     print()
-    print("[langgraph] Demonstrating the prefix-match leak:")
-    print("  Store.search(('tenant',)) matches ALL namespaces starting with 'tenant'")
-    print("  Including: tenantA, tenantB, tenant-prod, tenant-staging, etc.")
-    print()
-
-    # Seed tenantB with a different message
-    namespace_b = ("tenantB", "userB", "shared-session")
-    store.put(namespace_b, "msg-002", {
-        "role": "user",
-        "content": "tenantB message",
-    })
-
-    # Seed a third tenant with overlapping prefix
-    namespace_c = ("tenant-prod", "userC", "shared-session")
-    store.put(namespace_c, "msg-003", {
-        "role": "user",
-        "content": "tenant-prod message",
-    })
-
-    # THE LEAK: search with prefix 'tenant' scans ALL matching namespaces
-    print("  Searching with prefix ('tenant',)...")
-    search_results = list(store.search(("tenant",)))
-
-    # Collect all content from search results
-    all_content = []
-    for item in search_results:
-        if hasattr(item, 'val'):
-            all_content.append(str(item.val))
-        elif isinstance(item, dict):
-            all_content.append(str(item.get('content', '')))
-        else:
-            all_content.append(str(item))
-
-    combined_content = " ".join(all_content)
-    prefix_leak = marker in combined_content
-
+    print("[langgraph] Demonstrating the short-prefix scan leak:")
+    print("  Namespaces are (org, tenant, user). Search with just the org element")
+    print("  -> element-wise prefix match returns EVERY tenant nested under it.")
+    print("  Searching store.search(('acme',))  # one element short of full scoping")
+    results = list(store.search(("acme",)))
+    scanned = [(i.namespace, i.value.get("content", "")) for i in results]
+    print(f"  -> {len(results)} items across namespaces: {[ns for ns, _ in scanned]}")
+    prefix_leak = any(marker in content for _, content in scanned)
     if prefix_leak:
-        details.append(
-            "  ✗ PREFIX-MATCH LEAK: search(('tenant',)) scanned across tenants",
-            f"     Found tenantA's marker in results from tenantB/tenant-prod namespaces",
-            "     This is the fundamental isolation weakness: prefix matching = cross-tenant scan",
-        )
-        print("  ✗ PREFIX-MATCH LEAK: search(('tenant',)) found tenantA's marker!")
-        leaked = True
+        details.append("  [LEAK] Prefix leak: search(('acme',)) scanned across tenants -> tenantA's marker surfaced")
+        details.append("         Root cause: search() is an element-wise prefix scan. A prefix shorter than the")
+        details.append("         full namespace crosses tenant boundaries. The developer owns the prefix depth;")
+        details.append("         the framework never checks it against the authenticated tenant.")
+        print("  [LEAK] Prefix leak confirmed: short prefix -> cross-tenant scan")
     else:
-        details.append("  ✓ No prefix-match leak in this run (marker not in search results)")
-        print("  Note: InMemoryStore.search() behavior may vary by version.")
-        print("  The STRUCTURAL vulnerability remains: search() is prefix-based.")
+        details.append("  [FAIL] Expected prefix leak did NOT reproduce (marker absent from short-prefix scan)")
+        print("  [FAIL] Expected prefix leak did not reproduce")
+        return False, details
 
-    # ── Demonstrate the namespace convention leak ──
-    print()
-    print("[langgraph] Demonstrating the namespace convention leak:")
-    print("  The developer chooses the namespace tuple.")
-    print("  If the wrong namespace is used, you read the wrong tenant's data.")
-    print("  The framework does NOT validate that namespace matches the authenticated tenant.")
-    print()
-
-    # Simulate: request comes from tenantB, but developer passes tenantA's namespace
-    wrong_namespace = ("tenantA", "userA", "shared-session")
-    wrong_results = list(store.get(*wrong_namespace))
-    wrong_content = " ".join(
-        str(r.val) if hasattr(r, 'val') else str(r) for r in wrong_results
-    )
-
-    if marker in wrong_content:
-        details.append(
-            "  ✗ CONVENTION LEAK: developer passed wrong namespace → saw tenantA's marker",
-            "     This is the convention leak: namespace is developer-passed, not enforced.",
-        )
-        print("  ✗ CONVENTION LEAK: wrong namespace → cross-tenant read")
-        leaked = True
-
-    # ── Summary of the isolation model ──
     print()
     print("[langgraph] Isolation model summary:")
-    print("  Namespaces are developer-chosen tuples: (tenant, user, session)")
-    print("  Store.get() — exact key lookup (safe if correct namespace)")
-    print("  Store.search() — PREFIX match on first tuple element (LEAKY)")
-    print("  No framework-level validation that namespace matches authenticated tenant")
-    print()
+    print("  store.get(namespace, key)   -> exact-key lookup (safe if namespace is correct)")
+    print("  store.search(prefix)        -> ELEMENT-WISE prefix scan (leaks if prefix is too shallow)")
+    print("  No framework check that the prefix matches the authenticated tenant.")
     print("  vs. aisotropy: exact-key scoping + Scope{} value objects = unrepresentable leaks")
 
-    return not leaked, details
+    return True, details
 
 
 # ── Main ───────────────────────────────────────────────────────────────────
@@ -193,10 +141,12 @@ if __name__ == "__main__":
     print("-" * 60)
 
     if passed:
-        print("\nResult: PASSED (no leak detected in this run)")
+        print("\nResult: PASS")
+        print("  Positive control verified AND the expected short-prefix scan leak reproduced.")
+        print("  Finding: store.search() is an element-wise prefix scan. A namespace prefix")
+        print("           shallower than full scoping crosses tenant boundaries. Namespace")
+        print("           depth is developer-owned convention, not framework-enforced.")
+        sys.exit(0)
     else:
-        print("\nResult: FAILED — cross-tenant isolation leak confirmed")
-        print("Root cause: Store.search() is prefix-match; namespace is")
-        print("            developer-passed convention, not enforced.")
-
-    sys.exit(0 if passed else 1)
+        print("\nResult: FAIL — the demonstration did not run as expected (see above).")
+        sys.exit(1)

@@ -17,9 +17,9 @@ from pydantic import BaseModel, Field
 
 try:
     from pydantic_ai import Agent, RunContext
-    from pydantic_ai.models.stub import StubModel
+    from pydantic_ai.models.test import TestModel
 except ImportError:
-    StubModel = None
+    TestModel = None
 
 
 # ── Models ─────────────────────────────────────────────────────────────────
@@ -48,8 +48,7 @@ class Deps:
 # ── Agent ──────────────────────────────────────────────────────────────────
 
 agent = Agent(
-    'stub',
-    model=StubModel(text_response="I am a Pydantic AI agent."),
+    model=TestModel(),
     deps_type=Deps,
 )
 
@@ -104,7 +103,7 @@ async def chat(tenant_id: str, user_id: str, req: ChatRequest):
     result = agent.run_sync(req.prompt, deps=store)
 
     return ChatResponse(
-        reply=result.data,
+        reply=result.output,
         tenant_id=tenant_id,
         user_id=user_id,
         session_id=store.session_id,
@@ -126,7 +125,7 @@ async def chat_stream(tenant_id: str, user_id: str, req: ChatRequest):
     async def event_stream():
         yield f"data: {{\"type\": \"start\", \"tenant_id\": \"{tenant_id}\"}}\n\n"
         result = agent.run_sync(req.prompt, deps=store)
-        yield f"data: {{\"type\": \"message\", \"reply\": \"{result.data}\"}}\n\n"
+        yield f"data: {{\"type\": \"message\", \"reply\": \"{result.output}\"}}\n\n"
         yield f"data: {{\"type\": \"done\"}}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

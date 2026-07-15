@@ -1,0 +1,12 @@
+# Real Letta dependency — the official Letta REST SDK (Stainless-generated).
+# Provides the REAL Letta memory/state Pydantic types (BlockResponse, AgentState,
+# Passage, CreateBlockParam, response-format schemas) and the real client
+# resources (client.agents / .blocks / .passages / .archives / .identities).
+#
+# NOTE: letta-client is a *client* for a Letta SERVER. Agent execution
+# (messages.create) requires a running Letta server (`letta server`, Docker, or
+# Letta Cloud). The offline smoke uses the real types without a server — see README.
+letta-client==1.12.1
+
+# Test runner (offline isolation matrix).
+pytest>=8.0.0

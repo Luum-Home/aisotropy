@@ -34,9 +34,12 @@ After three years of v0.x churn, 1.0 shipped with a stable API. TheOSS core is M
 ## The painful
 
 ### Prefix-match `Store.search()` — fundamental isolation weakness
-This is the critical flaw. `Store.search(("acme",))` matches ALL tenants whose namespace
-starts with `'acme'` — including `'acme-prod'`, `'acme-staging'`, etc. This is not a bug
-you can fix with better docs; it's baked into the search semantics.
+This is the critical flaw. `Store.search()` is an **element-wise** prefix scan over the
+namespace tuple. Namespace tenants as `(org, tenant, user)` and a search of just `("acme",)` —
+one element short of full scoping — returns EVERY tenant nested under the `acme` org
+(`tenantA`, `tenantB`, ...). This is not a bug you can fix with better docs; it's baked into the
+search semantics. (The match is element-wise, not string-prefix: `search(("tenant",))` does not
+match `("tenantA", ...)`. The leak is the shallow-prefix scan over a shared namespace root.)
 
 aisotropy's exact-key scoping (`{tenant}:{user}:{session}`) + `Scope{}` value objects with
 unexported fields make cross-tenant reads **unrepresentable**. LangGraph's prefix-match is
