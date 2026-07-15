@@ -110,6 +110,27 @@ aspirational) and the [data model](data-model.md) / [API reference](api-referenc
 > with judge-error posture tracking the blocking posture (fail-open when annotating, fail-closed when
 > hard-blocking). All four opt-in / default-off; no new dependency, no contract break.
 
+> **Freshness note (2026-07-15, JWKS rotation + image signal + stateless `/ask` — [ADR-0030](../decisions/0030-jwks-rotation-image-signal-stateless-ask.md)):**
+> three seams ADR-0029 left unproven or inert are now closed, reflected in §1, §2, §5, §6 and the env
+> table, all stdlib-only and default-safe: (1) **JWKS key rotation is proven end-to-end** over the shipped
+> `jwksSource` — a rotated-in signing key is picked up via the bounded unknown-`kid` refetch, a rotated
+> whole set is refreshed at the TTL boundary, and an unknown-`kid` burst is throttled to one fetch per
+> window (the throttle bounds failures too, since `refreshLocked` stamps `lastFetch` even on failure)
+> ([`internal/auth/jwt_rs256.go`](../../internal/auth/jwt_rs256.go),
+> [`jwt_rs256_test.go`](../../internal/auth/jwt_rs256_test.go)); nothing in the key-handling code changed —
+> this adds the tested property. (2) **`ChatRequest.images`** — an **additive `omitempty`** `[]string`
+> presence signal (existing clients byte-for-byte unaffected, ADR-0002 held) — activates the gateway's
+> previously-inert capability **`ImageRule`**: `len(images) > 0 → gateway.Request.HasImage`, routed to the
+> **`AISOTROPY_VISION_MODEL`** target (new env var; empty → primary, so routing is unchanged when unset).
+> **HONEST SCOPE:** routing **signal only** — the text-only `llm.Client`s do NOT transmit image bytes to
+> the model; the multimodal call is the remaining follow-on. (3) The **new stateless
+> `POST /v1/.../ask`** route makes [`internal/responsecache`](../../internal/responsecache) **LIVE** — no
+> working-memory hydration, no session, no consolidation outbox, so caching is SAFE (no memory-hydrated
+> personalization → no staleness footgun); per-`(tenant, user)` isolation by construction in both cache
+> layers; behind the SAME authn must-agree bind as `/chat`. The **stateful** chat path stays uncached by
+> decision. Response cache moves CODE-ONLY → **REAL** (on `/ask` only); the image rule moves
+> ready-but-inert → **REAL**; no new dependency, no contract break.
+
 ## 1. The HTTP surface (every route actually registered)
 
 `App.Run` builds a `chi` router (`middleware.RequestID`, `middleware.Recoverer`, plus — **only when
@@ -128,6 +149,7 @@ behind-a-proxy TLS termination), mounts a Huma v2 API on it via the `humachi` ad
 | `POST /v1/tenant/{tenant_id}/user/{user_id}/chat` | `api.Register` ([`chat.go`](../../internal/api/chat.go)) | Yes (`operationID: chat`) | Non-streaming, structured-output chat. Runs the reflection loop and **fails closed** with 502 on a persistent schema violation. |
 | `POST /v1/tenant/{tenant_id}/user/{user_id}/chat/stream` | `api.RegisterStream` ([`chat_stream.go`](../../internal/api/chat_stream.go)) | Yes (`operationID: chat-stream`) | SSE streaming chat, token by token. The full memory + outbox + cost path. Emits `token` / `done` / `error` events. |
 | `POST /v1/tenant/{tenant_id}/user/{user_id}/chat/agent` | `api.RegisterAgent` ([`chat_agent.go`](../../internal/api/chat_agent.go)) | Yes (`operationID: chat-agent`) | Bounded structured-output tool loop over scope-permitted tools. Returns the ordered list of tool decisions + results. |
+| `POST /v1/tenant/{tenant_id}/user/{user_id}/ask` | `api.RegisterAsk` ([`ask.go`](../../internal/api/ask.go)) | Yes (`operationID: ask`) | **Stateless**, response-cached question (ADR-0030). NO working-memory hydration, no session, no consolidation outbox — its only context is tenant-scoped semantic RAG, which is exactly what makes caching safe. Consults a per-`(tenant, user)` response cache first (HIT → cached answer, **no LLM call**); on a MISS builds RAG context, makes one LLM call, runs the output guardrail, caches under the `(tenant, user)` scope, and returns. Cross-tenant hit impossible by construction ([`internal/responsecache`](../../internal/responsecache)). `AskOutput.cached` echoes whether the cache served it. |
 | `POST /v1/tenant/{tenant_id}/user/{user_id}/knowledge` | `api.RegisterKnowledge` ([`knowledge.go`](../../internal/api/knowledge.go)) | Yes (`operationID: ingest-knowledge`) | User-scoped knowledge ingestion (ADR-0018): chunks + embeds a document into `KindDocument` vectors, sharing the exact store/embedder pair chat RAG reads. |
 | `DELETE /v1/tenant/{tenant_id}/user/{user_id}/knowledge/{doc_id}` | `api.RegisterKnowledgeDelete` ([`knowledge.go`](../../internal/api/knowledge.go)) | Yes (`operationID: delete-knowledge`) | Removes a user-scoped document's chunks by id. |
 | `POST /v1/tenant/{tenant_id}/knowledge` | `api.RegisterTenantKnowledge` ([`knowledge.go`](../../internal/api/knowledge.go)) | Yes (`operationID: ingest-tenant-knowledge`) | Tenant-shared knowledge ingestion (ADR-0019): a corpus ingested once, retrievable by every user of that tenant via the merged RAG search. |
@@ -175,13 +197,18 @@ shared bearer token compared constant-time, 503 until the token is set (see §5 
 
 ### Contract shapes
 
-- **`ChatRequest`** (body): `prompt` (maxLength 2000), `product_id`, `session_id`, `scopes[]`, and
-  `model_preference` (optional, `omitempty`, ADR-0029 — an explicit gateway-target override; additive,
-  so existing clients are unaffected).
+- **`ChatRequest`** (body): `prompt` (maxLength 2000), `product_id`, `session_id`, `scopes[]`,
+  `model_preference` (optional, `omitempty`, ADR-0029 — an explicit gateway-target override), and
+  `images[]` (optional, `omitempty`, ADR-0030 — a presence signal that routes the turn to the vision
+  target via the `ImageRule`; **routing only**, image bytes are not sent to the model yet). Both new
+  fields are additive, so existing clients are byte-for-byte unaffected.
 - **`ChatOutput`** (non-streaming): `reply`, `tenant_id` (isolation echo), `stub` (true when the
   resolved LLM client is the credential-less stub).
 - **SSE events** (streaming): `token{text}`, `done{tenant_id}`, `error{message}`.
 - **`AgentOutput`**: `tenant_id`, `steps[]` where each step is `{tool, args, result}`.
+- **`AskRequest`** (body, ADR-0030): `prompt` (maxLength 2000), `product_id` — **no** `session_id`
+  (stateless) and **no** `scopes[]` (injects no tools). **`AskOutput`**: `reply`, `tenant_id` (isolation
+  echo), `cached` (true when served from the response cache with no LLM call), `stub`.
 
 ## 2. The streaming request lifecycle, step by step as coded
 
@@ -240,20 +267,25 @@ the request 401/403 so the handler is never reached. This is the `chat/stream` h
    enqueued** — the turn is `Reserve`d in the bitrate store and deliberately kept out of the
    facts/semantic consolidation pipeline, so the later memory-lift measurement is not contaminated
    by leakage.
-7. **Model selection through the gateway seam (ADR-0028 / ADR-0029).** `selectClient(ctx, gw, client,
-   meter, tenant, user, forwarded, in.Body.ModelPreference)`
+7. **Model selection through the gateway seam (ADR-0028 / ADR-0029 / ADR-0030).** `selectClient(ctx, gw,
+   client, meter, tenant, user, forwarded, in.Body.ModelPreference, len(in.Body.Images) > 0)`
    ([`internal/api/guard.go`](../../internal/api/guard.go), [`internal/gateway`](../../internal/gateway))
    runs the routing policy to pick the client for this turn, projecting the request down to a
-   `gateway.Request` carrying the tenant's cumulative spend (from the shared cost meter) **and the
-   caller's `model_preference` as `UISelector`** (ADR-0029). `gateway.OverridePolicy` — now **first** in
-   the chain — honors a non-empty preference as a hard target that **wins over** the cost-budget rule; it
-   abstains when the preference is empty, so preference-less requests route exactly as before. The
-   **cost-budget** policy then shapes an over-budget tenant to the cheap target — live only when
-   `AISOTROPY_COST_BUDGET_USD` **and** a cheap client are configured; otherwise the gateway is a clean
-   pass-through to `primary`. The image-override request-shape rule stays **present-but-inert** (no image
-   signal on `ChatInput` yet), and there is **no** prompt-length/difficulty rule (Bet-4 refuted,
-   ADR-0021). An unknown preference name resolves to the default and a routing miss falls back to the
-   passed client — a decision (or a bad client value) never drops a request.
+   `gateway.Request` carrying the tenant's cumulative spend (from the shared cost meter), **the caller's
+   `model_preference` as `UISelector`** (ADR-0029), **and `HasImage` from the presence of `images`**
+   (ADR-0030). `gateway.OverridePolicy` — **first** in the chain — honors a non-empty preference as a hard
+   target that **wins over** everything below; it abstains when the preference is empty. The
+   **`ImageRule`** — chained next, **before** the cost rule — routes an image-bearing turn
+   (`HasImage == true`) to the `AISOTROPY_VISION_MODEL` target **regardless of spend** (a multimodal
+   request must not be shaped down to the cheap text model); it abstains when there is no image, so
+   image-less requests route exactly as before, and an empty/unset `AISOTROPY_VISION_MODEL` makes the
+   target the primary (routing unchanged). The **cost-budget** policy then shapes an over-budget tenant to
+   the cheap target — live only when `AISOTROPY_COST_BUDGET_USD` **and** a cheap client are configured;
+   otherwise the gateway is a clean pass-through to `primary`. There is **no** prompt-length/difficulty
+   rule (Bet-4 refuted, ADR-0021). An unknown target name resolves to the default and a routing miss falls
+   back to the passed client — a decision (or a bad client/env value) never drops a request. **HONEST
+   SCOPE (ADR-0030):** the image rule wires **routing only** — the text-only clients do not transmit image
+   bytes to the model; the multimodal `llm.Client` is the follow-on.
 8. **Quota-pressure model degradation (OVERRIDE on the gateway pick).** If a cheap client *and* a
    limiter are both configured, `limiter.Pressure(ctx, tenant)` peeks the bucket and
    `llm.DegradeAt(pressure, 0.95, active, cheap)` may override the gateway-chosen client with the
@@ -408,17 +440,22 @@ threaded through the handlers:
   detector is advisory: it classifies, the handler decides. Logs types/counts/signal names only,
   never raw values or the response body.
 - **Model-selection gateway** — `buildModelGateway(streamClient, cheapStreamClient,
-  costBudgetFromEnv())` ([`internal/gateway`](../../internal/gateway)), consulted via `selectClient`
-  on `chat` and `chat/stream` (not `chat/agent`). Registers `primary` (the OTel-wrapped stream
-  client) as the default; enables the `CostAwarePolicy` cost-budget rule **only** when
-  `AISOTROPY_COST_BUDGET_USD > 0` **and** a cheap client exists, else a pure pass-through. Deliberately
-  no prompt-length/difficulty rule (Bet-4 refuted, ADR-0021); image/UI-override rules are inert for
-  lack of a `ChatInput` signal. On the streaming route the quota-pressure degrade above still applies
-  as an override on top of the gateway pick.
-- **Response cache** — [`internal/responsecache`](../../internal/responsecache) is **deliberately NOT
-  constructed on the chat path** (ADR-0028): a prompt-keyed cache over a per-user memory-hydrated
-  response is a staleness/isolation footgun. It stays a standalone, tested primitive for stateless
-  flows — see §6.
+  costBudgetFromEnv(), visionModelFromEnv())` ([`internal/gateway`](../../internal/gateway)), consulted
+  via `selectClient` on `chat` and `chat/stream` (not `chat/agent`). Registers `primary` (the
+  OTel-wrapped stream client) as the default; chains `OverridePolicy` (driven by `model_preference`,
+  ADR-0029) → `ImageRule` (driven by `images` → `AISOTROPY_VISION_MODEL` target, ADR-0030) →
+  `CostAwarePolicy` (cost-budget rule, enabled **only** when `AISOTROPY_COST_BUDGET_USD > 0` **and** a
+  cheap client exists). With no preference, no image, and no budget it is a pure pass-through to `primary`.
+  Deliberately no prompt-length/difficulty rule (Bet-4 refuted, ADR-0021). On the streaming route the
+  quota-pressure degrade above still applies as an override on top of the gateway pick. The image rule
+  routes only — image bytes are not yet sent to the model (ADR-0030, honest scope).
+- **Response cache** — [`internal/responsecache`](../../internal/responsecache) is now **LIVE on the
+  new stateless `/ask` route** (ADR-0030): `buildResponseCache(embedder)` builds an exact LRU layer
+  (4096 entries, 1 h TTL) always, plus a semantic (nearest-neighbor) layer (cosine threshold 0.95, 1 h
+  TTL, 512 entries/scope) when an embedder exists. Both layers key/partition by `(tenant, user)`, so a
+  cross-tenant hit is impossible by construction. It remains **deliberately NOT on the stateful chat
+  path** (ADR-0028): a prompt-keyed cache over a per-user memory-hydrated `/chat` response is a
+  staleness/isolation footgun — see §6.
 
 ## 6. Honest "not yet wired / limitations"
 
@@ -487,18 +524,32 @@ threaded through the handlers:
   makes `chat/stream` **buffer** the whole response and hard-block (replace with a refusal before the
   first byte), at the cost of time-to-first-token — closing the ADR-0028 follow-on. Non-streaming `chat`
   hard-blocks under the same toggle without buffering (it already has the whole reply).
-- **The gateway's UI-override rule now fires on `model_preference`; the image rule is still inert
-  (ADR-0029).** The cost-budget rule and — new — the `OverridePolicy` (driven by the additive
-  `ChatRequest.model_preference` → `UISelector`) both route today; the **image** request-shape rule stays
-  present-but-inert because `ChatInput` still carries no image part (a further contract change). There is
-  deliberately no length/difficulty rule (Bet-4 refuted, ADR-0021). A `model_preference` is a routing
-  hint only (unknown names fall back to the default; quota-pressure `DegradeAt` still overrides it) — not
-  authorization.
-- **The response cache is CODE-ONLY by decision, not by omission (ADR-0028).**
-  [`internal/responsecache`](../../internal/responsecache) is tested and isolation-correct by
-  construction, but it is **not** on the chat path: the chat response depends on per-user hydrated
-  working/facts/semantic memory that a prompt-keyed cache excludes, so a hit would serve a
-  context-wrong or stale answer. It remains a standalone primitive for a future stateless surface.
+- **The gateway's override AND image rules now both fire; only the model still can't see the image
+  (ADR-0029 / ADR-0030).** The cost-budget rule, the `OverridePolicy` (driven by
+  `ChatRequest.model_preference` → `UISelector`, ADR-0029), **and** the `ImageRule` (driven by
+  `ChatRequest.images` → `HasImage`, target `AISOTROPY_VISION_MODEL`, ADR-0030) all route today. There is
+  deliberately no length/difficulty rule (Bet-4 refuted, ADR-0021). A `model_preference` is a routing hint
+  only (unknown names fall back to the default; quota-pressure `DegradeAt` still overrides it) — not
+  authorization. **The image rule is routing-only:** the text-only `llm.Client`s (Anthropic /
+  OpenAI-compat / stub) do **not** transmit the image bytes to the model — the `images` field is neither
+  embedded, persisted, nor forwarded, only counted for presence. A multimodal `llm.Client` is the
+  remaining follow-on; until then an image turn is merely *routed* to the most capable configured target,
+  not *understood*.
+- **The response cache is LIVE on `/ask` only — never on the stateful chat path (ADR-0028 / ADR-0030).**
+  [`internal/responsecache`](../../internal/responsecache) now backs the stateless `POST /v1/.../ask`
+  route (ADR-0030): stateless by design (no working-memory hydration, no session, no consolidation
+  outbox), which is exactly what makes caching safe — with no memory-hydrated personalization in the
+  prompt, a cached `(tenant, user, prompt)` answer cannot go stale. Both cache layers key/partition by
+  `(tenant, user)`, so a cross-tenant hit is impossible by construction (not a post-filter). It remains
+  **deliberately off** `/chat` and `/chat/stream`: those responses depend on per-user hydrated
+  working/facts/semantic memory that a prompt key excludes, so a hit would serve a context-wrong or stale
+  answer.
+- **`/ask` is stateless by design (ADR-0030).** Unlike `/chat`, `/ask` does not hydrate working memory,
+  carry a `session_id`, or write a consolidation outbox event — its only context is tenant-scoped semantic
+  RAG. A reader must not expect it to remember a prior turn; that statelessness is the load-bearing
+  invariant behind its cache safety. It runs the same input/output guardrails and sits behind the same
+  authenticated-identity must-agree bind as `/chat` (registered on the same `humaAPI` after
+  `UseMiddleware`), and is driven by the same protected (circuit-breakered) client.
 
 ## Environment variables (as consumed by the code)
 
@@ -516,6 +567,7 @@ threaded through the handlers:
 | `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` | `guardrailsBlockFromEnv` → `api.Guard.BlockOutput` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/api/guard.go`](../../internal/api/guard.go)) | Truthy → a flagged (toxicity/leak) reply is replaced with a safe refusal (which then persists + returns) instead of merely annotating it, on **both** chat routes (ADR-0028 + ADR-0029): the **non-streaming** `chat` substitutes the refusal after the reply is produced, and — new — the **streaming** `chat/stream` **BUFFERS** the whole response (no live token flush) so it, too, can inspect and refuse before emitting a byte (a **time-to-first-token** cost, opt-in). Also sets the LLM judge's error posture to **fail-closed** when the judge is attached (below). Unset/off (default) → annotate + log only; `chat/stream` keeps its live flush (no latency change). No effect on `chat/agent` (no output guardrail). |
 | `AISOTROPY_GUARDRAILS_LLM_JUDGE` | `guardrailsBlockFromEnv` → the output-inspector branch in `App.Run` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/api/eval_output_check.go`](../../internal/api/eval_output_check.go)) | Truthy (and an LLM client exists) → attaches an **LLM-as-a-judge Safety check** to the output guardrail via the `api.EvalOutputCheck` adapter over the `guardrails.OutputCheck` seam (ADR-0029; `internal/guardrails` still never imports `internal/eval`). Built on `eval.NewLLMJudge(llmClient, eval.Safety, …)` and flags a reply whose normalized safety score is **< 0.5** (`guardrailsJudgeSafetyThreshold`). Driven by the **raw** `llmClient` — deliberately not the circuit-broken chat client — so a flaky judge can't trip the chat breaker. Its **error posture tracks `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT`**: fail-open (annotate) when blocking is off, fail-closed (suspicious) when on. Construction failure → logged, falls back to the built-in output heuristics. Unset/off (default) → built-in heuristics only; keyless/stub runtimes unchanged. |
 | `AISOTROPY_COST_BUDGET_USD` | `costBudgetFromEnv` → `buildModelGateway` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/gateway`](../../internal/gateway)) | A positive USD budget enables the gateway's `CostAwarePolicy` cost-budget shaping — an over-budget tenant (by cumulative spend from the cost meter) is routed to the cheap target (ADR-0028). **Requires a cheap client** (`AISOTROPY_CHEAP_MODEL`) too; with either unset, the rule is skipped and the gateway is a pass-through to `primary`. An explicit `ChatRequest.model_preference` (`gateway.OverridePolicy`, ADR-0029) **wins over** this cost-budget rule. Unset/non-positive → shaping disabled. |
+| `AISOTROPY_VISION_MODEL` | `visionModelFromEnv` → `buildModelGateway` ([`aisotropy/app.go`](../../aisotropy/app.go), [`internal/gateway`](../../internal/gateway)) | The gateway target **name** an image-bearing turn (`ChatRequest.images` present → `gateway.Request.HasImage`) is routed to via the `ImageRule`, chained **before** the cost-budget rule so an image request is not shaped down to the cheap text model (ADR-0030). Must name a registered client (in this runtime `primary` or `cheap`); an unregistered name resolves safely to the default at `Route` time. Unset/empty → images route to `primary` (routing unchanged). **HONEST SCOPE:** routing signal only — the text-only clients do **not** transmit image bytes to the model yet; the multimodal client is a follow-on. |
 | `AISOTROPY_DATA_DIR` | working memory + facts | On-disk BadgerDB dir; also default `facts.db` location |
 | `AISOTROPY_FACTS_DB` | `facts.OpenFromEnv` | Explicit SQLite file path |
 | `RQLITE_URL` | `facts.OpenFromEnv` | Networked rqlite facts store |

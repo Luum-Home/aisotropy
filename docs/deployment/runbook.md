@@ -267,7 +267,7 @@ Notes independent of these levers, so the picture is honest:
   mode) when the token is shared with other services, and `AISOTROPY_JWT_MAX_TTL` to bound
   token lifetime.
 
-## 7. Output-safety and model-routing knobs (ADR-0028 / ADR-0029)
+## 7. Output-safety and model-routing knobs (ADR-0028 / ADR-0029 / ADR-0030)
 
 Guardrails run on every chat request — input redaction + injection/output **detection are
 ALWAYS on** — but **blocking is opt-in and default-off** (annotate + log). The model-selection
@@ -279,9 +279,30 @@ default-off:
 | `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` | Truthy → a suspicious **input** injection verdict **rejects** the request (400 on `chat`/`chat/agent`, SSE `error` on `chat/stream`) instead of annotating. | Heuristic detector — expect false positives. Default off: redaction + detection still run, nothing is blocked. | `aisotropy/app.go` (`guardrailsBlockFromEnv`), `internal/api/guard.go` |
 | `AISOTROPY_GUARDRAILS_BLOCK_OUTPUT` | Truthy → a flagged (toxicity/leak) reply is replaced with a safe refusal on **both** chat routes. On `chat/stream` this forces the response to be **BUFFERED** (no live token flush) so it can be inspected before any byte is sent. | **Latency trade-off (ADR-0029):** buffering sacrifices time-to-first-token on `chat/stream` — the client waits for the full reply. Non-streaming `chat` has no such cost. Default off → `chat/stream` streams live and only annotates. | `aisotropy/app.go`, `internal/api/guard.go`, `internal/api/chat_stream.go` |
 | `AISOTROPY_GUARDRAILS_LLM_JUDGE` | Truthy (and an LLM client set) → attaches an **LLM-as-a-judge** Safety check to the output guardrail (flags a reply scoring `< 0.5` safety). | **Adds a model call per response** (cost + latency). Driven by the **raw** LLM client, not the circuit-broken chat client, so a flaky judge can't trip the chat breaker. Its error posture tracks `BLOCK_OUTPUT` (fail-open when annotating, fail-closed when hard-blocking). Construction failure → falls back to built-in heuristics. Default off. | `aisotropy/app.go`, `internal/api/eval_output_check.go`, `internal/eval` |
-| `AISOTROPY_COST_BUDGET_USD` | A positive USD budget enables gateway cost-budget shaping — an over-budget tenant is routed to the cheap target. | **Requires `AISOTROPY_CHEAP_MODEL`** too, else skipped (pass-through). An explicit per-request `model_preference` overrides this rule. | `aisotropy/app.go` (`costBudgetFromEnv`, `buildModelGateway`) |
+| `AISOTROPY_COST_BUDGET_USD` | A positive USD budget enables gateway cost-budget shaping — an over-budget tenant is routed to the cheap target. | **Requires `AISOTROPY_CHEAP_MODEL`** too, else skipped (pass-through). An explicit per-request `model_preference` overrides this rule, as does an image-bearing turn (the `ImageRule` is chained ahead of the cost rule). | `aisotropy/app.go` (`costBudgetFromEnv`, `buildModelGateway`) |
+| `AISOTROPY_VISION_MODEL` | The gateway target **name** an image-bearing turn is routed to via the `ImageRule` (ADR-0030): a `chat`/`chat/stream` request carrying `images` sets `HasImage` and is routed here, ahead of cost shaping. | Must name a **registered** client (this runtime: `primary` or `cheap`); an unregistered name resolves safely to the default. **Routing signal only** — the text-only clients do **not** send image bytes to the model yet (multimodal is a follow-on). Unset → images route to `primary` (unchanged). | `aisotropy/app.go` (`visionModelFromEnv`, `buildModelGateway`), `internal/gateway/policies.go` (`ImageRule`) |
 | `model_preference` (request body field, not env) | An **optional** `ChatRequest` field naming a gateway target (e.g. `"cheap"`) the caller wants for that turn (ADR-0029). Wins over cost-budget routing. | A routing **preference, not authorization** — an unknown name falls back to the default, and quota-pressure degradation still overrides it. Additive/`omitempty`, so existing clients are unaffected. | `internal/api/chat.go` (`ChatRequest.ModelPreference`), `internal/api/guard.go` (`selectClient`) |
+| `images` (request body field, not env) | An **optional** `ChatRequest` `[]string` presence signal that the turn carries image content (ADR-0030). Non-empty → routes to `AISOTROPY_VISION_MODEL` via the `ImageRule`. | **Routing signal only** — image bytes are neither embedded, persisted, nor forwarded to the model; only their presence is counted. Additive/`omitempty`, so existing clients are unaffected. | `internal/api/chat.go` (`ChatRequest.Images`), `internal/api/guard.go` (`selectClient`) |
 
 The complete env-var table (all levers, not just the ops-critical subset) remains in
 [runtime-as-built.md](../architecture/runtime-as-built.md) → "Environment variables (as
 consumed by the code)".
+
+### The stateless `/ask` route and its response cache (ADR-0030)
+
+`POST /v1/tenant/{tenant_id}/user/{user_id}/ask` is a **stateless**, response-cached sibling of
+`/chat`: no working-memory hydration, no `session_id`, no consolidation outbox — its only context
+is tenant-scoped semantic RAG. On a cache **HIT** it returns the stored answer with **no LLM call**
+(`AskOutput.cached = true`); on a **MISS** it builds RAG context, makes one LLM call, runs the same
+output guardrail, caches the answer, and returns it. Operationally:
+
+- **The cache is in-process and ephemeral.** `buildResponseCache` holds an exact-match LRU
+  (4096 entries, 1 h TTL) plus, when an embedder is configured, a semantic near-match layer (cosine
+  threshold 0.95, 1 h TTL, 512 entries per `(tenant, user)`). Nothing is persisted — a restart empties
+  it (like every in-process tier, section 1), and it is **per-replica**, so N replicas hold N independent
+  caches (no shared hit rate). There is no env var to size it today; the bounds are compiled-in.
+- **Isolation is by construction.** Both cache layers key/partition by `(tenant, user)`, so a
+  cross-tenant hit is structurally impossible — not a post-filter.
+- **Same security posture as `/chat`.** `/ask` is a `/v1` route registered after the authn
+  middleware, so it inherits the must-agree bind (401 missing/invalid, 403 tenant/user mismatch) and
+  the input/output guardrails; the redacted prompt (never the raw one) is what becomes the cache key.
