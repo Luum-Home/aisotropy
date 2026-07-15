@@ -205,7 +205,11 @@ func chatBuildSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store 
 		return "", err
 	}
 	if toolReg != nil {
-		if frag := toolReg.PromptFragment(in.Body.Scopes); frag != "" {
+		// Gate tools by the AUTHORITATIVE scopes: under a real authenticator the
+		// verified principal's scopes win, so a client cannot self-grant a tool
+		// via body scopes (see effectiveScopes). Under NoAuth/no middleware the
+		// body scopes are the fallback.
+		if frag := toolReg.PromptFragment(effectiveScopes(ctx, in.Body.Scopes)); frag != "" {
 			system += "\n\n" + frag
 		}
 	}

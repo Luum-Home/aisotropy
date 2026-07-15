@@ -34,4 +34,7 @@ func TestNoAuth_TrustsPathIdentityVerbatim(t *testing.T) {
 	if len(p.Scopes) != 0 {
 		t.Errorf("NoAuth should carry no scopes, got %v", p.Scopes)
 	}
+	if p.ScopesVerified {
+		t.Error("NoAuth must set ScopesVerified=false: it vouches for neither identity nor scopes")
+	}
 }

@@ -113,9 +113,26 @@ func writeAuthError(api huma.API, hctx huma.Context, err error) {
 // PrincipalFromContext returns the verified auth.Principal the auth middleware
 // injected, or (zero, false) if absent (e.g. a route reached without the
 // middleware, as in unit tests that call Register directly). It exposes the
-// verified scopes for a future switch of tool-gating from client-asserted
-// ChatRequest.Scopes to these verified scopes (a documented follow-on).
+// verified scopes that effectiveScopes uses to gate tools.
 func PrincipalFromContext(ctx context.Context) (auth.Principal, bool) {
 	p, ok := ctx.Value(principalCtxKey{}).(auth.Principal)
 	return p, ok
+}
+
+// effectiveScopes resolves the AUTHORITATIVE scopes that gate tool access for a
+// request. When a real authenticator ran and vouched for the principal's scopes
+// (ScopesVerified), those verified scopes are the authority — a client that
+// smuggles extra scopes into the request body CANNOT escalate, because the body
+// scopes are ignored entirely. Otherwise (NoAuth, or no auth middleware at all,
+// as in unit tests that call Register directly) the guarantee is not active and
+// the caller-asserted body scopes are honored as the fallback.
+//
+// This is the single place the client-asserted-vs-verified decision lives, so
+// every tool-gating site (chat, chat/stream, chat/agent) resolves scopes
+// identically and no handler can accidentally read in.Body.Scopes directly.
+func effectiveScopes(ctx context.Context, bodyScopes []string) []string {
+	if p, ok := PrincipalFromContext(ctx); ok && p.ScopesVerified {
+		return p.Scopes
+	}
+	return bodyScopes
 }

@@ -30,6 +30,12 @@ import (
 )
 
 func main() {
+	// Authentication is SECURABLE BY CONFIG: AuthenticatorFromEnv reads
+	// AISOTROPY_JWT_SECRET and returns either a real HS256 JWT authenticator or
+	// the explicit NoAuth opt-out, so an operator can secure the shipped binary
+	// without forking or embedding the library.
+	authr, authMode := aisotropy.AuthenticatorFromEnv()
+
 	app := aisotropy.New(
 		// Scope-gated demo tools (Phase 7 behavior axis): read_financials and
 		// write_tasks require a scope; search_docs is always available.
@@ -42,17 +48,22 @@ func main() {
 		// Register the built-in default persona explicitly for the empty product
 		// id, so the binary's persona is self-documenting rather than implicit.
 		aisotropy.WithPersona("", aisotropy.Persona{BasePrompt: "You are the Aisotropy agent. Respond briefly and directly."}),
-		// Authentication: the demo binary explicitly opts OUT of credential
-		// verification via NoAuth so it still boots zero-config. This is the
-		// pre-seam behavior (path tenant/user trusted verbatim) — INSECURE for a
-		// real deployment, which must replace this with a real Authenticator
-		// (e.g. aisotropy.NewJWTAuthenticator(secret)). Without any
-		// WithAuthenticator the runtime would default-deny every /v1 request.
-		aisotropy.WithAuthenticator(aisotropy.NoAuth()),
+		// Authentication is selected from the environment (see
+		// AuthenticatorFromEnv): with AISOTROPY_JWT_SECRET set the binary
+		// verifies HS256 bearer JWTs; unset it opts OUT via NoAuth (path
+		// tenant/user trusted verbatim) so the binary still boots zero-config.
+		// Without any WithAuthenticator the runtime would default-deny every /v1
+		// request.
+		aisotropy.WithAuthenticator(authr),
 	)
 
-	slog.Warn("aisotropyd is running in NoAuth (insecure) mode: path tenant_id/user_id are trusted with no credential verification. " +
-		"Configure a real authenticator (e.g. aisotropy.NewJWTAuthenticator) for any non-local deployment.")
+	switch authMode {
+	case "jwt-hs256":
+		slog.Info("aisotropyd authentication enabled: verifying HS256 bearer JWTs (AISOTROPY_JWT_SECRET is set).")
+	default:
+		slog.Warn("aisotropyd is running in NoAuth (insecure) mode: path tenant_id/user_id are trusted with no credential verification. " +
+			"Set AISOTROPY_JWT_SECRET to enable HS256 JWT authentication for any non-local deployment.")
+	}
 
 	if err := app.Run(context.Background()); err != nil {
 		slog.Error("aisotropyd exited with error", "err", err)

@@ -53,6 +53,9 @@ func TestJWTBearer_ValidToken_MapsClaims(t *testing.T) {
 	if len(p.Scopes) != 2 || p.Scopes[0] != "read:financial-data" || p.Scopes[1] != "write:tasks" {
 		t.Errorf("scopes = %v, want [read:financial-data write:tasks]", p.Scopes)
 	}
+	if !p.ScopesVerified {
+		t.Error("JWTBearer must set ScopesVerified=true: JWT claims are verified authorization")
+	}
 }
 
 func TestJWTBearer_AlternateClaimKeys(t *testing.T) {

@@ -123,7 +123,10 @@ func (j *jwtBearer) Authenticate(_ context.Context, req Request) (Principal, err
 	return Principal{
 		TenantID: tenant,
 		UserID:   user,
-		Scopes:   scopesClaim(claims, "scope", "scp", "scopes"),
+		// Scopes come from verified JWT claims, so they are an authenticated
+		// authorization: a handler may gate tools by them (ScopesVerified=true).
+		Scopes:         scopesClaim(claims, "scope", "scp", "scopes"),
+		ScopesVerified: true,
 	}, nil
 }
 

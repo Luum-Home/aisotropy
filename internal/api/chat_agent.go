@@ -117,9 +117,15 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 		// tools are offered, and an unregistered/hallucinated tool name can never
 		// execute) and run tools through the same scope-/friction-wrapped
 		// executor — so switching paths never changes the isolation guarantee.
+		// Gate tools by the AUTHORITATIVE scopes (effectiveScopes): under a real
+		// authenticator the verified principal's scopes win, so a client cannot
+		// self-grant a tool via body scopes; under NoAuth/no middleware the body
+		// scopes are the fallback. Both dispatch paths below share this authority.
+		scopes := effectiveScopes(ctx, in.Body.Scopes)
+
 		var steps []AgentStep
 		if tc, ok := client.(llm.ToolCaller); ok {
-			steps, err = runNativeToolAgent(ctx, tc, tracer, registry, exec, typed, in.Body.Scopes, in.Body.Prompt, maxSteps)
+			steps, err = runNativeToolAgent(ctx, tc, tracer, registry, exec, typed, scopes, in.Body.Prompt, maxSteps)
 		} else {
 			// Fallback (no native tool-calling): the combined executor routes
 			// typed tools through the typed dispatcher (best-effort over the
@@ -127,7 +133,7 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 			loopExec := agentloop.ToolExecutor(combinedMapExecutor{typed: typed, fallback: exec})
 			loop := &agentloop.Loop{Client: client, Registry: registry, Executor: loopExec, MaxSteps: maxSteps}
 			var loopSteps []agentloop.StepResult
-			loopSteps, err = loop.Run(ctx, in.Body.Scopes, in.Body.Prompt)
+			loopSteps, err = loop.Run(ctx, scopes, in.Body.Prompt)
 			steps = agentStepsFromLoop(loopSteps)
 		}
 		if err != nil {

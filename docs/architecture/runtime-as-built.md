@@ -45,6 +45,19 @@ aspirational) and the [data model](data-model.md) / [API reference](api-referenc
 > assistant turns never carry an outbox event; (6) per-user primitive friction consolidation is
 > wired (no longer "fully un-wired") — see the amended §6 bullet for what still isn't closed.
 
+> **Freshness note (2026-07-14, authn seam — [ADR-0024](../decisions/0024-authenticated-identity-seam.md)):**
+> the authenticated-identity seam shipped, so the earlier "path tenant/user are trusted with no
+> credential" posture no longer holds by construction. Reflected below: (1) a single **fail-closed
+> auth middleware** now runs as one Huma API middleware in front of **every** `/v1` route
+> ([`internal/api/authn.go`](../../internal/api/authn.go), wired at
+> [`app.go:412-417`](../../aisotropy/app.go)) — either the configured `Authenticator` with a
+> must-agree bind (verified principal == URL path tenant/user), or a default-deny gate when none is
+> registered; the health/liveness/costs/openapi/docs routes stay outside it (see §1); (2) tool-gating
+> now resolves scopes through `effectiveScopes` — the **verified principal's** scopes when a real
+> authenticator ran, falling back to client body scopes only under NoAuth / no middleware (see §2 and
+> §5); (3) the shipped binary is **securable by config** via `AISOTROPY_JWT_SECRET` (see the env
+> table). Line references are HEAD-accurate as of this pass; other line numbers in this doc may lag.
+
 ## 1. The HTTP surface (every route actually registered)
 
 `App.Run` builds a `chi` router (`middleware.RequestID`, `middleware.Recoverer`), mounts a Huma v2
@@ -70,7 +83,33 @@ following — nothing else:
 (the two tenant-shared knowledge routes carry only `tenant_id`), charset-constrained at the
 contract level (`pattern:"^[a-zA-Z0-9_-]{1,64}$"`, Huma rejects with 422 before the handler
 runs). On the chat routes, `session_id` and `scopes` travel in the request body (`ChatRequest`): a
-session id carries no authorization meaning, and scopes are the JWT-derived permissions stand-in.
+session id carries no authorization meaning, and the body `scopes` are the caller-asserted
+permissions — honored only as a fallback (see the auth gate below and §5); under a real
+authenticator the *verified* principal's scopes win.
+
+### The fail-closed auth gate in front of every `/v1` route (ADR-0024)
+
+Before any `/v1` operation runs, `App.Run` installs **one** Huma API middleware via
+`humaAPI.UseMiddleware`, registered *before* the first `huma.Register` call
+([`app.go:412-417`](../../aisotropy/app.go)) so it wraps every operation:
+
+- If an `Authenticator` is registered (`aisotropy.WithAuthenticator`), the gate is
+  `api.BindAuthMiddleware` ([`internal/api/authn.go`](../../internal/api/authn.go)): it authenticates
+  the caller's credential, then enforces a **must-agree bind** — the verified principal's
+  tenant/user MUST equal the URL path tenant/user. A missing/invalid credential is **401**, a
+  mismatch is **403**, and on either the handler never runs (fail-closed). On success it injects the
+  verified principal (tenant/user + verified scopes) into `ctx` before the handler.
+- If **no** authenticator is registered, the gate is `api.DenyAllMiddleware`: every `/v1` request is
+  rejected **401** (default-deny) — running unauthenticated is never the silent default; it is an
+  explicit opt-in via `NoAuth()`. The shipped `aisotropyd` binary opts in through
+  `AuthenticatorFromEnv` (`AISOTROPY_JWT_SECRET` → HS256 JWT bearer verification; unset → `NoAuth()`
+  with a startup warning — see [`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go) and the env
+  table).
+
+The `GET /healthz`, `GET /health`, `GET /costs`, `GET /bitrate`, `/openapi.json` and `/docs` routes
+are registered directly on chi (or via the Huma adapter's `Handle` for openapi/docs), **outside** the
+operation middleware chain `UseMiddleware` feeds, so they stay open — the gate covers only the `/v1`
+operations registered through `huma.Register`.
 
 ### Contract shapes
 
@@ -82,8 +121,10 @@ session id carries no authorization meaning, and scopes are the JWT-derived perm
 
 ## 2. The streaming request lifecycle, step by step as coded
 
-This is the `chat/stream` handler in [`chat_stream.go`](../../internal/api/chat_stream.go),
-in exact execution order:
+Before the handler runs, the API-level **auth gate** (§1, ADR-0024) has already authenticated the
+caller, enforced the must-agree bind, and injected the verified principal into `ctx` — or rejected
+the request 401/403 so the handler is never reached. This is the `chat/stream` handler in
+[`chat_stream.go`](../../internal/api/chat_stream.go), in exact execution order:
 
 1. **Identity validation.** `withIdentity(ctx, tenant, user, session)` validates all three
    components through `memory.Key.Validate()` (non-empty, none of the reserved chars `:`, `\x00`,
@@ -104,9 +145,15 @@ in exact execution order:
    - facts-memory `store.Search(ctx, scope, prompt, 4)` — FTS5 top-4 engrams ranked
      Relevance × Importance × Recency. **A facts failure is non-fatal** (logged, proceeds without
      facts); a working-memory failure *is* fatal (SSE error).
-4. **Scope-gated tool fragment.** If a `*tools.Registry` is present, `PromptFragment(scopes)` appends
-   only the tools the caller's scopes permit. A tool the scopes do not grant is never mentioned —
-   governance by absence of information ([`internal/tools/tools.go`](../../internal/tools/tools.go)).
+4. **Scope-gated tool fragment.** If a `*tools.Registry` is present, `PromptFragment(...)` appends
+   only the tools the caller's scopes permit. The scopes are the **authoritative** ones resolved by
+   `effectiveScopes(ctx, in.Body.Scopes)` ([`chat_stream.go:200`](../../internal/api/chat_stream.go),
+   [`internal/api/authn.go`](../../internal/api/authn.go)): the **verified principal's** scopes when a
+   real authenticator vouched for them (`ScopesVerified`), so a client cannot escalate by smuggling
+   extra scopes into the body; the client-asserted body scopes are honored only as the fallback under
+   NoAuth (or no auth middleware, as in unit tests that call `Register` directly). A tool the scopes
+   do not grant is never mentioned — governance by absence of information
+   ([`internal/tools/tools.go`](../../internal/tools/tools.go)).
 5. **`AppendWithOutbox` (atomic message + consolidation intent).** The user turn and a pending
    consolidation event are written in **one BadgerDB transaction**
    ([`internal/memory/outbox.go`](../../internal/memory/outbox.go)). The event id is a stable
@@ -220,7 +267,11 @@ threaded through the handlers:
   [read:financial-data], write_tasks [write:tasks])`. Only scope-permitted tools enter the prompt;
   the agent loop re-checks the model's chosen tool name against the permitted set post-parse, so a
   hallucinated/injected tool name can never execute
-  ([`internal/agentloop/agentloop.go`](../../internal/agentloop/agentloop.go)).
+  ([`internal/agentloop/agentloop.go`](../../internal/agentloop/agentloop.go)). All three routes
+  (`chat`, `chat/stream`, `chat/agent`) resolve the gating scopes through the single `effectiveScopes`
+  helper ([`internal/api/authn.go`](../../internal/api/authn.go)): under a real authenticator the
+  **verified principal's** scopes are authoritative (a client cannot escalate via body scopes); under
+  NoAuth / no auth middleware the client-asserted body scopes are the fallback (ADR-0024).
 - **Model degradation** — `llm.CheapClientFromEnv()` (built from `AISOTROPY_CHEAP_MODEL`) wrapped in
   the same breaker + OTel. Consumed only by the streaming path at pressure ≥ 0.95. `nil` (no
   degradation) when the env var is unset.
@@ -293,6 +344,7 @@ threaded through the handlers:
 |---|---|---|
 | `AISOTROPY_ADDR` | `App.Run` (`aisotropy/app.go`) | HTTP listen address; the `WithAddr` option wins over it, and both fall back to `:8080` |
 | `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | `llm.RegistryFromEnv` (via `llm.FromEnv`) | Select the default LLM client by precedence `OPENROUTER_API_KEY > OPENAI_API_KEY > ANTHROPIC_API_KEY > stub` ([`internal/llm/registry.go`](../../internal/llm/registry.go)). Every provider with a key set is registered; the highest-precedence one becomes the default. With none set, the credential-less `stub` client is the default (`ChatOutput.stub = true`). |
+| `AISOTROPY_JWT_SECRET` | `aisotropy.AuthenticatorFromEnv` ([`aisotropy/authenv.go`](../../aisotropy/authenv.go)) | Selects the `aisotropyd` binary's authenticator (ADR-0024). Set (non-empty) → `NewJWTAuthenticator([]byte(secret))`, verifying an `Authorization: Bearer <jwt>` **HS256** credential with the Go stdlib only (no dependency); the auth gate then enforces the must-agree bind (401 on missing/invalid, 403 on tenant/user mismatch). Unset → `NoAuth()` (path tenant/user trusted verbatim) with a startup **warning**. The secret value is never logged. |
 | `AISOTROPY_DATA_DIR` | working memory + facts | On-disk BadgerDB dir; also default `facts.db` location |
 | `AISOTROPY_FACTS_DB` | `facts.OpenFromEnv` | Explicit SQLite file path |
 | `RQLITE_URL` | `facts.OpenFromEnv` | Networked rqlite facts store |

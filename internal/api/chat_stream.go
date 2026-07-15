@@ -192,9 +192,12 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 
 		// Scope-gated tools (Phase 7): inject only the tools the caller's scopes
 		// permit. A forbidden tool never appears in the payload, so the model
-		// cannot know it exists (docs/architecture/granular-control.md).
+		// cannot know it exists (docs/architecture/granular-control.md). The
+		// scopes are the AUTHORITATIVE ones (effectiveScopes): under a real
+		// authenticator a client cannot escalate via body scopes; under NoAuth
+		// the body scopes are the fallback.
 		if toolReg != nil {
-			if frag := toolReg.PromptFragment(in.Body.Scopes); frag != "" {
+			if frag := toolReg.PromptFragment(effectiveScopes(ctx, in.Body.Scopes)); frag != "" {
 				system += "\n\n" + frag
 			}
 		}

@@ -39,13 +39,21 @@ var ErrForbidden = errors.New("auth: forbidden")
 
 // Principal is the verified identity an Authenticator returns. TenantID/UserID
 // are the authenticated identity the middleware binds (must-agree) against the
-// URL path; Scopes are the verified granted permissions, exposed via ctx for
-// later tool-gating (the switch of tool-gating from client-asserted to verified
-// scopes is a documented follow-on — see internal/api/authn.go).
+// URL path; Scopes are the granted permissions, exposed via ctx for tool-gating.
+//
+// ScopesVerified marks whether those Scopes are an AUTHENTICATED authorization
+// (true) or merely a caller-trusted assertion (false). It is the switch that
+// makes tool-gating safe: a handler gates tools by the principal's Scopes only
+// when ScopesVerified is true (a real authenticator vouched for them); otherwise
+// it falls back to the client-asserted body scopes. NoAuth sets it false — it
+// trusts the caller for identity AND scopes, so its "scopes" are not an
+// authenticated authority — while a real authenticator (e.g. JWTBearer) sets it
+// true because the scopes come from verified claims.
 type Principal struct {
-	TenantID string
-	UserID   string
-	Scopes   []string
+	TenantID       string
+	UserID         string
+	Scopes         []string
+	ScopesVerified bool
 }
 
 // Request exposes the request attributes an Authenticator inspects. It is a
@@ -83,7 +91,11 @@ type noAuth struct{}
 // separate gateway already authenticates upstream.
 func NoAuth() Authenticator { return noAuth{} }
 
-// Authenticate returns the path identity unverified.
+// Authenticate returns the path identity unverified. Scopes are left nil and
+// ScopesVerified is false (the zero value): NoAuth vouches for neither identity
+// nor scopes, so downstream tool-gating falls back to the client-asserted body
+// scopes — consistent with "NoAuth does not activate the verified-scope
+// guarantee".
 func (noAuth) Authenticate(_ context.Context, req Request) (Principal, error) {
-	return Principal{TenantID: req.PathTenant(), UserID: req.PathUser()}, nil
+	return Principal{TenantID: req.PathTenant(), UserID: req.PathUser(), ScopesVerified: false}, nil
 }
