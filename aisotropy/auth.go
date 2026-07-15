@@ -1,6 +1,7 @@
 package aisotropy
 
 import (
+	"crypto/rsa"
 	"time"
 
 	"github.com/Luum-Home/aisotropy/internal/auth"
@@ -49,6 +50,39 @@ func WithJWTIssuer(iss string) JWTOption { return auth.WithIssuer(iss) }
 // check.
 func WithJWTMaxTTL(d time.Duration) JWTOption { return auth.WithMaxTTL(d) }
 
+// JWKSOption tunes the JWKS key source built by WithJWTJWKS (cache TTL, refetch
+// bound, HTTP client, clock). Alias for the internal type so the public
+// WithJWTJWKS signature is self-contained.
+type JWKSOption = auth.JWKSOption
+
+// WithJWTRSAPublicKey configures RS256 verification against a STATIC RSA public
+// key (for tokens minted by an external IdP). Thin re-export of
+// auth.WithRSAPublicKey. Using it pins the verifier to RS256: HS256 tokens are
+// rejected outright, which blocks the RS256->HS256 algorithm-confusion attack.
+// Parse a PEM key with ParseRSAPublicKeyPEM.
+func WithJWTRSAPublicKey(pub *rsa.PublicKey) JWTOption { return auth.WithRSAPublicKey(pub) }
+
+// WithJWTJWKS configures RS256 verification against a JWKS endpoint: the key set
+// is fetched (net/http), parsed with the standard library only, cached with a
+// TTL, and the token "kid" is matched to a key (bounded refetch on unknown
+// kid). Thin re-export of auth.WithJWKS. A fetch failure fails CLOSED (the
+// request is rejected). Using it pins the verifier to RS256.
+func WithJWTJWKS(jwksURL string, opts ...JWKSOption) JWTOption {
+	return auth.WithJWKS(jwksURL, opts...)
+}
+
+// WithJWTJWKSCacheTTL sets how long a fetched JWKS key set is served before the
+// next lookup refreshes it. Thin re-export of auth.WithJWKSCacheTTL.
+func WithJWTJWKSCacheTTL(d time.Duration) JWKSOption { return auth.WithJWKSCacheTTL(d) }
+
+// ParseRSAPublicKeyPEM parses a PEM-encoded RSA public key (PKIX "PUBLIC KEY"
+// or PKCS#1 "RSA PUBLIC KEY") into an *rsa.PublicKey for WithJWTRSAPublicKey.
+// Thin re-export of auth.ParseRSAPublicKeyPEM; its errors never contain key
+// bytes.
+func ParseRSAPublicKeyPEM(pemBytes []byte) (*rsa.PublicKey, error) {
+	return auth.ParseRSAPublicKeyPEM(pemBytes)
+}
+
 // WithAuthenticator registers the Authenticator the runtime invokes as the
 // single fail-closed gate in front of every /v1 route. Register exactly one;
 // a later WithAuthenticator overrides an earlier one. Without it (and without
@@ -66,12 +100,16 @@ func WithAuthenticator(a Authenticator) Option {
 func NoAuth() Authenticator { return auth.NoAuth() }
 
 // NewJWTAuthenticator returns an Authenticator that verifies an
-// "Authorization: Bearer <jwt>" credential: an HS256 signature + expiry using
-// only the Go standard library (no external dependency). Claims map
-// tenant_id|tid -> TenantID, user_id|uid|sub -> UserID, scope|scp|scopes ->
-// Scopes. Missing/malformed/expired/bad-signature tokens are rejected (401),
-// and a valid token whose tenant/user does not match the URL path is rejected
-// by the must-agree bind (403). RS256/JWKS is a documented follow-on.
+// "Authorization: Bearer <jwt>" credential using only the Go standard library
+// (no external dependency). By default it verifies an HS256 signature against
+// hmacSecret; pass WithJWTRSAPublicKey(pub) or WithJWTJWKS(url) to verify RS256
+// tokens from an external IdP instead (in which case hmacSecret is unused and
+// may be nil). The CONFIGURED option fixes the expected algorithm — a token
+// whose header alg does not match is rejected, blocking the RS256->HS256
+// confusion attack. Claims map tenant_id|tid -> TenantID, user_id|uid|sub ->
+// UserID, scope|scp|scopes -> Scopes. Missing/malformed/expired/bad-signature
+// tokens are rejected (401), and a valid token whose tenant/user does not match
+// the URL path is rejected by the must-agree bind (403).
 func NewJWTAuthenticator(hmacSecret []byte, opts ...auth.JWTOption) Authenticator {
 	return auth.NewJWTBearer(hmacSecret, opts...)
 }

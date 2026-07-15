@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -11,18 +12,69 @@ import (
 	"time"
 )
 
-// jwtBearer verifies an "Authorization: Bearer <jwt>" credential: an HS256
-// signature + exp using ONLY the Go standard library (crypto/hmac,
-// crypto/sha256, encoding/base64, encoding/json). It deliberately adds NO
-// module dependency (no golang-jwt), so the build stays offline-green and the
-// stack's 100% MIT/Apache dependency policy is untouched. RS256/JWKS is a
-// documented follow-on (it needs asymmetric-key + key-rotation plumbing this
-// minimal verifier does not attempt).
+// jwtMode selects the signing family the verifier expects. It is fixed by the
+// construction option (not the token) and drives both the header "alg" pin and
+// the signature-verification path — the core of the algorithm-confusion defense.
+type jwtMode int
+
+const (
+	// modeHS256 (the zero value / default) verifies a symmetric HMAC-SHA256
+	// signature against a shared secret.
+	modeHS256 jwtMode = iota
+	// modeRS256 verifies an asymmetric RSA (PKCS#1 v1.5, SHA-256) signature
+	// against either a static public key (rsaKey) or a JWKS-sourced key (jwks).
+	modeRS256
+)
+
+// expectedAlg returns the single JOSE "alg" this verifier accepts, derived from
+// the configured mode — never from the token. A token whose header alg differs
+// is rejected before any signature check.
+func (m jwtMode) expectedAlg() string {
+	if m == modeRS256 {
+		return "RS256"
+	}
+	return "HS256"
+}
+
+// jwtBearer verifies an "Authorization: Bearer <jwt>" credential using ONLY the
+// Go standard library (crypto/hmac, crypto/rsa, crypto/sha256, crypto/x509,
+// encoding/base64, encoding/json, math/big, net/http). It deliberately adds NO
+// module dependency (no golang-jwt, no external JWK library), so the build stays
+// offline-green and the stack's 100% MIT/Apache dependency policy is untouched.
+//
+// It supports two signing families, selected by CONFIGURATION at construction —
+// never by the token:
+//   - HS256 (symmetric): NewJWTBearer(secret) — the default. Verified with an
+//     HMAC-SHA256 over header.claims.
+//   - RS256 (asymmetric): WithRSAPublicKey(pub) for a static key, or
+//     WithJWKS(url) to fetch/rotate keys from an external IdP. Verified with
+//     crypto/rsa.VerifyPKCS1v15 over a SHA-256 digest of header.claims.
+//
+// THE ALGORITHM-CONFUSION DEFENSE (mode field): the configured mode fixes the
+// single expected header "alg" (HS256 for symmetric, RS256 for asymmetric).
+// Authenticate rejects any token whose header alg does not match the configured
+// mode BEFORE it verifies a signature, and it dispatches verification purely on
+// the mode — the token header can never steer the verifier onto the HMAC path
+// while an RSA public key is configured (the classic RS256->HS256 confusion
+// where an attacker HMAC-signs with the public key as the secret). The
+// verification algorithm is NEVER derived from the token header.
 //
 // Claim mapping: tenant_id|tid -> TenantID, user_id|uid|sub -> UserID,
 // scope|scp|scopes -> Scopes (a space-delimited string or a string array).
 type jwtBearer struct {
+	// mode fixes the single expected header alg and the signature-verification
+	// path. It is set by which construction option was used (default HS256), and
+	// the token header can never change it — this is the alg-confusion defense.
+	mode jwtMode
+	// secret is the HS256 signing secret (used only in modeHS256).
 	secret []byte
+	// rsaKey is the static RS256 public key (used only in modeRS256 static-key).
+	rsaKey *rsa.PublicKey
+	// jwks is the RS256 JWKS key source (used only in modeRS256 JWKS mode). When
+	// set, the verifier resolves the token's "kid" against a TTL-cached key set
+	// fetched from an external IdP. See jwt_rs256.go.
+	jwks *jwksSource
+
 	now    func() time.Time
 	leeway time.Duration
 
@@ -110,23 +162,46 @@ func NewJWTBearer(hmacSecret []byte, opts ...JWTOption) Authenticator {
 	for _, o := range opts {
 		o(j)
 	}
-	if ValidateHS256Secret(hmacSecret) != nil {
+	// The 32-byte minimum applies to the HMAC secret only. In RS256 mode the
+	// secret is unused, so a nil/empty secret there is not a weakness.
+	if j.mode == modeHS256 && ValidateHS256Secret(hmacSecret) != nil {
 		j.secretTooShort = true
 	}
 	return j
 }
 
-// jwtHeader is the minimal JOSE header this verifier inspects.
+// verifySignature checks the token signature using the path fixed by the
+// configured mode — HMAC-SHA256 for HS256, RSA PKCS#1 v1.5 for RS256. It is
+// dispatched purely on j.mode (config), never on the token header, which is
+// what makes the algorithm-confusion attack impossible. signingInput is the
+// "header.claims" string the signature covers. Every failure returns
+// ErrUnauthenticated (fail closed).
+func (j *jwtBearer) verifySignature(ctx context.Context, header jwtHeader, signingInput string, sig []byte) error {
+	if j.mode == modeRS256 {
+		return j.verifyRS256(ctx, header, signingInput, sig)
+	}
+	mac := hmac.New(sha256.New, j.secret)
+	_, _ = mac.Write([]byte(signingInput))
+	if !hmac.Equal(mac.Sum(nil), sig) {
+		return fmt.Errorf("%w: JWT signature verification failed", ErrUnauthenticated)
+	}
+	return nil
+}
+
+// jwtHeader is the minimal JOSE header this verifier inspects. Kid is the key
+// identifier used only in RS256 JWKS mode to select the matching public key;
+// it is NEVER used to choose the verification algorithm (see jwtMode).
 type jwtHeader struct {
 	Alg string `json:"alg"`
 	Typ string `json:"typ"`
+	Kid string `json:"kid"`
 }
 
 // Authenticate parses and verifies the bearer token, returning the mapped
 // Principal. Every failure path returns ErrUnauthenticated (fail closed): the
 // caller cannot distinguish "no token" from "bad token", which is the intended
 // posture for an auth boundary.
-func (j *jwtBearer) Authenticate(_ context.Context, req Request) (Principal, error) {
+func (j *jwtBearer) Authenticate(ctx context.Context, req Request) (Principal, error) {
 	// Fail closed on a weak signing secret: a verifier built from a secret
 	// shorter than MinHS256SecretBytes rejects every request rather than
 	// authenticating anyone against a brute-forceable key.
@@ -153,18 +228,20 @@ func (j *jwtBearer) Authenticate(_ context.Context, req Request) (Principal, err
 	if err := json.Unmarshal(headerBytes, &header); err != nil {
 		return Principal{}, fmt.Errorf("%w: JWT header is not valid JSON: %v", ErrUnauthenticated, err)
 	}
-	if !strings.EqualFold(header.Alg, "HS256") {
-		return Principal{}, fmt.Errorf("%w: unsupported JWT alg %q (only HS256)", ErrUnauthenticated, header.Alg)
+	// Algorithm-confusion defense: the CONFIGURED mode decides the expected alg,
+	// never the token. Reject a mismatched header alg BEFORE verifying anything,
+	// so an RS256-configured verifier can never be tricked onto the HMAC path by
+	// an attacker-supplied "alg":"HS256" header (and vice versa).
+	if !strings.EqualFold(header.Alg, j.mode.expectedAlg()) {
+		return Principal{}, fmt.Errorf("%w: unexpected JWT alg %q (this verifier expects %s)", ErrUnauthenticated, header.Alg, j.mode.expectedAlg())
 	}
 
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
 		return Principal{}, fmt.Errorf("%w: JWT signature is not valid base64url: %v", ErrUnauthenticated, err)
 	}
-	mac := hmac.New(sha256.New, j.secret)
-	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
-	if !hmac.Equal(mac.Sum(nil), sig) {
-		return Principal{}, fmt.Errorf("%w: JWT signature verification failed", ErrUnauthenticated)
+	if err := j.verifySignature(ctx, header, parts[0]+"."+parts[1], sig); err != nil {
+		return Principal{}, err
 	}
 
 	claimsBytes, err := base64.RawURLEncoding.DecodeString(parts[1])

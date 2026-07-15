@@ -69,9 +69,13 @@ func main() {
 	switch authMode {
 	case "jwt-hs256":
 		slog.Info("aisotropyd authentication enabled: verifying HS256 bearer JWTs (AISOTROPY_JWT_SECRET is set).")
+	case "jwt-rs256":
+		slog.Info("aisotropyd authentication enabled: verifying RS256 bearer JWTs against a static RSA public key (AISOTROPY_JWT_PUBLIC_KEY[_FILE] is set).")
+	case "jwt-rs256-jwks":
+		slog.Info("aisotropyd authentication enabled: verifying RS256 bearer JWTs against a JWKS endpoint (AISOTROPY_JWT_JWKS_URL is set).")
 	default:
 		slog.Warn("aisotropyd is running in NoAuth (insecure) mode: path tenant_id/user_id are trusted with no credential verification. " +
-			"Set AISOTROPY_JWT_SECRET to enable HS256 JWT authentication for any non-local deployment.")
+			"Set AISOTROPY_JWT_SECRET (HS256), AISOTROPY_JWT_PUBLIC_KEY[_FILE] (RS256), or AISOTROPY_JWT_JWKS_URL (RS256 JWKS) to enable JWT authentication for any non-local deployment.")
 	}
 
 	// Operator-endpoint + transport posture (values never printed, only presence):

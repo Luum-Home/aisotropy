@@ -70,6 +70,15 @@ type ChatRequest struct {
 	// injected into the LLM payload — a tool the scopes don't cover never
 	// exists for the model (see internal/tools, docs/architecture/granular-control.md).
 	Scopes []string `json:"scopes,omitempty" doc:"Granted permission scopes gating tool access, e.g. [\"write:tasks\"]"`
+	// ModelPreference is an OPTIONAL explicit operator/UI model override: the
+	// registry NAME of a gateway target (e.g. "cheap") the caller wants to serve
+	// this turn. It is a routing PREFERENCE, not authorization — the gateway's
+	// OverridePolicy honors it over the cost-budget rule, but the streaming
+	// path's quota-pressure DegradeAt still overrides it (the safety valve), and
+	// an unknown name resolves to the default. Empty (the default) leaves routing
+	// unchanged. Additive per ADR-0002 (the struct is the contract): omitempty,
+	// so existing clients that never send it are byte-for-byte unaffected.
+	ModelPreference string `json:"model_preference,omitempty" doc:"Optional explicit model/gateway-target override (e.g. \"cheap\"); an explicit preference wins over cost-budget routing but quota-pressure degradation still overrides it"`
 }
 
 // ChatInput combines the tenant/user-scoped path params with the validated
@@ -342,7 +351,7 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 		// Model selection through the gateway seam; nil gw resolves to the passed
 		// client. The non-streaming route has no quota-pressure degrade override
 		// (that is the streaming path's behavior) — the gateway pick is final here.
-		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded)
+		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded, in.Body.ModelPreference)
 
 		slog.InfoContext(ctx, "chat request",
 			"tenant_id", in.TenantID,

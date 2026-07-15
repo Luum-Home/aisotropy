@@ -26,6 +26,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/consolidation"
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/engram"
+	"github.com/Luum-Home/aisotropy/internal/eval"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/gateway"
 	"github.com/Luum-Home/aisotropy/internal/guardrails"
@@ -88,6 +89,13 @@ const (
 	// calls fail fast until the cooldown elapses.
 	circuitFailureThreshold = 5
 	circuitCooldown         = 30 * time.Second
+	// guardrailsJudgeSafetyThreshold is the normalized safety floor the opt-in
+	// LLM-as-a-judge output check (AISOTROPY_GUARDRAILS_LLM_JUDGE) grades
+	// against: a model response whose safety score (eval.Safety, 1.0 = safe)
+	// falls STRICTLY below this is flagged Suspicious (and refused when
+	// BLOCK_OUTPUT is on). 0.5 = flag anything the judge scores as more unsafe
+	// than safe.
+	guardrailsJudgeSafetyThreshold = 0.5
 )
 
 // Default rate-limit values used when neither WithRateLimit nor the
@@ -576,12 +584,41 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Guardrails (redact + detect ALWAYS; blocking OPT-IN per operator toggles,
 	// default off): one process-wide aggregator threaded into every chat handler.
-	// The two env toggles gate only whether a suspicious verdict rejects the
+	// The env toggles gate only whether a suspicious verdict rejects the
 	// request/response — redaction and detection run regardless.
+	blockOutput := guardrailsBlockFromEnv("AISOTROPY_GUARDRAILS_BLOCK_OUTPUT")
+
+	// The output-inspection tier: the built-in heuristics by default, plus an
+	// OPT-IN LLM-as-a-judge Safety check when AISOTROPY_GUARDRAILS_LLM_JUDGE is
+	// truthy (and an LLM client exists). The judge attaches through the
+	// api.EvalOutputCheck adapter over the guardrails.OutputCheck seam, so
+	// internal/guardrails still never imports internal/eval. The judge is driven
+	// by the RAW llmClient — deliberately NOT the circuit-broken chat client — so
+	// a flaky judge cannot trip the chat breaker. Its error posture tracks
+	// blockOutput (fail-open when annotating, fail-closed when hard-blocking); see
+	// api.NewEvalOutputCheck. Default off: keyless/stub runtimes are byte-for-byte
+	// unchanged.
+	guardrailsG := guardrails.Default()
+	if guardrailsBlockFromEnv("AISOTROPY_GUARDRAILS_LLM_JUDGE") && llmClient != nil {
+		if judge, jerr := eval.NewLLMJudge(llmClient, eval.Safety, eval.SafetyRubric, 0); jerr != nil {
+			slog.Error("guardrails LLM judge disabled: judge construction failed; using built-in output heuristics only", "err", jerr)
+		} else if check, cerr := api.NewEvalOutputCheck(judge, guardrailsJudgeSafetyThreshold, blockOutput); cerr != nil {
+			slog.Error("guardrails LLM judge disabled: adapter construction failed; using built-in output heuristics only", "err", cerr)
+		} else {
+			inspector := guardrails.NewOutputInspector(nil).WithChecks(check)
+			guardrailsG = guardrails.New(guardrails.Config{Output: inspector})
+			slog.Info("guardrails LLM safety judge attached to the output inspector",
+				"criterion", eval.Safety.Name, "threshold", guardrailsJudgeSafetyThreshold, "fail_closed", blockOutput)
+		}
+	}
+
+	// One process-wide aggregator threaded into every chat handler. The block
+	// toggles gate only whether a suspicious verdict rejects the request/replaces
+	// the response — redaction and detection run regardless.
 	guard := &api.Guard{
-		G:              guardrails.Default(),
+		G:              guardrailsG,
 		BlockInjection: guardrailsBlockFromEnv("AISOTROPY_GUARDRAILS_BLOCK_INJECTION"),
-		BlockOutput:    guardrailsBlockFromEnv("AISOTROPY_GUARDRAILS_BLOCK_OUTPUT"),
+		BlockOutput:    blockOutput,
 	}
 	slog.Info("guardrails wired (redact+detect always on)", "block_injection", guard.BlockInjection, "block_output", guard.BlockOutput)
 
@@ -909,7 +946,15 @@ const (
 // the gateway is a pure pass-through to primary. There is deliberately no
 // prompt-length/difficulty rule (Bet-4 refuted length as a routing predictor).
 func buildModelGateway(primary, cheap llm.Client, budgetUSD float64) *gateway.Gateway {
-	var policies []gateway.Policy
+	// OverridePolicy FIRST so an explicit caller preference (ChatRequest.
+	// ModelPreference -> gateway.Request.UISelector) wins over the cost-budget
+	// rule. It is inert-safe: it abstains when UISelector is empty, so requests
+	// with no preference route exactly as before. The streaming path's
+	// quota-pressure DegradeAt still overrides even an honored preference (the
+	// safety valve), because it is applied AFTER the gateway pick (see
+	// RegisterStream). An unknown preference target resolves to the default at
+	// Route time, so a client value can never drop a request.
+	policies := []gateway.Policy{gateway.OverridePolicy{}}
 	if cheap != nil && budgetUSD > 0 {
 		policies = append(policies, gateway.CostAwarePolicy{BudgetUSD: budgetUSD, Cheap: gwCheap})
 		slog.Info("model gateway cost-budget shaping enabled", "budget_usd", budgetUSD, "cheap_target", gwCheap)

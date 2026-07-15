@@ -123,9 +123,14 @@ const (
 // the user prompt is redacted before it reaches memory or the model (secrets
 // never persist or reach the model), a suspicious injection verdict is
 // annotated (or rejected when BlockInjection is enabled), and the ASSEMBLED
-// final response is inspected after the stream completes (annotate-only — a
-// streamed response can't be un-sent; hard output-blocking on this route is a
-// documented follow-on). A nil guard disables guardrails entirely.
+// final response is inspected before it reaches the client. Output handling has
+// two honest modes, keyed on Guard.BlockOutput: when OFF (default) the response
+// is streamed live token by token and the assembled text is inspected
+// annotate-only afterward (annotateOutput) — no latency change; when ON the
+// whole response is BUFFERED (tokens accumulated WITHOUT flushing), inspected
+// via checkOutput, and only then emitted — either the safe text, or a safe
+// refusal if it tripped a guardrail, so unsafe output is never sent. A nil guard
+// disables guardrails entirely.
 //
 //nolint:gocognit,cyclop,funlen // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
 func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, inPricePer1M, outPricePer1M float64, bptSampler bitrate.SampleRecorder, gw *gateway.Gateway, guard *Guard) {
@@ -259,7 +264,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 		// Model selection through the gateway seam first (nil gw -> the passed
 		// client). This is where routing policy (e.g. cost-budget shaping) picks
 		// the target.
-		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded)
+		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded, in.Body.ModelPreference)
 
 		// Quota-pressure degradation (Phase 7) applies as an OVERRIDE on top of
 		// the gateway pick: when this tenant is near its limit, route to the
@@ -283,6 +288,16 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			return
 		}
 
+		// Hard output-blocking mode (opt-in, AISOTROPY_GUARDRAILS_BLOCK_OUTPUT):
+		// when ON, tokens are ACCUMULATED WITHOUT being flushed to the client, so
+		// the assembled response can be inspected before a single byte is emitted.
+		// Tradeoff: buffering the full response sacrifices token-streaming latency
+		// (TTFT) for the guarantee that unsafe (toxic/leaky) output is never sent.
+		// When OFF (default), tokens flush live as they arrive (no latency change)
+		// and the assembled text is inspected annotate-only afterward — a streamed
+		// response cannot be un-sent.
+		blocking := guard.outputBlockingEnabled()
+
 		var assistantReply strings.Builder
 		for {
 			select {
@@ -303,22 +318,43 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 				if tok.Err != nil {
 					// Mid-stream failure: surface it as an SSE error event and stop,
 					// so the client never mistakes a truncated stream for success.
-					// The partial reply is not persisted (see above).
+					// The partial reply is not persisted (see above). In blocking
+					// mode nothing has been flushed, so no toxic partial escaped.
 					_ = send.Data(StreamErrorEvent{Message: tok.Err.Error()})
 					return
 				}
 				if tok.Done {
 					// Only a clean, complete stream gets its assistant turn
 					// persisted to working memory.
-					if assistantReply.Len() > 0 {
-						if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: assistantReply.String()}); err != nil {
-							slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
+					if blocking {
+						// Buffered path: nothing has been flushed yet. Inspect the
+						// assembled text via checkOutput, which returns it unchanged
+						// when safe or the safe refusal when it tripped a guardrail.
+						// ONLY that (safe) text is emitted and persisted — the
+						// toxic/leaky text never reaches the wire nor memory,
+						// mirroring the non-streaming route.
+						if assistantReply.Len() > 0 {
+							safe := guard.checkOutput(ctx, in.TenantID, in.UserID, forwarded, assistantReply.String(), system)
+							if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: safe}); err != nil {
+								slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
+							}
+							if err := send.Data(StreamTokenEvent{Text: safe}); err != nil {
+								// Client disconnected before the buffered reply
+								// could be emitted; stop without persisting cost.
+								return
+							}
 						}
-						// Output guardrail on the ASSEMBLED final text (annotate-only:
-						// the stream has already been sent token by token, so a
-						// refusal can't replace it here — hard output-blocking on the
-						// streaming route is a documented follow-on needing buffering).
-						guard.annotateOutput(ctx, in.TenantID, in.UserID, forwarded, assistantReply.String(), system)
+					} else {
+						if assistantReply.Len() > 0 {
+							if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: assistantReply.String()}); err != nil {
+								slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
+							}
+							// Output guardrail on the ASSEMBLED final text
+							// (annotate-only: the stream was already sent token by
+							// token, so a refusal can't replace it here — that is
+							// exactly what blocking mode above trades latency for).
+							guard.annotateOutput(ctx, in.TenantID, in.UserID, forwarded, assistantReply.String(), system)
+						}
 					}
 					// Per-tenant cost accounting (Phase 7 observability): record the
 					// real provider token usage carried on the terminal token, so
@@ -338,10 +374,15 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 					return
 				}
 				assistantReply.WriteString(tok.Text)
-				if err := send.Data(StreamTokenEvent{Text: tok.Text}); err != nil {
-					// Client disconnected mid-write: there is no way to keep
-					// writing, so we stop. The partial reply is not persisted.
-					return
+				if !blocking {
+					// Live flush. In blocking mode this is deliberately skipped:
+					// the token is buffered above and emitted (or refused) only
+					// after the full response has been inspected.
+					if err := send.Data(StreamTokenEvent{Text: tok.Text}); err != nil {
+						// Client disconnected mid-write: there is no way to keep
+						// writing, so we stop. The partial reply is not persisted.
+						return
+					}
 				}
 			}
 		}

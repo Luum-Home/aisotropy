@@ -46,12 +46,24 @@ type Guard struct {
 	// BlockInjection, when true, rejects an input whose injection verdict is
 	// Suspicious with a 4xx instead of merely annotating it. Default: false.
 	BlockInjection bool
-	// BlockOutput, when true, replaces a flagged (toxic/leaky) NON-STREAMING
-	// response with a safe refusal instead of merely annotating it. Default:
-	// false. Hard blocking on the streaming route is deliberately NOT done
-	// here (a mid-stream response can't be un-sent); the streaming path
-	// annotate-only via annotateOutput.
+	// BlockOutput, when true, replaces a flagged (toxic/leaky) response with a
+	// safe refusal instead of merely annotating it. Default: false. It governs
+	// BOTH chat routes: the non-streaming route substitutes the refusal after
+	// the model returns (checkOutput), and the streaming route BUFFERS the whole
+	// response (never flushing tokens live) so it, too, can inspect the assembled
+	// text and refuse before emitting a single byte (see RegisterStream). When
+	// false, the streaming route keeps its live token-by-token flush and
+	// annotate-only posture (annotateOutput) — no latency change.
 	BlockOutput bool
+}
+
+// outputBlockingEnabled reports whether hard output-blocking is active: a
+// non-nil Guard, a non-nil aggregator (nil disables all guardrails), and the
+// BlockOutput toggle on. Nil-safe so a guardless handler never blocks. The
+// streaming route consults this to decide between the buffered blocking path
+// and the live annotate-only path.
+func (g *Guard) outputBlockingEnabled() bool {
+	return g != nil && g.G != nil && g.BlockOutput
 }
 
 // checkInput runs the input guardrails and returns the text to forward
@@ -143,10 +155,20 @@ func (g *Guard) annotateOutput(ctx context.Context, tenant, user, input, output,
 // Bet-4 refuted length/compressibility as a routing predictor, so there is
 // deliberately no length rule.
 //
+// modelPreference is the caller's explicit, optional model override
+// (ChatRequest.ModelPreference): it maps onto gateway.Request.UISelector so
+// gateway.OverridePolicy honors it as a hard target choice that wins over the
+// cost-budget rule. Empty (the default) leaves UISelector empty, OverridePolicy
+// abstains, and routing is unchanged. The streaming path's quota-pressure
+// DegradeAt still overrides even an explicit preference (the safety valve),
+// because it is applied AFTER this pick.
+//
 // A hard routing miss (policy target unresolved AND no default configured)
 // falls back to `fallback`: a routing decision must never drop a request on the
-// floor. The Gateway itself already logs the miss.
-func selectClient(ctx context.Context, gw *gateway.Gateway, fallback llm.Client, meter *costmeter.Meter, tenant, user, prompt string) llm.Client {
+// floor. An unknown/unregistered preference is likewise resolved to the default
+// at Route time, so a client-supplied value can never drop the request. The
+// Gateway itself already logs the miss.
+func selectClient(ctx context.Context, gw *gateway.Gateway, fallback llm.Client, meter *costmeter.Meter, tenant, user, prompt, modelPreference string) llm.Client {
 	if gw == nil {
 		return fallback
 	}
@@ -162,6 +184,7 @@ func selectClient(ctx context.Context, gw *gateway.Gateway, fallback llm.Client,
 		Tenant:               tenant,
 		User:                 user,
 		CostSpentUSD:         spent,
+		UISelector:           modelPreference,
 	}
 	client, _, err := gw.Route(ctx, req)
 	if err != nil || client == nil {

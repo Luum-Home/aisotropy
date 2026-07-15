@@ -300,6 +300,96 @@ func TestGuardrails_OutputBlockWhenEnabled(t *testing.T) {
 	})
 }
 
+// TestGuardrails_OutputBlockStreaming proves the streaming route honors
+// BlockOutput by BUFFERING the whole response: when ON, a leaky/toxic reply is
+// inspected before any byte is flushed and replaced with a safe refusal — the
+// unsafe text NEVER appears in the SSE stream; when OFF, the reply streams live,
+// unchanged (annotate-only), so no latency/behavior change.
+func TestGuardrails_OutputBlockStreaming(t *testing.T) {
+	// The model "leaks" a secret in its streamed reply -> Leak verdict -> Blocked.
+	leaky := "sure, the key is " + secretAPIKey
+
+	t.Run("blocking on -> buffered refusal, secret never streamed", func(t *testing.T) {
+		wm := newTestWorkingMemory(t)
+		guard := &Guard{G: guardrails.Default(), BlockOutput: true}
+		handler := newGuardStreamRouter(t, scriptedClient{text: leaky}, wm, guard)
+
+		events := postChatStream(t, handler, "acme", "alice", "what is the key", "s1")
+
+		// (a) The raw secret must never appear in ANY SSE event.
+		for _, ev := range events {
+			if strings.Contains(string(ev.Data), secretAPIKey) {
+				t.Fatalf("LEAK: secret appeared in SSE %q event: %s", ev.Event, ev.Data)
+			}
+		}
+		// (b) The safe refusal was emitted, and the stream completed cleanly.
+		var sawRefusal, sawDone bool
+		for _, ev := range events {
+			if ev.Event == sseEventToken && strings.Contains(string(ev.Data), outputGuardRefusal) {
+				sawRefusal = true
+			}
+			if ev.Event == sseEventDone {
+				sawDone = true
+			}
+		}
+		if !sawRefusal {
+			t.Fatalf("expected the safe refusal token in the stream, got events %v", events)
+		}
+		if !sawDone {
+			t.Fatalf("expected a done event, got events %v", events)
+		}
+		// (c) Working memory persisted the refusal, not the leaky text.
+		recent, err := wm.Recent(context.Background(), memory.Key{Tenant: "acme", User: "alice", Session: "s1"}, 10)
+		if err != nil {
+			t.Fatalf("wm.Recent: %v", err)
+		}
+		for _, m := range recent {
+			if strings.Contains(m.Content, secretAPIKey) {
+				t.Fatalf("LEAK: leaky reply persisted in working memory: %q", m.Content)
+			}
+		}
+	})
+
+	t.Run("blocking off -> streamed live unchanged (annotate-only)", func(t *testing.T) {
+		wm := newTestWorkingMemory(t)
+		guard := &Guard{G: guardrails.Default()} // BlockOutput defaults false
+		handler := newGuardStreamRouter(t, scriptedClient{text: leaky}, wm, guard)
+
+		events := postChatStream(t, handler, "acme", "alice", "what is the key", "s1")
+
+		var joined strings.Builder
+		for _, ev := range events {
+			if ev.Event == sseEventToken {
+				joined.Write(ev.Data)
+			}
+		}
+		if !strings.Contains(joined.String(), secretAPIKey) {
+			t.Fatalf("annotate-only posture should stream the reply unchanged; secret missing in %q", joined.String())
+		}
+	})
+
+	t.Run("blocking on, safe output -> buffered then emitted intact", func(t *testing.T) {
+		wm := newTestWorkingMemory(t)
+		guard := &Guard{G: guardrails.Default(), BlockOutput: true}
+		handler := newGuardStreamRouter(t, scriptedClient{text: "the capital of France is Paris"}, wm, guard)
+
+		events := postChatStream(t, handler, "acme", "alice", "capital of france", "s1")
+
+		var joined strings.Builder
+		for _, ev := range events {
+			if ev.Event == sseEventToken {
+				joined.Write(ev.Data)
+			}
+		}
+		if !strings.Contains(joined.String(), "Paris") {
+			t.Fatalf("safe output should be emitted intact in blocking mode; got %q", joined.String())
+		}
+		if strings.Contains(joined.String(), outputGuardRefusal) {
+			t.Fatalf("safe output was wrongly refused: %q", joined.String())
+		}
+	})
+}
+
 // TestSelectClient_GatewaySeam proves model selection routes through the gateway:
 // a cost-budget policy shapes an over-budget tenant to the cheap target, an
 // under-budget tenant resolves to the default primary, and a nil gateway falls
@@ -325,23 +415,77 @@ func TestSelectClient_GatewaySeam(t *testing.T) {
 	ctx := context.Background()
 
 	// Under budget (no spend recorded): CostAwarePolicy abstains -> default primary.
-	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi"); got.Name() != "primary" {
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", ""); got.Name() != "primary" {
 		t.Fatalf("under budget: expected primary, got %q", got.Name())
 	}
 
 	// Over budget: shape to cheap.
 	meter.Record("t1", 0, 0, 2.0) // cumulative 2.0 >= 1.0 budget
-	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi"); got.Name() != "cheap" {
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", ""); got.Name() != "cheap" {
 		t.Fatalf("over budget: expected cheap, got %q", got.Name())
 	}
 
 	// A different tenant is still under budget -> primary (per-tenant spend).
-	if got := selectClient(ctx, gw, primary, meter, "t2", "u", "hi"); got.Name() != "primary" {
+	if got := selectClient(ctx, gw, primary, meter, "t2", "u", "hi", ""); got.Name() != "primary" {
 		t.Fatalf("other tenant under budget: expected primary, got %q", got.Name())
 	}
 
 	// Nil gateway -> fallback client unchanged.
-	if got := selectClient(ctx, nil, primary, meter, "t1", "u", "hi"); got.Name() != "primary" {
+	if got := selectClient(ctx, nil, primary, meter, "t1", "u", "hi", ""); got.Name() != "primary" {
 		t.Fatalf("nil gateway: expected fallback primary, got %q", got.Name())
+	}
+}
+
+// TestSelectClient_ModelPreferenceOverride proves ChatRequest.ModelPreference
+// threads through selectClient (as gateway.Request.UISelector) so an explicit
+// preference wins over the cost-budget rule, while an empty preference leaves
+// routing unchanged and an unknown preference resolves safely to the default.
+func TestSelectClient_ModelPreferenceOverride(t *testing.T) {
+	primary := namedClient{name: "primary"}
+	cheap := namedClient{name: "cheap"}
+
+	// OverridePolicy FIRST (honors UISelector), then the cost-budget rule — the
+	// exact chain aisotropy.buildModelGateway assembles.
+	gw := gateway.New(gateway.ChainPolicy{Policies: []gateway.Policy{
+		gateway.OverridePolicy{},
+		gateway.CostAwarePolicy{BudgetUSD: 1.0, Cheap: "cheap"},
+	}}, nil)
+	for name, c := range map[string]llm.Client{"primary": primary, "cheap": cheap} {
+		if err := gw.Register(name, c); err != nil {
+			t.Fatalf("register %s: %v", name, err)
+		}
+	}
+	if err := gw.SetDefault("primary"); err != nil {
+		t.Fatalf("set default: %v", err)
+	}
+
+	meter := costmeter.New()
+	ctx := context.Background()
+
+	// Empty preference, under budget -> default primary (routing unchanged).
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", ""); got.Name() != "primary" {
+		t.Fatalf("no preference: expected primary, got %q", got.Name())
+	}
+
+	// Explicit preference "cheap" wins even though the tenant is UNDER budget
+	// (the cost rule would otherwise abstain to primary).
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "cheap"); got.Name() != "cheap" {
+		t.Fatalf("explicit cheap preference: expected cheap, got %q", got.Name())
+	}
+
+	// Explicit preference "primary" wins even when the tenant is OVER budget —
+	// the preference beats the cost-budget shaping (DegradeAt, the safety valve,
+	// is applied separately in the streaming handler, not here).
+	meter.Record("t1", 0, 0, 5.0) // cumulative 5.0 >= 1.0 budget
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "primary"); got.Name() != "primary" {
+		t.Fatalf("explicit primary preference over budget: expected primary, got %q", got.Name())
+	}
+
+	// An unknown preference target still short-circuits the chain (OverridePolicy
+	// emits a non-empty target, so the cost rule never runs) and then resolves to
+	// the gateway DEFAULT at Route time — a client-supplied value can never drop
+	// the request, it just falls back safely to primary.
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "does-not-exist"); got.Name() != "primary" {
+		t.Fatalf("unknown preference: expected safe fallback to default primary, got %q", got.Name())
 	}
 }
