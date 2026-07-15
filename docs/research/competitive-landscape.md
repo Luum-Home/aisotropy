@@ -411,6 +411,42 @@ longer literally true.
    CN-origin frameworks (AgentScope, Qwen-Agent) and durable-execution runtimes
    (Temporal/Restack/Modal/Inngest).
 
+## Framework version watch — Pydantic AI v2 (2026-07-14)
+
+Pydantic AI is the framework that most directly matches aisotropy's structured-output posture —
+and the one aisotropy's own [thesis](../vision/thesis.md) cites as its model ("the Go equivalent
+of FastAPI + Pydantic AI"). It shipped a **v2**, so we re-checked whether v2 moves any of the four
+verdicts. **It does not.**
+
+- **The headline of v2 is the `Capability` pattern, not a new guarantee.** An agent is composed
+  from reusable `capabilities=[...]` bricks — each bundling instructions, a `FunctionToolset`,
+  `ModelSettings`, and lifecycle hooks — instead of one monolithic `Agent(...)` constructor. This
+  is a developer-experience / composition improvement, **orthogonal to all four pillars**. The
+  reference demo [`coleam00/orbit-support-agent`](https://github.com/coleam00/orbit-support-agent)
+  ships both `agent_v1_style.py` (the old monolithic constructor) and the v2 capability version
+  side by side — a clean v1-vs-v2 diff.
+- **P2 (fail-closed reflection loop) survives into v2** — `ModelRetry` still works; output
+  validators / process hooks can raise it with a custom message; and a function-tool `ModelRetry`
+  now suppresses the output so the model self-corrects on the next round. The "P2 collapsed as a
+  differentiator" verdict holds. The retry-token-efficiency gap we noted upstream is still open
+  ([pydantic-ai#4908](https://github.com/pydantic/pydantic-ai/issues/4908), "send minimal
+  correction context instead of full conversation history").
+- **P3 (`UsageLimits`) survives** — v2 exposes the run's `usage_limits` on `RunContext` to
+  tools/capabilities; still **per-run, not per-tenant**.
+- **P4 (multi-tenant isolation) is unchanged** — v2 adds no tenancy. orbit-support-agent confirms
+  it carries "no database/session handling, memory persistence, or multi-tenancy mechanisms."
+  aisotropy's isolation moat is untouched by Pydantic AI v2.
+- Other v2 behavior changes (OpenAI defaults to the Responses API; native WebSearch/WebFetch and
+  local `MCP(url=...)`; `end_strategy` default `early` → `graceful`; instrumentation v5) do not
+  touch the four pillars.
+
+Confidence: the v2 change details are from the [v2 article](https://pydantic.dev/articles/pydantic-ai-v2)
++ upstream docs/issues, not a byte-level diff of the release. Sources:
+[Pydantic AI v2](https://pydantic.dev/articles/pydantic-ai-v2) ·
+[Capabilities docs](https://pydantic.dev/docs/ai/core-concepts/capabilities/) ·
+[Upgrade guide](https://pydantic.dev/docs/ai/project/changelog/) ·
+[orbit-support-agent](https://github.com/coleam00/orbit-support-agent).
+
 ## Sources & caveats
 
 Every dated claim above cites a primary or clearly-labeled secondary source inline. Items
