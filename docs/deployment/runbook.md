@@ -206,3 +206,46 @@ back to its default (with a `slog.Warn`) when unset, unparsable, or non-positive
 override applies **per replica** — N replicas still multiply the effective per-tenant
 rate. The builder option is documented in
 [build-your-own-agent](../guides/build-your-own-agent.md).
+
+## 6. Security & authentication environment variables (ADR-0024 / ADR-0025)
+
+The shipped binary is **securable by config** — no fork, no library embedding. The
+defaults are chosen so that an unconfigured deployment is loud (a `NoAuth` warning) or
+safe (ops endpoints closed), never silently insecure. For any non-local deployment, set
+`AISOTROPY_JWT_SECRET` **and** `AISOTROPY_OPS_TOKEN`, and put TLS in front (or enable
+`AISOTROPY_REQUIRE_TLS`).
+
+| Variable | Effect | Default when unset | Code pointer |
+|---|---|---|---|
+| `AISOTROPY_JWT_SECRET` | Enables HS256 bearer-JWT authentication on every `/v1` route (the must-agree bind: 401 missing/invalid, 403 tenant/user mismatch). Verified JWT scopes gate tools. **Must be ≥ 32 bytes** — a shorter secret is a fatal config fault: the binary **refuses to boot** (the error never contains the secret). | `NoAuth()` — path `tenant_id`/`user_id` trusted verbatim, logged as a **startup warning**. The secret value is never logged. | `aisotropy/authenv.go` (`AuthenticatorFromEnv`, `auth.ValidateHS256Secret`); wired at `cmd/aisotropyd/main.go` |
+| `AISOTROPY_OPS_TOKEN` | Gates the operator endpoints `GET /costs` and `GET /bitrate` (all-tenant aggregates) behind a shared bearer token, compared constant-time (`crypto/subtle`). Present → the request must carry `Authorization: Bearer <token>` (401 otherwise). The token is never logged. | **Endpoints closed**: every request to `/costs` and `/bitrate` gets **503** until the token is set (default-closed — no cross-tenant leak). | `internal/api/ops_gate.go` (`OpsAuthGate`, `OpsTokenFromEnv`); wired at `aisotropy/app.go` |
+| `AISOTROPY_JWT_AUDIENCE` | When set, requires the JWT `aud` claim (string or array, RFC 7519) to contain this value — closes token-confusion / cross-audience replay. **Optional.** | `aud` is not checked (existing tokens keep verifying). | `internal/auth/jwt.go` (`WithAudience`); re-export `aisotropy.WithJWTAudience` |
+| `AISOTROPY_JWT_ISSUER` | When set, requires the JWT `iss` claim to equal this value exactly. **Optional.** | `iss` is not checked. | `internal/auth/jwt.go` (`WithIssuer`); re-export `aisotropy.WithJWTIssuer` |
+| `AISOTROPY_JWT_MAX_TTL` | When set (a Go duration, e.g. `1h`), rejects a token whose lifetime `(exp - iat)` — or `(exp - now)` when `iat` is absent — exceeds the cap; bounds effectively immortal tokens. A **malformed** value is a fatal config fault (the binary refuses to boot). **Optional.** | Lifetime bounded only by the required `exp` claim. | `internal/auth/jwt.go` (`WithMaxTTL`); re-export `aisotropy.WithJWTMaxTTL`; parsed in `aisotropy/authenv.go` |
+| `AISOTROPY_REQUIRE_TLS` | Truthy (per `strconv.ParseBool`) → reject any request that did not arrive over TLS (`r.TLS == nil`) with **HTTP 400**, so a bearer token (the `/v1` JWT or the ops token) can never be sent in plaintext. **Enable only when aisotropyd terminates TLS itself.** | **Off** — plaintext accepted, for the common behind-a-proxy topology where TLS is terminated upstream and plain HTTP is forwarded. | `aisotropy/app.go` (`requireTLSFromEnv`, the pre-route `Use` middleware) |
+
+Notes independent of these levers, so the picture is honest:
+
+- **`exp` is always required** and `nbf`/`iat` are always validated when present (a
+  token with no expiry, or a far-future `iat`, is rejected) — this holds regardless of
+  the optional `AISOTROPY_JWT_*` hardening above (`internal/auth/jwt.go`).
+- **Startup posture is logged, secrets are not.** `cmd/aisotropyd/main.go` logs the auth
+  mode (`jwt-hs256` vs the NoAuth warning), whether the ops token is set, and whether TLS
+  enforcement is on — presence only, never a value.
+- **Library users get default-deny.** Building `aisotropy.App` with **no**
+  `WithAuthenticator` rejects every `/v1` request with 401; the shipped binary avoids
+  that by always passing `WithAuthenticator(AuthenticatorFromEnv())` (which is `NoAuth`
+  when the secret is unset). Full rationale: [ADR-0024](../decisions/0024-authenticated-identity-seam.md),
+  [ADR-0025](../decisions/0025-security-hardening-authn-ops.md); attack surface: [threat model](../architecture/threat-model.md).
+
+### Secure-deployment checklist
+
+- [ ] `AISOTROPY_JWT_SECRET` set to a **≥ 32-byte** random secret (the binary refuses to
+  boot on a weaker one; unset means the insecure `NoAuth` mode with a warning).
+- [ ] `AISOTROPY_OPS_TOKEN` set to a random token if `/costs` / `/bitrate` are exposed
+  (unset means those endpoints return 503 — also safe, just unavailable).
+- [ ] TLS terminated in front of aisotropyd (proxy/load balancer), or
+  `AISOTROPY_REQUIRE_TLS=true` when the binary terminates TLS itself — bearer credentials
+  must not travel in plaintext.
+- [ ] Consider `AISOTROPY_JWT_AUDIENCE` / `AISOTROPY_JWT_ISSUER` when the HS256 secret is
+  shared with other services, and `AISOTROPY_JWT_MAX_TTL` to bound token lifetime.

@@ -125,7 +125,10 @@ func TestRunServesAndShutsDown(t *testing.T) {
 	base := "http://" + addr
 	waitForServer(t, base+"/healthz")
 
-	for _, path := range []string{"/healthz", "/costs", "/openapi.json"} {
+	// These stay OPEN (outside the operator-token gate): liveness and the
+	// OpenAPI document. /costs is now default-closed (see the 503 assertion
+	// below) because AISOTROPY_OPS_TOKEN is unset in this test.
+	for _, path := range []string{"/healthz", "/openapi.json"} {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
 		if err != nil {
 			t.Fatalf("build request %s: %v", path, err)
@@ -139,6 +142,22 @@ func TestRunServesAndShutsDown(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s = %d, want 200", path, resp.StatusCode)
 		}
+	}
+
+	// /costs is an operator endpoint: with AISOTROPY_OPS_TOKEN unset it is
+	// default-closed and returns 503, never leaking all-tenant cost data.
+	costsReq, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/costs", nil)
+	if err != nil {
+		t.Fatalf("build /costs request: %v", err)
+	}
+	costsResp, err := http.DefaultClient.Do(costsReq)
+	if err != nil {
+		t.Fatalf("GET /costs: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, costsResp.Body)
+	_ = costsResp.Body.Close()
+	if costsResp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("GET /costs (no ops token) = %d, want 503", costsResp.StatusCode)
 	}
 
 	cancel()

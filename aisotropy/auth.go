@@ -1,6 +1,8 @@
 package aisotropy
 
 import (
+	"time"
+
 	"github.com/Luum-Home/aisotropy/internal/auth"
 )
 
@@ -28,6 +30,24 @@ type Principal = auth.Principal
 // NewJWTAuthenticator (e.g. clock-skew leeway). Alias for the internal type so
 // the public NewJWTAuthenticator signature is self-contained.
 type JWTOption = auth.JWTOption
+
+// WithJWTAudience requires the token's "aud" claim to contain aud (RFC 7519: a
+// string or an array of strings). Thin re-export of auth.WithAudience so
+// embedders can harden JWT verification via
+// NewJWTAuthenticator(secret, WithJWTAudience("...")). Unset (default) = aud is
+// not checked, so existing tokens keep verifying.
+func WithJWTAudience(aud string) JWTOption { return auth.WithAudience(aud) }
+
+// WithJWTIssuer requires the token's "iss" claim to equal iss. Thin re-export
+// of auth.WithIssuer. Unset (default) = iss is not checked.
+func WithJWTIssuer(iss string) JWTOption { return auth.WithIssuer(iss) }
+
+// WithJWTMaxTTL caps the accepted token lifetime to d: a token whose
+// (exp - iat) — or (exp - now) when iat is absent — exceeds d is rejected. Thin
+// re-export of auth.WithMaxTTL that guards against effectively immortal tokens.
+// Unset (default, 0) = the lifetime is not bounded beyond the required exp
+// check.
+func WithJWTMaxTTL(d time.Duration) JWTOption { return auth.WithMaxTTL(d) }
 
 // WithAuthenticator registers the Authenticator the runtime invokes as the
 // single fail-closed gate in front of every /v1 route. Register exactly one;

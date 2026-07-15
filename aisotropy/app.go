@@ -393,6 +393,25 @@ func (a *App) Run(ctx context.Context) error {
 	router.Use(middleware.RequestID)
 	router.Use(middleware.Recoverer)
 
+	// Optional TLS enforcement (AISOTROPY_REQUIRE_TLS truthy): reject any request
+	// that did not arrive over TLS (r.TLS == nil) so a bearer token — the /v1 JWT
+	// or the AISOTROPY_OPS_TOKEN — can never be transmitted in plaintext. OFF by
+	// default: most deployments sit behind a proxy/load balancer that terminates
+	// TLS upstream and forwards plain HTTP, where r.TLS is legitimately nil. Turn
+	// it on only when aisotropyd terminates TLS itself. Registered as a Use()
+	// middleware BEFORE any route, so chi accepts it and it covers every path.
+	if requireTLSFromEnv() {
+		router.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.TLS == nil {
+					http.Error(w, `{"error":"TLS required"}`, http.StatusBadRequest)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+		})
+	}
+
 	// Liveness, outside the OpenAPI contract.
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -476,9 +495,17 @@ func (a *App) Run(ctx context.Context) error {
 		executor = api.DemoExecutor{}
 	}
 
+	// Operator-endpoint gate (default-closed): /costs and /bitrate return
+	// ALL-tenant aggregates, so they live behind a shared operator token
+	// (AISOTROPY_OPS_TOKEN) instead of the per-tenant /v1 JWT gate. With the
+	// token unset every request gets 503; with it set the request must carry a
+	// matching "Authorization: Bearer <token>" (401 otherwise). Health/liveness/
+	// openapi/docs stay open.
+	opsGate := api.OpsAuthGate(api.OpsTokenFromEnv())
+
 	// Per-tenant cost meter, exposed at GET /costs.
 	costMeter := costmeter.New()
-	router.Get("/costs", func(w http.ResponseWriter, _ *http.Request) {
+	router.With(opsGate).Get("/costs", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(costMeter.Snapshot())
 	})
@@ -510,7 +537,7 @@ func (a *App) Run(ctx context.Context) error {
 				slog.Info("bitrate measured memory lift", "samples", len(ms))
 			}
 		})
-		router.Get("/bitrate", func(w http.ResponseWriter, r *http.Request) {
+		router.With(opsGate).Get("/bitrate", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			summaries, serr := bitrateStore.AllSummaries(r.Context())
 			if serr != nil {
@@ -766,6 +793,19 @@ func ratePerSecFromEnv() float64 {
 		slog.Warn("invalid AISOTROPY_RATE_PER_SEC; using default", "value", v, "default", defaultRatePerSec)
 	}
 	return defaultRatePerSec
+}
+
+// requireTLSFromEnv reports whether AISOTROPY_REQUIRE_TLS is set to a truthy
+// value (per strconv.ParseBool: "1", "t", "true", etc.). It gates the optional
+// plaintext-rejection middleware. Unset, empty, or unparsable => false (off),
+// so the default posture is unchanged for behind-proxy deployments.
+func requireTLSFromEnv() bool {
+	v := os.Getenv("AISOTROPY_REQUIRE_TLS")
+	if v == "" {
+		return false
+	}
+	on, err := strconv.ParseBool(v)
+	return err == nil && on
 }
 
 // burstFromEnv parses AISOTROPY_BURST (an integer bucket capacity) for the

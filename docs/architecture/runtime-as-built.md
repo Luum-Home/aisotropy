@@ -58,18 +58,31 @@ aspirational) and the [data model](data-model.md) / [API reference](api-referenc
 > §5); (3) the shipped binary is **securable by config** via `AISOTROPY_JWT_SECRET` (see the env
 > table). Line references are HEAD-accurate as of this pass; other line numbers in this doc may lag.
 
+> **Freshness note (2026-07-14, security hardening — [ADR-0025](../decisions/0025-security-hardening-authn-ops.md)):**
+> a security review of the ADR-0024 seam added two more request-path gates, both reflected below:
+> (1) the operator endpoints `GET /costs` and `GET /bitrate` (all-tenant aggregates, registered as raw
+> chi routes *outside* the `/v1` auth chain) are now guarded **default-closed** by `api.OpsAuthGate`
+> ([`internal/api/ops_gate.go`](../../internal/api/ops_gate.go), wired via `router.With(opsGate)` at
+> [`app.go:504-508`,`540`](../../aisotropy/app.go)) — 503 when `AISOTROPY_OPS_TOKEN` is unset, else a
+> constant-time bearer-token check (401 on miss); (2) an **optional** plaintext-rejection middleware
+> (`AISOTROPY_REQUIRE_TLS`, [`app.go:403-413`](../../aisotropy/app.go)) rejects non-TLS requests with 400.
+> The HS256 verifier also gained a 32-byte-minimum secret (fail-fast at boot), optional `aud`/`iss`
+> binding, and a max-TTL cap — see the env table. All stdlib, no new dependency.
+
 ## 1. The HTTP surface (every route actually registered)
 
-`App.Run` builds a `chi` router (`middleware.RequestID`, `middleware.Recoverer`), mounts a Huma v2
-API on it via the `humachi` adapter (`huma.DefaultConfig("Aisotropy", "0.1.0")`), and registers the
-following — nothing else:
+`App.Run` builds a `chi` router (`middleware.RequestID`, `middleware.Recoverer`, plus — **only when
+`AISOTROPY_REQUIRE_TLS` is truthy** — a pre-route plaintext-rejection `Use` middleware that 400s any
+request with `r.TLS == nil`, [`app.go:403-413`](../../aisotropy/app.go), ADR-0025; OFF by default for
+behind-a-proxy TLS termination), mounts a Huma v2 API on it via the `humachi` adapter
+(`huma.DefaultConfig("Aisotropy", "0.1.0")`), and registers the following — nothing else:
 
 | Route | Where registered | In OpenAPI contract? | What it does |
 |---|---|---|---|
 | `GET /healthz` | `app.go:390` (raw chi handler) | No | Liveness only. Writes `{"status":"ok"}` with HTTP 200. No dependency checks. |
 | `GET /health` | `app.go:507` (raw chi handler, [`internal/health`](../../internal/health/health.go)) | No | Readiness. Cheap, read-only, `_health`-tenant-scoped probes of the facts + semantic tiers (2s per-probe timeout). 200 `ok` / 503 `degraded`. Deliberately never probes the LLM (no tokens spent on polling). |
-| `GET /costs` | `app.go:459` (raw chi handler) | No | JSON-encodes `costMeter.Snapshot()` — the per-tenant token/cost aggregate (see [`internal/costmeter`](../../internal/costmeter/costmeter.go)). Sorted by tenant id. |
-| `GET /bitrate` | `app.go:491` (raw chi handler) — **only when `AISOTROPY_BITRATE_BIN` is set** | No | Bet 6 ops view: JSON-encodes `bitrateStore.AllSummaries()` — per-tenant bits-per-token memory-lift summaries. Absent (404) when the bitrate path is disabled. |
+| `GET /costs` | `app.go:508` (raw chi handler, **`router.With(opsGate)`**) | No | JSON-encodes `costMeter.Snapshot()` — the per-tenant token/cost aggregate (see [`internal/costmeter`](../../internal/costmeter/costmeter.go)). Sorted by tenant id. **All-tenant data → gated default-closed** by `api.OpsAuthGate` (ADR-0025): 503 until `AISOTROPY_OPS_TOKEN` is set, then a constant-time bearer-token check (401 on miss). |
+| `GET /bitrate` | `app.go:540` (raw chi handler, **`router.With(opsGate)`**) — **only when `AISOTROPY_BITRATE_BIN` is set** | No | Bet 6 ops view: JSON-encodes `bitrateStore.AllSummaries()` — per-tenant bits-per-token memory-lift summaries. Absent (404) when the bitrate path is disabled; same default-closed `AISOTROPY_OPS_TOKEN` gate as `/costs` when present. |
 | `GET /openapi.json`, `/openapi.yaml`, `GET /docs` | Huma `DefaultConfig` | n/a (they *are* the contract) | Auto-generated OpenAPI 3.1 schema + Stoplight docs UI. The Go struct is the single source of truth. |
 | `POST /v1/tenant/{tenant_id}/user/{user_id}/chat` | `api.Register` ([`chat.go`](../../internal/api/chat.go)) | Yes (`operationID: chat`) | Non-streaming, structured-output chat. Runs the reflection loop and **fails closed** with 502 on a persistent schema violation. |
 | `POST /v1/tenant/{tenant_id}/user/{user_id}/chat/stream` | `api.RegisterStream` ([`chat_stream.go`](../../internal/api/chat_stream.go)) | Yes (`operationID: chat-stream`) | SSE streaming chat, token by token. The full memory + outbox + cost path. Emits `token` / `done` / `error` events. |
@@ -108,8 +121,11 @@ Before any `/v1` operation runs, `App.Run` installs **one** Huma API middleware 
 
 The `GET /healthz`, `GET /health`, `GET /costs`, `GET /bitrate`, `/openapi.json` and `/docs` routes
 are registered directly on chi (or via the Huma adapter's `Handle` for openapi/docs), **outside** the
-operation middleware chain `UseMiddleware` feeds, so they stay open — the gate covers only the `/v1`
-operations registered through `huma.Register`.
+`/v1` operation middleware chain `UseMiddleware` feeds — that per-`(tenant, user)` auth gate covers only
+the `/v1` operations registered through `huma.Register`. `healthz`/`health`/`openapi`/`docs` carry no
+tenant data and stay open, but `GET /costs` and `GET /bitrate` return **all-tenant aggregates**, so they
+carry their **own** default-closed operator gate — `api.OpsAuthGate(AISOTROPY_OPS_TOKEN)` (ADR-0025), a
+shared bearer token compared constant-time, 503 until the token is set (see §5 and the route table above).
 
 ### Contract shapes
 
@@ -344,7 +360,10 @@ threaded through the handlers:
 |---|---|---|
 | `AISOTROPY_ADDR` | `App.Run` (`aisotropy/app.go`) | HTTP listen address; the `WithAddr` option wins over it, and both fall back to `:8080` |
 | `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | `llm.RegistryFromEnv` (via `llm.FromEnv`) | Select the default LLM client by precedence `OPENROUTER_API_KEY > OPENAI_API_KEY > ANTHROPIC_API_KEY > stub` ([`internal/llm/registry.go`](../../internal/llm/registry.go)). Every provider with a key set is registered; the highest-precedence one becomes the default. With none set, the credential-less `stub` client is the default (`ChatOutput.stub = true`). |
-| `AISOTROPY_JWT_SECRET` | `aisotropy.AuthenticatorFromEnv` ([`aisotropy/authenv.go`](../../aisotropy/authenv.go)) | Selects the `aisotropyd` binary's authenticator (ADR-0024). Set (non-empty) → `NewJWTAuthenticator([]byte(secret))`, verifying an `Authorization: Bearer <jwt>` **HS256** credential with the Go stdlib only (no dependency); the auth gate then enforces the must-agree bind (401 on missing/invalid, 403 on tenant/user mismatch). Unset → `NoAuth()` (path tenant/user trusted verbatim) with a startup **warning**. The secret value is never logged. |
+| `AISOTROPY_JWT_SECRET` | `aisotropy.AuthenticatorFromEnv` ([`aisotropy/authenv.go`](../../aisotropy/authenv.go)) | Selects the `aisotropyd` binary's authenticator (ADR-0024). Set (non-empty) → `NewJWTAuthenticator([]byte(secret))`, verifying an `Authorization: Bearer <jwt>` **HS256** credential with the Go stdlib only (no dependency); the auth gate then enforces the must-agree bind (401 on missing/invalid, 403 on tenant/user mismatch). Unset → `NoAuth()` (path tenant/user trusted verbatim) with a startup **warning**. **Must be ≥ 32 bytes** (ADR-0025): a shorter secret is a fatal config fault — the binary refuses to boot (`auth.ValidateHS256Secret`). The secret value is never logged. |
+| `AISOTROPY_JWT_AUDIENCE` / `AISOTROPY_JWT_ISSUER` / `AISOTROPY_JWT_MAX_TTL` | `aisotropy.AuthenticatorFromEnv` ([`aisotropy/authenv.go`](../../aisotropy/authenv.go)) | **Optional** HS256 hardening (ADR-0025), applied only when the JWT authenticator is selected. `AUDIENCE` → require the `aud` claim (string/array) to contain it (token-confusion defence); `ISSUER` → require `iss` to equal it; `MAX_TTL` (a Go duration) → cap `(exp - iat)` token lifetime — a malformed value is a fatal boot fault. Each unset = not checked, so existing tokens keep verifying. `exp` is always required, `nbf`/`iat` always validated when present ([`internal/auth/jwt.go`](../../internal/auth/jwt.go)). |
+| `AISOTROPY_OPS_TOKEN` | `api.OpsTokenFromEnv` → `api.OpsAuthGate` ([`internal/api/ops_gate.go`](../../internal/api/ops_gate.go)), wired in `App.Run` | Gates the operator endpoints `GET /costs` and `GET /bitrate` (all-tenant aggregates), default-closed (ADR-0025). Unset → both return **503**; set → the request must carry a matching `Authorization: Bearer <token>` (constant-time compare, `crypto/subtle`; generic 401 on miss). The token is never logged (only its presence). |
+| `AISOTROPY_REQUIRE_TLS` | `requireTLSFromEnv` → pre-route chi middleware ([`aisotropy/app.go`](../../aisotropy/app.go)) | Truthy (`strconv.ParseBool`) → reject any non-TLS request (`r.TLS == nil`) with **HTTP 400**, so a bearer token can never be sent in plaintext (ADR-0025). **Off** by default — most deployments terminate TLS at a proxy and forward plain HTTP; enable only when aisotropyd terminates TLS itself. |
 | `AISOTROPY_DATA_DIR` | working memory + facts | On-disk BadgerDB dir; also default `facts.db` location |
 | `AISOTROPY_FACTS_DB` | `facts.OpenFromEnv` | Explicit SQLite file path |
 | `RQLITE_URL` | `facts.OpenFromEnv` | Networked rqlite facts store |

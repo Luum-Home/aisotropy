@@ -24,6 +24,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strconv"
 
 	"github.com/Luum-Home/aisotropy/aisotropy"
 	"github.com/Luum-Home/aisotropy/internal/api"
@@ -33,8 +34,16 @@ func main() {
 	// Authentication is SECURABLE BY CONFIG: AuthenticatorFromEnv reads
 	// AISOTROPY_JWT_SECRET and returns either a real HS256 JWT authenticator or
 	// the explicit NoAuth opt-out, so an operator can secure the shipped binary
-	// without forking or embedding the library.
-	authr, authMode := aisotropy.AuthenticatorFromEnv()
+	// without forking or embedding the library. A weak signing secret (below the
+	// HS256 minimum) or a malformed AISOTROPY_JWT_MAX_TTL is a fatal config fault:
+	// the binary REFUSES TO BOOT rather than come up on a brute-forceable key.
+	// The error never contains the secret value.
+	authr, authMode, authErr := aisotropy.AuthenticatorFromEnv()
+	if authErr != nil {
+		slog.Error("aisotropyd refusing to start: invalid authentication configuration "+
+			"(check AISOTROPY_JWT_SECRET length and AISOTROPY_JWT_MAX_TTL format)", "err", authErr)
+		os.Exit(1)
+	}
 
 	app := aisotropy.New(
 		// Scope-gated demo tools (Phase 7 behavior axis): read_financials and
@@ -63,6 +72,18 @@ func main() {
 	default:
 		slog.Warn("aisotropyd is running in NoAuth (insecure) mode: path tenant_id/user_id are trusted with no credential verification. " +
 			"Set AISOTROPY_JWT_SECRET to enable HS256 JWT authentication for any non-local deployment.")
+	}
+
+	// Operator-endpoint + transport posture (values never printed, only presence):
+	// /costs and /bitrate are default-closed unless AISOTROPY_OPS_TOKEN is set,
+	// and plaintext requests are rejected only when AISOTROPY_REQUIRE_TLS is on.
+	if api.OpsTokenFromEnv() != "" {
+		slog.Info("aisotropyd ops endpoints enabled: /costs and /bitrate require the AISOTROPY_OPS_TOKEN bearer token.")
+	} else {
+		slog.Info("aisotropyd ops endpoints disabled: /costs and /bitrate return 503 until AISOTROPY_OPS_TOKEN is set.")
+	}
+	if requireTLS, _ := strconv.ParseBool(os.Getenv("AISOTROPY_REQUIRE_TLS")); requireTLS {
+		slog.Info("aisotropyd TLS enforcement ON (AISOTROPY_REQUIRE_TLS): non-TLS requests are rejected 400.")
 	}
 
 	if err := app.Run(context.Background()); err != nil {

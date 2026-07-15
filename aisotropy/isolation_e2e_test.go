@@ -472,7 +472,9 @@ func TestPathParamTrustUnauthenticatedRequestIsRejectedByDefaultAuthnRegressionA
 	}
 
 	// (3) JWT authenticator: must-agree bind + credential verification.
-	secret := []byte("anchor-hs256-secret")
+	// The secret must be at least auth.MinHS256SecretBytes (32) long; a weaker
+	// secret makes the verifier fail closed (rejects every request).
+	secret := []byte("anchor-hs256-secret-at-least-32b!")
 	jwtBase := startAuthApp(t, NewJWTAuthenticator(secret))
 	future := time.Now().Add(time.Hour).Unix()
 	past := time.Now().Add(-time.Hour).Unix()

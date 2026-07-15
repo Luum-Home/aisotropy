@@ -25,6 +25,42 @@ type jwtBearer struct {
 	secret []byte
 	now    func() time.Time
 	leeway time.Duration
+
+	// audience, when non-empty, requires the token's "aud" claim (string or
+	// string-array per RFC 7519) to contain it. Empty = not checked (back-compat).
+	audience string
+	// issuer, when non-empty, requires the token's "iss" claim to equal it.
+	// Empty = not checked (back-compat).
+	issuer string
+	// maxTTL, when > 0, caps the token lifetime: (exp - iat), or (exp - now) if
+	// iat is absent. Guards against absurdly long-lived tokens. 0 = not checked.
+	maxTTL time.Duration
+	// secretTooShort is set at construction when the HMAC secret is shorter than
+	// MinHS256SecretBytes. Because NewJWTBearer returns only an Authenticator (no
+	// error), a weak secret cannot be surfaced at the constructor; instead the
+	// verifier fails closed — every Authenticate returns ErrUnauthenticated. The
+	// boot path should call ValidateHS256Secret to fail fast before this point.
+	secretTooShort bool
+}
+
+// MinHS256SecretBytes is the minimum acceptable length of an HS256 signing
+// secret. HMAC-SHA256 keys shorter than the 256-bit (32-byte) output offer no
+// additional security and invite brute-force/dictionary attacks, so this
+// verifier refuses them (see ValidateHS256Secret and the fail-closed behavior
+// of a verifier built from a short secret).
+const MinHS256SecretBytes = 32
+
+// ValidateHS256Secret reports whether secret is strong enough to sign/verify
+// HS256 tokens: it returns a clear, non-nil error for a secret shorter than
+// MinHS256SecretBytes (32 bytes), and nil otherwise. The boot path
+// (aisotropy/authenv.go) calls it to refuse to start on a weak secret; the
+// error is NOT wrapped in ErrUnauthenticated because it is a server-side
+// configuration fault, not a request-authentication outcome.
+func ValidateHS256Secret(secret []byte) error {
+	if len(secret) < MinHS256SecretBytes {
+		return fmt.Errorf("auth: HS256 secret is %d bytes; a minimum of %d bytes is required", len(secret), MinHS256SecretBytes)
+	}
+	return nil
 }
 
 // JWTOption configures a JWTBearer authenticator.
@@ -41,13 +77,41 @@ func WithLeeway(d time.Duration) JWTOption {
 	return func(j *jwtBearer) { j.leeway = d }
 }
 
+// WithAudience requires the token's "aud" claim to contain aud (RFC 7519: aud
+// is a string or an array of strings). When unset (default), aud is not checked
+// so existing tokens keep verifying.
+func WithAudience(aud string) JWTOption {
+	return func(j *jwtBearer) { j.audience = aud }
+}
+
+// WithIssuer requires the token's "iss" claim to equal iss. When unset
+// (default), iss is not checked so existing tokens keep verifying.
+func WithIssuer(iss string) JWTOption {
+	return func(j *jwtBearer) { j.issuer = iss }
+}
+
+// WithMaxTTL caps the accepted token lifetime to d: a token whose (exp - iat)
+// exceeds d is rejected (or (exp - now) when iat is absent). It guards against
+// mistakenly minted, effectively immortal tokens. When unset (default, 0), the
+// lifetime is not bounded beyond the required exp check.
+func WithMaxTTL(d time.Duration) JWTOption {
+	return func(j *jwtBearer) { j.maxTTL = d }
+}
+
 // NewJWTBearer builds an HS256 bearer-token Authenticator verifying against
 // hmacSecret. Missing/malformed/expired/bad-signature tokens, or tokens lacking
-// a tenant/user claim, are rejected with ErrUnauthenticated.
+// a tenant/user claim, are rejected with ErrUnauthenticated. A secret shorter
+// than MinHS256SecretBytes (32 bytes) yields a verifier that fails closed —
+// every Authenticate returns ErrUnauthenticated — so a weak key can never
+// authenticate a request; callers should call ValidateHS256Secret to fail fast
+// at boot instead of relying on this last-line defense.
 func NewJWTBearer(hmacSecret []byte, opts ...JWTOption) Authenticator {
 	j := &jwtBearer{secret: hmacSecret, now: time.Now}
 	for _, o := range opts {
 		o(j)
+	}
+	if ValidateHS256Secret(hmacSecret) != nil {
+		j.secretTooShort = true
 	}
 	return j
 }
@@ -63,6 +127,13 @@ type jwtHeader struct {
 // caller cannot distinguish "no token" from "bad token", which is the intended
 // posture for an auth boundary.
 func (j *jwtBearer) Authenticate(_ context.Context, req Request) (Principal, error) {
+	// Fail closed on a weak signing secret: a verifier built from a secret
+	// shorter than MinHS256SecretBytes rejects every request rather than
+	// authenticating anyone against a brute-forceable key.
+	if j.secretTooShort {
+		return Principal{}, fmt.Errorf("%w: HS256 signing secret is below the minimum length", ErrUnauthenticated)
+	}
+
 	scheme, token, found := strings.Cut(strings.TrimSpace(req.Header("Authorization")), " ")
 	if !found || !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(token) == "" {
 		return Principal{}, fmt.Errorf("%w: authorization header is not a bearer token", ErrUnauthenticated)
@@ -112,6 +183,51 @@ func (j *jwtBearer) Authenticate(_ context.Context, req Request) (Principal, err
 	}
 	if j.now().After(exp.Add(j.leeway)) {
 		return Principal{}, fmt.Errorf("%w: JWT is expired", ErrUnauthenticated)
+	}
+
+	// Not-before (nbf): if present, the token is not yet valid when the current
+	// time — extended by the clock-skew leeway — is still before nbf. This
+	// mirrors the exp+leeway tolerance direction: now.Add(leeway).Before(nbf)
+	// is equivalent to now.Before(nbf.Sub(leeway)).
+	if nbf, ok := numericClaim(claims, "nbf"); ok {
+		if j.now().Add(j.leeway).Before(nbf) {
+			return Principal{}, fmt.Errorf("%w: JWT is not yet valid (nbf)", ErrUnauthenticated)
+		}
+	}
+
+	// Issued-at (iat) sanity: reject a token stamped in the far future (beyond
+	// leeway), which signals a forged or clock-broken issuer.
+	if iat, ok := numericClaim(claims, "iat"); ok {
+		if iat.After(j.now().Add(j.leeway)) {
+			return Principal{}, fmt.Errorf("%w: JWT iat is in the future", ErrUnauthenticated)
+		}
+	}
+
+	// Maximum lifetime: when configured, bound (exp - iat), or (exp - now) when
+	// iat is absent, so an absurdly long-lived token is rejected.
+	if j.maxTTL > 0 {
+		if iat, ok := numericClaim(claims, "iat"); ok {
+			if exp.Sub(iat) > j.maxTTL {
+				return Principal{}, fmt.Errorf("%w: JWT lifetime exceeds the maximum", ErrUnauthenticated)
+			}
+		} else if exp.Sub(j.now()) > j.maxTTL {
+			return Principal{}, fmt.Errorf("%w: JWT lifetime exceeds the maximum", ErrUnauthenticated)
+		}
+	}
+
+	// Issuer (iss): when configured, the token issuer must match exactly.
+	if j.issuer != "" {
+		if firstStringClaim(claims, "iss") != j.issuer {
+			return Principal{}, fmt.Errorf("%w: JWT issuer is not accepted", ErrUnauthenticated)
+		}
+	}
+
+	// Audience (aud): when configured, the token's aud (string or string-array)
+	// must contain the expected audience.
+	if j.audience != "" {
+		if !audienceContains(claims, j.audience) {
+			return Principal{}, fmt.Errorf("%w: JWT audience is not accepted", ErrUnauthenticated)
+		}
 	}
 
 	tenant := firstStringClaim(claims, "tenant_id", "tid")
@@ -171,7 +287,14 @@ func scopesClaim(claims map[string]json.RawMessage, keys ...string) []string {
 // expClaim reads the numeric "exp" claim (seconds since the Unix epoch, per
 // RFC 7519 NumericDate). Returns ok=false when absent or non-numeric.
 func expClaim(claims map[string]json.RawMessage) (time.Time, bool) {
-	raw, ok := claims["exp"]
+	return numericClaim(claims, "exp")
+}
+
+// numericClaim reads a NumericDate claim (seconds since the Unix epoch, per RFC
+// 7519) — exp, nbf, iat. Returns ok=false when the claim is absent or not a
+// JSON number.
+func numericClaim(claims map[string]json.RawMessage, key string) (time.Time, bool) {
+	raw, ok := claims[key]
 	if !ok {
 		return time.Time{}, false
 	}
@@ -180,4 +303,28 @@ func expClaim(claims map[string]json.RawMessage) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return time.Unix(int64(n), 0), true
+}
+
+// audienceContains reports whether the "aud" claim contains want. Per RFC 7519,
+// aud is either a single string or an array of strings; both encodings are
+// accepted. A missing or malformed aud claim returns false (fail closed).
+func audienceContains(claims map[string]json.RawMessage, want string) bool {
+	raw, ok := claims["aud"]
+	if !ok {
+		return false
+	}
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		for _, a := range arr {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s == want
+	}
+	return false
 }
