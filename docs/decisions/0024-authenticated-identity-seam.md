@@ -208,18 +208,21 @@ supply-chain posture (ADR-0001, license-policy).
 - **No new dependency, no new license surface:** the HS256 reference impl uses Go stdlib only; the
   100% MIT/Apache constitutional gate is preserved.
 
-## Open follow-on (recorded, not yet decided)
+## Follow-on — RESOLVED (2026-07-14): verified scopes now gate tools
 
-**Verified `Principal.Scopes` should replace client-asserted `ChatRequest.Scopes` for tool-gating.**
-Today the scopes that gate tool access come from the request **body**
-(`ChatRequest.Scopes []string`, `internal/api/chat.go:71`; consumed at
-`toolReg.PromptFragment(in.Body.Scopes)` and the double scope-gate in tool dispatch). That is a
-**second trust hole of the same shape as this one**: a client currently **self-grants its own tool
-scopes** by asserting them in the request, exactly as it previously self-asserted its own tenant/user
-in the path. Once a verified `Principal` exists, tool-gating should read `Principal.Scopes` (the
-verified, credential-derived scopes) instead of `Body.Scopes`. This is deliberately **not** resolved
-here because it touches the request-body contract and the tool-dispatch scope-gate, and warrants its
-own ADR — but it is recorded so the scopes hole is not forgotten now that the identity hole is closed.
+**Verified `Principal.Scopes` now replace client-asserted `ChatRequest.Scopes` for tool-gating —
+shipped, closing the second trust hole.** The scopes that gate tool access previously came from the
+request **body** (`ChatRequest.Scopes`), so a client **self-granted its own tool scopes** exactly as
+it previously self-asserted its own tenant/user in the path. This is now closed: `auth.Principal`
+carries `ScopesVerified` (JWTBearer sets it `true`, `NoAuth` `false`), and `effectiveScopes(ctx,
+bodyScopes)` (`internal/api/authn.go`) returns the **verified principal's** scopes whenever a real
+authenticator ran, else falls back to the body scopes. It is wired at all three tool-gating sites
+(`chat.go`, `chat_stream.go`, `chat_agent.go` — both the `ToolCaller` and agentloop paths), so under a
+real authenticator a client that smuggles extra scopes into the body **cannot escalate**. The
+request-body contract is unchanged (`ChatRequest.Scopes` is kept as the `NoAuth`/no-middleware
+fallback). Remaining nuance, unchanged by this: under `NoAuth()` (or default-deny until an
+authenticator is configured) the body scopes are still honored — consistent with "`NoAuth` does not
+activate the guarantee". RS256/JWKS verification remains the one named follow-on.
 
 ## References
 
