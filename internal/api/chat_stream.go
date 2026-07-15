@@ -264,7 +264,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 		// Model selection through the gateway seam first (nil gw -> the passed
 		// client). This is where routing policy (e.g. cost-budget shaping) picks
 		// the target.
-		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded, in.Body.ModelPreference)
+		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded, in.Body.ModelPreference, len(in.Body.Images) > 0)
 
 		// Quota-pressure degradation (Phase 7) applies as an OVERRIDE on top of
 		// the gateway pick: when this tenant is near its limit, route to the

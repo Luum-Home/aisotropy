@@ -155,6 +155,15 @@ func (g *Guard) annotateOutput(ctx context.Context, tenant, user, input, output,
 // Bet-4 refuted length/compressibility as a routing predictor, so there is
 // deliberately no length rule.
 //
+// hasImage is the request-shape signal (ChatRequest.Images present): it sets
+// gateway.Request.HasImage so the capability-based ImageRule (buildModelGateway,
+// chained BEFORE the cost-budget rule) routes an image-bearing turn to the
+// vision/premium target instead of letting it be shaped down to the cheap text
+// model. HONEST SCOPE: this only routes the SIGNAL to a capable target; the
+// image bytes themselves are not transmitted to the model yet (the current
+// clients are text-only) — a named multimodal follow-on. false leaves routing
+// unchanged.
+//
 // modelPreference is the caller's explicit, optional model override
 // (ChatRequest.ModelPreference): it maps onto gateway.Request.UISelector so
 // gateway.OverridePolicy honors it as a hard target choice that wins over the
@@ -168,7 +177,7 @@ func (g *Guard) annotateOutput(ctx context.Context, tenant, user, input, output,
 // floor. An unknown/unregistered preference is likewise resolved to the default
 // at Route time, so a client-supplied value can never drop the request. The
 // Gateway itself already logs the miss.
-func selectClient(ctx context.Context, gw *gateway.Gateway, fallback llm.Client, meter *costmeter.Meter, tenant, user, prompt, modelPreference string) llm.Client {
+func selectClient(ctx context.Context, gw *gateway.Gateway, fallback llm.Client, meter *costmeter.Meter, tenant, user, prompt, modelPreference string, hasImage bool) llm.Client {
 	if gw == nil {
 		return fallback
 	}
@@ -181,6 +190,7 @@ func selectClient(ctx context.Context, gw *gateway.Gateway, fallback llm.Client,
 	req := gateway.Request{
 		Prompt:               prompt,
 		PromptTokensEstimate: len(prompt) / 4,
+		HasImage:             hasImage,
 		Tenant:               tenant,
 		User:                 user,
 		CostSpentUSD:         spent,

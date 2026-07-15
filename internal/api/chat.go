@@ -79,6 +79,23 @@ type ChatRequest struct {
 	// unchanged. Additive per ADR-0002 (the struct is the contract): omitempty,
 	// so existing clients that never send it are byte-for-byte unaffected.
 	ModelPreference string `json:"model_preference,omitempty" doc:"Optional explicit model/gateway-target override (e.g. \"cheap\"); an explicit preference wins over cost-budget routing but quota-pressure degradation still overrides it"`
+	// Images is an OPTIONAL presence SIGNAL that this turn carries image content
+	// (image URLs or data refs). Its ONLY effect today is routing: a non-empty
+	// Images activates the gateway's capability-based ImageRule so an image-
+	// bearing turn is routed to the configured vision/premium target (see
+	// selectClient -> gateway.Request.HasImage and buildModelGateway's ImageRule).
+	//
+	// HONEST SCOPE: this wires the ROUTING SIGNAL only. Actually sending the image
+	// BYTES to the model requires a multimodal llm.Client, which the current
+	// text-only clients (Anthropic/OpenAI-compat/stub) are NOT — the image parts
+	// are never transmitted to the model yet. That multimodal call is a named
+	// follow-on. Consequently the field's contents are not inspected here beyond
+	// their presence; they are neither embedded, persisted, nor forwarded.
+	//
+	// Additive per ADR-0002 (the struct is the contract): omitempty, so existing
+	// clients that never send it are byte-for-byte unaffected, and an empty/absent
+	// Images leaves routing exactly as before (inert-safe).
+	Images []string `json:"images,omitempty" doc:"Optional image URLs or data refs — a presence SIGNAL that routes the turn to a vision/premium model target (ImageRule). Image bytes are not yet sent to the model; this wires routing only."`
 }
 
 // ChatInput combines the tenant/user-scoped path params with the validated
@@ -351,7 +368,7 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 		// Model selection through the gateway seam; nil gw resolves to the passed
 		// client. The non-streaming route has no quota-pressure degrade override
 		// (that is the streaming path's behavior) — the gateway pick is final here.
-		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded, in.Body.ModelPreference)
+		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded, in.Body.ModelPreference, len(in.Body.Images) > 0)
 
 		slog.InfoContext(ctx, "chat request",
 			"tenant_id", in.TenantID,

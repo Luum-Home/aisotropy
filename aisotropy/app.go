@@ -34,6 +34,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/primitives"
+	"github.com/Luum-Home/aisotropy/internal/responsecache"
 	"github.com/Luum-Home/aisotropy/internal/routing"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
 	"github.com/Luum-Home/aisotropy/internal/sleepcycle"
@@ -634,7 +635,7 @@ func (a *App) Run(ctx context.Context) error {
 	// instruments that path (a no-op unless a tracer is configured). The
 	// streaming path's quota-pressure degrade (llm.DegradeAt) still applies as
 	// an override AFTER the gateway pick.
-	modelGateway := buildModelGateway(streamClient, cheapStreamClient, costBudgetFromEnv())
+	modelGateway := buildModelGateway(streamClient, cheapStreamClient, costBudgetFromEnv(), visionModelFromEnv())
 
 	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry, persona, costMeter, modelGateway, guard)
 	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient, semanticStore, embedder, persona, a.inPricePer1M, a.outPricePer1M, bptSampler, modelGateway, guard)
@@ -650,6 +651,19 @@ func (a *App) Run(ctx context.Context) error {
 	// tenant via hydrateSystemPrompt's merged search.
 	api.RegisterTenantKnowledge(humaAPI, semanticStore, embedder, a.chunkOptions())
 	api.RegisterTenantKnowledgeDelete(humaAPI, semanticStore)
+
+	// Stateless cached /ask route (makes internal/responsecache LIVE). It sits
+	// behind the SAME authn middleware + must-agree bind as the chat routes (it is
+	// a /v1 route registered on humaAPI, after UseMiddleware above) and reuses the
+	// same guardrails posture. Unlike /chat it is STATELESS: no working-memory
+	// hydration, no session, no consolidation outbox — only tenant-scoped semantic
+	// RAG feeds the one LLM call, and the answer is cached per (tenant,user). This
+	// is the SAFE use of the cache: with no memory-hydrated personalization mixed
+	// in, a cached answer cannot go stale against a user's evolving working memory.
+	// The cache is per-process and scoped by (tenant,user) in both layers, so a
+	// cross-tenant hit is structurally impossible (see internal/responsecache).
+	askCache := buildResponseCache(embedder)
+	api.RegisterAsk(humaAPI, protectedClient, askCache, semanticStore, embedder, persona, guard)
 
 	// Per-user primitives (Phase 6 behavioral memory).
 	primStore := primitives.NewStore()
@@ -945,7 +959,13 @@ const (
 // positive USD budget is configured — otherwise the rule is skipped cleanly and
 // the gateway is a pure pass-through to primary. There is deliberately no
 // prompt-length/difficulty rule (Bet-4 refuted length as a routing predictor).
-func buildModelGateway(primary, cheap llm.Client, budgetUSD float64) *gateway.Gateway {
+//
+// visionTarget is the registry NAME an image-bearing request is routed to via
+// the capability-based ImageRule (chained BEFORE the cost-budget rule): empty
+// means "route images to primary" (AISOTROPY_VISION_MODEL unset). See the
+// ImageRule wiring below for the honest-scope caveat (the routing signal is
+// wired, but image bytes are not yet transmitted to the model).
+func buildModelGateway(primary, cheap llm.Client, budgetUSD float64, visionTarget string) *gateway.Gateway {
 	// OverridePolicy FIRST so an explicit caller preference (ChatRequest.
 	// ModelPreference -> gateway.Request.UISelector) wins over the cost-budget
 	// rule. It is inert-safe: it abstains when UISelector is empty, so requests
@@ -955,6 +975,31 @@ func buildModelGateway(primary, cheap llm.Client, budgetUSD float64) *gateway.Ga
 	// RegisterStream). An unknown preference target resolves to the default at
 	// Route time, so a client value can never drop a request.
 	policies := []gateway.Policy{gateway.OverridePolicy{}}
+
+	// ImageRule (capability-based routing), chained AFTER the explicit override
+	// but BEFORE the cost-budget rule: an image-bearing request
+	// (ChatRequest.Images present -> gateway.Request.HasImage) is routed to the
+	// vision/premium target regardless of spend, because a multimodal request
+	// cannot be correctly served by shaping down to the cheap text model. Target:
+	// AISOTROPY_VISION_MODEL when set (it must name a registered client; an
+	// unregistered name resolves safely to the default at Route time), else the
+	// primary. The rule is inert-safe: a request with no image signal makes the
+	// rule abstain (empty target) and the chain falls through to cost/default
+	// exactly as before.
+	//
+	// HONEST SCOPE: this activates the ROUTING SIGNAL only. The current llm.Client
+	// implementations are text-only, so the image bytes are NOT transmitted to the
+	// model yet — a multimodal Client is the named follow-on. Until then this
+	// ensures an image turn at least lands on the most capable configured target.
+	imageTarget := visionTarget
+	if imageTarget == "" {
+		imageTarget = gwPrimary
+	}
+	policies = append(policies, gateway.RulesPolicy{Rules: []gateway.Rule{gateway.ImageRule(imageTarget)}})
+	if imageTarget != gwPrimary {
+		slog.Info("model gateway image routing enabled", "vision_target", imageTarget)
+	}
+
 	if cheap != nil && budgetUSD > 0 {
 		policies = append(policies, gateway.CostAwarePolicy{BudgetUSD: budgetUSD, Cheap: gwCheap})
 		slog.Info("model gateway cost-budget shaping enabled", "budget_usd", budgetUSD, "cheap_target", gwCheap)
@@ -975,6 +1020,48 @@ func buildModelGateway(primary, cheap llm.Client, budgetUSD float64) *gateway.Ga
 	return gw
 }
 
+// Response-cache tuning for the stateless /ask route (internal/responsecache).
+// These are process-wide, in-process bounds — deliberately conservative so the
+// cache is a pure win (bounded memory, TTL'd freshness) with no external
+// dependency. The exact layer is always present; the semantic layer is added
+// only when an embedder exists.
+const (
+	// askCacheTTL bounds how long an exact-cache answer stays servable.
+	askCacheTTL = 1 * time.Hour
+	// askCacheCapacity bounds the exact cache's LRU entry count (process-wide,
+	// across all tenants — isolation is by key, not by capacity).
+	askCacheCapacity = 4096
+	// askSemanticThreshold is the minimum cosine similarity for a semantic-cache
+	// hit. Set high so only near-identical paraphrases hit — a conservative
+	// posture that avoids serving a subtly-different question's answer.
+	askSemanticThreshold = 0.95
+	// askSemanticTTL bounds a semantic-cache entry's lifetime.
+	askSemanticTTL = 1 * time.Hour
+	// askSemanticMaxPerScope bounds a single (tenant,user) partition's size, so
+	// per-Get scan cost and memory stay bounded (oldest-first eviction).
+	askSemanticMaxPerScope = 512
+)
+
+// buildResponseCache constructs the per-process ResponseCache for the /ask
+// route: an exact (hash) layer always, plus a semantic (nearest-neighbor) layer
+// when an embedder is available so paraphrases also hit. Both layers key/
+// partition by (tenant,user), so a cross-tenant hit is impossible by
+// construction. A semantic-layer construction failure degrades to exact-only
+// (logged) rather than failing the runtime — the exact layer is the cheaper,
+// higher-confidence line of defense.
+func buildResponseCache(embedder semantic.Embedder) *responsecache.ResponseCache {
+	exact := responsecache.NewExactCache(responsecache.NewLRUStore(askCacheCapacity), askCacheTTL, false)
+	var sem *responsecache.SemanticCache
+	if embedder != nil {
+		if sc, err := responsecache.NewSemanticCache(embedder, askSemanticThreshold, askSemanticTTL, askSemanticMaxPerScope); err != nil {
+			slog.Error("response cache semantic layer disabled: construction failed; using exact-only", "err", err)
+		} else {
+			sem = sc
+		}
+	}
+	return responsecache.New(exact, sem)
+}
+
 // guardrailsBlockFromEnv reports whether the named guardrail block toggle env
 // var is set to a truthy value (per strconv.ParseBool). Unset, empty, or
 // unparsable => false (off): the operator-fixed default posture is annotate +
@@ -990,6 +1077,17 @@ func guardrailsBlockFromEnv(name string) bool {
 		return false
 	}
 	return on
+}
+
+// visionModelFromEnv reads AISOTROPY_VISION_MODEL: the gateway target NAME an
+// image-bearing request is routed to via the ImageRule (buildModelGateway). It
+// must name a client already registered in the gateway (in this runtime:
+// gwPrimary or gwCheap); an unregistered name still routes safely to the default
+// at Route time. Empty/unset (the default) means image requests route to the
+// primary — the ImageRule stays wired but its target is the default target, so
+// routing is unchanged from before this signal existed.
+func visionModelFromEnv() string {
+	return strings.TrimSpace(os.Getenv("AISOTROPY_VISION_MODEL"))
 }
 
 // costBudgetFromEnv parses AISOTROPY_COST_BUDGET_USD (a float, USD) for the

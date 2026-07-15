@@ -415,23 +415,23 @@ func TestSelectClient_GatewaySeam(t *testing.T) {
 	ctx := context.Background()
 
 	// Under budget (no spend recorded): CostAwarePolicy abstains -> default primary.
-	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", ""); got.Name() != "primary" {
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "", false); got.Name() != "primary" {
 		t.Fatalf("under budget: expected primary, got %q", got.Name())
 	}
 
 	// Over budget: shape to cheap.
 	meter.Record("t1", 0, 0, 2.0) // cumulative 2.0 >= 1.0 budget
-	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", ""); got.Name() != "cheap" {
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "", false); got.Name() != "cheap" {
 		t.Fatalf("over budget: expected cheap, got %q", got.Name())
 	}
 
 	// A different tenant is still under budget -> primary (per-tenant spend).
-	if got := selectClient(ctx, gw, primary, meter, "t2", "u", "hi", ""); got.Name() != "primary" {
+	if got := selectClient(ctx, gw, primary, meter, "t2", "u", "hi", "", false); got.Name() != "primary" {
 		t.Fatalf("other tenant under budget: expected primary, got %q", got.Name())
 	}
 
 	// Nil gateway -> fallback client unchanged.
-	if got := selectClient(ctx, nil, primary, meter, "t1", "u", "hi", ""); got.Name() != "primary" {
+	if got := selectClient(ctx, nil, primary, meter, "t1", "u", "hi", "", false); got.Name() != "primary" {
 		t.Fatalf("nil gateway: expected fallback primary, got %q", got.Name())
 	}
 }
@@ -463,13 +463,13 @@ func TestSelectClient_ModelPreferenceOverride(t *testing.T) {
 	ctx := context.Background()
 
 	// Empty preference, under budget -> default primary (routing unchanged).
-	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", ""); got.Name() != "primary" {
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "", false); got.Name() != "primary" {
 		t.Fatalf("no preference: expected primary, got %q", got.Name())
 	}
 
 	// Explicit preference "cheap" wins even though the tenant is UNDER budget
 	// (the cost rule would otherwise abstain to primary).
-	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "cheap"); got.Name() != "cheap" {
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "cheap", false); got.Name() != "cheap" {
 		t.Fatalf("explicit cheap preference: expected cheap, got %q", got.Name())
 	}
 
@@ -477,7 +477,7 @@ func TestSelectClient_ModelPreferenceOverride(t *testing.T) {
 	// the preference beats the cost-budget shaping (DegradeAt, the safety valve,
 	// is applied separately in the streaming handler, not here).
 	meter.Record("t1", 0, 0, 5.0) // cumulative 5.0 >= 1.0 budget
-	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "primary"); got.Name() != "primary" {
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "primary", false); got.Name() != "primary" {
 		t.Fatalf("explicit primary preference over budget: expected primary, got %q", got.Name())
 	}
 
@@ -485,7 +485,7 @@ func TestSelectClient_ModelPreferenceOverride(t *testing.T) {
 	// emits a non-empty target, so the cost rule never runs) and then resolves to
 	// the gateway DEFAULT at Route time — a client-supplied value can never drop
 	// the request, it just falls back safely to primary.
-	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "does-not-exist"); got.Name() != "primary" {
+	if got := selectClient(ctx, gw, primary, meter, "t1", "u", "hi", "does-not-exist", false); got.Name() != "primary" {
 		t.Fatalf("unknown preference: expected safe fallback to default primary, got %q", got.Name())
 	}
 }
