@@ -53,6 +53,26 @@ func main() {
 > performance of Go + Rust, with tiered memory and granular control, without a single line of
 > opaque abstraction.
 
+## Why aisotropy — and why Go
+
+The Python and TypeScript worlds have great agent frameworks — Pydantic AI, Mastra, LangGraph. If you
+want a quick chatbot, use one of those. Aisotropy is for a different job, in a different language.
+
+**Go has agent libraries, but no agent _runtime_.** Eino (ByteDance) and ADK-Go orchestrate;
+Genkit-Go is tied to Firebase (and leaks across tenants — [we tested it](arenas/)); LangChainGo is a
+thin port. None of them is an _isolation-first, self-hostable runtime_ where multi-tenant isolation,
+sandboxing, and key-brokering are **structural, not bolted on**.
+
+**The audience and the differentiator line up.** In Python you'd be selling isolation to people who
+want magic. In Go, the people building agents are backend, infra, and platform engineers — the ones
+who already think in single binaries, permissive licensing, tenant boundaries, and production ops.
+Aisotropy's edges are their defaults.
+
+**So aisotropy is for one job:** you're building the backend or platform that _runs other people's
+agents_ — per-tenant, per-task, sometimes untrusted — embedded in your Go service, at scale. That is
+the pain no Go framework covers. Aisotropy does: `app.Turn` for in-process turns, `app.RunTask` for
+sandboxed key-brokered tasks, and tenant isolation by construction under all of it.
+
 ## Quickstart: build your own agent
 
 Aisotropy is a **library first**: the runtime is a value you build once and **call like a
