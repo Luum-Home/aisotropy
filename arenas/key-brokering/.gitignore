@@ -1,0 +1,8 @@
+# Never commit built binaries or arena scratch — the arena is source + a script.
+*.test
+*.out
+/bin/
+/tmp/
+# The sandcastle clone used only for citation lives in the session scratchpad,
+# never inside the repo — ignore it defensively if a contributor clones it here.
+/sandcastle/
