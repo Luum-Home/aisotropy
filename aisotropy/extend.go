@@ -42,14 +42,20 @@
 // path (internal/api's hydrateSystemPrompt -> searchSemanticContext) consults a
 // configured Reranker on the streaming /chat/stream and stateless /ask routes and
 // in the bitrate "with memory" measurement, over an isolation-clean over-fetched
-// candidate pool (ADR-0033). Separately, some policy seams are still not fully
-// third-party-implementable from an EXTERNAL module: their method signatures
-// reference internal-only supporting types (ScoredPoint, Message,
-// Criterion/EvalSample/Score, Request/Decision, TenantTier payloads) that are not
-// re-exported here yet — a pending follow-up. GuardrailCheck is the exception: its
-// payload types ARE re-exported (GuardrailCheckInput / GuardrailVerdict), so it is
-// fully implementable from an external module today. Inside this module (and this
-// repo's tests) all seams are implementable.
+// candidate pool (ADR-0033). Every policy seam is ALSO fully
+// third-party-implementable from an EXTERNAL module: the supporting payload
+// types each method signature references are now re-exported here alongside the
+// interface alias — GuardrailCheck (GuardrailCheckInput / GuardrailVerdict),
+// Reranker (ScoredPoint / Point), Summarizer (Message), EvalJudge (Criterion /
+// EvalSample / Score / Scale / UnitScale), ModelPolicy (Request / Decision), and
+// TenantRoutingPolicy (TenantTier / TierShared / TierDedicated) — so a consumer
+// implements any of the six against the public façade alone, with no internal
+// import. The remaining pending follow-up is narrower and lives on the two
+// SEALED-DRIVER (Tier-2) backends below: VectorBackend's BackendVector/BackendHit
+// and DocBackend's BackendDoc/BackendDocHit driver payload types are not
+// re-exported here yet (tracked in each backend's doc comment), so an EXTERNAL
+// backend implementation still needs those. Inside this module (and this repo's
+// tests) every seam is implementable.
 package aisotropy
 
 import (
@@ -110,12 +116,28 @@ type GuardrailVerdict = guardrails.Verdict
 //
 // Fixed shape:
 //
-//	Rerank(ctx context.Context, query string, candidates []semantic.ScoredPoint, topK int) []semantic.ScoredPoint
+//	Rerank(ctx context.Context, query string, candidates []ScoredPoint, topK int) []ScoredPoint
 //
-// The candidate/return element type (semantic.ScoredPoint) is not re-exported
-// yet, so a full external implementation needs that alias too — a pending
-// follow-up. Rerank MUST NOT return more than topK.
+// The candidate/return element type (ScoredPoint) and its embedded Point are
+// re-exported below, so Reranker is fully implementable from an external module —
+// no internal import required. Rerank MUST NOT return more than topK.
 type Reranker = semantic.Reranker
+
+// ScoredPoint is one retrieval candidate handed to a Reranker: an embedded Point
+// (the chunk's id/tenant/user/content/vector/…) annotated with its cosine Score
+// to the query (higher = closer). Re-exported so an external Reranker can name
+// the candidate/return element type — and, via the embedded Point below,
+// construct candidates in its own tests. A reranker reorders and trims the
+// candidates it is handed; it never needs to widen the pool.
+type ScoredPoint = semantic.ScoredPoint
+
+// Point is the embedded value inside a ScoredPoint: one retrieved knowledge chunk
+// (ID, TenantID, UserID, Content, Source, Citation, Vector, CreatedAt). Its
+// content-bearing fields are public, so a Reranker reads them directly (promoted
+// through ScoredPoint) and constructs candidates as plain struct literals in its
+// tests. The Kind field's type stays runtime-owned and is not needed to rerank
+// (reordering never depends on kind), so it is left at its zero value externally.
+type Point = semantic.Point
 
 // Summarizer condenses messages evicted from the active working-memory buffer
 // into an updated rolling "session state" paragraph (the summary buffer;
@@ -125,11 +147,18 @@ type Reranker = semantic.Reranker
 //
 // Fixed shape:
 //
-//	Condense(ctx context.Context, existingSummary string, oldest []memory.Message) (string, error)
+//	Condense(ctx context.Context, existingSummary string, oldest []Message) (string, error)
 //
-// The evicted-message element type (memory.Message) is not re-exported yet, so
-// a full external implementation needs that alias too — a pending follow-up.
+// The evicted-message element type (Message) is re-exported below, so Summarizer
+// is fully implementable from an external module — no internal import required.
 type Summarizer = memory.Summarizer
+
+// Message is one chat turn from the working-memory active buffer — the element
+// type of the `oldest` slice a Summarizer.Condense receives. Its Role, Content,
+// and Timestamp fields are public, so an external Summarizer reads them and
+// builds Messages as plain struct literals in its tests. Re-exported so a
+// Summarizer is implementable against the public façade alone.
+type Message = memory.Message
 
 // EvalJudge scores one sample against one criterion. It is the seam that
 // unifies the three evaluation methods (an LLM judge, a deterministic code
@@ -140,15 +169,47 @@ type Summarizer = memory.Summarizer
 // Fixed shape:
 //
 //	Criterion() eval.Criterion
-//	Score(ctx context.Context, sample eval.EvalSample) (eval.Score, error)
+//	Score(ctx context.Context, sample EvalSample) (Score, error)
 //
-// The Criterion / EvalSample / Score payload types are not re-exported yet, so
-// a full external implementation needs those aliases too — a pending follow-up.
+// The Criterion / EvalSample / Score payload types are re-exported below (along
+// with Scale / UnitScale, which Criterion's rubric range needs), so EvalJudge is
+// fully implementable from an external module — no internal import required.
 // Score returns an error only for an OPERATIONAL failure (e.g. the model was
 // unreachable); a legitimately low-quality sample is a low Score value, never
 // an error, so a suite stays fail-closed on infrastructure but never on
 // content.
 type EvalJudge = eval.Judge
+
+// Criterion is the one named quality axis an EvalJudge is bound to (returned by
+// Criterion()): a stable Name (the aggregate key), a Description (the instruction
+// shown to an LLM judge), and a Scale (the rubric range). All three fields are
+// public, so an external judge returns its Criterion as a plain struct literal —
+// e.g. Criterion{Name: "faithfulness", Description: "...", Scale: UnitScale}.
+type Criterion = eval.Criterion
+
+// EvalSample is the unit an EvalJudge.Score receives: the user Query, the Context
+// assembled for the model (the grounding a faithfulness judge checks against),
+// and the model's Response. All fields are public strings, so an external judge
+// reads them directly and constructs samples in its tests.
+type EvalSample = eval.EvalSample
+
+// Score is what an EvalJudge.Score returns: the Criterion name, a Value ALWAYS
+// normalized to [0,1] (a judge on a wider Scale normalizes before returning), and
+// a short human-readable Reasoning. All fields are public, so an external judge
+// builds one as a plain struct literal.
+type Score = eval.Score
+
+// Scale is the closed numeric interval a Criterion is scored on (Min, Max). It is
+// only the human-facing rubric range — every Score.Value is normalized to [0,1]
+// regardless — but it is re-exported because Criterion carries a Scale field, so
+// an external judge can set a meaningful range instead of the zero value. Use
+// UnitScale for the default 0..1.
+type Scale = eval.Scale
+
+// UnitScale is the default 0..1 Scale the built-in criteria use — re-exported so
+// an external judge can assign the common rubric range to its Criterion without
+// hand-constructing a Scale.
+var UnitScale = eval.UnitScale
 
 // ModelPolicy decides which registered LLM target (by registry name) a request
 // should route to — the model-gateway routing seam (cost-aware downgrade,
@@ -158,13 +219,27 @@ type EvalJudge = eval.Judge
 //
 // Fixed shape:
 //
-//	Select(ctx context.Context, req gateway.Request) gateway.Decision
+//	Select(ctx context.Context, req Request) Decision
 //
-// The Request / Decision payload types are not re-exported yet, so a full
-// external implementation needs those aliases too — a pending follow-up. A
+// The Request / Decision payload types are re-exported below, so ModelPolicy is
+// fully implementable from an external module — no internal import required. A
 // Decision with an empty Target means "no opinion" (the gateway resolves it to
 // its default / the next policy in a chain).
 type ModelPolicy = gateway.Policy
+
+// Request is the routing-relevant projection of a chat request a ModelPolicy.Select
+// inspects: the Prompt, a PromptTokensEstimate, a HasImage flag, the Tenant/User,
+// an optional UISelector (UI-chosen target name), and CostSpentUSD. All fields are
+// public, and it is a plain value type (no I/O, no client handle) — which is what
+// keeps Select deterministic and table-testable. Re-exported so a policy reads its
+// signals and builds Requests in its tests against the public façade alone.
+type Request = gateway.Request
+
+// Decision is what a ModelPolicy.Select returns: the Target (the registry NAME of
+// the chosen LLM client, empty = "no opinion" → fall through to the next policy /
+// gateway default) and a human-readable Reason for logs/audit. Both fields are
+// public, so an external policy returns one as a plain struct literal.
+type Decision = gateway.Decision
 
 // TenantRoutingPolicy decides which tenancy tier a tenant is assigned to
 // (Shared vs Dedicated), the ADR-0007 promotion seam: today an
@@ -174,13 +249,32 @@ type ModelPolicy = gateway.Policy
 //
 // Fixed shape:
 //
-//	Tier(tenant string) routing.TenantTier
+//	Tier(tenant string) TenantTier
 //
-// The TenantTier return type is not re-exported yet, so a full external
-// implementation needs that alias too — a pending follow-up. An empty tenant
-// string has no identity and MUST resolve to the Shared (safe) default, never
-// Dedicated.
+// The TenantTier return type IS re-exported below, together with its two values
+// as TierShared / TierDedicated constants, so TenantRoutingPolicy is fully
+// implementable from an external module — no internal import required. An empty
+// tenant string has no identity and MUST resolve to TierShared (the safe
+// default), never TierDedicated.
 type TenantRoutingPolicy = routing.Policy
+
+// TenantTier is the physical routing tier a TenantRoutingPolicy.Tier assigns a
+// tenant to (ADR-0007): the pooled/logically-isolated default or the physically
+// separated tier. Re-exported so an external policy can name its return type; the
+// two values are TierShared and TierDedicated below (an external module returns
+// those constants — the underlying integer values stay runtime-owned).
+type TenantTier = routing.TenantTier
+
+// TierShared and TierDedicated are the two TenantTier values a TenantRoutingPolicy
+// returns. TierShared is the safe default: the tenant's data lives in a pooled
+// resource isolated by a tenant_id filter. TierDedicated is reserved for large or
+// compliance-critical tenants that get a physically separate resource. They are
+// re-exported so an external policy can return a tier without an internal import;
+// an empty tenant MUST resolve to TierShared.
+const (
+	TierShared    = routing.Shared
+	TierDedicated = routing.Dedicated
+)
 
 // VectorBackend is the SEALED-DRIVER seam for semantic (vector) persistence: the
 // Tier-2 open-core path that lets a third party bring their OWN vector store
