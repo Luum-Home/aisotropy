@@ -345,62 +345,22 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 			"schema violation fails closed with an HTTP error — never a silent " +
 			"unstructured fallback (see .claude/rules/constitutional-gates.md).",
 	}, func(ctx context.Context, in *ChatInput) (*ChatOutput, error) {
-		ctx, key, scope, err := chatIdentity(ctx, in)
-		if err != nil {
-			return nil, huma.Error422UnprocessableEntity("invalid tenant/user identity", err)
-		}
-
-		if err := chatCheckQuota(ctx, limiter, in.TenantID); err != nil {
-			return nil, err
-		}
-
-		// Input guardrail (redact + detect ALWAYS; block opt-in). forwarded is
-		// the REDACTED prompt: it — never the raw prompt — is what hydrates the
-		// system prompt, persists to working memory, and reaches the model, so a
-		// secret in the prompt never leaks into the model or any memory tier. A
-		// suspicious injection verdict is annotated by default and only rejected
-		// when BlockInjection is enabled.
-		forwarded, blocked := guard.checkInput(ctx, in.TenantID, in.UserID, in.Body.Prompt)
-		if blocked {
-			return nil, huma.Error400BadRequest("request blocked by input guardrail (possible prompt injection)")
-		}
-
-		// Model selection through the gateway seam; nil gw resolves to the passed
-		// client. The non-streaming route has no quota-pressure degrade override
-		// (that is the streaming path's behavior) — the gateway pick is final here.
-		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded, in.Body.ModelPreference, len(in.Body.Images) > 0)
-
-		slog.InfoContext(ctx, "chat request",
-			"tenant_id", in.TenantID,
-			"user_id", in.UserID,
-			"session_id", in.Body.SessionID,
-			"product_id", in.Body.ProductID,
-			"prompt_len", len(in.Body.Prompt),
-			"llm", active.Name(),
-		)
-
-		system, err := chatBuildSystemPrompt(ctx, wm, store, toolReg, persona, key, scope, in, forwarded)
-		if err != nil {
-			return nil, huma.Error500InternalServerError("failed to hydrate working memory", err)
-		}
-
-		chatPersistUserTurn(ctx, wm, key, forwarded)
-
-		reply, usage, err := chatReflect(ctx, active, system, in, forwarded)
-		if err != nil {
-			return nil, err
-		}
-
-		// Output guardrail, AFTER the model returns and BEFORE persisting or
-		// returning. When BlockOutput is enabled and the reply tripped a
-		// guardrail (toxicity/leak), the flagged text is replaced with a safe
-		// refusal — which is what both persists to memory and returns to the
-		// client. Default posture: annotate + log, reply unchanged.
-		finalReply := guard.checkOutput(ctx, in.TenantID, in.UserID, forwarded, reply.Reply, system)
-
-		chatRecordTurn(ctx, wm, key, in.TenantID, finalReply, usage, meter)
-
-		return chatBuildOutput(finalReply, in.TenantID, active), nil
+		// Thin wrapper: bundle the handler's dependencies and delegate to
+		// ChatCore, the single non-streaming pipeline the in-process caller
+		// (aisotropy.App.Turn) also runs. Keeping the body here to just the
+		// ChatDeps assembly is what guarantees HTTP and in-process share one
+		// code path — no behavior lives in this closure any more.
+		return ChatCore(ctx, ChatDeps{
+			Client:  client,
+			WM:      wm,
+			Store:   store,
+			Limiter: limiter,
+			ToolReg: toolReg,
+			Persona: persona,
+			Meter:   meter,
+			GW:      gw,
+			Guard:   guard,
+		}, in)
 	})
 }
 

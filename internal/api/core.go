@@ -1,0 +1,110 @@
+package api
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/Luum-Home/aisotropy/internal/costmeter"
+	"github.com/Luum-Home/aisotropy/internal/facts"
+	"github.com/Luum-Home/aisotropy/internal/gateway"
+	"github.com/Luum-Home/aisotropy/internal/llm"
+	"github.com/Luum-Home/aisotropy/internal/memory"
+	"github.com/Luum-Home/aisotropy/internal/tools"
+)
+
+// ChatDeps bundles the dependencies the non-streaming chat pipeline needs,
+// so ChatCore can be driven from both the HTTP handler and an in-process
+// caller (aisotropy.App.Turn) without duplicating the pipeline.
+//
+// The fields mirror Register's parameters one-for-one — this is deliberate:
+// the two entry points (HTTP and in-process) MUST run the same code over the
+// same dependencies, so the only difference between them is how ctx and *in
+// arrive, never what the pipeline does with them. Nil semantics are identical
+// to Register's (a nil Limiter/ToolReg/Persona/Meter/GW/Guard degrades exactly
+// as documented on the corresponding helper), so an embedder that constructs a
+// leaner App gets the same defined behavior the HTTP path would.
+type ChatDeps struct {
+	Client  llm.Client
+	WM      *memory.WorkingMemory
+	Store   facts.Store
+	Limiter *memory.Limiter
+	ToolReg *tools.Registry
+	Persona PersonaProvider
+	Meter   *costmeter.Meter
+	GW      *gateway.Gateway
+	Guard   *Guard
+}
+
+// ChatCore runs the full non-streaming chat pipeline in-process: identity->ctx,
+// pre-spend quota gate, input guardrail, gateway model selection, system-prompt
+// hydration, transactional-outbox user-turn persist, fail-closed reflection loop,
+// output guardrail, cost record. Returned errors are huma.StatusError values
+// (they carry an HTTP status but are ordinary errors off the HTTP path). It is
+// the EXACT code the HTTP handler runs.
+//
+// Extracting this from Register's closure keeps the codebase's core value —
+// a single pipeline — literally single: the HTTP handler and aisotropy.App.Turn
+// share this body verbatim rather than each maintaining their own copy that can
+// drift on the constitutional gates (tenant isolation via ctx, quota-before-spend,
+// fail-closed reflection). The isolation guarantee is unchanged: tenant_id and
+// user_id enter ctx here (via chatIdentity) and never travel any other way.
+func ChatCore(ctx context.Context, d ChatDeps, in *ChatInput) (*ChatOutput, error) {
+	ctx, key, scope, err := chatIdentity(ctx, in)
+	if err != nil {
+		return nil, huma.Error422UnprocessableEntity("invalid tenant/user identity", err)
+	}
+
+	if err := chatCheckQuota(ctx, d.Limiter, in.TenantID); err != nil {
+		return nil, err
+	}
+
+	// Input guardrail (redact + detect ALWAYS; block opt-in). forwarded is
+	// the REDACTED prompt: it — never the raw prompt — is what hydrates the
+	// system prompt, persists to working memory, and reaches the model, so a
+	// secret in the prompt never leaks into the model or any memory tier. A
+	// suspicious injection verdict is annotated by default and only rejected
+	// when BlockInjection is enabled.
+	forwarded, blocked := d.Guard.checkInput(ctx, in.TenantID, in.UserID, in.Body.Prompt)
+	if blocked {
+		return nil, huma.Error400BadRequest("request blocked by input guardrail (possible prompt injection)")
+	}
+
+	// Model selection through the gateway seam; nil gw resolves to the passed
+	// client. The non-streaming route has no quota-pressure degrade override
+	// (that is the streaming path's behavior) — the gateway pick is final here.
+	active := selectClient(ctx, d.GW, d.Client, d.Meter, in.TenantID, in.UserID, forwarded, in.Body.ModelPreference, len(in.Body.Images) > 0)
+
+	slog.InfoContext(ctx, "chat request",
+		"tenant_id", in.TenantID,
+		"user_id", in.UserID,
+		"session_id", in.Body.SessionID,
+		"product_id", in.Body.ProductID,
+		"prompt_len", len(in.Body.Prompt),
+		"llm", active.Name(),
+	)
+
+	system, err := chatBuildSystemPrompt(ctx, d.WM, d.Store, d.ToolReg, d.Persona, key, scope, in, forwarded)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to hydrate working memory", err)
+	}
+
+	chatPersistUserTurn(ctx, d.WM, key, forwarded)
+
+	reply, usage, err := chatReflect(ctx, active, system, in, forwarded)
+	if err != nil {
+		return nil, err
+	}
+
+	// Output guardrail, AFTER the model returns and BEFORE persisting or
+	// returning. When BlockOutput is enabled and the reply tripped a
+	// guardrail (toxicity/leak), the flagged text is replaced with a safe
+	// refusal — which is what both persists to memory and returns to the
+	// client. Default posture: annotate + log, reply unchanged.
+	finalReply := d.Guard.checkOutput(ctx, in.TenantID, in.UserID, forwarded, reply.Reply, system)
+
+	chatRecordTurn(ctx, d.WM, key, in.TenantID, finalReply, usage, d.Meter)
+
+	return chatBuildOutput(finalReply, in.TenantID, active), nil
+}
