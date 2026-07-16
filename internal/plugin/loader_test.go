@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/fugue-labs/gollem/ext/mcp"
@@ -122,10 +125,88 @@ func TestLoadTools_GoImport_DescriptorsNoHandlers(t *testing.T) {
 	}
 }
 
-func TestLoadTools_WASM_NotYetSupported(t *testing.T) {
-	m := Manifest{Name: "w", Version: "1", License: "MIT", Kind: KindWASM}
+// buildWASMGuest compiles the wasmtool echo fixture to a wasip1 reactor module
+// and returns its on-disk path, so the loader's real KindWASM path can be
+// exercised end to end. The fixture is shared with the wasmtool package (it lives
+// under internal/wasmtool/testdata); building it here needs only the standard Go
+// toolchain (no external tools), and is skipped under -short.
+func buildWASMGuest(t *testing.T) string {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping wasm build under -short (shells out to `go build` for GOOS=wasip1)")
+	}
+	out := filepath.Join(t.TempDir(), "echo.wasm")
+	cmd := exec.Command("go", "build", "-buildmode=c-shared", "-o", out, ".")
+	cmd.Dir = filepath.Join("..", "wasmtool", "testdata", "echomod")
+	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build wasm guest: %v\n%s", err, b)
+	}
+	return out
+}
+
+// TestLoadTools_WASM_MissingModule proves KindWASM now takes the real loading
+// path: a manifest whose run.module does not exist fails with a read error, NOT
+// the old ErrKindUnsupported stub.
+func TestLoadTools_WASM_MissingModule(t *testing.T) {
+	m := Manifest{
+		Name: "w", Version: "1", License: "MIT", Kind: KindWASM,
+		Run: RunSpec{Module: filepath.Join(t.TempDir(), "does-not-exist.wasm")},
+	}
 	_, err := LoadTools(context.Background(), m, nil)
-	if !errors.Is(err, ErrKindUnsupported) {
-		t.Fatalf("error = %v, want ErrKindUnsupported", err)
+	if err == nil {
+		t.Fatal("expected an error for a missing wasm module")
+	}
+	if errors.Is(err, ErrKindUnsupported) {
+		t.Fatalf("error = %v, want a real load error, not ErrKindUnsupported", err)
+	}
+}
+
+// TestLoadTools_WASM_LoadsSandboxedTool proves a KindWASM manifest produces a
+// working, scope-gated, sandboxed tool: the tool name/scope come from the
+// manifest, the handler runs the module, and the guest cannot reach the host.
+func TestLoadTools_WASM_LoadsSandboxedTool(t *testing.T) {
+	modulePath := buildWASMGuest(t)
+	m := Manifest{
+		Name: "echo-plugin", Version: "1", License: "Apache-2.0", Kind: KindWASM,
+		Run:   RunSpec{Module: modulePath},
+		Tools: []ToolSpec{{Name: "echo", Description: "echo", RequiredScope: "use:echo"}},
+	}
+
+	loaded, err := LoadTools(context.Background(), m, nil)
+	if err != nil {
+		t.Fatalf("LoadTools wasm: %v", err)
+	}
+	defer func() {
+		if err := loaded.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}()
+
+	if len(loaded.Tools) != 1 || loaded.Tools[0].Name != "echo" || loaded.Tools[0].RequiredScope != "use:echo" {
+		t.Fatalf("tools = %+v, want one echo/use:echo", loaded.Tools)
+	}
+	handler, ok := loaded.Handlers["echo"]
+	if !ok {
+		t.Fatal("no handler registered for echo")
+	}
+
+	res, err := handler(context.Background(), json.RawMessage(`{"name":"plugin","n":3}`))
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	var out struct {
+		Greeting     string `json:"greeting"`
+		Doubled      int    `json:"doubled"`
+		FSReadDenied bool   `json:"fs_read_denied"`
+	}
+	if err := json.Unmarshal([]byte(res), &out); err != nil {
+		t.Fatalf("unmarshal %q: %v", res, err)
+	}
+	if out.Greeting != "hello plugin" || out.Doubled != 6 {
+		t.Errorf("result = %+v, want greeting=hello plugin doubled=6", out)
+	}
+	if !out.FSReadDenied {
+		t.Error("wasm plugin READ a host file — sandbox isolation FAILED")
 	}
 }

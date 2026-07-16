@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/Luum-Home/aisotropy/internal/api"
 	"github.com/Luum-Home/aisotropy/internal/tools"
+	"github.com/Luum-Home/aisotropy/internal/wasmtool"
 )
 
-// ErrKindUnsupported is returned by LoadTools for a manifest whose Kind is
-// recognized by Validate but not yet runnable — today only KindWASM. It lets a
-// caller distinguish "reserved-for-later" from a genuine configuration error and
-// degrade gracefully (skip the plugin, log, keep booting).
+// ErrKindUnsupported is reserved for a manifest whose Kind is recognized by
+// Validate but not yet runnable. Every kind Validate accepts (mcp, go-import,
+// wasm) is runnable today, so LoadTools does not currently return it; it is kept
+// so a future reserved kind can degrade gracefully (skip the plugin, log, keep
+// booting) with a distinguishable sentinel.
 var ErrKindUnsupported = errors.New("plugin kind not yet supported")
 
 // MCPConnector is how LoadTools reaches an MCP server without this package
@@ -66,7 +69,13 @@ func noopClose() error { return nil }
 //     model can see but not execute. This is the documented convention, stated
 //     plainly rather than faked.
 //
-//   - KindWASM: returns ErrKindUnsupported — reserved for a later workflow.
+//   - KindWASM: reads the module at m.Run.Module and loads it into the wazero
+//     sandbox (internal/wasmtool), exposing its ABI entry point as ONE
+//     scope-gated tool. The tool's name/description/scope come from m.Tools[0]
+//     when declared, else from the manifest itself (see loadWASM). The module
+//     runs in-process but memory-isolated with NO host access by default; the
+//     returned Close tears down the wazero runtime. This replaces the former
+//     "not yet supported" stub.
 //
 // The requiredScope applied to KindMCP tools is derived from the manifest: MCP
 // servers expose a homogeneous tool set under one scope, matching WithMCPServer's
@@ -81,7 +90,7 @@ func LoadTools(ctx context.Context, m Manifest, connect MCPConnector) (*Loaded, 
 	case KindGoImport:
 		return loadGoImport(m), nil
 	case KindWASM:
-		return nil, fmt.Errorf("%w: %q (reserved, not implemented)", ErrKindUnsupported, m.Kind)
+		return loadWASM(ctx, m)
 	default:
 		// Validate should have rejected this; guard defensively.
 		return nil, fmt.Errorf("plugin: cannot load unknown kind %q", m.Kind)
@@ -119,6 +128,52 @@ func loadMCP(ctx context.Context, m Manifest, connect MCPConnector) (*Loaded, er
 		return nil, fmt.Errorf("plugin %q: discover mcp tools: %w", m.Name, err)
 	}
 	return &Loaded{Tools: ts, Handlers: handlers, Close: closer}, nil
+}
+
+// loadWASM reads the module named by m.Run.Module and adapts it into a single
+// scope-gated, wasmtool-backed tool. The tool's identity is taken from the
+// manifest's first declared tool when present (name/description/required_scope) —
+// a wasm plugin exposes exactly one ABI entry point, so at most the first tool
+// spec is meaningful — and otherwise falls back to the manifest's own name with
+// an empty (always-available) scope. Validate has already guaranteed Run.Module
+// is non-empty.
+//
+// The sandbox is wired with its DEFAULT capabilities: WASI present but powerless
+// (no filesystem, env, args, network, or real clock) and NO aisotropy host
+// functions. Granting the optional log host function needs a logger to hand the
+// sandbox, which is a wiring concern for the public builder (Wave 2), not this
+// dependency-free loader — so the loader deliberately loads wasm plugins as pure
+// sandboxes. The returned Close tears down the wazero runtime the tool owns.
+func loadWASM(ctx context.Context, m Manifest) (*Loaded, error) {
+	wasmBytes, err := os.ReadFile(m.Run.Module)
+	if err != nil {
+		return nil, fmt.Errorf("plugin %q: read wasm module %q: %w", m.Name, m.Run.Module, err)
+	}
+
+	name, description, scope := m.Name, m.Description, ""
+	if len(m.Tools) > 0 {
+		t := m.Tools[0]
+		name, description, scope = t.Name, t.Description, t.RequiredScope
+	}
+
+	tool, err := wasmtool.New(ctx, wasmtool.Config{
+		Name:          name,
+		Description:   description,
+		RequiredScope: scope,
+		Module:        wasmBytes,
+		Capabilities:  wasmtool.Capabilities{AllowWASI: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("plugin %q: load wasm tool: %w", m.Name, err)
+	}
+
+	return &Loaded{
+		Tools:    []tools.Tool{tool.Spec()},
+		Handlers: map[string]api.TypedToolHandler{tool.Spec().Name: tool.Handler()},
+		// Close with a fresh context so a cancelled request ctx cannot interfere
+		// with runtime teardown.
+		Close: func() error { return tool.Close(context.Background()) },
+	}, nil
 }
 
 // loadGoImport returns the manifest's declared tools as scope-gated governance

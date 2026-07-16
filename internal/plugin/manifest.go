@@ -15,12 +15,14 @@
 // an MCP subprocess) is injected as a func, so this package stays free of any MCP
 // client library and is unit-testable without spawning a process.
 //
-// Supported kinds today: "mcp" (reuses the existing gollem MCP path) and
+// Supported kinds today: "mcp" (reuses the existing gollem MCP path),
 // "go-import" (a documented compile-time convention — Go has no runtime plugin
 // loading, so the manifest contributes governance-scoped descriptors while the
-// behavior arrives via a normal Go import the consumer wires). "wasm" is a
-// RESERVED enum value for a later workflow: it validates but the loader returns a
-// clear "not yet supported" error rather than pretending to run anything.
+// behavior arrives via a normal Go import the consumer wires), and "wasm"
+// (loads the module named by run.module into the wazero sandbox in
+// internal/wasmtool and exposes its ABI entry point as a scope-gated tool —
+// untrusted community code that runs in-process yet memory-isolated with no host
+// access by default).
 package plugin
 
 import (
@@ -50,10 +52,13 @@ const (
 	// discovery/surfacing; the handlers arrive via the Go import the consumer
 	// already links. See LoadTools for exactly what is (and is not) wired.
 	KindGoImport Kind = "go-import"
-	// KindWASM is RESERVED for a future WebAssembly-sandboxed execution workflow.
-	// It is accepted by Validate (so a manifest can declare it today) but the
-	// loader returns ErrKindUnsupported — nothing is executed. Do not treat a
-	// wasm plugin as runnable until this is implemented.
+	// KindWASM exposes a plugin's tool by loading the WebAssembly module at
+	// Run.Module into the wazero sandbox (internal/wasmtool) and adapting its ABI
+	// entry point into a scope-gated tool. This is the strongest isolation
+	// posture: the module runs IN-PROCESS (no subprocess, no ports) but in its
+	// own linear memory with NO host filesystem, network, clock, or ambient
+	// authority — only the capability-gated host functions the runtime chooses to
+	// expose (none by default). Use it for untrusted community tools.
 	KindWASM Kind = "wasm"
 )
 
@@ -112,11 +117,19 @@ type Manifest struct {
 	Personas []string `yaml:"personas"`
 }
 
-// RunSpec is the stdio launch command for a KindMCP plugin. The behavior is the
-// external process; the manifest only points at it.
+// RunSpec is how a plugin's tools are launched. Which fields matter depends on
+// Kind: KindMCP uses Command+Args (the stdio server to spawn); KindWASM uses
+// Module (a filesystem path to the .wasm module the sandbox loads). KindGoImport
+// uses none of them (its behavior is a compiled Go import). The manifest only
+// ever points at behavior — it never carries it.
 type RunSpec struct {
 	Command string   `yaml:"command"`
 	Args    []string `yaml:"args"`
+	// Module is the path to the WebAssembly module for a KindWASM plugin
+	// (required for that kind; ignored otherwise). Resolution is the caller's
+	// concern — an absolute path, or relative to the process working directory /
+	// the manifest directory as the registry decides.
+	Module string `yaml:"module"`
 }
 
 // ToolSpec is one declared, scope-gated tool. RequiredScope gates it exactly as
@@ -222,6 +235,9 @@ func (m Manifest) Validate() error {
 	}
 	if m.Kind == KindMCP && strings.TrimSpace(m.Run.Command) == "" {
 		return errors.New("kind mcp requires run.command")
+	}
+	if m.Kind == KindWASM && strings.TrimSpace(m.Run.Module) == "" {
+		return errors.New("kind wasm requires run.module (path to the .wasm module)")
 	}
 	for i, t := range m.Tools {
 		if strings.TrimSpace(t.Name) == "" {
