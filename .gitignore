@@ -56,3 +56,8 @@ external/
 crates/*/target/
 /examples/task-agent/task-agent
 /examples/task-fanout/task-fanout
+/examples/memory-sessions/memory-sessions
+/examples/multi-tenant/multi-tenant
+/examples/auth-scopes/auth-scopes
+/examples/knowledge-rag/knowledge-rag
+/examples/serve-http/serve-http

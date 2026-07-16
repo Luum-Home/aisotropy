@@ -1,0 +1,2 @@
+# Stray binary if built with `go build .` instead of `go run .`.
+/knowledge-rag

@@ -14,6 +14,9 @@ timestamp: 2026-07-08T00:00:00Z
 > the single source of truth* that governs HTTP validation, the OpenAPI schema, and the
 > contract enforced on the LLM, all at once. See the [thesis](vision/thesis.md).
 
+> **New here?** Start with [Getting Started](getting-started.md) → the [Tutorial](tutorial/index.md).
+> This knowledge base below is the architecture-first reference the tutorial links into for depth.
+
 ## How to read this knowledge base
 
 This folder **is not a pile of loose design docs**: it's an **OKF bundle**
