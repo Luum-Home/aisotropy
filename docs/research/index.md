@@ -67,3 +67,7 @@ lexical rarity instead of using raw bits — not just a bigger or better-fit mod
 - [Competitive landscape](competitive-landscape.md) — where aisotropy sits vs. LangChain/LangGraph,
   Mastra, Letta, and the Go-native contenders (Eino, ADK Go, Genkit Go), with the memory-window
   time-to-threat judgment (mid-2026 snapshot).
+- [Frontend / agent-UI integration landscape](frontend-ui-integration-landscape.md) — what adapter
+  aisotropy's service must emit to power in-app copilots (AG-UI/CopilotKit, the Vercel AI SDK "UI
+  Message Stream", assistant-ui, A2A), ranked by coverage/effort. Conclusion: adapters over the
+  existing SSE stream, not a rewrite (mid-2026 snapshot).
