@@ -1,7 +1,7 @@
 # Aisotropy
 
-**Run untrusted AI agents that never touch your API keys — a single Go binary with multi-tenant
-isolation built in.**
+**Run untrusted AI agents that never touch your API keys.**
+Multi-tenant isolation, sandboxing, and key brokering — built into a single Go binary.
 
 A multi-tenant, local-first, sovereign AI-agent runtime in Go + Rust. Aisotropy is not "a chat with
 an LLM." It's a precision-engineering runtime where a **single Go struct is the source of truth**
