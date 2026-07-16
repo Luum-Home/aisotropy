@@ -101,7 +101,24 @@ func (a *App) ensureSemantic(ctx context.Context) (semantic.Store, semantic.Embe
 		// get their own physical semantic resource.
 		dedicatedTenants := splitCSV(os.Getenv("AISOTROPY_DEDICATED_TENANTS"))
 		tierRouter := routing.NewRouter(routing.NewStaticPolicy(dedicatedTenants...))
-		store, err := openSemanticStore(ctx, tierRouter, dedicatedTenants, emb.Dimension())
+		// A consumer's WithVectorBackend (Tier-2 open-core) wins: it is sealed into
+		// a tenant-isolating semantic.Store here — the ONE shared build path — so the
+		// chat/HTTP RAG surface and the SDK IngestKnowledge surface use the same
+		// sealed index (never two divergent stores). The sealed decorator enforces
+		// per-tenant isolation by namespace, so physical dedicated-tenant tier
+		// routing is not layered over it (the backend owns its persistence); logged
+		// when both are configured. Unset => the env/default in-memory/Qdrant store.
+		var store semantic.Store
+		var err error
+		if a.ext.vectorBackend != nil {
+			store = semantic.NewVectorBackendStore(a.ext.vectorBackend, emb.Dimension())
+			if len(dedicatedTenants) > 0 {
+				slog.Warn("semantic tier routing not applied to a WithVectorBackend store (sealed decorator provides per-tenant isolation; the community backend owns its own persistence)", "dedicated", dedicatedTenants)
+			}
+			slog.Info("custom vector backend installed (WithVectorBackend); sealed into a tenant-isolating semantic store", "dimension", emb.Dimension())
+		} else {
+			store, err = openSemanticStore(ctx, tierRouter, dedicatedTenants, emb.Dimension())
+		}
 		a.semanticStore = store
 		a.semanticErr = err
 	})

@@ -40,7 +40,7 @@ func newTestRouter(t *testing.T, client llm.Client, wm *memory.WorkingMemory) ht
 	router := chi.NewRouter()
 	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy-test", "0.1.0"))
 	Register(humaAPI, client, wm, factsStore, nil, nil, nil, nil, nil, nil)
-	RegisterStream(humaAPI, client, wm, factsStore, nil, nil, nil, nil, nil, nil, nil, 0, 0, nil, nil, nil)
+	RegisterStream(humaAPI, client, wm, factsStore, nil, nil, nil, nil, nil, nil, nil, nil, 0, 0, nil, nil, nil)
 	return router
 }
 
@@ -322,7 +322,7 @@ func TestHydrateSystemPrompt_SemanticSearchExcludesTurnKind(t *testing.T) {
 	}
 
 	key := memory.Key{Tenant: "acme", User: "alice", Session: "s1"}
-	prompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, key, scope, "p1", query)
+	prompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, nil, key, scope, "p1", query)
 	if err != nil {
 		t.Fatalf("hydrateSystemPrompt: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestHydrateSystemPrompt_MergesTenantSharedDocuments(t *testing.T) {
 		t.Fatalf("facts.NewScope: %v", err)
 	}
 	key := memory.Key{Tenant: "acme", User: "bob", Session: "s1"}
-	prompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, key, factsScope, "p1", query)
+	prompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, nil, key, factsScope, "p1", query)
 	if err != nil {
 		t.Fatalf("hydrateSystemPrompt: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestHydrateSystemPrompt_MergesTenantSharedDocuments(t *testing.T) {
 		t.Fatalf("facts.NewScope (globex): %v", err)
 	}
 	otherKey := memory.Key{Tenant: "globex", User: "carol", Session: "s1"}
-	otherPrompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, otherKey, otherFactsScope, "p1", query)
+	otherPrompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, nil, otherKey, otherFactsScope, "p1", query)
 	if err != nil {
 		t.Fatalf("hydrateSystemPrompt (globex): %v", err)
 	}
@@ -437,7 +437,7 @@ func TestHydrateSystemPrompt_TenantSharedExcludesFactAndTurn(t *testing.T) {
 		t.Fatalf("facts.NewScope: %v", err)
 	}
 	key := memory.Key{Tenant: "acme", User: "alice", Session: "s1"}
-	prompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, key, factsScope, "p1", query)
+	prompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, nil, nil, key, factsScope, "p1", query)
 	if err != nil {
 		t.Fatalf("hydrateSystemPrompt: %v", err)
 	}
@@ -575,5 +575,93 @@ func TestChatStream_ClientCancellationStopsStream(t *testing.T) {
 		if m.Role == roleAssistant {
 			t.Errorf("assistant turn was persisted despite client cancellation: %+v", m)
 		}
+	}
+}
+
+// spyReranker records the candidate pool it was handed and returns a fixed
+// selection, so a test can prove the hydration path both OVER-FETCHES (the
+// reranker sees more than semanticWindow candidates) and APPLIES the reranker's
+// output verbatim (only the returned points are injected).
+type spyReranker struct {
+	sawCandidates int
+	sawQuery      string
+	pick          string // Content of the single point to return
+}
+
+func (r *spyReranker) Rerank(_ context.Context, query string, candidates []semantic.ScoredPoint, topK int) []semantic.ScoredPoint {
+	r.sawCandidates = len(candidates)
+	r.sawQuery = query
+	for _, c := range candidates {
+		if c.Content == r.pick {
+			return []semantic.ScoredPoint{c}
+		}
+	}
+	return nil
+}
+
+// TestHydrateSystemPrompt_AppliesReranker is the ADR-0033 reranker acceptance
+// criterion: when a semantic.Reranker is configured, the hydration path
+// over-fetches an isolation-clean candidate pool (more than semanticWindow),
+// hands it to the reranker with the query, and injects ONLY the reranker's
+// chosen output — the exact behavior app.go's WithReranker option now drives
+// through this seam.
+func TestHydrateSystemPrompt_AppliesReranker(t *testing.T) {
+	ctx := context.Background()
+	emb := semantic.NewHashEmbedder(0)
+	semStore := semantic.NewInMemoryStore(emb.Dimension())
+
+	scope, err := facts.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatalf("facts.NewScope: %v", err)
+	}
+	semScope, err := semantic.NewScope("acme", "alice")
+	if err != nil {
+		t.Fatalf("semantic.NewScope: %v", err)
+	}
+
+	const query = "quarterly financial results"
+	vecs, err := emb.Embed(ctx, []string{query})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	queryVec := vecs[0]
+
+	// Six Fact-kind candidates all carrying the query vector: without a reranker
+	// only semanticWindow (4) would be fetched, so seeing all six proves the
+	// over-fetch. One carries the marker the reranker will pick.
+	var pts []semantic.Point
+	for i := 0; i < 6; i++ {
+		content := "FILLER-CANDIDATE"
+		if i == 5 {
+			content = "RERANKER-PICKED-MARKER"
+		}
+		pts = append(pts, semantic.Point{
+			ID:       semantic.PointID(semScope, semantic.KindFact, string(rune('a'+i))),
+			TenantID: "acme", UserID: "alice",
+			Kind: semantic.KindFact, Content: content, Vector: queryVec,
+		})
+	}
+	if err := semStore.Upsert(ctx, semScope, pts); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	spy := &spyReranker{pick: "RERANKER-PICKED-MARKER"}
+	key := memory.Key{Tenant: "acme", User: "alice", Session: "s1"}
+	prompt, err := hydrateSystemPrompt(ctx, nil, nil, semStore, emb, spy, nil, key, scope, "p1", query)
+	if err != nil {
+		t.Fatalf("hydrateSystemPrompt: %v", err)
+	}
+
+	if spy.sawQuery != query {
+		t.Fatalf("reranker saw query %q, want %q", spy.sawQuery, query)
+	}
+	if spy.sawCandidates <= semanticWindow {
+		t.Fatalf("reranker saw %d candidates, expected over-fetch beyond semanticWindow=%d", spy.sawCandidates, semanticWindow)
+	}
+	if !strings.Contains(prompt, "RERANKER-PICKED-MARKER") {
+		t.Fatalf("reranker's chosen point was not injected: %s", prompt)
+	}
+	if strings.Contains(prompt, "FILLER-CANDIDATE") {
+		t.Fatalf("a point the reranker did NOT return leaked into the prompt: %s", prompt)
 	}
 }

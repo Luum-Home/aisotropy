@@ -227,7 +227,9 @@ func chatCheckQuota(ctx context.Context, limiter *memory.Limiter, tenantID strin
 // scope-gated tools fragment (Phase 7): a forbidden tool never enters the
 // payload (granular-control.md).
 func chatBuildSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, toolReg *tools.Registry, persona PersonaProvider, key memory.Key, scope facts.Scope, in *ChatInput, prompt string) (string, error) {
-	system, err := hydrateSystemPrompt(ctx, wm, store, nil, nil, persona, key, scope, in.Body.ProductID, prompt)
+	// Non-streaming route wires no semantic RAG (nil semStore/embedder), so the
+	// reranker is nil too — there are no semantic hits for it to reorder.
+	system, err := hydrateSystemPrompt(ctx, wm, store, nil, nil, nil, persona, key, scope, in.Body.ProductID, prompt)
 	if err != nil {
 		return "", err
 	}

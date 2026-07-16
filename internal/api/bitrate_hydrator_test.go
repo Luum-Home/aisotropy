@@ -30,7 +30,7 @@ func TestHydrateNilWMExcludesLiveBuffer(t *testing.T) {
 
 	// Baseline: with the live working memory, the held-out turn leaks into the
 	// prompt (this is exactly what the request path does, and why bpt must not).
-	withWM, err := hydrateSystemPrompt(ctx, wm, nil, nil, nil, nil, key, scope, "p1", "meeting")
+	withWM, err := hydrateSystemPrompt(ctx, wm, nil, nil, nil, nil, nil, key, scope, "p1", "meeting")
 	if err != nil {
 		t.Fatalf("hydrate with wm: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestHydrateNilWMExcludesLiveBuffer(t *testing.T) {
 	// The bpt path (nil wm): the live buffer — and thus the held-out turn — must
 	// be absent. Consolidated memory (facts/semantic) is nil here, so the result
 	// is the bare persona base with no session content.
-	nilWM, err := hydrateSystemPrompt(ctx, nil, nil, nil, nil, nil, key, scope, "p1", "meeting")
+	nilWM, err := hydrateSystemPrompt(ctx, nil, nil, nil, nil, nil, nil, key, scope, "p1", "meeting")
 	if err != nil {
 		t.Fatalf("hydrate nil wm: %v", err)
 	}

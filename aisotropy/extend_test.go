@@ -1,22 +1,25 @@
 package aisotropy
 
-// extend_test.go is the demonstrable artifact for the Wave-2 "bring your own"
-// extension surface (extend.go's options + their app.go wiring). Every WIRED
-// seam is proven INVOKED by the real in-process pipeline (App.Turn -> ChatCore),
-// not merely stored: a spy implementation records that the running runtime called
-// it. The one seam that is deliberately stored-but-not-wired this wave (Reranker)
-// is asserted to be captured on the App and its non-wiring stated plainly, per
-// the honesty gate — no test pretends a pending wiring is live.
+// extend_test.go is the demonstrable artifact for the "bring your own"
+// extension surface (extend.go's options + their app.go wiring). Every seam is
+// proven INVOKED by the real running pipeline, not merely stored: a spy
+// implementation records that the runtime called it. Most seams are exercised
+// through the in-process App.Turn -> ChatCore path; the Reranker seam is
+// exercised over the real /ask HTTP route, because semantic RAG hydration (the
+// stage a Reranker sits in) lives on the streaming/ask paths, not the
+// working-memory-centric non-streaming Turn path — so the test drives the seam
+// where it actually runs rather than pretending Turn consults it.
 //
-// All tests are keyless (fastStub, no ANTHROPIC_API_KEY) and defer app.Close().
-// They read invocation counters off spy implementations rather than the reply
-// text, for the same reason turn_test.go reads the working-memory store directly:
-// the non-streaming reflection pipeline returns a schema-satisfying reply that
-// echoes only the turn's prompt, so a seam's effect is asserted where the seam
-// actually runs, not off the reply string.
+// The in-process tests are keyless (fastStub, no ANTHROPIC_API_KEY) and defer
+// app.Close(). They read invocation counters off spy implementations rather than
+// the reply text, for the same reason turn_test.go reads the working-memory store
+// directly: the non-streaming reflection pipeline returns a schema-satisfying
+// reply that echoes only the turn's prompt, so a seam's effect is asserted where
+// the seam actually runs, not off the reply string.
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -111,14 +114,18 @@ func (s *spyEvalJudge) Score(_ context.Context, _ eval.EvalSample) (eval.Score, 
 	return eval.Score{Criterion: eval.Safety.Name, Value: 1.0, Reasoning: "spy: safe"}, nil
 }
 
-// spyReranker satisfies Reranker for the stored-not-wired assertion. It is a
-// pure pass-through; its Rerank is never expected to be called this wave.
+// spyReranker satisfies Reranker and records each invocation. It is a pure
+// pass-through (returns the candidate pool unchanged), so it never alters the
+// injected context — the assertion is purely that the wired hydration path called
+// it. Recording the query lets the test confirm the real prompt reached the seam.
 type spyReranker struct {
-	calls atomic.Int32
+	calls     atomic.Int32
+	lastQuery atomic.Value // string
 }
 
-func (s *spyReranker) Rerank(_ context.Context, _ string, candidates []semantic.ScoredPoint, _ int) []semantic.ScoredPoint {
+func (s *spyReranker) Rerank(_ context.Context, query string, candidates []semantic.ScoredPoint, _ int) []semantic.ScoredPoint {
 	s.calls.Add(1)
+	s.lastQuery.Store(query)
 	return candidates
 }
 
@@ -251,25 +258,47 @@ func TestWithTenantRoutingPolicyInvoked(t *testing.T) {
 	}
 }
 
-// TestWithRerankerStoredNotWired documents the ONE honest exception: WithReranker
-// captures the implementation on the App but the semantic hydration path does not
-// yet consult it, so a normal turn completes WITHOUT invoking Rerank. The seam is
-// exported and stored; retrieval-wiring is a named follow-up (see extend.go and
-// startRuntime). This test asserts exactly that contract — stored, not called —
-// rather than pretending the wiring is live.
-func TestWithRerankerStoredNotWired(t *testing.T) {
+// TestWithRerankerInvoked proves WithReranker is APPLIED: a registered Reranker
+// is consulted by the semantic hydration path. The seam lives on the RAG
+// hydration stage (streaming /chat/stream and the stateless /ask route), NOT the
+// working-memory-centric non-streaming Turn path, so the test drives the seam
+// where it runs — one /ask over the real HTTP server — and asserts the wired
+// hydration called Rerank with the request's prompt. (A fresh prompt is a cache
+// MISS, so the request reaches hydrateSystemPrompt -> searchSemanticContext,
+// which hands the isolation-clean candidate pool to the reranker before the model
+// call; ADR-0033.) It also asserts the option is stored on the App.
+func TestWithRerankerInvoked(t *testing.T) {
 	spy := &spyReranker{}
-	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9), WithReranker(spy))
-	defer closeApp(t, app)()
+	addr := freeAddr(t)
+	// NoAuth(): /ask is a /v1 route behind the default-deny gate; the explicit
+	// local/dev opt-out lets the test exercise it over HTTP without minting JWTs.
+	app := New(WithAddr(addr), WithLLM(fastStub()), WithReranker(spy), WithAuthenticator(NoAuth()))
 
 	if app.ext.reranker == nil {
 		t.Fatal("WithReranker did not store the reranker on the App")
 	}
-	if _, err := app.Turn(context.Background(), ChatInput{TenantID: "t", UserID: "u", SessionID: "s", Prompt: "hello"}); err != nil {
-		t.Fatalf("turn: %v", err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- app.Run(ctx) }()
+
+	base := "http://" + addr
+	waitForServer(t, base+"/healthz")
+
+	const prompt = "what did we decide about the rollout plan?"
+	_ = postAsk(t, ctx, base, "acme", "alice", prompt)
+
+	if got := spy.calls.Load(); got == 0 {
+		t.Fatal("reranker Rerank was never invoked by the /ask semantic hydration path; WithReranker must now be APPLIED")
 	}
-	if got := spy.calls.Load(); got != 0 {
-		t.Fatalf("reranker Rerank was called %d time(s); this wave stores it but does NOT wire the retrieval path — update this test when the internal/api hydration seam starts consulting a Reranker", got)
+	if q, _ := spy.lastQuery.Load().(string); q != prompt {
+		t.Fatalf("reranker received query %q, want the request prompt %q (the wired hydration must pass the real prompt to the seam)", q, prompt)
+	}
+
+	cancel()
+	if err := <-errCh; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run returned error on shutdown: %v", err)
 	}
 }
 

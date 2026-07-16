@@ -26,6 +26,11 @@ type BitrateHydrator struct {
 	Store    facts.Store
 	Semantic semantic.Store
 	Embedder semantic.Embedder
+	// Reranker mirrors the streaming handler's configured reranker so the "with
+	// memory" context the bitrate measurement scores matches what the request
+	// path actually injects (anti-magic, ADR-0002). Nil when no reranker is
+	// configured — the same default the streaming handler runs under.
+	Reranker semantic.Reranker
 	Persona  PersonaProvider
 }
 
@@ -41,7 +46,7 @@ func (h BitrateHydrator) ContextWith(ctx context.Context, tenantID, userID, sess
 	if err != nil {
 		return "", fmt.Errorf("bitrate hydrate scope: %w", err)
 	}
-	return hydrateSystemPrompt(ctx, nil, h.Store, h.Semantic, h.Embedder, h.Persona, key, scope, productID, query)
+	return hydrateSystemPrompt(ctx, nil, h.Store, h.Semantic, h.Embedder, h.Reranker, h.Persona, key, scope, productID, query)
 }
 
 // ContextWithout returns the bare persona base prompt for productID — the "no

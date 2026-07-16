@@ -50,6 +50,15 @@ const factsWindow = 4
 // qdrant-semantic-memory.md).
 const semanticWindow = 4
 
+// semanticCandidatePoolFactor over-fetches ANN candidates before a configured
+// semantic.Reranker reorders and trims them to semanticWindow. Reranking only
+// adds value when it has more candidates than the injection window to choose
+// from, so when a reranker is present each scoped search fetches
+// semanticWindow*factor points; without a reranker the pre-existing behavior
+// (fetch exactly semanticWindow, order by score) is preserved. Mirrors the
+// facts tier's candidatePoolFactor.
+const semanticCandidatePoolFactor = 4
+
 // costInputPricePer1M / costOutputPricePer1M are the default USD prices per
 // 1M tokens used to estimate per-tenant cost for the /costs view. Rough
 // defaults; a real deployment sets a per-model price table.
@@ -133,7 +142,7 @@ const (
 // disables guardrails entirely.
 //
 //nolint:gocognit,cyclop,funlen // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
-func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, inPricePer1M, outPricePer1M float64, bptSampler bitrate.SampleRecorder, gw *gateway.Gateway, guard *Guard) {
+func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, meter *costmeter.Meter, cheapClient llm.Client, semStore semantic.Store, embedder semantic.Embedder, reranker semantic.Reranker, persona PersonaProvider, inPricePer1M, outPricePer1M float64, bptSampler bitrate.SampleRecorder, gw *gateway.Gateway, guard *Guard) {
 	sse.Register(api, huma.Operation{
 		OperationID: "chat-stream",
 		Method:      httpMethodPost,
@@ -215,7 +224,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 			"llm", client.Name(),
 		)
 
-		system, err := hydrateSystemPrompt(ctx, wm, store, semStore, embedder, persona, key, scope, in.Body.ProductID, forwarded)
+		system, err := hydrateSystemPrompt(ctx, wm, store, semStore, embedder, reranker, persona, key, scope, in.Body.ProductID, forwarded)
 		if err != nil {
 			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("failed to hydrate working memory: %v", err)})
 			return
@@ -396,7 +405,7 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 // docs/architecture/memory-tiers.md).
 //
 //nolint:gocognit,cyclop // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
-func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, key memory.Key, scope facts.Scope, productID, prompt string) (string, error) {
+func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, semStore semantic.Store, embedder semantic.Embedder, reranker semantic.Reranker, persona PersonaProvider, key memory.Key, scope facts.Scope, productID, prompt string) (string, error) {
 	if persona == nil {
 		persona = defaultPersonaProvider{}
 	}
@@ -439,8 +448,8 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 
 	// Semantic memory (Phase 4 + ADR-0019 tenant-shared merge): see
 	// searchSemanticContext's doc for the full rationale (kind filtering,
-	// non-fatal degradation, the tenant-shared merge).
-	semantics := searchSemanticContext(ctx, semStore, embedder, scope, prompt)
+	// non-fatal degradation, the tenant-shared merge, optional reranking).
+	semantics := searchSemanticContext(ctx, semStore, embedder, reranker, scope, prompt)
 
 	if summary == "" && len(recent) == 0 && len(relevant) == 0 && len(semantics) == 0 {
 		return base, nil
@@ -488,7 +497,17 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 // only) is merged in with the user's own results, client-side — never a
 // widened/OR-filtered store scan. The two searches degrade independently: a
 // failure on either side still lets the other contribute.
-func searchSemanticContext(ctx context.Context, semStore semantic.Store, embedder semantic.Embedder, scope facts.Scope, prompt string) []semantic.ScoredPoint {
+//
+// ADR-0033 reranker (this wave): when reranker is non-nil, both scoped searches
+// OVER-FETCH a larger candidate pool (semanticWindow*semanticCandidatePoolFactor)
+// and the merged, deduped, isolation-clean pool is reordered and trimmed to
+// semanticWindow by the reranker before injection — the "maintain relevance"
+// step of the semantic tier (the component doc's reranking; ADR-0006). The
+// reranker runs strictly AFTER the per-scope isolation filter, so it only ever
+// reorders points the caller is already entitled to; it can never widen scope.
+// A nil reranker preserves the pre-existing behavior exactly (fetch
+// semanticWindow, order by score, no rerank).
+func searchSemanticContext(ctx context.Context, semStore semantic.Store, embedder semantic.Embedder, reranker semantic.Reranker, scope facts.Scope, prompt string) []semantic.ScoredPoint {
 	if semStore == nil || embedder == nil {
 		return nil
 	}
@@ -497,10 +516,18 @@ func searchSemanticContext(ctx context.Context, semStore semantic.Store, embedde
 		return nil
 	}
 	query := vecs[0]
+
+	// Over-fetch only when a reranker will trim the pool back down; otherwise
+	// fetch exactly the injection window (unchanged legacy behavior).
+	fetch := semanticWindow
+	if reranker != nil {
+		fetch = semanticWindow * semanticCandidatePoolFactor
+	}
+
 	var userPts, tenantPts []semantic.ScoredPoint
 
 	if semScope, serr := semantic.NewScope(scope.Tenant(), scope.User()); serr == nil { //nolint:contextcheck // semantic.NewScope has no context parameter (internal/semantic, out of scope for this cleanup)
-		if pts, serr := semStore.Search(ctx, semScope, query, semanticWindow, semantic.KindDocument, semantic.KindFact); serr == nil {
+		if pts, serr := semStore.Search(ctx, semScope, query, fetch, semantic.KindDocument, semantic.KindFact); serr == nil {
 			userPts = pts
 		} else {
 			slog.ErrorContext(ctx, "semantic search failed; proceeding without it", "err", serr)
@@ -510,7 +537,7 @@ func searchSemanticContext(ctx context.Context, semStore semantic.Store, embedde
 	}
 
 	if tenantScope, terr := semantic.NewTenantScope(scope.Tenant()); terr == nil { //nolint:contextcheck // semantic.NewTenantScope has no context parameter (internal/semantic, out of scope for this cleanup)
-		if pts, serr := semStore.Search(ctx, tenantScope, query, semanticWindow, semantic.KindDocument); serr == nil {
+		if pts, serr := semStore.Search(ctx, tenantScope, query, fetch, semantic.KindDocument); serr == nil {
 			tenantPts = pts
 		} else {
 			slog.ErrorContext(ctx, "tenant-shared semantic search failed; proceeding without it", "err", serr)
@@ -519,7 +546,15 @@ func searchSemanticContext(ctx context.Context, semStore semantic.Store, embedde
 		slog.ErrorContext(ctx, "tenant scope construction failed; proceeding without it", "err", terr)
 	}
 
-	return mergeScoredPoints(semanticWindow, userPts, tenantPts)
+	merged := mergeScoredPoints(fetch, userPts, tenantPts)
+	if reranker != nil {
+		// Rerank the isolation-clean candidate pool down to the injection window.
+		return reranker.Rerank(ctx, prompt, merged, semanticWindow)
+	}
+	if len(merged) > semanticWindow {
+		merged = merged[:semanticWindow]
+	}
+	return merged
 }
 
 // mergeScoredPoints merges already-scoped semantic search result sets (a

@@ -154,7 +154,7 @@ func askBuildOutput(reply, tenantID string, cached bool, client llm.Client) *Ask
 // (and, if BlockInjection, rejected) before it reaches the model or the cache key,
 // and the model response is inspected before it is returned/cached (or, if
 // BlockOutput, replaced with a safe refusal). A nil guard disables guardrails.
-func RegisterAsk(api huma.API, client llm.Client, cache *responsecache.ResponseCache, semStore semantic.Store, embedder semantic.Embedder, persona PersonaProvider, guard *Guard) {
+func RegisterAsk(api huma.API, client llm.Client, cache *responsecache.ResponseCache, semStore semantic.Store, embedder semantic.Embedder, reranker semantic.Reranker, persona PersonaProvider, guard *Guard) {
 	huma.Register(api, huma.Operation{
 		OperationID: "ask",
 		Method:      httpMethodPost,
@@ -211,7 +211,7 @@ func RegisterAsk(api huma.API, client llm.Client, cache *responsecache.ResponseC
 		// persona base prompt plus semantic fragments (the exact statelessness this
 		// route depends on for cache safety). The empty memory.Key is unused when
 		// wm is nil.
-		system, err := hydrateSystemPrompt(ctx, nil, nil, semStore, embedder, persona, memory.Key{}, scope, in.Body.ProductID, forwarded)
+		system, err := hydrateSystemPrompt(ctx, nil, nil, semStore, embedder, reranker, persona, memory.Key{}, scope, in.Body.ProductID, forwarded)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to build semantic context", err)
 		}

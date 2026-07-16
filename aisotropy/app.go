@@ -274,6 +274,7 @@ type appRuntime struct {
 	guard         *api.Guard
 	semanticStore semantic.Store
 	embedder      semantic.Embedder
+	reranker      semantic.Reranker // consumer WithReranker (nil => built-in score ordering)
 
 	// HTTP-only extras Run layers on top of the shared deps above (Turn does
 	// not touch these — the streaming/ask/agent/ops surfaces are HTTP-only).
@@ -357,11 +358,25 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 		slog.Info("dedicated-tenant routing enabled", "tenants", dedicatedTenants)
 	}
 
-	// Facts memory (Phase 3): SQLite+FTS5 / rqlite by env (ADR-0007 routing).
-	factsStore, err := openFactsStore(tierRouter, dedicatedTenants) //nolint:contextcheck // facts.OpenSQLite has no context parameter (internal/facts, out of scope for this cleanup)
-	if err != nil {
-		_ = wm.Close()
-		return nil, err
+	// Facts memory (Phase 3): a consumer's WithFactsBackend sealed into a
+	// tenant-isolating store (Tier-2 open-core) wins; else SQLite+FTS5 / rqlite by
+	// env (ADR-0007 routing). The sealed backend enforces per-tenant isolation via
+	// the namespace decorator, so physical dedicated-tenant tier routing is not
+	// layered over it (the backend owns its own persistence) — logged when both a
+	// backend and a dedicated allowlist are configured.
+	var factsStore facts.Store
+	if a.ext.factsBackend != nil {
+		factsStore = facts.NewDocBackendStore(a.ext.factsBackend)
+		if len(dedicatedTenants) > 0 {
+			slog.Warn("facts tier routing not applied to a WithFactsBackend store (sealed decorator provides per-tenant isolation; the community backend owns its own persistence)", "dedicated", dedicatedTenants)
+		}
+		slog.Info("custom facts backend installed (WithFactsBackend); sealed into a tenant-isolating store")
+	} else {
+		factsStore, err = openFactsStore(tierRouter, dedicatedTenants) //nolint:contextcheck // facts.OpenSQLite has no context parameter (internal/facts, out of scope for this cleanup)
+		if err != nil {
+			_ = wm.Close()
+			return nil, err
+		}
 	}
 	factsExtractor := facts.HeuristicExtractor{}
 
@@ -608,16 +623,14 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 		}
 	}
 
-	// Reranker (WithReranker): HONEST SCOPE — the option is STORED but its
-	// retrieval-wiring is PENDING. The semantic hydration path
-	// (internal/api's hydrateSystemPrompt -> searchSemanticContext) does not yet
-	// consult a semantic.Reranker: threading one through requires internal/api
-	// surgery beyond this wave's app.go ownership. Rather than fake a wiring, the
-	// option captures the consumer's reranker on the App and this line records
-	// that it is not yet applied. When the api hydration seam accepts a reranker,
-	// this is where rt.reranker would be passed through.
+	// Reranker (WithReranker): APPLIED. The consumer's reranker is threaded onto
+	// the runtime (rt.reranker below) and consulted by the semantic hydration path
+	// — RegisterStream (/chat/stream), RegisterAsk (/ask), and the bitrate
+	// hydrator above — over an isolation-clean, over-fetched candidate pool
+	// (ADR-0033, internal/api's searchSemanticContext). A nil reranker preserves
+	// the built-in score ordering exactly.
 	if a.ext.reranker != nil {
-		slog.Warn("custom reranker registered but NOT yet applied: the semantic retrieval/hydration path does not consult a Reranker yet (internal/api wiring pending); the option is stored only")
+		slog.Info("custom reranker installed (WithReranker); applied on the semantic hydration path (streaming /chat/stream, /ask, bitrate)")
 	}
 
 	// Scope-gated tool registry: the consumer's registered tools plus any
@@ -651,6 +664,7 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 				Store:    factsStore,
 				Semantic: semanticStore,
 				Embedder: embedder,
+				Reranker: a.ext.reranker,
 				Persona:  persona,
 			},
 			Runner: bitrate.Worker{BinaryPath: bin, Tracer: tracer},
@@ -765,6 +779,7 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 		guard:             guard,
 		semanticStore:     semanticStore,
 		embedder:          embedder,
+		reranker:          a.ext.reranker,
 		streamClient:      streamClient,
 		cheapStreamClient: cheapStreamClient,
 		typedHandlers:     typedHandlers,
@@ -935,7 +950,7 @@ func (a *App) Run(ctx context.Context) error {
 	).Handler())
 
 	api.Register(humaAPI, rt.client, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.persona, rt.costMeter, rt.gateway, rt.guard)
-	api.RegisterStream(humaAPI, rt.streamClient, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.costMeter, rt.cheapStreamClient, rt.semanticStore, rt.embedder, rt.persona, a.inPricePer1M, a.outPricePer1M, rt.bptSampler, rt.gateway, rt.guard)
+	api.RegisterStream(humaAPI, rt.streamClient, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.costMeter, rt.cheapStreamClient, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, a.inPricePer1M, a.outPricePer1M, rt.bptSampler, rt.gateway, rt.guard)
 	// Knowledge ingestion (ADR-0018): the HTTP arm of the dual-surface
 	// capability, sharing the exact same semantic store/embedder pair the
 	// chat routes' RAG hydration reads from above.
@@ -960,7 +975,7 @@ func (a *App) Run(ctx context.Context) error {
 	// The cache is per-process and scoped by (tenant,user) in both layers, so a
 	// cross-tenant hit is structurally impossible (see internal/responsecache).
 	askCache := buildResponseCache(rt.embedder)
-	api.RegisterAsk(humaAPI, rt.client, askCache, rt.semanticStore, rt.embedder, rt.persona, rt.guard)
+	api.RegisterAsk(humaAPI, rt.client, askCache, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, rt.guard)
 
 	// Agentic tool-use endpoint (Phase 7): the injected executor drives real tool
 	// logic, wrapped per-request in a friction recorder.

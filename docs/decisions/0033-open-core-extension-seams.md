@@ -1,7 +1,7 @@
 ---
 type: ADR
 title: "ADR-0033 — Open-core extension seams, tiered by isolation-criticality: open the policy seams, seal the isolation"
-description: Opening a runtime's internals for "bring your own X" is where multi-tenant isolation usually leaks — a competitor lets you plug a memory backend that can read across tenants. This ADR sets the RULE that decides which internal seam is safe to expose raw and which is not, and it tiers them. TIER-1 (SAFE, shipped now) are pure POLICY seams — decision/transform logic with no authority over WHICH tenant's data is touched: six type aliases (GuardrailCheck, Reranker, Summarizer, EvalJudge, ModelPolicy, TenantRoutingPolicy) plus the functional options that install them (WithGuardrailCheck / WithSummarizer / WithEvalJudge / WithModelPolicy / WithTenantRoutingPolicy / WithReranker) and the plugin loaders. Because none of them enforce tenant isolation (it is enforced downstream in the ctx-scoped stores, ADR-0011), a community implementation cannot leak cross-tenant no matter how wrong it is. HONEST per-seam status as the code shows it: FIVE are WIRED end-to-end (a supplied impl is actually invoked by the running pipeline, each proven by a spy test); the SIXTH, Reranker, is EXPORTED + STORED but NOT WIRED (the semantic hydration path does not consult a Reranker yet — the option captures it and the runtime logs it is not applied). TIER-2 (ISOLATION-CRITICAL) are the memory backends (facts.Store / semantic.Store / working memory, the tool Registry, the memory Scope and its constructors): DELIBERATELY NOT opened as raw interfaces, because a raw store interface would let an embedder bypass the "every Scope is built by the runtime from ctx" invariant that makes isolation hold by construction. Their future opening is a SEALED-DRIVER design (a separate change): a tenant-UNAWARE driver (VectorBackend / KVBackend) + a runtime-owned SEALED scoping decorator that no plugin can bypass + a plugintest conformance suite — "bring your own backend, not your own isolation". The differentiator, stated plainly: competitors let you plug a backend that can leak; Aisotropy seals the isolation so a wrong backend still cannot.
+description: Opening a runtime's internals for "bring your own X" is where multi-tenant isolation usually leaks — a competitor lets you plug a memory backend that can read across tenants. This ADR sets the RULE that decides which internal seam is safe to expose raw and which is not, and it tiers them. TIER-1 (SAFE) are pure POLICY seams — decision/transform logic with no authority over WHICH tenant's data is touched: six type aliases (GuardrailCheck, Reranker, Summarizer, EvalJudge, ModelPolicy, TenantRoutingPolicy) plus the functional options that install them (WithGuardrailCheck / WithSummarizer / WithEvalJudge / WithModelPolicy / WithTenantRoutingPolicy / WithReranker) and the plugin loaders. Because none of them enforce tenant isolation (it is enforced downstream in the ctx-scoped stores, ADR-0011), a community implementation cannot leak cross-tenant no matter how wrong it is. HONEST per-seam status as the code shows it: all SIX are WIRED end-to-end (a supplied impl is actually invoked by the running pipeline, each proven by a spy test) — the Reranker, initially exported-stored-only, is now APPLIED on the semantic hydration path (streaming /chat/stream, /ask, and the bitrate hydrator) over an isolation-clean over-fetched candidate pool. TIER-2 (ISOLATION-CRITICAL) are the memory backends (facts.Store / semantic.Store / working memory, the tool Registry, the memory Scope and its constructors): DELIBERATELY NOT opened as RAW interfaces, because a raw store interface would let an embedder bypass the "every Scope is built by the runtime from ctx" invariant that makes isolation hold by construction. They are instead opened as the SEALED-DRIVER design: tenant-UNAWARE drivers (semantic.VectorBackend / facts.DocBackend) + runtime-owned SEALED scoping decorators that no plugin can bypass (namespace derived from the ctx-scoped Scope) + the internal/plugintest conformance + isolation-proof suite, installed via WithVectorBackend / WithFactsBackend — "bring your own backend, not your own isolation". The differentiator, stated plainly: competitors let you plug a backend that can leak; Aisotropy seals the isolation so a wrong backend still cannot.
 tags: [decisions, adr, open-core, extension-seams, isolation, tiering, bring-your-own, sealed-driver, policy-seams, phase-9]
 timestamp: 2026-07-16T00:00:00Z
 ---
@@ -12,11 +12,14 @@ timestamp: 2026-07-16T00:00:00Z
 
 ✅ **Accepted — 2026-07-16.** Establishes the **rule** that decides which internal seam of the sealed
 runtime is safe to expose as a freely-implementable "bring your own X" interface and which is not, and
-**tiers** the seams by that rule. **Tier-1** (pure policy seams — SAFE, shipped now) is opened as six
+**tiers** the seams by that rule. **Tier-1** (pure policy seams — SAFE) is opened as six
 type aliases plus the functional options that install them, and the plugin loaders
-([ADR-0032](0032-plugin-ecosystem.md)). **Tier-2** (the isolation-critical memory backends) is
-**deliberately NOT** opened as raw interfaces in this change; its future opening is specified here as a
-**sealed-driver** design for a separate change. This ADR **extends**
+([ADR-0032](0032-plugin-ecosystem.md)); all six are wired end-to-end (the Reranker, initially
+exported-stored-only, is now applied on the semantic hydration path). **Tier-2** (the
+isolation-critical memory backends) is **deliberately NOT** opened as raw interfaces; it is opened as
+the **sealed-driver** design specified here — tenant-unaware drivers
+(`semantic.VectorBackend` / `facts.DocBackend`) behind runtime-owned sealed scoping decorators plus the
+`internal/plugintest` conformance suite, installed via `WithVectorBackend` / `WithFactsBackend`. This ADR **extends**
 [ADR-0016](0016-dual-surface-sealed-runtime-composition-sdk.md)'s sealed-kernel / composition-surface
 split (it operationalizes *which side of the seal* each seam is on) and
 [ADR-0013](0013-public-extension-surface-facade-vs-promote.md)'s façade (the aliases live in the same
@@ -67,35 +70,41 @@ opened LATER without ever handing out the read-authority.**
 - **Ship Tier-1** — the six policy aliases + their install options + the plugin loaders — as the
   genuine internal types the runtime consumes (façade contract, ADR-0013), so a consumer's value is the
   real seam, not a shadow copy.
-- **Prove Tier-1 is invocation-real, and be honest where it is not.** Each *wired* seam is proven
-  **invoked by the running in-process pipeline** by a spy implementation; the one seam that is exported
-  and stored but **not yet wired** (Reranker) is stated plainly and its non-wiring is asserted, not
-  hidden.
+- **Prove Tier-1 is invocation-real.** Each seam is proven **invoked by the running pipeline** by a spy
+  implementation. All six are now wired — the Reranker (initially exported-stored-only) is applied on
+  the semantic hydration path (streaming `/chat/stream`, `/ask`, bitrate hydrator) and proven invoked
+  over the real `/ask` route (`TestWithRerankerInvoked`) and at the hydration seam
+  (`TestHydrateSystemPrompt_AppliesReranker`).
 - **Guarantee Tier-1 cannot leak isolation.** None of the six enforce tenant isolation — it is enforced
   downstream in the ctx-scoped stores — so a community implementation, however wrong, cannot produce a
   cross-tenant read.
-- **Specify Tier-2's future opening as a sealed-driver design** (a separate change): a tenant-**unaware**
-  backend driver + a runtime-owned **sealed** scoping decorator no plugin can bypass + a conformance
-  suite. "Bring your own backend, not your own isolation."
+- **Open Tier-2 as a sealed-driver design:** tenant-**unaware** backend drivers
+  (`semantic.VectorBackend` / `facts.DocBackend`) + runtime-owned **sealed** scoping decorators no
+  plugin can bypass + the `internal/plugintest` conformance suite, installed via `WithVectorBackend` /
+  `WithFactsBackend`. "Bring your own backend, not your own isolation."
 
 ## Non-goals
 
 - **NOT** opening the memory backends (facts / semantic / working-memory stores), the tool `Registry`,
-  or the memory `Scope` / its constructors as raw interfaces in this change. They are the sealed kernel
-  (ADR-0016 L0); their opening is the Tier-2 sealed-driver design, deferred to a separate change.
-- **NOT** claiming all six Tier-1 seams are wired. **Five** are wired end-to-end; **Reranker** is
-  exported and stored but **not** consulted by the semantic hydration path yet — an honest, tested
-  exception, not a silent one.
+  or the memory `Scope` / its constructors as **raw** interfaces — ever. They are the sealed kernel
+  (ADR-0016 L0). The facts/semantic backends are opened only via the Tier-2 **sealed-driver** design
+  (tenant-unaware driver + runtime-owned scoping decorator); the working-memory store, tool `Registry`,
+  and `Scope` constructors remain runtime-owned with no consumer seam.
+- The Reranker is **not** a silent exception: it was shipped exported-stored-only first and its
+  non-wiring was asserted by test; it is **now wired** (applied on the semantic hydration path) and the
+  test flipped to assert invocation. All six Tier-1 seams are wired end-to-end.
 - **NOT** claiming the six are fully third-party-implementable from an EXTERNAL module today. Several
   method signatures reference internal-only payload types (`OutputCheckInput`/`Verdict`, `ScoredPoint`,
   `Message`, `Criterion`/`EvalSample`/`Score`, `Request`/`Decision`, `TenantTier`) that are **not
   re-exported yet** — a pending follow-up. Inside this module (and this repo's tests) all six are
   implementable; from an external module, the payload aliases are still owed.
-- **NOT** building `VectorBackend` / `KVBackend` / the sealed scoping decorator / the `plugintest`
-  conformance suite in this change. Those are the **specification** of the Tier-2 design; none exist in
-  the tree yet, and this ADR does not pretend they do.
-- **NOT** changing the HTTP contract or adding a dependency. Tier-1 is aliases + options over
-  already-vendored internals.
+- The Tier-2 drivers (`semantic.VectorBackend` / `facts.DocBackend`), their sealed scoping decorators
+  (`NewVectorBackendStore` / `NewDocBackendStore`), and the `internal/plugintest` conformance +
+  isolation-proof suite are **built and wired** (installed via `WithVectorBackend` / `WithFactsBackend`,
+  threaded through `startRuntime` + the shared `ensureSemantic` build path). The facts driver shipped as
+  `DocBackend` (the KV/document journal), not the placeholder name `KVBackend` used while specifying it.
+- **NOT** changing the HTTP contract. Tier-1 is aliases + options over already-vendored internals; the
+  Tier-2 drivers add no new dependency.
 
 ## Options considered
 
@@ -121,16 +130,17 @@ opened LATER without ever handing out the read-authority.**
   `semantic.Reranker`, `memory.Summarizer`, `eval.Judge`, `gateway.Policy`, `routing.Policy` — so a
   consumer's implementation **is** the exact value the runtime consumes, no adapter, no drift.
 
-### Tier-2: how to open the isolation-critical backends (later)
+### Tier-2: how to open the isolation-critical backends (as shipped)
 
 - **A raw `Store` interface (`Query`/`Upsert` taking arbitrary predicates).** Rejected — this is the
   leak: the plugin decides what to read, so isolation depends on the plugin getting scoping right.
-- **A tenant-UNAWARE driver + a runtime-owned SEALED scoping decorator (CHOSEN for the future change).**
-  The plugin implements a driver that knows **nothing** about tenants (`VectorBackend` / `KVBackend`:
-  put/get/search over opaque, already-partitioned keyspaces); the runtime wraps it in a **sealed**
-  decorator that derives the partition from `ctx` (ADR-0011) and that no plugin code can bypass or
-  reach around. A `plugintest` conformance suite proves a driver honors the contract. The plugin brings
-  storage; the runtime keeps isolation.
+- **A tenant-UNAWARE driver + a runtime-owned SEALED scoping decorator (CHOSEN, and shipped).**
+  The plugin implements a driver that knows **nothing** about tenants (`semantic.VectorBackend` /
+  `facts.DocBackend`: put/get/search over opaque, already-partitioned namespaces); the runtime wraps it
+  in a **sealed** decorator (`NewVectorBackendStore` / `NewDocBackendStore`) that derives the namespace
+  from `ctx` (ADR-0011) and that no plugin code can bypass or reach around. The `internal/plugintest`
+  conformance + isolation-proof suite proves a driver honors the contract. The plugin brings storage;
+  the runtime keeps isolation.
 
 ## Decision
 
@@ -159,7 +169,7 @@ the code and [`extend_test.go`](../../aisotropy/extend_test.go) show it** (each 
 | `EvalJudge` (`eval.Judge`) | `WithEvalJudge` | **WIRED** | Attached as the guardrails output judge **regardless** of the `AISOTROPY_GUARDRAILS_LLM_JUDGE` env toggle; scores every reply. Proven invoked — `TestWithEvalJudgeInvoked`. |
 | `ModelPolicy` (`gateway.Policy`) | `WithModelPolicy` | **WIRED** | Chained **FIRST** in the model-selection gateway (ahead of the built-in override/image/cost rules); consulted on every turn, and a concrete `Target` wins while an abstention falls through. Proven consulted — `TestWithModelPolicyInvoked`. |
 | `TenantRoutingPolicy` (`routing.Policy`) | `WithTenantRoutingPolicy` | **WIRED (active only with dedicated tenants)** | Replaces the static `AISOTROPY_DEDICATED_TENANTS` allowlist as the tier Router's policy. The Router is consulted only when a routing store exists (i.e. a dedicated-tenant allowlist is configured); with no dedicated tenants it is never consulted. Proven consulted under a configured allowlist — `TestWithTenantRoutingPolicyInvoked`. |
-| `Reranker` (`semantic.Reranker`) | `WithReranker` | **EXPORTED + STORED, NOT WIRED** | Captured on the App (`a.ext.reranker`); the semantic hydration path (`internal/api`) does **not** consult a `Reranker` yet, so a normal turn completes without calling `Rerank`, and `startRuntime` logs a warning that it is stored-not-applied. Retrieval-wiring is a named `internal/api` follow-up. Asserted stored-not-called — `TestWithRerankerStoredNotWired`. |
+| `Reranker` (`semantic.Reranker`) | `WithReranker` | **WIRED** | Threaded onto the runtime (`rt.reranker`) and consulted by the semantic hydration path (`internal/api` `hydrateSystemPrompt` → `searchSemanticContext`) on the streaming `/chat/stream` and stateless `/ask` routes and in the bitrate hydrator: when set it over-fetches an isolation-clean candidate pool and `Rerank` reorders/trims it to the injection window (ADR-0006/ADR-0033), running strictly **after** the per-scope isolation filter so it can never widen scope. Proven invoked over the real `/ask` route — `TestWithRerankerInvoked` (aisotropy) — and at the hydration seam — `TestHydrateSystemPrompt_AppliesReranker` (internal/api). Note: the working-memory-centric non-streaming `/chat`/`Turn` path has no semantic-RAG rerank stage, so a `Reranker` affects the streaming/ask/bitrate paths, not plain `Turn`. |
 
 Plus the **plugin loaders** `WithPlugin` / `WithPluginDir` (ADR-0032), wired and proven to merge a
 plugin-declared, scope-gated tool into the runtime tool registry
@@ -171,32 +181,39 @@ verdict, a reranked order, a condensed summary, a score). A hostile or buggy imp
 wrong *decision*, never a cross-tenant *read*. This is the safety that makes opening them raw
 acceptable.
 
-**Honest limitation (external implementability).** Five of the six are *wired* and all six are
+**Honest limitation (external implementability).** All six are *wired* and all six are
 implementable **inside this module and its tests today**. But full implementation from an **external**
 module still needs the payload types their signatures reference (`OutputCheckInput`/`Verdict`,
 `ScoredPoint`, `Message`, `Criterion`/`EvalSample`/`Score`, `Request`/`Decision`, `TenantTier`)
 re-exported as aliases — a pending follow-up documented in `extend.go`. "Aliased + wired" is not yet
 "externally implementable"; this ADR does not conflate them.
 
-### Tier-2 — the ISOLATION-CRITICAL backends (deliberately sealed; opened later by driver)
+### Tier-2 — the ISOLATION-CRITICAL backends (opened by sealed driver, never raw)
 
-The facts store (`facts.Store`), the semantic store (`semantic.Store`), working memory, the tool
-`Registry`, and the memory `Scope` and its constructors are **not** aliased into the extension surface
-and are **not** opened as raw interfaces. `extend.go` states this refusal explicitly ("Do not move a
-store interface into this file to 'make it pluggable'"), because a raw store interface would let an
-embedder bypass the "every `Scope` is built by the runtime from `ctx`" invariant (ADR-0011) that makes
-isolation hold by construction.
+The facts store (`facts.Store`) and the semantic store (`semantic.Store`) are **not** aliased into the
+extension surface as raw interfaces, and working memory, the tool `Registry`, and the memory `Scope`
+and its constructors are **not** opened at all. `extend.go` states this refusal explicitly ("Do not
+move a `facts.Store` / `semantic.Store` into this file to 'make it pluggable'"), because a raw store
+interface would let an embedder bypass the "every `Scope` is built by the runtime from `ctx`" invariant
+(ADR-0011) that makes isolation hold by construction.
 
-Their **future** opening (a separate change, **not built here**) is the sealed-driver design:
+The facts/semantic backends are instead opened via the sealed-driver design (built and wired,
+installed via `WithVectorBackend` / `WithFactsBackend`):
 
-- **A tenant-UNAWARE driver** — `VectorBackend` (put/get/search over an opaque, already-partitioned
-  vector keyspace) and `KVBackend` (the working-memory analogue). The driver knows storage, not
-  tenants: it never sees a `tenant_id`, only opaque partition keys the runtime chose.
-- **A runtime-owned SEALED scoping decorator** — wraps the driver, derives every partition key from the
-  ctx `Scope` (ADR-0011), and is **not bypassable** by plugin code (the plugin holds only the driver
-  handle, never the decorator). The read-authority never leaves the runtime.
-- **A `plugintest` conformance suite** — a table of cross-tenant, cross-user, and durability probes a
-  candidate driver must pass, so "bring your own backend" is verifiable, not trust-me.
+- **A tenant-UNAWARE driver** — `semantic.VectorBackend` (upsert/search/delete/scan over an opaque,
+  already-partitioned vector namespace) and `facts.DocBackend` (the document/task-journal analogue).
+  The driver knows storage, not tenants: it never sees a `tenant_id`, only opaque namespaces the runtime
+  chose (a SHA-256 over the `ctx` `Scope`).
+- **A runtime-owned SEALED scoping decorator** — `NewVectorBackendStore` / `NewDocBackendStore` wrap the
+  driver, derive every namespace from the ctx `Scope` (ADR-0011), and are **not bypassable** by plugin
+  code (the plugin holds only the driver handle, never the decorator). The read-authority never leaves
+  the runtime. `facts.DocBackend.ExportAll` is the single audited cross-tenant path (the sleep cycle's
+  export), reconstructing identity from stored fields.
+- **The `internal/plugintest` conformance suite** — `RunVectorBackendSuite` / `RunDocBackendSuite`, a
+  table of cross-tenant, cross-user, and durability probes (incl. the central isolation proof: a marker
+  written through the decorator for tenant A is invisible to tenant B, while physically present in the
+  raw backend under A's namespace) a candidate driver must pass, so "bring your own backend" is
+  verifiable, not trust-me.
 
 The slogan is the design: **bring your own backend, not your own isolation.**
 
@@ -214,23 +231,30 @@ tenants**. The read-authority is structurally retained by the runtime, by constr
 - **An extender (and a reviewer) has a rule, not a case-by-case judgment call.** Policy seam → safe to
   open raw; can-decide-what-data-is-read → sealed driver only. The rule is what keeps future "open
   seam X?" requests from silently regressing isolation.
-- **Tier-1 is real and honestly reported.** Five seams are proven invoked by the running pipeline; the
-  sixth (Reranker) is exported and stored but not wired, stated as such and asserted by test. No reader
-  can mistake "aliased" for "wired," or "wired inside the module" for "implementable from an external
-  module."
+- **Tier-1 is real and honestly reported.** All six seams are now proven invoked by the running
+  pipeline (the former stored-not-wired exception, `Reranker`, is APPLIED on the semantic hydration
+  path — streaming `/chat/stream`, `/ask`, and the bitrate hydrator — asserted by
+  `TestWithRerankerInvoked` and `TestHydrateSystemPrompt_AppliesReranker`). No reader can mistake
+  "aliased" for "wired," or "wired inside the module" for "implementable from an external module."
 - **Tier-1 is structurally incapable of leaking isolation.** Because isolation is enforced downstream
   in the ctx-scoped stores, a community policy implementation — however wrong — cannot produce a
   cross-tenant read. This is the property that justifies opening these six raw.
-- **Tier-2 stays sealed until it can be opened safely.** The memory backends are not raw interfaces;
-  their future opening is specified as a sealed-driver design (tenant-unaware driver + sealed decorator
-  + conformance suite) that is **not built in this change**. Nothing here overstates what exists.
+- **Tier-2 is now opened as designed — still sealed.** The memory backends are exposed not as raw
+  `Store` interfaces but as the specified sealed-driver design: tenant-unaware drivers
+  (`semantic.VectorBackend` / `facts.DocBackend`) behind runtime-owned sealed scoping decorators
+  (`semantic.NewVectorBackendStore` / `facts.NewDocBackendStore`, namespace derived from the
+  ctx-scoped `Scope`), plus the `internal/plugintest` conformance + isolation-proof suite. They are
+  installed via `WithVectorBackend` / `WithFactsBackend` (`aisotropy/extend.go`, wired through
+  `startRuntime` and the shared `ensureSemantic` build path). A community backend supplies persistence
+  but never sees, chooses, or can forge a tenant — the isolation guarantee does not degrade to the
+  weakest backend.
 - **The positioning is executable, not marketing.** "We seal the isolation competitors leak" is backed
-  by the rule, the Tier-1 downstream-enforcement property, and the Tier-2 sealed-driver design — not by
-  a claim. When Tier-2 ships, the conformance suite makes it verifiable.
-- **Named follow-ons (honest gaps).** Wiring the `Reranker` into the semantic hydration path; re-exporting
-  the Tier-1 payload types so the six are externally implementable; and building the Tier-2
-  `VectorBackend` / `KVBackend` + sealed decorator + `plugintest` suite — each is a distinct future
-  change, none in this cut.
+  by the rule, the Tier-1 downstream-enforcement property, and the shipped Tier-2 sealed-driver +
+  `plugintest` conformance suite — verifiable, not a claim.
+- **Named follow-ons (honest gaps).** Re-exporting the Tier-1 payload types and the Tier-2 driver
+  payload types (`BackendVector`/`BackendHit`, `BackendDoc`/`BackendDocHit`) so the seams are fully
+  implementable from an EXTERNAL module (today implementable inside this module) — a distinct future
+  change.
 
 ## References
 
@@ -246,18 +270,24 @@ tenants**. The read-authority is structurally retained by the runtime, by constr
   enforcement relies on) · [ADR-0007](0007-multitenancy-fisico-db-unica-vs-por-tenant.md) (the tiered
   multi-tenancy the `TenantRoutingPolicy` seam assigns) · [ADR-0002](0002-anti-framework-magic-struct-as-contract.md)
   (the aliases are the genuine internal types, no shadow contract) · [ADR-0006](0006-reranker-cohere-vs-bge-local.md)
-  (the reranking the `Reranker` seam would host once the retrieval path consults it)
+  (the reranking the `Reranker` seam hosts on the retrieval path)
 - **Tier-1 seams + wiring:** [`aisotropy/extend.go`](../../aisotropy/extend.go) (`GuardrailCheck`,
   `Reranker`, `Summarizer`, `EvalJudge`, `ModelPolicy`, `TenantRoutingPolicy`; `WithGuardrailCheck`,
   `WithReranker`, `WithSummarizer`, `WithEvalJudge`, `WithModelPolicy`, `WithTenantRoutingPolicy`,
   `WithPlugin`, `WithPluginDir`; `appExt`) · [`aisotropy/app.go`](../../aisotropy/app.go)
-  (`startRuntime` — the install points and the stored-not-wired Reranker warning) ·
+  (`startRuntime` — the install points, incl. threading the applied `Reranker` onto `rt.reranker` for
+  `RegisterStream`/`RegisterAsk`/the bitrate hydrator) ·
   [`aisotropy/extend_test.go`](../../aisotropy/extend_test.go) (the per-seam invocation spies:
   `TestWithGuardrailCheckInvoked`, `TestWithSummarizerInvoked`, `TestWithEvalJudgeInvoked`,
-  `TestWithModelPolicyInvoked`, `TestWithTenantRoutingPolicyInvoked`, `TestWithRerankerStoredNotWired`,
+  `TestWithModelPolicyInvoked`, `TestWithTenantRoutingPolicyInvoked`, `TestWithRerankerInvoked`,
   `TestWithPluginDirContributesTool`, `TestWithPluginFileContributesTool`,
   `TestNoOptionsRuntimeUnchanged`)
-- **Tier-2 sealed backends (not opened here):** [`internal/facts/facts.go`](../../internal/facts/facts.go)
-  (`Store`) · [`internal/semantic/semantic.go`](../../internal/semantic/semantic.go) (`Store`) ·
-  [`internal/tenancy`](../../internal/tenancy) (the `Scope`-from-`ctx` construction the sealed decorator
-  would derive from)
+- **Tier-2 sealed backends (opened as sealed drivers):**
+  [`internal/semantic/backend.go`](../../internal/semantic/backend.go) (`VectorBackend` driver +
+  `NewVectorBackendStore` sealed decorator) · [`internal/facts/backend.go`](../../internal/facts/backend.go)
+  (`DocBackend` driver + `NewDocBackendStore` sealed decorator) ·
+  [`internal/plugintest`](../../internal/plugintest) (the conformance + tenant-isolation-proof suites,
+  `RunVectorBackendSuite` / `RunDocBackendSuite`) · installed via `WithVectorBackend` /
+  `WithFactsBackend` (`aisotropy/extend.go`, wired in `startRuntime` + `ensureSemantic`) ·
+  [`internal/tenancy`](../../internal/tenancy) (the `Scope`-from-`ctx` construction the sealed
+  decorators derive the namespace from)

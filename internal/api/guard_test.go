@@ -108,7 +108,7 @@ func newGuardStreamRouter(t *testing.T, client llm.Client, wm *memory.WorkingMem
 	})
 	router := chi.NewRouter()
 	humaAPI := humachi.New(router, huma.DefaultConfig("guard-test", "0.1.0"))
-	RegisterStream(humaAPI, client, wm, store, nil, nil, nil, nil, nil, nil, nil, 0, 0, nil, nil, guard)
+	RegisterStream(humaAPI, client, wm, store, nil, nil, nil, nil, nil, nil, nil, nil, 0, 0, nil, nil, guard)
 	return router
 }
 
