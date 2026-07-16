@@ -62,8 +62,24 @@ your API key. The one privileged operation that spends the key (the model call) 
 in your process**. Only the *execution* of a tool the model chose is dispatched into a throwaway
 sandbox. The sandbox holds the agent's hands; the key stays in your wallet.
 
+```
+        HOST (your process)                     sandbox (container)
+┌────────────────────────────┐          ┌──────────────────────────┐
+│  BRAIN: Aisotropy calls the │          │  HANDS: shell / git /     │
+│  LLM   (the API KEY lives   │          │  files                    │
+│  here, never leaves)        │          │  (NO key)                 │
+│                             │ ─"run X"→│  runs the command         │
+│  ← decides the next step ───│ ←result─ │                           │
+└────────────────────────────┘          └──────────────────────────┘
+   the model call + the key                only commands cross the
+   stay on the host                        boundary — break into the
+                                           box, there is nothing to steal
+```
+
 This is the exact inverse of a coding-CLI-in-a-box, which must place the raw key *inside* the sandbox
-because the CLI calls the model from in there. `RunTask` has no field for a provider key, by design.
+because the CLI calls the model from in there. Sandcastle et al. cannot move the brain out without
+ceasing to wrap an external CLI and *becoming* the agent — which is Aisotropy's model, a full
+re-architecture. `RunTask` has no field for a provider key, by design.
 
 Depth: [ADR-0036: sandboxed task agent key-brokering](decisions/0036-sandboxed-task-agent-key-brokering.md)
 and the [threat model](architecture/threat-model.md).
