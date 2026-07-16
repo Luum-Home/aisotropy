@@ -60,6 +60,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "new":
+		return runNew(args[1:], stdout, stderr)
 	case "plugins":
 		return runPlugins(args[1:], stdout, stderr)
 	case "task":
@@ -79,6 +81,7 @@ func usage(w io.Writer) {
 	fmt.Fprint(w, `aisotropy — operator CLI for the Aisotropy runtime
 
 Usage:
+  aisotropy new <dir>                   Scaffold a new, runnable bot (persona + tool + dev chat)
   aisotropy plugins add <path-or-dir>   Install a plugin manifest (parse+validate, then copy in)
   aisotropy plugins list                List installed plugin manifests
   aisotropy plugins remove <name>       Uninstall a plugin by name

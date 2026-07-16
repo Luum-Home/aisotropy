@@ -1,0 +1,88 @@
+// Command {{.Module}} is a starter Aisotropy bot, scaffolded by `aisotropy new`.
+//
+// It is a COMPLETE, runnable shape: `go mod tidy` then `go run .` boots the
+// runtime on :8080 with a browser dev chat at http://localhost:8080/ui. Every
+// piece below is a seam you customize — the persona is the bot's voice, the
+// typed tool is the bot's hands, and the options on aisotropy.New wire the rest.
+//
+// What you almost certainly want to change first:
+//   - persona (below): the base system prompt for your product.
+//   - the example tool (greetArgs/greet): replace it with a real capability.
+//   - product_id: the dev UI sends "dev-ui" (see devUIProduct); real clients
+//     send their own product_id and unregistered ids fall back to the built-in
+//     default persona.
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/Luum-Home/aisotropy/aisotropy"
+)
+
+// devUIProduct is the product_id the built-in dev UI sends by default (its
+// product_id field is pre-filled with this value). Registering the persona
+// under this id means the dev chat at /ui speaks with YOUR persona out of the
+// box. A real client picks its own product_id per request; any id you have not
+// registered with WithPersona falls back to the runtime's default persona.
+const devUIProduct = "dev-ui"
+
+// greetArgs is the typed argument struct for the example tool. This single
+// struct drives three things at once (the "struct as the single contract"
+// thesis): the JSON Schema the model is shown, the decoding of the model's
+// returned arguments, and fail-closed validation if those arguments do not fit.
+// Add fields with json/jsonschema tags to grow the tool's input shape.
+type greetArgs struct {
+	// Name is who to greet. The jsonschema tag becomes the field's description
+	// in the schema advertised to the model.
+	Name string `json:"name" jsonschema:"description=The name of the person to greet"`
+}
+
+func main() {
+	// New builds the App from env-driven defaults (LLM client, memory tiers,
+	// listen address) plus the options below. With no ANTHROPIC_API_KEY set it
+	// uses the keyless stub client, so this runs with zero configuration.
+	app := aisotropy.New(
+		// WithPersona registers the base system prompt for a product_id. Edit
+		// the prompt to define your bot's voice, scope, and guardrails.
+		aisotropy.WithPersona(devUIProduct, aisotropy.Persona{
+			BasePrompt: "You are a friendly starter assistant built on Aisotropy. " +
+				"Be concise and helpful. When a user wants to be greeted by name, " +
+				"call the greet tool.",
+		}),
+
+		// WithTypedTool registers a tool whose arguments are a Go struct. The
+		// empty requiredScope means the tool is always offered to the model;
+		// pass a scope string to gate it behind a granted request scope.
+		aisotropy.WithTypedTool("greet", "Greet a person by name.", "",
+			func(ctx context.Context, args greetArgs) (string, error) {
+				name := args.Name
+				if name == "" {
+					name = "there"
+				}
+				return fmt.Sprintf("Hello, %s! Welcome to your new Aisotropy bot.", name), nil
+			}),
+
+		// WithDevUI mounts an unauthenticated single-page dev chat at /ui. It is
+		// a DEVELOPMENT CONVENIENCE, not a production UI — remove this option (or
+		// build your own frontend on the /chat/agui or /chat/aisdk adapters)
+		// before you ship.
+		aisotropy.WithDevUI(),
+
+		// WithAuthenticator(NoAuth()) trusts the tenant_id/user_id in the request
+		// path with no credential check, so the dev UI works keylessly. This is
+		// NOT safe for any non-local deployment: swap in NewJWTAuthenticator (or
+		// set AISOTROPY_JWT_SECRET for the server binary) before exposing this.
+		aisotropy.WithAuthenticator(aisotropy.NoAuth()),
+	)
+
+	log.Println("starting {{.Module}} on :8080 — open http://localhost:8080/ui")
+
+	// Run blocks serving HTTP until the context is cancelled or SIGINT/SIGTERM
+	// arrives, then shuts down gracefully. It returns nil on a clean shutdown and
+	// a non-nil error only if the HTTP server itself fails to start or serve.
+	if err := app.Run(context.Background()); err != nil {
+		log.Fatalf("{{.Module}}: %v", err)
+	}
+}

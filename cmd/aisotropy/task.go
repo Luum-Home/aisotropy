@@ -137,6 +137,10 @@ func reorderFlagsFirst(args []string) []string {
 		"-provider": true, "--provider": true,
 		"-image": true, "--image": true,
 		"-max-steps": true, "--max-steps": true,
+		// The `new` subcommand shares this permutation helper; its --module flag
+		// takes a value too, so it must be listed here to be pulled along with
+		// its argument when it appears before the positional <dir>.
+		"-module": true, "--module": true,
 	}
 	var flags, pos []string
 	for i := 0; i < len(args); i++ {

@@ -1,0 +1,15 @@
+# Compiled binary (this module's name, plus any ad-hoc build output).
+/{{.Module}}
+*.exe
+*.out
+
+# On-disk runtime data if you set AISOTROPY_DATA_DIR to a local path.
+/data/
+
+# Local environment overrides — never commit secrets (e.g. ANTHROPIC_API_KEY).
+.env
+.env.local
+
+# Editor / OS noise.
+.DS_Store
+*.swp

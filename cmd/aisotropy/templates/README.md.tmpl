@@ -1,0 +1,54 @@
+# {{.Module}}
+
+A starter bot built on the [Aisotropy](https://github.com/Luum-Home/aisotropy)
+in-process LLM runtime, scaffolded with `aisotropy new`. It is a complete,
+runnable shape — a persona, one example tool, and a browser dev chat — ready for
+you to customize.
+
+## Run it
+
+```sh
+go mod tidy          # resolve and pin the aisotropy dependency
+go run .              # boots the runtime on :8080
+```
+
+Then open the built-in dev chat:
+
+<http://localhost:8080/ui>
+
+No API key is required: with `ANTHROPIC_API_KEY` unset the runtime uses a keyless
+stub client, so the loop completes and you can exercise the wiring. Set a real
+key for real model responses:
+
+```sh
+export ANTHROPIC_API_KEY=sk-...
+go run .
+```
+
+## What you get
+
+- **A persona** — the base system prompt in `main.go`. It is registered under the
+  product_id `dev-ui`, which is exactly the product_id the dev chat sends by
+  default, so the chat speaks with your persona out of the box.
+- **One example tool** — `greet`, a typed tool (`greetArgs`) the model can call.
+  Replace it with a real capability; the argument struct drives the model-facing
+  schema, decoding, and validation all at once.
+- **A dev chat at `/ui`** — a self-contained, single-page chat for local
+  iteration.
+
+## Not for production
+
+Two things in `main.go` are development conveniences and are **not safe to
+ship**:
+
+- `WithDevUI()` mounts an **unauthenticated** single-page UI. Remove it (and
+  build your own frontend on the `/chat/agui` or `/chat/aisdk` adapters) before
+  you deploy.
+- `WithAuthenticator(NoAuth())` trusts the tenant/user in the request path with
+  no credential check. Swap in `NewJWTAuthenticator` before exposing the service.
+
+## Customize
+
+Open `main.go` — it is fully commented. Start with the persona `BasePrompt`, then
+replace the `greet` tool with something your bot should actually do. Add more
+tools with additional `WithTypedTool(...)` options.
