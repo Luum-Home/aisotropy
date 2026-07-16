@@ -61,3 +61,4 @@ crates/*/target/
 /examples/auth-scopes/auth-scopes
 /examples/knowledge-rag/knowledge-rag
 /examples/serve-http/serve-http
+/examples/guardrail-policy/guardrail-policy

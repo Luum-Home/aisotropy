@@ -44,10 +44,12 @@
 // in the bitrate "with memory" measurement, over an isolation-clean over-fetched
 // candidate pool (ADR-0033). Separately, some policy seams are still not fully
 // third-party-implementable from an EXTERNAL module: their method signatures
-// reference internal-only supporting types (the OutputCheckInput/Verdict,
-// ScoredPoint, Message, Criterion/EvalSample/Score, Request/Decision, TenantTier
-// payloads) that are not re-exported here yet — a pending follow-up. Inside this
-// module (and this repo's tests) all are implementable today.
+// reference internal-only supporting types (ScoredPoint, Message,
+// Criterion/EvalSample/Score, Request/Decision, TenantTier payloads) that are not
+// re-exported here yet — a pending follow-up. GuardrailCheck is the exception: its
+// payload types ARE re-exported (GuardrailCheckInput / GuardrailVerdict), so it is
+// fully implementable from an external module today. Inside this module (and this
+// repo's tests) all seams are implementable.
 package aisotropy
 
 import (
@@ -71,18 +73,29 @@ import (
 //	Name() string
 //	Check(ctx context.Context, in GuardrailCheckInput) GuardrailVerdict
 //
-// The Check payload (guardrails.OutputCheckInput) and the returned
-// guardrails.Verdict are not re-exported yet, so implementing GuardrailCheck
-// from an external module still requires those payload aliases — a pending
-// follow-up. Implementations MUST be safe under a cancellable context, MUST NOT
-// panic, and should fail open (return a non-Suspicious Verdict) on their own
-// internal error, per the integrator's policy.
+// The Check payload and the returned verdict are re-exported below
+// (GuardrailCheckInput / GuardrailVerdict), so GuardrailCheck is fully
+// implementable from an external module — no internal import required.
+// Implementations MUST be safe under a cancellable context, MUST NOT panic, and
+// should fail open (return a non-Suspicious verdict) on their own internal error,
+// per the integrator's policy.
 //
 // Note: internal/guardrails intentionally exposes NO input-side check
 // interface — only this output seam exists — so there is no InputCheck alias to
 // add. Input-side defence (prompt-injection / redaction) is built in and not a
 // consumer seam.
 type GuardrailCheck = guardrails.OutputCheck
+
+// GuardrailCheckInput is the payload a GuardrailCheck.Check receives: the
+// original user Input, the model's Output under inspection, and the SystemPrompt
+// in force (any field may be empty). Re-exported so an external module can
+// implement GuardrailCheck against the public façade alone.
+type GuardrailCheckInput = guardrails.OutputCheckInput
+
+// GuardrailVerdict is what a GuardrailCheck.Check returns: Suspicious (true =
+// flag/refuse the reply), the Signals that fired, and a Score. Its fields are
+// public, so an external check constructs one as a plain struct literal.
+type GuardrailVerdict = guardrails.Verdict
 
 // Reranker reorders and trims the ANN candidates hydrated for a request before
 // they enter the model's context, so only the few most relevant fragments are
