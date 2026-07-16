@@ -53,6 +53,14 @@ type RunTasksOptions struct {
 	// NOT be goroutine-safe. Keep it cheap and non-blocking — it runs on a worker
 	// goroutine; do any SSE/fan-out work asynchronously.
 	OnEvent func(TaskEvent)
+
+	// SessionStore is a batch-wide default persistence backend applied to every
+	// task that does not set its own TaskRequest.SessionStore — the ergonomic way
+	// to give a whole fan-out one shared, tenant-scoped session store. A task with
+	// its own store keeps it; a task with an empty SessionID persists nothing
+	// regardless. nil (the default) leaves per-task stores untouched. See
+	// TaskSessionStore / NewInMemoryTaskSessions / OpenTaskSessions.
+	SessionStore TaskSessionStore
 }
 
 // RunTasks runs many sandboxed agentic coding tasks CONCURRENTLY — a fan-out over
@@ -92,6 +100,13 @@ func (a *App) RunTasks(ctx context.Context, reqs []TaskRequest, opts RunTasksOpt
 
 	ireqs := make([]taskagent.Request, len(reqs))
 	for i, r := range reqs {
+		// A task's own store wins; otherwise the batch-wide default (if any) is
+		// applied, so a whole fan-out can share one session store without setting
+		// it on every request.
+		store := r.SessionStore
+		if store == nil {
+			store = opts.SessionStore
+		}
 		ireqs[i] = taskagent.Request{
 			RepoDir:        r.RepoDir,
 			Prompt:         r.Prompt,
@@ -101,6 +116,9 @@ func (a *App) RunTasks(ctx context.Context, reqs []TaskRequest, opts RunTasksOpt
 			OnLine:         r.OnLine,
 			Provider:       r.Provider,
 			BranchStrategy: r.BranchStrategy,
+			SessionID:      r.SessionID,
+			Resume:         r.Resume,
+			SessionStore:   store,
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	osexec "os/exec"
 	"sync"
@@ -89,6 +90,28 @@ type Request struct {
 	// the Sandbox past RunTask's return. A returned error aborts the task.
 	OnReady func(ctx context.Context, sb sandbox.Sandbox) error
 
+	// SessionID, when non-empty AND paired with a non-nil SessionStore, makes
+	// this run part of a resumable, tenant-scoped task session: after the run its
+	// step trace + prompt are persisted under (tenant, user, SessionID) — tenant
+	// and user read from ctx, never a data field (the multi-tenancy gate) — so a
+	// later run with Resume set can rehydrate the agent's context. Empty (or a nil
+	// SessionStore) disables persistence entirely. See session.go.
+	SessionID string
+	// Resume, when true, rehydrates a prior run's step trace + prompt for this
+	// SessionID and injects it into the agent loop's prompt (see resumePrompt)
+	// instead of starting cold. It requires a non-empty SessionID and a non-nil
+	// SessionStore; set without them it is a hard error (a resume that could
+	// silently start cold would be a lie). A resume of a session with no prior
+	// state is NOT an error — it simply starts cold. The resumed run gets a FRESH
+	// sandbox + worktree; only the agent's CONTEXT is restored, never the
+	// filesystem (the prior commits are already merged into HEAD).
+	Resume bool
+	// SessionStore is the persistence seam a SessionID run writes to and a Resume
+	// run reads from. nil (the default) disables session persistence/resume. It
+	// MUST scope every read/write to the full (tenant, user, session) key so one
+	// session can never observe another's state.
+	SessionStore SessionStore
+
 	// repoGate, when non-nil, serializes this task's SHARED-REPO git-metadata
 	// mutations — the worktree Add and the merge-to-HEAD — against sibling tasks
 	// running concurrently against the SAME RepoDir. It is set only by RunTasks
@@ -160,6 +183,41 @@ func RunTask(ctx context.Context, client llm.Client, tracer oteltrace.TracerProv
 		provider = sandbox.NewDockerProvider()
 	}
 
+	// Session resume (see session.go): a run is "session-active" only when both a
+	// store and a SessionID are supplied. Resume without them is a hard error — a
+	// resume that silently started cold would misrepresent what happened. When
+	// resuming, the prior step trace is loaded and folded into the prompt the loop
+	// sees (resumePrompt); the prior steps are also carried forward so the saved
+	// trace accumulates across resumes. The run itself still gets a fresh
+	// sandbox+worktree below — only the agent's CONTEXT is rehydrated, never the
+	// filesystem (the prior commits are already at HEAD).
+	sessionActive := req.SessionStore != nil && req.SessionID != ""
+	if req.Resume && !sessionActive {
+		return Result{}, errors.New("taskagent: Resume requires a non-empty SessionID and a non-nil SessionStore")
+	}
+	var (
+		sessKey    SessionKey
+		priorSteps []AgentStep
+	)
+	prompt := req.Prompt
+	if sessionActive {
+		var err error
+		sessKey, err = resolveSessionKey(ctx, req.SessionID)
+		if err != nil {
+			return Result{}, fmt.Errorf("taskagent: resolve session key: %w", err)
+		}
+		if req.Resume {
+			prior, found, lerr := req.SessionStore.Load(ctx, sessKey)
+			if lerr != nil {
+				return Result{}, fmt.Errorf("taskagent: load session %q: %w", req.SessionID, lerr)
+			}
+			if found {
+				priorSteps = prior.Steps
+				prompt = resumePrompt(prior, req.Prompt)
+			}
+		}
+	}
+
 	// Isolated worktree on a fresh task branch. Creating a worktree mutates the
 	// shared repo (a new branch ref, the worktree admin dir, a HEAD reflog entry),
 	// so under a fan-out it is serialized per-repo via repoGate — concurrent
@@ -210,7 +268,7 @@ func RunTask(ctx context.Context, client llm.Client, tracer oteltrace.TracerProv
 	exec := &sandboxExecutor{sb: sb, worktreeDir: add.Path, onLine: req.OnLine, onStep: req.onStep}
 	registry := handsRegistry()
 
-	steps, err := runLoop(ctx, client, tracer, registry, exec, req.Scopes, req.Prompt, maxSteps)
+	steps, err := runLoop(ctx, client, tracer, registry, exec, req.Scopes, prompt, maxSteps)
 	if err != nil {
 		return Result{}, err
 	}
@@ -237,6 +295,19 @@ func RunTask(ctx context.Context, client llm.Client, tracer oteltrace.TracerProv
 			if err := gatedMergeToHead(ctx, wt, req.repoGate, req.RepoDir, add.Branch); err != nil {
 				return res, fmt.Errorf("taskagent: merge to head: %w", err)
 			}
+		}
+	}
+
+	// Persist the session's step trace for a future Resume. The run's real work
+	// (the merged commits) has already landed, so a persistence failure must NOT
+	// fail the task and discard a successful result — it is logged best-effort,
+	// exactly like the chat path treats a working-memory write failure. The saved
+	// trace accumulates: prior steps (from a resume) are carried forward ahead of
+	// this run's, so the next resume sees the whole history.
+	if sessionActive {
+		merged := append(append([]AgentStep(nil), priorSteps...), steps...)
+		if err := req.SessionStore.Save(ctx, sessKey, SessionState{Prompt: req.Prompt, Steps: merged}); err != nil {
+			slog.WarnContext(ctx, "taskagent: failed to persist task session state", "session", req.SessionID, "err", err)
 		}
 	}
 	return res, nil
