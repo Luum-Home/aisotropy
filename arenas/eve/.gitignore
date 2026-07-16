@@ -1,0 +1,6 @@
+# eve build + durable-state output — never commit
+.eve/
+.output/
+.nitro/
+node_modules/
+*.log

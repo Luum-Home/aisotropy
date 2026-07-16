@@ -1,0 +1,6 @@
+# Maven build output — never commit compiled classes or jars.
+target/
+cp.txt
+
+# Maven wrapper jar (binary) if bootstrapped locally.
+.mvn/wrapper/maven-wrapper.jar

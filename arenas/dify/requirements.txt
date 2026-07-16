@@ -1,0 +1,18 @@
+# Dify arena — harness deps.
+#
+# Dify has NO in-process/embeddable Python library. It is a Flask + Celery +
+# Postgres + Redis SERVER platform; the only way to run an Orbit agent is to POST
+# to a live Dify server's REST API (see orbit/agent.py). This offline arena does
+# NOT boot that stack. Instead it does a SOURCE-GROUNDED analysis: the isolation
+# smoke transcribes Dify's real multi-tenant schema (verified against
+# langgenius/dify @ 1aea3460) and replicates its app-layer tenant-filter contract
+# using Dify's OWN ORM — SQLAlchemy 2.0 — so the correct vs. leaky read are
+# exactly as far apart as in the real codebase.
+SQLAlchemy>=2.0
+
+# Isolation matrix as executable tests.
+pytest>=8.0.0
+
+# Dependency license-posture scan (Part A is a real executed scan of this venv;
+# Part B classifies Dify's own manifest from source — see scripts/license_scan.txt).
+pip-licenses>=5.0

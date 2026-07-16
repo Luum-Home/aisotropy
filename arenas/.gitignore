@@ -20,3 +20,16 @@ node_modules/
 /genkit-go/parity
 /genkit-go/costobs
 /genkit-go/server
+
+# Java / Spring build output
+target/
+*.class
+*.jar
+# eve (filesystem-first) build + runtime dirs
+.eve/
+.output/
+# Cloudflare / wrangler local state
+.wrangler/
+# misc build/cache
+dist/
+.turbo/

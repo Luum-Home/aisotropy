@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.aisotropy.arena</groupId>
+    <artifactId>spring-ai-orbit</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>Spring AI Orbit Arena</name>
+    <description>Multi-tenant Orbit support chatbot on the REAL Spring AI API (no provider key, fake ChatModel).</description>
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- Pinned: latest Spring AI 1.x GA line (2.0.0 GA also exists; core memory/advisor/
+             structured-output API is identical across both). -->
+        <spring-ai.version>1.1.8</spring-ai.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- ChatClient, ChatMemory/ChatMemoryRepository, MessageChatMemoryAdvisor,
+             MessageWindowChatMemory, InMemoryChatMemoryRepository -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-client-chat</artifactId>
+        </dependency>
+        <!-- ChatModel/StreamingChatModel, Prompt/Message/ChatResponse, BeanOutputConverter -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-model</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>

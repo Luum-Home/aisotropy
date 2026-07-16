@@ -9,8 +9,12 @@ timestamp: 2026-07-16T00:00:00Z
 # ARENA-SPEC v2 — Authoritative feature catalog of the aisotropy runtime
 
 This document is the **source-of-truth catalog** of every distinct capability the aisotropy runtime
-offers, for a complete feature-parity comparison against the 7 arenas already smoke-tested in
-[`arenas/README.md`](README.md): **Pydantic AI, Mastra, LangGraph, Eino, ADK Go, Genkit Go, Letta**.
+offers, for a complete feature-parity comparison against the arenas smoke-tested in
+[`arenas/README.md`](README.md): the original 7 — **Pydantic AI, Mastra, LangGraph, Eino, ADK Go,
+Genkit Go, Letta** — plus 5 new entrants folded in below — **Dify, Cloudflare Agents, Spring AI,
+Flue, eve** (12 arenas total; the adjacent, out-of-category **sandcastle** is noted honestly in the
+README). Four of the five new entrants ran as REAL offline integrations; Dify is SOURCE-VERIFIED,
+NOT EXECUTED (see the [v2 expansion matrix](#summary-table--the-5-new-entrants-v2-expansion-12-arenas--aisotropy)).
 
 Everything below is **grounded in the built docs** — no general knowledge, no invention. Each feature
 cites the doc that describes it. Where the docs distinguish REAL vs CODE-ONLY vs ASPIRATIONAL (the
@@ -448,6 +452,81 @@ matters here: **isolation,
 tiered memory, and pre-spend governance** — where every arena either falls to CONVENTION/DIY or
 hits a structural NOT-POSSIBLE, and aisotropy is by-construction.
 
+---
+
+## Summary table — the 5 new entrants (v2 expansion: 12 arenas + aisotropy)
+
+Five frameworks are folded into the comparison after the original seven: **Dify** (Python
+Flask+Celery platform), **Cloudflare Agents** (TS on Workers + Durable Objects), **Spring AI**
+(Java/JVM), **Flue** (TS durable-agent harness, Astro team), and **eve** (TS filesystem-first
+durable agents, Vercel). Four ran as **REAL** offline integrations against the pinned upstream
+framework (Cloudflare Agents `agents@0.17.4` in real `workerd`, Spring AI `1.1.8` on JDK 26, Flue
+`@flue/runtime@1.0.0-beta.9`, eve `0.24.5` — all smokes exit 0); **Dify is SOURCE-VERIFIED, NOT
+EXECUTED** (it is a multi-container server platform with no in-process library — cloned at HEAD
+`1aea3460`, read line-by-line, its real schema transcribed into its own ORM for a labelled
+behavioral smoke). Cells for Dify are marked **source-verified**, never **executed**.
+
+The matrix below carries the rows the dossier grounds line-by-line: the **memory-tier rows**
+(1.1–1.4), the **isolation rows** (4.1 tenant, 4.2 value-object Scope, 4.3 in-scan filter, 4.7
+product — the tenant/user/product axes), the **pre-spend governance** and **transactional-outbox**
+rows (5.1, 7.1), and the **license-posture rows** (5.6 self-hostable multi-tenant, 5.7 scanned dep
+tree). Coverage classes are the same legend (`BUILT-IN` / `CONVENTION` / `PARTIAL` / `DIY` / `PAID`
+/ `NOT-POSSIBLE`); the "▶ run / S src" tag states whether that arena's cell was executed or
+source-verified.
+
+| # | Feature | Dify (Py, src) | Cloudflare Agents (TS/Workers, ▶) | Spring AI (JVM, ▶) | Flue (TS, ▶) | eve (TS, ▶) | **aisotropy** |
+|---|---|---|---|---|---|---|---|
+| 1.1 | Temperature hierarchy (4-tier of different nature) | PARTIAL — 2 surfaces (SQL convo + per-dataset vector); no FTS facts, no batch *(src)* | PARTIAL — one per-DO SQLite (FTS5 available → facts DIY-on-primitive); not 4 tiers | PARTIAL — message-window `ChatMemory` + separate `VectorStore`; no FTS, no batch | **NOT-POSSIBLE** — durable transcript only; facts/vector/sleep 100% DIY | **NOT-POSSIBLE** — one session KV + history + sandbox FS; no vector/FTS/batch | REAL (4 stores of different nature) |
+| 1.2 | Working memory (in-process, µs) | BUILT-IN — SQL conversation/message history *(src; server SQL, not µs)* | BUILT-IN — in-process per-DO SQLite (hydrated:2 proven ▶) | BUILT-IN — `MessageWindowChatMemory` (hydration + window-evict 4/6 ▶) | PARTIAL — durable canonical conversation stream (crash-safe recall ▶) | BUILT-IN — session-scoped KV + history (crash-resume ▶) | REAL (BadgerDB) |
+| 1.3 | Facts memory (FTS/keyword journal) | DIY — no FTS facts journal *(src)* | DIY — FTS5 present in DO SQLite but journal is BYO | DIY — no FTS/facts tier | DIY — durable db is not a facts journal | DIY — no FTS tier | REAL (SQLite+FTS5) |
+| 1.4 | Semantic memory (vectors) | BUILT-IN — per-dataset vector store (RAG plane) *(src)* | DIY — Vectorize/AutoRAG is rented, not in-tree | PARTIAL — `VectorStore` (separate module, src-verified) | DIY — no vector/RAG tier | DIY — no vector tier | REAL (cosine) / CODE-ONLY (Qdrant) |
+| 4.1 | Multi-tenant isolation | CONVENTION — shared-schema `tenant_id` discriminator, hand-written `.where()`, **no RLS**; `Conversation` has no `tenant_id` (scope transitive via `app_id`) *(leak run-reproduced, src ORM)* | **BUILT-IN storage boundary by construction** — one Durable Object = one physically separate SQLite; cross-object read unrepresentable (6/6 ▶). *But the (t,u,p)→object name is dev-CONVENTION, and the whole boundary is RENTED* | CONVENTION — opaque `conversationId` bound to nothing; `findConversationIds()` returns every tenant's ids (leaks reproduced ▶) | CONVENTION — one opaque instance-`id`; per-instance stream isolated by-construction, but tenant/user/product folded in and Flue authenticates nothing (dev writes the route guard) | CONVENTION (memory axis) — **no tenant/user/product concept**; session-scoped; per-(t,u,p) memory is a dev-built string key | REAL (by construction) |
+| 4.2 | Value-object Scope (unforgeable) | DIY — no Scope type; bare `tenant_id` column *(src)* | DIY — the DO name is a bare string bound to nothing | DIY — `conversationId` is a bare unescaped string | DIY — bare instance-`id` string, no Scope | DIY — hand-concatenated `${t}:${u}:${p}` key | REAL (by construction) |
+| 4.3 | Qdrant-style in-scan payload filter | CONVENTION — app-layer `.where(tenant_id==?)`, no in-scan RLS *(src)* | BUILT-IN — physically separate DBs (no cross-object scan exists) / but semantic tier itself is rented | DIY — `VectorStore` filtering is BYO | DIY — no vector tier to filter | DIY — no vector tier to filter | REAL (by construction) |
+| 4.7 | Multi-product isolation (4th axis) ▶ | CONVENTION — **no `product_id` column exists anywhere**; a "product" is `app_id` convention or an unbound tag; RAG plane has no product boundary (cross-product leak run-reproduced) | CONVENTION — drop the `product_id` name segment → two products collapse onto ONE object + one SQLite (leak proven in workerd); same mis-assembled-key class | CONVENTION — cross-product leaks reproduced incl. a **delimiter-injection collision** (two identities → identical flat key) ▶ | CONVENTION — cross-product leak reproduced one token apart (routed billing convo to analytics id → read analytics secret) ▶ | CONVENTION — leaky key `${t}:${u}` returns product=checkout's secret on a product=billing read (`proven_cross_product_leaks=1`) ▶ | REAL (by construction) |
+| 5.1 | Per-tenant PRE-SPEND quota gate | DIY — real per-message USD cost field, but no pre-spend per-tenant gate *(src)* | DIY — no pre-spend quota gate, cost meter, or guardrails (all DIY) | DIY — no pre-spend gate/breaker/per-tenant meter | DIY — per-call cost estimate incl. `usage.cost` (PARTIAL), but no pre-spend gate | DIY — usage is post-hoc, no pre-spend per-tenant governance | REAL (per-tenant, by construction) |
+| 7.1 | Transactional outbox (atomic msg+intent) | **NOT-POSSIBLE** — Celery tasks enqueued separately from DB writes; no atomic row+intent co-commit *(src)* | PARTIAL — a single DO's transactional SQLite makes an atomic turn+intent write *within one object* achievable | PARTIAL — the one arena where atomic msg+intent is buildable in-process (shared JDBC `DataSource` + `@Transactional`) | PARTIAL — `dispatch()`→ordered canonical stream durably couples submission→conversation (at-least-once + idempotency keys), but not a memory-tier consolidation intent | DIY — durable session, but one store; no separate consolidation-intent plane | REAL |
+| 5.6 | License 100% MIT/Apache, self-hostable multi-tenant | **HARD BLOCKER** — modified Apache-2.0 §1a **forbids operating a multi-tenant environment** without a paid commercial license; Orbit is precisely the prohibited use (same class as BSL/SSPL/ELv2) *(src, quoted verbatim)* | PARTIAL — SDK is MIT, but the **RUNTIME is RENTED** (Durable Objects run only on Cloudflare; not self-hostable OSS) | BUILT-IN — Apache-2.0, 100% permissive tree, fully self-hostable, no SaaS gate anywhere | BUILT-IN — Apache-2.0 core, self-hostable multi-tenant (not the strict MIT/Apache line: BSD/ISC + weak-copyleft leaves) | BUILT-IN — Apache-2.0 (eve + `ai` both), permissive (some runtime surfaces — Sandbox/AI Gateway — rented) | REAL (100% MIT/Apache by construction) |
+| 5.7 | Dependency license posture (scanned) † | PERMISSIVE (src-classified) — 39/41 direct backend deps permissive; 2 weak-copyleft LGPL-3.0 leaves (psycopg2-binary, gmpy2) = CAUTION; 0 GPL/AGPL, 0 BUSL/SSPL. *(harness venv scan real 7/7; full tree src-declared)* | PERMISSIVE ▶ — prod 184 pkgs (157 MIT/16 ISC/…); +2 weak-copyleft MPL-2.0 (lightningcss) = CAUTION; 0 hard blockers | PERMISSIVE ▶ — 41-dep tree, ~31 Apache/4 MIT/4 BSD/1 CC0; **0 MPL, a pure permissive line**; cleaner than the Python arenas | PERMISSIVE ▶ — 319/323 permissive; 4 weak-copyleft build/CLI native leaves (MPL/LGPL) = CAUTION; 0 hard blockers | PERMISSIVE ▶ — 25 MIT + 7 Apache + 1 dual; 0 hard blockers, 0 MPL | REAL (100% MIT/Apache gate) |
+
+**Note on Dify's two license rows.** Row 5.7 (the *dependency tree*) clears the hard-blocker gate —
+its deps are permissive. But row 5.6 (the *project's own license and field-of-use*) is the headline:
+Dify's modified Apache-2.0 forbids operating a multi-tenant environment without a paid commercial
+license, and Orbit — a multi-tenant support chatbot — is exactly that prohibited use. So Dify is the
+one arena whose **own license** blocks the Orbit use case, independent of a clean dependency scan.
+
+**Note on Cloudflare's two isolation classes.** Cloudflare Agents is the only entrant that *deletes
+the shared store* — two names = two physically separate SQLite DBs, and a cross-object read is
+unrepresentable (strongest storage boundary in the whole field, stronger than the original seven).
+But two caveats, both proven in real `workerd`: (1) the `(tenant,user,product)→object` mapping is a
+developer-assembled name string the framework binds to nothing — the *same* mis-assembled-key
+failure class as Eino/LangGraph, just landing in a separately-isolated store; and (2) the guarantee
+is a **RENTED** Cloudflare-platform property (Durable Objects run only on Cloudflare; `workerd`
+simulates them locally for dev). It wins the storage-boundary lane and loses the
+self-hostable-sovereignty lane.
+
+### BUILT-IN tally per new arena (across the 42 coverage-class rows, dossier-grounded)
+
+| Class | Cloudflare Agents ▶ | Spring AI ▶ | Flue ▶ | eve ▶ | Dify (src) |
+|---|---|---|---|---|---|
+| BUILT-IN | 3 | 8 | 6 | ~6–7 | source-verified only |
+| PARTIAL | 8 | 11 | (distinctive cluster) | ~11 | (2 memory surfaces) |
+| CONVENTION | 2 | ~3 | 2–3 | 3 | (app-layer, no RLS) |
+| DIY | 28 | 20 | ~24 | ~15 | (facts, outbox) |
+| PAID | 0 | 0 | 0 | 0 | 0 |
+| NOT-POSSIBLE | 1 (subprocess boundary) | 0 | 1 (row 1.1) | 1 (row 1.1) | outbox NOT-POSSIBLE |
+
+Reading the new tally: **Spring AI (8 BUILT-IN, 0 PAID, 0 NOT-POSSIBLE)** is the JVM's richest
+self-hostable agent SDK — the Spring ecosystem (Security, Actuator, Micrometer, `@Transactional`)
+turns every gap into idiomatic DIY, and it is the *only* new entrant where atomic msg+intent is
+buildable in-process. **Cloudflare Agents (3 BUILT-IN, 28 DIY)** is lean-but-rented — it wins the
+storage boundary outright and DIYs almost everything else, with the field's only 8.3 NOT-POSSIBLE
+(Workers isolates can't spawn subprocesses). **Flue** and **eve** are lean durable-execution
+harnesses (each 1 NOT-POSSIBLE on the memory hierarchy, row 1.1) whose durability buys crash-safe
+*conversation* memory but no memory-temperature tiers. **Dify** is the broadest *product* of all
+(RAG + agents + typed tools/MCP + provider registry + per-message USD cost + moderation) but the
+weakest on aisotropy's axis — and its own license blocks the Orbit use case.
+
 ### Governance: executable vs architectural
 
 The constitutional-gate surface (§5.5) splits into gates you can *run* and gates you can only
@@ -562,6 +641,51 @@ that trails the field. **The differentiator is not "more features" — Mastra an
 out of the box. It is that isolation, tiered memory, and pre-spend governance are guaranteed by the
 type system and the storage layout instead of by developer discipline.** For a sovereign
 multi-tenant runtime that is exactly the trade worth making; for anything less it is over-built.
+
+### 4. The 5 new entrants sharpen — not soften — the through-line
+
+Folding in Dify, Cloudflare Agents, Spring AI, Flue, and eve widens the field to twelve without
+changing the verdict. Each new entrant is strong on an axis aisotropy does not lead, and each falls
+on exactly the axes aisotropy is built for:
+
+- **Cloudflare Agents** poses the sharpest challenge to the isolation lane and half-wins it: it is
+  the **only** framework in the field that *deletes the shared store* — one Durable Object = one
+  physically separate SQLite, a cross-object read is unrepresentable, the strongest storage boundary
+  of all twelve (aisotropy still guards a *shared* store with a value-object Scope). But the win is
+  qualified twice, both proven in real `workerd`: the `(tenant,user,product)→object` name is
+  developer-CONVENTION the framework binds to nothing (drop the product segment → two products share
+  one SQLite; the same mis-assembled-key failure class as Eino/LangGraph), and the whole guarantee is
+  a **RENTED, not-self-hostable** Cloudflare-platform property. By-construction *storage* isolation
+  that is rented and identity-unbound is not the *self-hostable tenant-data* isolation the arena
+  tests.
+- **Dify** is the broadest product in the entire field (RAG + agents + typed tools/MCP + provider
+  registry + real per-message USD cost + moderation) yet the weakest on aisotropy's axis: isolation
+  is shared-schema app-layer `WHERE` with **no Postgres RLS**, `Conversation` carries no `tenant_id`
+  (scope is transitive through `app_id`), there is **no `product_id` column anywhere** (no product
+  boundary exists), and the transactional outbox is **NOT-POSSIBLE** (Celery is decoupled from the DB
+  writes). Decisively, **Dify's own modified Apache-2.0 license forbids operating a multi-tenant
+  environment without a paid commercial license** — Orbit is precisely the prohibited use, a
+  field-of-use restriction in the same hard-blocker class as BSL/SSPL/ELv2. It is the one arena whose
+  license, not just its architecture, rules it out for the Orbit use case.
+- **Spring AI** is the JVM's richest self-hostable agent SDK (8 BUILT-IN, 0 PAID, 0 NOT-POSSIBLE, a
+  *pure* permissive tree cleaner than the Python arenas) and the only new entrant where atomic
+  msg+intent consolidation is even buildable in-process (`@Transactional` over a shared JDBC
+  `DataSource`). But isolation is the same **`conversationId`-convention** as the field — an opaque
+  string bound to nothing, `findConversationIds()` returns every tenant's ids, and the product axis
+  leaks via a delimiter-injection collision on the unescaped flat key.
+- **Flue** and **eve** are durable-execution harnesses whose durability delivers one thing the field
+  mostly lacks — **crash-safe conversation memory** (run-verified: a fresh process recalled a secret
+  a killed process wrote). Flue's `dispatch()`→canonical-stream is the closest any arena comes to the
+  transactional outbox (PARTIAL). But both stop at the *transcript*: no memory-temperature tiers (row
+  1.1 NOT-POSSIBLE in each), no tenant/user/product scope bound by construction (both leak
+  cross-product one edit away, proven), and no pre-spend per-tenant governance.
+
+The honest through-line holds and tightens: across twelve frameworks in five languages, **isolation
+by construction in self-hostable, permissively-licensed OSS is aisotropy alone.** Cloudflare gets
+by-construction isolation but rents it and leaves identity-binding to convention; Dify is
+multi-tenant-capable but forbids it in its own license; Spring AI, Flue, and eve keep tenancy as a
+developer-owned string. The one framework that makes the leaky read *unrepresentable* **and** ships
+as a single self-hostable permissive binary is still only one.
 
 ## References (source-of-truth docs used)
 

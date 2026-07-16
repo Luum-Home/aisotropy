@@ -1,0 +1,17 @@
+{
+  // Orbit multi-tenant support chatbot on the Cloudflare Agents SDK.
+  // Each Agent is ONE Durable Object with its OWN embedded SQLite database.
+  "name": "orbit-cloudflare-agents",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // The Agent class must be a Durable Object binding...
+  "durable_objects": {
+    "bindings": [{ "name": "OrbitAgent", "class_name": "OrbitAgent" }]
+  },
+
+  // ...and it MUST be a SQLite-backed DO (new_sqlite_classes) — the Agents SDK
+  // stores per-instance state and the `this.sql` database inside that SQLite.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OrbitAgent"] }]
+}

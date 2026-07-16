@@ -1,8 +1,8 @@
 ---
 type: Survey
-title: "Adversarial isolation matrix — Pydantic AI, Mastra, LangGraph, Eino, ADK Go, Genkit Go, Letta"
-description: Executable smoke tests that prove tenant-isolation-by-construction is aisotropy's surviving differentiator. Each arena writes secret-A into a shared session, then reads from every cross-tenant identity — a marker appearing in the wrong tenant's response is a proven leak.
-tags: [arenas, isolation, adversarial, pydantic-ai, mastra, langgraph, eino, adk-go, genkit-go, letta, competitive]
+title: "Adversarial isolation matrix — 12 arenas (Pydantic AI, Mastra, LangGraph, Eino, ADK Go, Genkit Go, Letta, Dify, Cloudflare Agents, Spring AI, Flue, eve) + adjacent sandcastle"
+description: Executable smoke tests that prove tenant-isolation-by-construction is aisotropy's surviving differentiator. Each arena writes secret-A into a shared session, then reads from every cross-tenant identity — a marker appearing in the wrong tenant's response is a proven leak. 12 arenas across 5 languages, plus an honest adjacent note on sandcastle.
+tags: [arenas, isolation, adversarial, pydantic-ai, mastra, langgraph, eino, adk-go, genkit-go, letta, dify, cloudflare-agents, spring-ai, flue, eve, competitive]
 timestamp: 2026-07-15T00:00:00Z
 ---
 
@@ -10,7 +10,14 @@ timestamp: 2026-07-15T00:00:00Z
 
 > **Goal:** Prove that writing the *right path* and the *leaky path* costs the same in every
 > framework — and that every framework except aisotropy leaks when you take the leaky path.
-> **Coverage:** 7 frameworks across 3 languages (Python, TypeScript, Go) vs. the aisotropy runtime.
+> **Coverage:** **12 frameworks across 5 languages** (Python, TypeScript, Go, Java/JVM, and
+> TypeScript-on-Workers) vs. the aisotropy runtime — the original 7 (Pydantic AI, Mastra, LangGraph,
+> Eino, ADK Go, Genkit Go, Letta) plus 5 new entrants (Dify, Cloudflare Agents, Spring AI, Flue, eve).
+> An adjacent, out-of-category tool — **sandcastle** — is noted honestly at the end (it orchestrates
+> *coding* agents in sandboxes, not multi-tenant conversational runtimes). Of the 5 new entrants, 4
+> ran as REAL offline integrations; **Dify is SOURCE-VERIFIED, NOT EXECUTED** (a multi-container
+> server platform with no in-process library). Full 43-row capability matrix for all 12 in
+> [`ARENA-SPEC-v2.md`](ARENA-SPEC-v2.md).
 
 > **Full 41-feature comparison:** the 11-point isolation matrix below is the adversarial core;
 > for the complete, doc-grounded and run-verified capability comparison across **all 41 aisotropy
@@ -56,6 +63,38 @@ matrix originally tested only tenant/user, and aisotropy scopes by four axes
 `(tenant_id, user_id, session_id, product_id)`. Row 10b scans the real dep tree with
 `pip-licenses`/`license-checker`/`go-licenses`.
 
+## The 5 new entrants (v2 expansion)
+
+Five frameworks are folded into the comparison beyond the original seven. Four ran as **REAL**
+offline integrations against the pinned upstream framework; **Dify** is **SOURCE-VERIFIED, NOT
+EXECUTED** (it is a Flask+Celery+Postgres+Redis multi-container platform with no in-process library —
+cloned at HEAD `1aea3460`, read line-by-line, its real schema transcribed into its own ORM for a
+labelled behavioral smoke). The isolation-axis summary (full 43-row matrix in
+[`ARENA-SPEC-v2.md`](ARENA-SPEC-v2.md)):
+
+| # | Feature | Dify (Py, src) | Cloudflare Agents (TS/Workers, ▶) | Spring AI (JVM, ▶) | Flue (TS, ▶) | eve (TS, ▶) | **aisotropy** |
+|---|---|---|---|---|---|---|---|
+| 1 | **Multi-tenant isolation** | CONVENTION — shared-schema `tenant_id` discriminator, hand-written `.where()`, **no RLS**; `Conversation` has no `tenant_id` | **BUILT-IN storage boundary by construction** (one DO = one separate SQLite; cross-object read unrepresentable) — *but the name-mapping is CONVENTION and the runtime is RENTED* | CONVENTION — opaque `conversationId` bound to nothing; `findConversationIds()` returns every tenant's ids | CONVENTION — one opaque instance-`id`; per-instance stream isolated by-construction, tenant/user/product folded in; Flue authenticates nothing | CONVENTION — **no tenant/user/product concept**; session-scoped; per-(t,u,p) memory is a dev-built key | **BY CONSTRUCTION** — ctx + per-statement/key scoping |
+| 1b | **Multi-product isolation** (4th axis, ▶) | CONVENTION — **no `product_id` column exists**; "product" = `app_id` convention or unbound tag (leak run-reproduced, src ORM) | CONVENTION — drop the product name segment → two products share ONE SQLite (leak proven in workerd) | CONVENTION — cross-product leaks incl. a **delimiter-injection collision** on the flat key | CONVENTION — cross-product leak one token apart (routed billing convo to analytics id) | CONVENTION — leaky key `${t}:${u}` returns wrong product's secret (`proven_cross_product_leaks=1`) | **BY CONSTRUCTION** — `product_id` rides ctx in `Scope` |
+| 5 | Working memory | BUILT-IN (src) — SQL conversation/message history (server SQL, not µs) | BUILT-IN — in-process per-DO SQLite (hydrated:2 ▶) | BUILT-IN — `MessageWindowChatMemory` (▶) | PARTIAL — durable canonical conversation stream (crash-safe ▶) | BUILT-IN — session-scoped KV + history (▶) | BUILT-IN — BadgerDB (µs) |
+| 6 | Semantic memory (vectors) | BUILT-IN (src) — per-dataset vector store | DIY — Vectorize/AutoRAG rented, not in-tree | PARTIAL — `VectorStore` (separate module, src) | DIY — no vector/RAG tier | DIY — no vector tier | BUILT-IN — in-process cosine; Qdrant code-only |
+| 7 | Facts memory (journal) | DIY (src) — no FTS facts journal | DIY — FTS5 present in DO SQLite, journal is BYO | DIY — no FTS/facts tier | DIY — durable db is not a facts journal | DIY — no FTS tier | BUILT-IN — SQLite+FTS5 |
+| — | Memory-tier hierarchy (row 1.1) | PARTIAL (src) — 2 surfaces, no FTS/batch | PARTIAL — one per-DO SQLite, not 4 tiers | PARTIAL — window memory + `VectorStore`, no FTS/batch | **NOT-POSSIBLE** — durable transcript only | **NOT-POSSIBLE** — one session KV, no vector/FTS/batch | BUILT-IN — 4 stores of different nature |
+| 7.1 | Transactional outbox (atomic msg+intent) | **NOT-POSSIBLE** (src) — Celery decoupled from DB writes | PARTIAL — single DO's transactional SQLite (in-object) | PARTIAL — buildable in-process (`@Transactional` + shared JDBC) | PARTIAL — `dispatch()`→canonical stream (closest to an outbox) | DIY — durable session, single store | BUILT-IN — atomic, idempotent |
+| 8 | Cost governance (per-tenant pre-spend) | DIY (src) — per-message USD field, no pre-spend gate | DIY — no pre-spend gate/meter/guardrails | DIY — no gate/breaker/per-tenant meter | DIY — per-call cost estimate (PARTIAL), no gate | DIY — usage post-hoc, no pre-spend | BUILT-IN — per-tenant token-bucket→429 |
+| 10 | Sovereignty / licensing | **HARD BLOCKER** — modified Apache-2.0 §1a **forbids multi-tenant operation** without a paid commercial license (Orbit = the prohibited use) | PARTIAL — SDK MIT, but **RUNTIME RENTED** (DOs run only on Cloudflare; not self-hostable OSS) | Apache-2.0, 100% permissive, fully self-hostable, no SaaS gate | Apache-2.0 core, self-hostable multi-tenant (not the strict MIT/Apache line) | Apache-2.0 (eve + `ai`), permissive (some rented runtime surfaces) | 100% MIT/Apache, self-hostable |
+| 10b | Dependency license posture (real scan, ▶) | PERMISSIVE (src-classified) — 39/41 direct deps permissive; 2 LGPL-3.0 leaves = CAUTION; 0 GPL/AGPL, 0 BUSL/SSPL | PERMISSIVE ▶ — prod 184 pkgs; +2 MPL-2.0 (lightningcss) = CAUTION; 0 hard blockers | PERMISSIVE ▶ — 41 deps, **0 MPL, a pure permissive line** | PERMISSIVE ▶ — 319/323; 4 weak-copyleft native leaves = CAUTION; 0 hard blockers | PERMISSIVE ▶ — 25 MIT + 7 Apache + 1 dual; 0 hard blockers, 0 MPL | **100% MIT/Apache** — constitutional gate |
+| 11 | Language | Python (Flask+Celery) | TypeScript (Workers + Durable Objects) | Java / JVM | TypeScript (durable-agent harness) | TypeScript (filesystem-first) | Go + Rust |
+
+**Two things the new entrants sharpen.** (1) **Cloudflare Agents** is the only framework of all
+twelve that *deletes* the shared store — a cross-object read is unrepresentable, the strongest
+storage boundary in the field — yet its `(tenant,user,product)→object` name is developer-CONVENTION
+(mis-assembled key = leak, proven in `workerd`) and the whole boundary is a **rented, not-self-hostable**
+Cloudflare-platform property. (2) **Dify** is the one arena whose **own license** blocks the Orbit
+use case: its modified Apache-2.0 forbids operating a multi-tenant environment without a paid
+commercial license — independent of its permissive dependency tree. Neither closes the lane
+aisotropy holds: isolation by construction in self-hostable, permissively-licensed OSS.
+
 ### Governance: executable vs architectural
 
 The constitutional-gate surface (see [`ARENA-SPEC-v2.md`](ARENA-SPEC-v2.md) §5.5) splits into gates
@@ -79,11 +118,14 @@ change is a breaking-change gate). Honest classifications, not executed demos.
 
 ## Real integrations vs. honest simulations
 
-All claims are grounded in code that was fetched, built, and run. Six of seven arenas are **REAL
-integrations** against the pinned upstream framework; one (Letta) is a **partial** integration —
-real SDK types, but the isolation proof runs against a clearly-labelled behavioral simulation of
-the server data plane because Letta OSS is a server that needs a live DB + provider key this
-offline env lacks.
+All claims are grounded in code that was fetched, built, and run. Of the twelve arenas, ten are
+**REAL integrations** against the pinned upstream framework; two are labelled honestly — **Letta** is
+a **partial** integration (real SDK types, but the isolation proof runs against a clearly-labelled
+behavioral simulation of the server data plane because Letta OSS needs a live DB + provider key this
+offline env lacks), and **Dify** is **SOURCE-VERIFIED, NOT EXECUTED** (a Flask+Celery+Postgres+Redis
+multi-container platform with no in-process library — the real backend was cloned at HEAD `1aea3460`
+and read line-by-line, and its real schema transcribed into its own ORM for a labelled behavioral
+smoke).
 
 | Arena | Integration | What is real | Honesty caveat |
 |---|---|---|---|
@@ -94,6 +136,11 @@ offline env lacks.
 | ADK Go | **REAL** | `google.golang.org/adk/v2@v2.0.0`; real `llmagent.New` + `runner.Run` + `session.InMemoryService()`; `FakeModel` implements the real `model.LLM`. `gofmt`/`vet`/`build`/`test` clean; HTTP server booted on :4114, composite key isolated over real HTTP | Only the model is a keyless fake; session/state is genuine construction |
 | Genkit Go | **REAL** | `firebase/genkit/go@v1.10.0`; real `genkit.Init`/`DefineFlow`/`Generate`/`GenerateData[T]`/`DefineTool` + dotprompt; fake model via `DefineModel` (no built-in stub exists). `build`/`vet`/`test`/smoke run; leak proven through the real `Generate` pipeline; live server emits real SSE | Only the model is a keyless fake; observability schema confirmed `genkit:*` (no `gen_ai.*`) against v1.10.0 source |
 | Letta | **PARTIAL** | `letta-client==1.12.1` real SDK; real `BlockResponse`/`AgentState`/`Passage` types; payloads validated against real `AgentCreateParams`; 7/7 pytest + smoke exit 0 | Isolation smoke is a **labelled** simulation of the server's block/passage plane (real SDK types, real filter contract); no live `agents.create` turn ran — Letta OSS needs a running server + DB + LLM key. Live path only activates with `LETTA_BASE_URL` and pings honestly |
+| Dify | **SOURCE-VERIFIED** | Real backend cloned at HEAD `1aea3460`; `api/models` + `api/services/conversation_service.py` + RAG datasource + `LICENSE` + `pyproject.toml` read line-by-line; `python -m compileall` OK, `pytest` 9 passed, real `pip-licenses` on the harness venv (7/7 permissive) | **NOT EXECUTED** against a live Dify — it is a multi-container server with no in-process library. The isolation/product smoke is a **labelled** behavioral simulation: Dify's real schema (`App.tenant_id`, `Conversation.app_id`-only, `Dataset/DocumentSegment.tenant_id`) transcribed into its own ORM (SQLAlchemy 2.0), each query citing `api/<path>:<line>`. Live path activates on `DIFY_API_URL`/`DIFY_API_KEY` |
+| Cloudflare Agents | **REAL** | `agents@0.17.4` (MIT); `OrbitAgent extends Agent<Env,State>`, `this.sql` DO SQLite, `getAgentByName`+`routeAgentRequest` — signatures verified against installed `.d.ts`. Ran in real `workerd` via `@cloudflare/vitest-pool-workers` (7 passed) + live `wrangler dev --local` over HTTP; per-object isolation + FTS5 probe confirmed | Model turns/streaming/MCP source-verified from `.d.ts`; the runtime is a **rented** Cloudflare-platform boundary (`workerd`/miniflare simulate DOs locally, production isolation is not self-hostable OSS) |
+| Spring AI | **REAL** | `spring-ai-client-chat/model/commons` **1.1.8**; `EchoChatModel` implements the real `ChatModel`, so `ChatClient` + `MessageChatMemoryAdvisor` + `MessageWindowChatMemory` + `InMemoryChatMemoryRepository` + `BeanOutputConverter` all run through the genuine pipeline. `mvn compile` BUILD SUCCESS; `SmokeMain`/`ProductIsolationMain`/`FeatureDemoMain`/`license_scan.sh` all exit 0; signatures verified with `javap` | Only the model is a keyless echo; a real provider turn, streaming Flux cancellation, Micrometer→OTel bridge, `VectorStore` are source-verified (not executed), labelled as such |
+| Flue | **REAL** | `@flue/runtime@1.0.0-beta.9` (Apache-2.0, Astro team, on the Pi harness `@earendil-works/pi-ai@0.80.7`); real `defineAgent`/`defineTool`+valibot/`AgentRouteHandler` guard/`sqlite()` durable adapter/Hono app. `flue build --target node` compiled; two smokes ran fully offline via a fake `openai-completions` model + the built server as real subprocesses over HTTP (durable crash-safe recall + cross-product leak), both exit 0 | Only the model is a ~40-line keyless fake; findings tagged `[RAN]`/`[SRC from shipped .d.ts+bundle]`/`[DOC from flue docs read]`, never general knowledge |
+| eve | **REAL** | `eve@0.24.5` (Apache-2.0, Vercel) on Node 24; `eve build` → real Nitro/rolldown compile (5.74MB server); booted offline, real `/eve/v1/health`+`/info`, a real 9-event NDJSON turn via mock model; `scripts/smoke.mjs` via `eve/client` 6/6 PASS incl. proven cross-product leak; `license-checker` ran; clean from-scratch reproducibility run | Only the model is a mock; Vercel Sandbox, AI Gateway, production workflow world, Connect OAuth, Observability dashboard are source-verified from shipped docs (not run) |
 
 ## DX verdicts
 
@@ -160,23 +207,76 @@ aisotropy makes the unscoped read *unrepresentable*.
 | ADK Go | REAL | Convention — composite `(app,user,session)` key, **no tenant binding** | Drop the tenant fold → silent cross-read (one line shorter) |
 | Genkit Go | REAL | Convention — developer-built store, **no primitive** | Wrong/mis-passed session key → silent cross-read |
 | Letta | PARTIAL | Convention — dev-passed `identity_id`/`project_id`/`tags` | Omit filter → org-wide scan; per-user key is PAID only |
+| Dify | SOURCE-VERIFIED | Convention — shared-schema `tenant_id` `.where()`, **no RLS**; `Conversation` scoped only via `app_id` | Skip the app-ownership gate → `.where(app_id)` cross-reads; no `product_id` exists |
+| Cloudflare Agents | REAL | **By construction (storage)** — one DO = one separate SQLite; cross-object read unrepresentable — but name-mapping is convention, runtime RENTED | Mis-assemble the `(t,u,p)` object name → two products share one SQLite (proven in `workerd`) |
+| Spring AI | REAL | Convention — opaque `conversationId` bound to nothing | Wrong/guessed id → cross-read; `findConversationIds()` scans all tenants; delimiter-injection collision |
+| Flue | REAL | Convention — one opaque instance-`id`; per-instance stream isolated, dev-written route guard | Route to wrong instance id (one token) → cross-product read; Flue authenticates nothing |
+| eve | REAL | Convention — no tenant/user/product concept; session-scoped; dev-built `${t}:${u}:${p}` key | Drop `:${product}` → wrong product's secret returned (proven) |
 
 ## Bottom line
 
-**Isolation is `CONVENTION` / developer-passed in all seven frameworks — the Go-native cluster
-included — and `BY CONSTRUCTION` only in aisotropy.** This is now proven across **7 frameworks in 3
-languages** (Python, TypeScript, Go). Language is not the variable: Eino, ADK Go, and Genkit Go are
-the same Go as aisotropy's core, and all three still leave tenancy as a string the developer must
-never fumble. In every arena the leaky read and the correct read are one line — one string, one
-keyword, one dropped token — apart, and the type system does nothing to stop the leak. In aisotropy
-the leaky path does not exist: `tenant_id` travels in `context.Context` and every memory read is
-scoped per-statement/per-key, so no code path can issue an unscoped read.
+**Isolation is `CONVENTION` / developer-passed in eleven of the twelve frameworks — the Go-native
+cluster included — and `BY CONSTRUCTION` only in aisotropy.** This is now proven across **12
+frameworks in 5 languages** (Python, TypeScript, Go, Java/JVM, TypeScript-on-Workers). Language is
+not the variable: Eino, ADK Go, and Genkit Go are the same Go as aisotropy's core, and all three
+still leave tenancy as a string the developer must never fumble. In every arena the leaky read and
+the correct read are one line — one string, one keyword, one dropped token — apart, and the type
+system does nothing to stop the leak. In aisotropy the leaky path does not exist: `tenant_id` travels
+in `context.Context` and every memory read is scoped per-statement/per-key, so no code path can issue
+an unscoped read.
 
-Two arenas cost aisotropy an honest concession: **ADK Go ties on OTel `gen_ai` observability**, and
-**Letta validates the memory-OS thesis** (isomorphic tiers + productized sleep-time). Neither closes
-the isolation lane — ADK leaves the whole tenant dimension to discipline, and Letta's per-user key
-isolation is a paid-cloud feature. The open lane stands: enforced multi-tenant isolation is
-something none of the seven builds, and aisotropy makes it unrepresentable-to-get-wrong.
+Two of the original arenas cost aisotropy an honest concession: **ADK Go ties on OTel `gen_ai`
+observability**, and **Letta validates the memory-OS thesis** (isomorphic tiers + productized
+sleep-time). The 5 new entrants add three more concessions that still do not close the lane:
+
+- **Cloudflare Agents** goes further than any of the original seven on isolation — it is the only
+  framework that *deletes* the shared store (one Durable Object = one physically separate SQLite;
+  cross-object read unrepresentable), the strongest **storage** boundary in the field. But the
+  `(tenant,user,product)→object` name is developer-CONVENTION the framework binds to nothing
+  (mis-assembled key = leak, proven in `workerd`), and the whole guarantee is a **RENTED,
+  not-self-hostable** Cloudflare-platform property. By-construction storage isolation that is rented
+  and identity-unbound is not the self-hostable tenant-data isolation this arena tests.
+- **Dify** is the broadest *product* of the twelve, but isolation is shared-schema app-layer `WHERE`
+  with no RLS, there is **no `product_id` column at all**, and — decisively — **its own modified
+  Apache-2.0 license forbids operating a multi-tenant environment** (Orbit) without a paid commercial
+  license. It is the one arena whose license, not just its architecture, rules out the use case.
+- **Spring AI** is the JVM's richest self-hostable, fully-permissive agent SDK, but scoping is the
+  same `conversationId` convention: a string bound to nothing, `findConversationIds()` returning
+  every tenant's ids, a product-axis delimiter-injection collision.
+
+The open lane stands: **enforced multi-tenant isolation in self-hostable, permissively-licensed OSS
+is something none of the twelve builds — and aisotropy makes it unrepresentable-to-get-wrong.**
+
+## Adjacent: sandcastle (out of category)
+
+[`mattpocock/sandcastle`](https://github.com/mattpocock/sandcastle) comes up in the same breath as
+these frameworks, so it is worth naming why it is **not** an arena here. Sandcastle is a TypeScript
+library for orchestrating **coding agents** in isolated sandboxes — you hand it an agent that writes
+and runs code, and it spins that agent up inside a fresh, disposable execution environment (Docker
+locally, or a Vercel sandbox) so the agent's file writes and shell commands cannot touch the host.
+Its whole reason to exist is **execution isolation of an untrusted coding agent**, not serving a
+multi-tenant conversational product.
+
+**Why it does not fit the arena.** Every framework above is measured on the Orbit yardstick: a
+multi-tenant support chatbot where the question is whether tenant A's *memory* (conversation history,
+facts, vectors) can leak into tenant B's *response*. Sandcastle has no conversational runtime, no
+tenant/user/product identity model, no memory tiers, no per-tenant governance, and no isolation of
+*data* between callers — it isolates a *process*, once, per coding task. There is no shared store to
+leak through because there is no shared store at all; there is also no tenant abstraction to get
+wrong. It answers a different question ("can this agent's `rm -rf` escape?") than the arena's
+("can this tenant read that tenant's data?").
+
+**The one axis where it genuinely compares to aisotropy — and its limit.** Both draw an isolation
+boundary using an OS-level mechanism. Sandcastle's boundary is a **sandbox/process boundary**
+(Docker container or Vercel sandbox) around an *untrusted coding agent's execution*. aisotropy's
+comparable boundary is its **Go+Rust subprocess boundary** (ADR-0005): heavy Rust engines
+(DataFusion sleep-cycle, bitrate scorer) run as separate subprocesses over an explicit I/O contract,
+so a Rust panic is a Go-observable non-zero exit, never an in-process crash. Both are honest
+execution-isolation boundaries — but **neither is the tenant-data isolation the arena tests.**
+aisotropy's *tenant* isolation lives one layer up, in the `context.Context` + value-object `Scope`
+type system, not in the subprocess boundary. So sandcastle and aisotropy share exactly one axis
+(execution isolation via sandbox/process vs. subprocess), and it is precisely the axis that is
+*orthogonal* to the multi-tenant-memory question every arena is scored on.
 
 ## How to run each arena
 
@@ -193,6 +293,16 @@ design in the arenas that adopt the `leak = exit 1` contract.
 | `adk-go/` | Go 1.25+ | `go get google.golang.org/adk/v2@v2.0.0` | `go run scripts/smoke.go` | `go run cmd/server/main.go` | 4114 |
 | `letta/` | Python 3.13 | `pip install letta-client` (+ `letta` server for live) | `python scripts/smoke.py` | `letta server --port 4115` then `LETTA_BASE_URL=...` | 4115 |
 | `genkit-go/` | Go 1.23+ | `go get github.com/firebase/genkit/go@v1.10.0` | `GENKIT_ENV=prod go run ./scripts/` | `GENKIT_ENV=prod go run ./cmd/server/` | 4116 |
+| `dify/` (src) | Python 3.13 | `python -m venv .venv && pip install -r requirements.txt` | `python scripts/smoke.py` + `python scripts/product_isolation_demo.py` | n/a — needs full Dify stack via `DIFY_API_URL`/`DIFY_API_KEY` | n/a (server platform) |
+| `cloudflare-agents/` | Node 20+ / pnpm | `pnpm install` (`agents@0.17.4` + wrangler + vitest) | `pnpm smoke` (= `vitest run` → 7 passed) | `pnpm dev` (real `workerd` Durable Objects) | 4117 / 8787 |
+| `spring-ai/` | JDK 21+ / Maven 3.9+ | `mvn compile` (real `spring-ai` 1.1.8, 41-dep tree) | `SmokeMain` + `ProductIsolationMain` + `FeatureDemoMain` (via `mvn exec:java`) | n/a — JVM library, no HTTP server | n/a (JVM lib) |
+| `flue/` | Node + pnpm | `pnpm install` + `flue build --target node` | `pnpm run smoke` + `pnpm run isolation` | built `dist/server.mjs` (file-backed SQLite) | local subprocess |
+| `eve/` | Node 24+ | `npm install` + `eve build` | `node scripts/smoke.mjs` (6/6 PASS) | `node .output/server/index.mjs` | 4117 |
+
+> **Port note:** `cloudflare-agents` and `eve` both document port 4117 for local serve — they were
+> authored independently and are never run simultaneously. `spring-ai` and `dify` expose no local
+> HTTP server in this arena (`spring-ai` is a JVM library exercised via `main` methods; `dify` is
+> SOURCE-VERIFIED with the live path gated on a real Dify server via `DIFY_API_URL`/`DIFY_API_KEY`).
 
 > **Genkit note:** set `GENKIT_ENV=prod` for CI/smoke — otherwise `genkit.Init` starts a dev
 > Reflection server on :3100. **ADK Go note:** requires Go 1.25+ (v2 declares `go 1.25.0`).

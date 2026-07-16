@@ -1,0 +1,79 @@
+================================================================================
+Dify arena — dependency license posture
+================================================================================
+
+Two parts, honestly separated:
+
+  PART A — EXECUTED pip-licenses scan of THIS arena's harness venv (real output).
+  PART B — SOURCE-DECLARED classification of Dify's OWN backend manifest
+           (api/pyproject.toml @ langgenius/dify 1aea3460, 2026-07-16). NOT an
+           executed scan: Dify's backend tree (Flask+Celery+onnxruntime+provider
+           SDKs, native gmpy2/psycopg2) cannot be installed/booted offline here,
+           so licenses are classified from the declared direct deps against their
+           well-known upstream licenses. Clearly labelled as source-declared.
+
+--------------------------------------------------------------------------------
+PART A — EXECUTED (arena harness venv: SQLAlchemy = Dify's real ORM + pytest)
+--------------------------------------------------------------------------------
+ $ arenas/dify/.venv/bin/pip-licenses --ignore-packages pip-licenses prettytable wcwidth pip
+
+ Name               Version  License
+ Pygments           2.20.0   BSD-2-Clause
+ SQLAlchemy         2.0.51   MIT
+ iniconfig          2.3.0    MIT
+ packaging          26.2     Apache-2.0 OR BSD-2-Clause
+ pluggy             1.6.0    MIT License
+ pytest             9.1.1    MIT
+ typing_extensions  4.16.0   PSF-2.0
+
+ Harness verdict: 7/7 permissive (MIT/BSD/Apache/PSF). 0 copyleft, 0 restricted.
+
+--------------------------------------------------------------------------------
+PART B — SOURCE-DECLARED (Dify's own 41 direct runtime deps, api/pyproject.toml)
+--------------------------------------------------------------------------------
+Bucket                                        Count  Notable packages
+--------------------------------------------  -----  --------------------------------
+Permissive (MIT/BSD/Apache-2.0/ISC/PSF)         39  flask (BSD-3), flask-cors/-login/
+                                                     -migrate/-restx (BSD/MIT), celery
+                                                     (BSD-3), redis (MIT), gevent (MIT),
+                                                     boto3 (Apache-2.0), google-api-
+                                                     python-client + google-cloud-
+                                                     aiplatform (Apache-2.0), all
+                                                     opentelemetry-* (Apache-2.0),
+                                                     gunicorn (MIT), httpx/httpx-sse
+                                                     (BSD-3), sendgrid (MIT), resend
+                                                     (MIT), bleach (Apache-2.0),
+                                                     json-repair (MIT), zstandard (BSD)
+Weak copyleft (LGPL-3.0)                          2  ** psycopg2-binary (LGPL-3.0-or-
+                                                     later, +OpenSSL exception) **,
+                                                     ** gmpy2 (LGPL-3.0) **
+Strong copyleft (GPL/AGPL)                        0  —
+Restricted / source-available (BUSL/SSPL/ELv2)   0  — (in the DEP tree)
+
+  Dependency verdict: 39/41 permissive; 2 weak-copyleft LGPL-3.0 leaves
+  (psycopg2-binary — the Postgres driver — and gmpy2 — GMP bignum). LGPL-3.0 is
+  the CAUTION tier under aisotropy's own license-policy.md (dynamically-linked
+  library use is fine; do not modify their source and static-link without
+  review). Both are used unmodified as libraries. 0 GPL/AGPL, 0 BUSL/SSPL/ELv2.
+
+================================================================================
+THE GOVERNING FINDING — Dify's OWN license (not a dependency): a HARD BLOCKER for
+Orbit's stated use case.
+================================================================================
+Dify itself ships under a MODIFIED Apache-2.0 (repo-root LICENSE, verbatim §1a):
+
+  "a. Multi-tenant service: Unless explicitly authorized by Dify in writing, you
+   may not use the Dify source code to operate a multi-tenant environment.
+     - Tenant Definition: Within the context of Dify, one tenant corresponds to
+       one workspace."
+
+Orbit IS a multi-tenant support chatbot (many customer workspaces behind one
+service). Operating it on self-hosted Dify is precisely the prohibited use and
+requires a COMMERCIAL license from LangGenius. Under aisotropy's
+.claude/rules/cos/license-policy.md this source-available/commercial-use
+restriction is a BLOCKER for a SaaS product — the same class as BSL/SSPL/ELv2.
+
+  Net: the dependency TREE clears the hard-blocker gate (0 GPL/AGPL/BUSL/SSPL);
+  Dify's OWN modified-Apache multi-tenant clause does NOT — it is the single most
+  important license finding in this arena, and it is a governance finding, not a
+  dependency one. aisotropy is 100% MIT/Apache with no such field-of-use limit.

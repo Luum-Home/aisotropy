@@ -1,0 +1,22 @@
+{
+  "name": "eve-arena",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Adversarial isolation + feature-parity arena for Vercel eve",
+  "type": "module",
+  "scripts": {
+    "build": "eve build",
+    "start": "eve start",
+    "dev": "eve dev",
+    "info": "eve info",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "eve": "^0.24.5",
+    "zod": "^4.4.3",
+    "ai": "^7.0.29"
+  },
+  "imports": {
+    "#*": "./agent/*"
+  }
+}
