@@ -19,7 +19,11 @@ agent-tooling.yaml
 *.exe
 *.out
 *.test
-# Compiled example bots (nested modules build a binary named after their dir).
+# Compiled example bots: each example is its own module, so `go build ./...`
+# (or `go build .`) drops a binary named after the directory next to its go.mod.
+# Those are build artifacts — never commit them. When you add an example, add a
+# line here for its binary (one per module; gitignore can't match "extensionless
+# file named after its dir" generically).
 /examples/weatherbot/weatherbot
 /examples/helpdesk/helpdesk
 # Stray dev-console binary (go build ./cmd/x → ./x).
