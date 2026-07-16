@@ -102,6 +102,67 @@ Each feature is one of: **BUILT-IN** (framework provides it), **CONVENTION**
   tenant identity is on the request by construction, not a developer-passed span tag.
 - **AISOTROPY COMPARISON:** aisotropy ships OTel gen_ai semconv tracing, `/costs`, `/health`.
 
+## Comprehensive feature-parity matrix (RUN-VERIFIED, 25 executable features)
+
+Grounded by executing `scripts/feature_parity_demo.py` against the real
+`letta-client==1.12.1` SDK surface (offline; real request types, synthetic
+tokens/vectors). Each row's class is what the demo prints and asserts.
+
+Run:
+```bash
+arenas/letta/.venv/bin/python arenas/letta/scripts/feature_parity_demo.py   # exit 0
+```
+
+| # | Feature | Class | Run-verified evidence (real SDK symbol) |
+|---|---|---|---|
+| 1 | Temperature hierarchy (tiered memory) | **BUILT-IN** | 3 tiers of different nature: `client.blocks` (Core) / `client.messages`+`MessageSearchParams` (Recall) / `client.archives`+`client.passages` (Archival). aisotropy=4 |
+| 2 | Working memory (in-context state) | **BUILT-IN** | real `BlockResponse` core-memory block via `client.blocks` |
+| 3 | Facts memory (keyword/FTS journal) | **PARTIAL** | Recall = searchable message history (`MessageSearchParams`); not a first-class FTS decisions/rules journal |
+| 4 | Semantic memory (vector RAG) | **BUILT-IN** | real `Passage` archival store; `client.archives`+`passages.search` (offline cosine stand-in for HNSW) |
+| 5 | Summary buffer (context engineering) | **BUILT-IN** | MemGPT core: server recursive summarizer + eviction (window plateaus) |
+| 6 | Memory scoring (Rel×Imp×Rec) | **DIY** | Letta ranks archival by vector similarity (relevance) only; composite importance×recency is DIY |
+| 7 | Contradiction / supersede | **PARTIAL** | self-editing memory BUILT-IN but LLM-driven (`core_memory_replace`); no deterministic `superseded_by`/cross-store invariant |
+| 8 | Knowledge ingestion (chunk+embed) | **BUILT-IN** | `client.folders` (Sources/files) + `archival_memory_insert` chunk+embed server-side |
+| 9 | BYO embedder | **BUILT-IN** | real `EmbeddingConfig` swappable seam (openai vs self-hosted ollama endpoint) |
+| 10 | Fail-closed reflection loop | **DIY** | `response_format`/`JsonSchemaResponseFormat` validation BUILT-IN, but the repair loop is DIY (no fail-closed retry) |
+| 11 | SSE streaming + immediate cancel | **PARTIAL** | streaming BUILT-IN (`messages.stream`, `create(streaming=/stream_tokens=)`); `messages.cancel` server-side, no client spend-cutoff guarantee |
+| 12 | Stateless /ask + response cache | **DIY** | agents are stateful; no stateless route/cache — DIY exact cache (cross-tenant MISS) |
+| 13 | Scope-gated tools (gov by absence) | **DIY** | per-agent tool sets BUILT-IN, but caller-scope visibility gating is DIY |
+| 14 | Multi-step agent loop | **BUILT-IN** | server heartbeat/tool-chaining loop + `max_steps` + real `InitToolRule` tool_rules |
+| 15 | Typed tools + MCP | **BUILT-IN** | real `Tool` (JSON-schema args) via `client.tools.create/upsert` + native `client.mcp_servers` |
+| 16 | Bearer-token -> identity bind | **CONVENTION** | api_key bearer auths to the server; no must-agree bind to a path tenant. Tenant = `agents.identities`/tags; per-user keys PAID (Cloud) |
+| 17 | Per-tenant pre-spend quota gate | **DIY** | no check-before-request (`Usage` post-call; `max_steps` is a loop cap). DIY gate proven via call counter (rejected turn spent 0) |
+| 18 | Circuit breaker | **DIY** | no provider breaker in the client — DIY (open after N fails, fast-fail) |
+| 19 | Quota-pressure degradation | **DIY** | no built-in load-based model swap — DIY policy |
+| 20 | Cost meter (per-tenant) | **PARTIAL** | per-call `Usage` BUILT-IN + `runs.usage.retrieve`; per-tenant aggregation + USD DIY (no $ field) |
+| 21 | OTel gen_ai spans w/ tenant_id | **PARTIAL** | native `ProviderTrace` (agent_tags/user_id/org_id) BUILT-IN but SERVER-side (needs ClickHouse); offline client span DIY |
+| 22 | Health / readiness probe | **PARTIAL** | real `HealthResponse` (server liveness); no per-memory-tier readiness probe |
+| 23 | Product evaluation (IR / judge) | **DIY** | no eval harness — DIY P@k/MRR over the real archival retrieval |
+| 24 | Transactional outbox (atomic) | **NOT-POSSIBLE** | no atomic (message+event) txn + idempotent drain; closest is a durable message log with no co-committed intent |
+| 25 | Async consolidation (sleep-time) | **BUILT-IN** | productized sleep-time compute: real `agents.create(enable_sleeptime=True)` paired background agent. Only arena with this |
+
+**Run-verified tally (25 executable features):** BUILT-IN 9 · PARTIAL 6 · DIY 8 ·
+CONVENTION 1 · NOT-POSSIBLE 1.
+
+- **BUILT-IN (9):** #1, #2, #4, #5, #8, #9, #14, #15, #25 — the memory tiers,
+  RAG, ingestion, BYO embedder, the agent loop, typed tools/MCP, and sleep-time
+  consolidation. This is Letta's strength: it is the memory-OS competitor.
+- **PARTIAL (6):** #3, #7, #11, #20, #21, #22 — facts-as-message-history,
+  LLM-driven self-editing (no deterministic supersede), streaming without a
+  client spend-cutoff, usage-without-per-tenant-meter, server-side OTel,
+  liveness-without-tier-readiness.
+- **DIY (8):** #6, #10, #12, #13, #17, #18, #19, #23 — the whole governance
+  surface (pre-spend gate, circuit breaker, degradation, scope-gated tools,
+  reflection repair loop, response cache, eval) + composite memory scoring.
+- **CONVENTION (1):** #16 — identity binding (isolation leak proven in `smoke.py`).
+- **NOT-POSSIBLE (1):** #24 — transactional outbox.
+
+**The gap in one line:** Letta MATCHES aisotropy on memory tiers (its home turf —
+3 tiers of different nature + sleep-time) but DIFFERS on *how*: LLM-self-managed
+& probabilistic vs runtime-hydrated & deterministic; and it has none of
+aisotropy's governance-by-construction — pre-spend gate, fail-closed reflection,
+isolation binding, and the transactional outbox are DIY / CONVENTION / NOT-POSSIBLE.
+
 ## Summary
 
 Letta is the **closest conceptual neighbor** to aisotropy. Its memory hierarchy

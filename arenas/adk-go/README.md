@@ -56,6 +56,22 @@ Proves three things by executing against the real runner, printing a
    `generate_content` / `invoke_agent` spans with `gen_ai.usage.*` attributes
    (BUILT-IN); `tenant.id` is not on ADK spans natively (DIY enrichment).
 
+## Comprehensive feature-parity demo (offline, no API key)
+
+```bash
+go run ./cmd/parity
+```
+
+Walks **25 executable features** from `arenas/ARENA-SPEC-v2.md`, executing the
+real ADK stack (real `llmagent` + `runner` + `session.Service` + `memory.Service`
++ `tool.Toolset`; only the model is faked via the framework's `model.LLM` seam)
+and printing `FEATURE <n> <name>: [CLASS] <evidence>` for each. Run-verified
+tally: **6 BUILT-IN · 4 PARTIAL · 1 PAID · 9 DIY · 5 NOT-POSSIBLE**. Headline
+gap: ADK ships **2 memory tiers** (session KV + keyword recall) vs aisotropy's 4
+(KV / FTS5 / vector / batch) — no self-hostable vector tier, no FTS5 facts
+journal, no scoring/supersede, no transactional outbox, no sleep consolidation.
+See the table in `FEATURES.md`.
+
 ## Tests
 
 ```bash

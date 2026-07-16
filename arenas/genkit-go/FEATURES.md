@@ -106,14 +106,64 @@ paid/hosted service) · **NOT-POSSIBLE** (no path).
 ### 11. Language — Go
 - Idiomatic, generics-heavy, strongly typed. Same host language as aisotropy's core.
 
+## Comprehensive feature-parity walk (run-verified, `cmd/parity`)
+
+> Run: `go run ./cmd/parity` (from `arenas/genkit-go`). Exit 0. One runnable file
+> (`cmd/parity/feature_parity_demo.go`) walks 25 features from `arenas/ARENA-SPEC-v2.md`, each
+> **exercised** against the real framework (v1.10.0) fully offline, printing
+> `FEATURE <n> <name>: [CLASS] <evidence>`. Deeper investigation of v1.10.0 for this walk found
+> two framework surfaces the 11-point checklist above understated — corrected inline below.
+
+**Run-verified tally: BUILT-IN=6 · PARTIAL=5 · DIY=13 · NOT-POSSIBLE=1** (25 features).
+
+| # | Feature | Class | Run evidence (offline, real framework) |
+|---|---|---|---|
+| 1 | Tiered memory by access temperature | **NOT-POSSIBLE** | ships 1 session-snapshot store + 1 (plugin) vector store; no FTS tier, no offline-batch tier → not 4 distinct-nature tiers |
+| 2 | Working memory (recent history) | **BUILT-IN** (experimental) | `ai/exp` `SessionStore` + `localstore.NewInMemorySessionStore` persisted+replayed 4 msgs across turns; other session id → nil. Tenant binding is DIY |
+| 3 | Facts memory (keyword/FTS) | DIY | no FTS/journal primitive; hand-rolled index |
+| 4 | Semantic memory (vector RAG) | **BUILT-IN** (plugin) | official `plugins/localvec` cosine store: `DefineRetriever`+`Index`, query hit the right doc, `ai.WithDocs` fed it to `Generate`. Tenant payload-filter is DIY |
+| 5 | Summary / rolling buffer | DIY | no summarizer; `SessionState.Custom` is just a slot you fill |
+| 6 | Importance×recency×relevance scoring | DIY | no scoring primitive; hand-rolled composite |
+| 7 | Contradiction detection / supersede | DIY | no supersede primitive |
+| 8 | Knowledge ingestion (chunk+embed) | PARTIAL | framework embedder + `localvec.Index` embedded chunks; the chunker is DIY |
+| 9 | BYO embedder (swappable) | **BUILT-IN** | `genkit.DefineEmbedder` is a first-class action; two embedders index the same corpus, each owning its vector space → different top-1 (proven) |
+| 10 | Fail-closed reflection loop | PARTIAL | `GenerateData` **rejected** the schema break (framework error); the retry/repair loop is DIY |
+| 11 | SSE streaming + immediate ctx-cancel | **BUILT-IN** | `ai.WithStreaming`; cancelling ctx after 3 chunks stopped the model mid-stream (model observed cancel; not all 30 tokens) |
+| 12 | Stateless response cache | DIY | no cache primitive; DIY (tenant,user)-keyed cache; hit made 0 model calls |
+| 13 | Scope-gated tools | DIY | tools are BUILT-IN but there is **no scope concept**; gating = you choose the `WithTools` subset; a call to an un-offered tool is framework-rejected |
+| 14 | Multi-step agent loop | **BUILT-IN** | `genkit.Generate` ran tool→model automatically; `ai.WithMaxTurns` caps it |
+| 15 | Typed tools + MCP | **BUILT-IN** | `DefineTool[In,Out]` compile-time typed (ran); MCP ships as official `plugins/mcp` (`NewMCPHost`) — not exercised offline |
+| 16 | Bearer token → identity binding | DIY | framework core binds **no** identity; DIY middleware (401 deny / 403 must-agree) |
+| 17 | Per-tenant PRE-SPEND quota gate | DIY | no pre-spend API (`WithMaxTurns` errors *after* spending); DIY gate rejected over-budget turn with 0 model calls |
+| 18 | Circuit breaker | DIY | no breaker; DIY opened after 5 failures, 6th short-circuited (model invocations=5) |
+| 19 | Quota-pressure model degradation | DIY | no degradation hook; DIY router picks cheap model at pressure ≥0.95 |
+| 20 | Cost meter (per-tenant) | PARTIAL | `resp.Usage` BUILT-IN per call; per-tenant meter DIY |
+| 21 | OTel spans | PARTIAL | BUILT-IN transport (7 spans); schema **proprietary** (`genkit:*`, 0 `gen_ai.*` semconv); `tenant_id` only via DIY tag |
+| 22 | Health / readiness probe | DIY | no framework probe endpoint; DIY read-only tier probe |
+| 23 | Product evaluation (IR / judge) | PARTIAL | `genkit.DefineEvaluator`+`genkit.Evaluate` runner BUILT-IN (scored a dataset); IR P@k/MRR + LLM-judge DIY (plugin ships only DEEP_EQUAL/REGEX) |
+| 24 | Transactional outbox (atomic msg+event) | DIY | no outbox; `SaveSnapshot` gives single-snapshot atomicity only; cross-store atomic write is DIY |
+| 25 | Async consolidation (offline dedup) | DIY | no sleep-cycle primitive; DIY offline dedup |
+
+### Corrections to the 11-point checklist from the v1.10.0 deep-dive
+- **Working memory (§5 above said DIY):** v1.10.0 ships an **experimental** Agents/Session API
+  (`genkit/exp` + `ai/exp`) with a pluggable `SessionStore` — an in-memory store is shipped
+  (`localstore`), Firestore via plugin. It persists conversation `Messages` + custom state and is
+  exercised here. Still keyed by a **developer-passed session id with no tenant binding**, so the
+  isolation leak stands; and it is gated behind `requireExperimental`.
+- **Semantic memory (§6 above said DIY):** Genkit ships an **official in-tree offline vector store**,
+  `plugins/localvec` (cosine, on-disk), plus first-party `pinecone`/`weaviate`/`postgresql`/`alloydb`
+  plugins. The demo drives `localvec` end-to-end offline, so vector RAG is BUILT-IN (via plugin);
+  what stays DIY is the **tenant/user payload filter during the scan** (aisotropy's isolation gate).
+
 ## Summary
 
 Genkit Go is a **general-purpose AI application library** (Google's own framing). Its generation
-primitives are genuinely strong and shipped: structured output, tool-calling, streaming, and
-dotprompt all work offline in this arena against the real framework. Where it is thin is exactly
-aisotropy's thesis: **no memory tiers, no cost governance, and — critically — no isolation
-primitive**. Multi-tenancy is a discipline you must build and remember, and the leaky path costs
-the same as the correct one.
+primitives are genuinely strong and shipped: structured output, tool-calling, streaming, dotprompt,
+an offline vector store (`localvec`), an experimental session store, and an evaluator runner all
+work offline in this arena against the real framework. Where it is thin is exactly aisotropy's
+thesis: **no tiered memory of different nature, no cost/quota governance gates, and — critically —
+no tenant-isolation primitive**. Multi-tenancy is a discipline you must build and remember, and the
+leaky path costs the same as the correct one.
 
 **vs. aisotropy:** Genkit wins on breadth of shipped generation features and Firebase-ecosystem
 fit; aisotropy wins on isolation-by-construction, the complete built-in memory/cost stack, and

@@ -12,6 +12,12 @@ timestamp: 2026-07-15T00:00:00Z
 > framework — and that every framework except aisotropy leaks when you take the leaky path.
 > **Coverage:** 7 frameworks across 3 languages (Python, TypeScript, Go) vs. the aisotropy runtime.
 
+> **Full 41-feature comparison:** the 11-point isolation matrix below is the adversarial core;
+> for the complete, doc-grounded and run-verified capability comparison across **all 41 aisotropy
+> features** (memory tiers, contract, tools, isolation, governance, observability, consolidation,
+> sovereignty) — with 25 rows executed offline against each pinned upstream framework and a crisp
+> FINAL VERDICT — see [**`ARENA-SPEC-v2.md`**](ARENA-SPEC-v2.md).
+
 ## Feature-coverage matrix
 
 Rows are the 11-point Orbit checklist. Each cell is a **coverage class** + terse note.

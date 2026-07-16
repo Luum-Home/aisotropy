@@ -61,12 +61,17 @@ timestamp: 2026-07-15T00:00:00Z
   - Per-tenant aggregation: **[DIY]** — the framework returns per-call usage only; the tenant
     ledger (`Map<tenantId, totals>`) is hand-rolled in the demo.
   - Dollar cost: **[DIY]** — Mastra returns tokens, not `$`; the pricing table + math are ours.
-  - Pre-spend budget gate: **[DIY / NOT built-in]** — Mastra has **no** pre-spend/usage-limit
-    check (no equivalent of Pydantic AI `UsageLimits.check_before_request`); usage is known only
-    *after* the call. `grep` over `@mastra/core` for `usageLimit|checkBeforeRequest|budget` = 0 hits.
-    The demo implements the gate as a ledger check *before* `generate()` and **proves the model is
-    not invoked on a rejected turn** via a call-counter on the fake model (rejected turn Δ=0 calls,
-    CONFIRMED).
+  - Pre-spend budget gate: **[PARTIAL — corrected 2026-07-16, superseding the earlier "DIY / NOT
+    built-in" claim]** — Mastra **does** ship a built-in pre-spend gate: `CostGuardProcessor`
+    (`@mastra/core/processors`) runs on `processInputStep` *before each LLM call*, with
+    `scope: 'run'|'resource'|'thread'`, a time `window`, and `strategy: 'block'|'warn'`. The
+    comprehensive demo (`npm run parity`, feature 17) registers and runs it live (registered=true,
+    ran=true). Caveat: it is **monetary-cost-based and explicitly "approximate"** (reads async
+    observability metrics; requires observability storage), so a zero-cost fake model cannot *trip*
+    it offline. There is no per-*tenant token-bucket 429* primitive; the earlier grep only searched
+    `usageLimit|checkBeforeRequest` (0 hits) and missed `CostGuardProcessor`. The DIY hard
+    token-bucket (ledger check before `generate()`, rejected turn Δ=0 model calls, CONFIRMED) is
+    still what gives the deterministic 429-before-spend guarantee.
 - **AISOTROPY COMPARISON:** aisotropy has a **built-in** pre-spend quota gate + per-tenant cost
   meter — rejects or degrades *before* the LLM call. Mastra gives you the raw usage number and
   leaves the tenant ledger, the dollar conversion, and the reject-before-spend gate to you.
@@ -99,12 +104,60 @@ timestamp: 2026-07-15T00:00:00Z
   ignoring `resourceId`) proves the leak is real. aisotropy's `Scope{}` value object with
   unexported fields makes leaks unrepresentable.
 
+## Comprehensive feature-parity walk (RUN-VERIFIED, `npm run parity`, exit 0)
+
+`scripts/feature_parity_demo.ts` exercises **25 executable features** against the real installed
+framework, fully OFFLINE (fake `LanguageModelV2` + deterministic hash embedder; libsql temp-file
+DBs). Each line is `[CLASS]` backed by executing the framework (or clearly running the DIY version we
+had to write). Absence claims are grep-verified against `node_modules/@mastra/core/dist`. Counts:
+**9 BUILT-IN · 5 PARTIAL · 9 DIY · 2 NOT-POSSIBLE**.
+
+| # | Feature | Class | Evidence (executed) |
+|---|---|---|---|
+| 1 | working-memory (recent history, resource/thread) | **BUILT-IN** | `Memory({lastMessages:3})` recall returned the 3 newest msgs, dropped the oldest |
+| 2 | facts/episodic KEYWORD (FTS5) tier | **NOT-POSSIBLE** | no full-text/facts memory tier in `@mastra/core`; closest is vector recall (F3) |
+| 3 | semantic/VECTOR retrieval (RAG) | **BUILT-IN** | `semanticRecall` + `LibSQLVector` recalled a fact from a *different* thread (scope:resource) |
+| 4 | summary/rolling buffer | **BUILT-IN** | `lastMessages` bounds the window + `summarizeConversation()` + `TokenLimiter` processor ship |
+| 5 | importance×recency×relevance scoring | **DIY** | framework returns similarity-only; the composite score is ours |
+| 6 | contradiction detection / supersede | **DIY** | no built-in supersede; DIY delete-old-vector kept only the newer fact |
+| 7 | knowledge ingestion (chunk+embed doc) | **PARTIAL** | vector store + embed BUILT-IN; chunking DIY (`@mastra/rag` not installed) |
+| 8 | BYO embedder | **BUILT-IN** | `Memory({embedder})` accepted + invoked our custom `EmbeddingModelV2` |
+| 9 | **TIERED TEMPERATURE** (distinct tiers) | **PARTIAL** | 2 tiers of different nature (history + vector) + WM template, but ONE store + ONE vector; NO full-text, NO offline batch tier |
+| 10 | fail-closed structured output | **BUILT-IN** | `structuredOutput{errorStrategy:'strict'}` parsed valid, THREW on malformed (not garbage-200). Bounded-N reflection loop = PARTIAL (single structuring-agent repair pass) |
+| 11 | SSE streaming + immediate cancel | **BUILT-IN** | `agent.stream()` + `AbortController.abort()` propagated to the model producer |
+| 12 | response cache (stateless, per-tenant) | **BUILT-IN** | `ResponseCache` processor: 2nd identical ask = HIT (model not called), other tenant = scope-isolated MISS. Exact-hash; cosine/semantic cache not built-in |
+| 13 | scope-gated tools | **DIY** | Agent injects all tools you pass; DIY predicate hides a tool unless the scope is present |
+| 14 | multi-step agent loop | **BUILT-IN** | `agent.generate({maxSteps})` executed the tool then produced a final answer over 2 steps |
+| 15 | typed tools / MCP | **PARTIAL** | typed tools BUILT-IN (`createTool`+Zod); MCP = separate `@mastra/mcp`, not installed here |
+| 16 | bearer-token → identity bind | **DIY** | no identity-binding middleware; DIY HMAC verify + must-agree bind (valid / path-mismatch / forged) |
+| 17 | pre-spend quota gate | **PARTIAL** | **BUILT-IN `CostGuardProcessor`** runs pre-call (registered+ran), but cost-based/approximate — can't trip offline; DIY hard token-bucket gives the deterministic 429 (noSpend=true) |
+| 18 | circuit breaker | **DIY** | no built-in breaker (grep=0); DIY breaker opened after 5 failures, 6th fast-failed |
+| 19 | quota-pressure degradation | **DIY** | no built-in degrade seam; DIY pressure router →primary / →cheap at ≥95% |
+| 20 | cost meter (per-tenant) | **PARTIAL** | per-call `usage` BUILT-IN; per-resource cost aggregation via observability `getMetricAggregate` BUILT-IN (needs pricing); `/costs` surface DIY |
+| 21 | OTel spans (gen_ai usage) | **BUILT-IN** | `@mastra/observability` captured spans; `model_generation` carries usage. `tenant_id` on spans = DIY (per-call stamp) |
+| 22 | health / readiness probe | **DIY** | no built-in health endpoint; DIY read-only probe of storage.listThreads + vector.listIndexes |
+| 23 | product evaluation (P@k/recall) | **DIY** | metrics ours over the framework's REAL vector store (P@3, recall); `@mastra/evals` separate/uninstalled |
+| 24 | transactional outbox | **NOT-POSSIBLE** | no atomic message+event write; per-domain `saveMessages` — a crash leaves them inconsistent |
+| 25 | async consolidation (dedup/contradiction) | **DIY** | `summarizeConversation()` BUILT-IN, but dedup/contradiction reconciliation is ours (dropped 2 duplicate rows, 4→2) |
+
+**Headline (memory tiers — the crux):** Mastra's tiered-memory story is **PARTIAL**, not the 4-tier
+temperature hierarchy aisotropy claims. You get genuine BUILT-IN **recent-history** (SQL/KV) +
+**vector recall** + an LLM **working-memory template** — but all through **one `Memory` over one
+storage + one vector store**. There is **no keyword/FTS facts tier** (feature 2, NOT-POSSIBLE) and
+**no offline batch/sleep tier** (feature 25 is DIY, feature 24 outbox is NOT-POSSIBLE). Governance
+that aisotropy bakes in as constitutional gates — hard per-tenant token-bucket, circuit breaker,
+quota-pressure degrade, identity-bind, health — is DIY here, though Mastra *does* ship a built-in
+**approximate cost gate** (`CostGuardProcessor`) and a **per-tenant response cache** that the earlier
+notes missed.
+
 ## Summary
 
 Mastra is the **most batteries-included** of the three — memory, vectors, tools, streaming,
 structured output, and (run-verified) **native OTel-semconv observability** all built-in. But it's
-still a **framework**, not a runtime. Facts memory and cost governance are DIY; observability is
-built-in but tenant tagging is a per-call opt-in and the `/costs`/`/health` surface is DIY. The
+still a **framework**, not a runtime. Facts memory is NOT-POSSIBLE and most cost governance is DIY
+(though a built-in approximate cost gate `CostGuardProcessor` + a per-tenant `ResponseCache` exist);
+observability is built-in but tenant tagging is a per-call opt-in and the `/costs`/`/health` surface
+is DIY. The
 isolation model (`resourceId`/`threadId`) is
 the closest any competitor comes to construction, but mastra#11856 proves it's still convention.
 

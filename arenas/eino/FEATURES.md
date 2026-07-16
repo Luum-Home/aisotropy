@@ -131,3 +131,53 @@ wrong, as the smoke test proves).
 
 **vs. aisotropy:** Eino wins on Go-native velocity and CloudWeGo ecosystem fit; aisotropy wins on
 isolation-by-construction, temperature-tiered memory, pre-spend cost governance, and sovereignty.
+
+---
+
+# Comprehensive feature-parity walk (RUN-VERIFIED — `feature_parity_demo.go`)
+
+Beyond the 11-point checklist above, `feature_parity_demo.go` exercises **25 of aisotropy's
+executable-demo features** (ARENA-SPEC-v2.md) against the real Eino v0.9.12 runtime, fully offline
+(stub/counting models, no API key, SYNTHETIC token counts). Each line below is printed by the demo
+after the framework actually executed the path.
+
+**Run:** `go run ./feature_parity_demo.go` (from `arenas/eino/`) — exits 0.
+
+**Run-verified tally (25 features):** `BUILT-IN=3 · PARTIAL=4 · CONVENTION=3 · DIY=14 · NOT-POSSIBLE=1`.
+
+| # | Feature | Class | Run-verified evidence |
+|---|---|---|---|
+| 1 | working-memory | **CONVENTION** | Real `compose.CheckPointStore` round-trip under our `acme:alice:s1` key → recall correct. Persistence is Eino's; the `tenant:user:session` key + recent-buffer are ours. |
+| 2 | facts / FTS keyword search | **DIY** | Inverted-scan over `production database` → correct top hit. Eino ships no facts/journal or full-text tier (aisotropy = SQLite FTS5). |
+| 3 | semantic RAG | **PARTIAL** | Real `retriever.Retrieve(WithEmbedding,WithTopK)` → `k1` score 0.596. `retriever.Retriever`/`indexer.Indexer`/`embedding.Embedder` are BUILT-IN **interfaces**; the cosine store + tenant filter are ours (no in-core vector DB). |
+| 4 | summary / rolling buffer | **DIY** | 8 turns, keep=3 → prompt tokens plateau `[8 15 22 29 29 29 29 29]`. No summary-buffer primitive in Eino. |
+| 5 | importance×recency×relevance scoring | **DIY** | 3 facts scored → correct top-1. Eino ranks retrieval by cosine only. |
+| 6 | contradiction / supersede | **DIY** | Superseded old→new; stale vector gone. No supersede concept in Eino. |
+| 7 | knowledge ingestion (chunk+embed) | **PARTIAL** | Real `document.Transformer` seam split 1 doc→6 chunks → embedded+indexed → retrieved. Interfaces BUILT-IN; splitter/store bodies ours. |
+| 8 | BYO embedder | **CONVENTION** | `embedding.Embedder` is a BUILT-IN interface seam; swapped `HashEmbedder(saltA,128)`↔`(saltB,512)` accepted by `retriever.WithEmbedding`. Impl/self-hosting ours. |
+| 9 | **tiered temperature hierarchy** | **NOT-POSSIBLE** | The crux. Eino has NO tiered-memory concept — one bare-string checkpoint KV + retrieval seams, one flat nature. The 4 aisotropy tiers were each hand-assembled (working=CONVENTION, facts=DIY, vector=PARTIAL, summary=DIY). |
+| 10 | reflection loop (fail-closed) | **DIY** | `schema.NewMessageJSONParser` (BUILT-IN) flags bad JSON; the bad→retry→parsed and all-bad→fail-closed **loop** is ours. Eino has the parser, no repair loop. |
+| 11 | SSE streaming + cancel | **BUILT-IN** | Real `schema.Pipe` StreamReader/Writer; ctx cancel after 3 chunks stopped the producer at 3/12. Native. |
+| 12 | response cache (stateless) | **DIY** | 2nd identical query = hit (model calls 1→1); cross-tenant `globex` = MISS (key mixes `tenant\0user\0prompt`). No cache in Eino. |
+| 13 | scope-gated tools | **CONVENTION** | Granted-scope binds `lookup_order` (used); denied-scope binds `[]` (unused). Governance-by-absence achievable — but binding is the developer's choice, not a framework scope check. |
+| 14 | multi-step agent loop | **BUILT-IN** | Real `flow/agent/react.Agent` ran model→tool→model and folded the tool result. Native ReAct loop. |
+| 15 | typed tools / MCP | **BUILT-IN** | `utils.InferTool` reflected the Go struct into a `schema.ToolInfo`. Typed tools BUILT-IN; MCP execution is eino-ext (PARTIAL, external). |
+| 16 | auth: bearer→identity | **DIY** | HMAC verify + must-agree bind (cross-path token → `tenant-mismatch-403`). Eino has NO auth/identity/transport layer; entirely ours. |
+| 17 | pre-spend quota gate | **DIY** | Budget=20: turn-2 rejected **before** `Invoke` (model calls 1→1). Eino exposes usage only AFTER the call. |
+| 18 | circuit breaker | **DIY** | 5 failures open the breaker; 6th fast-fails with no model call (5→5). No breaker in Eino. |
+| 19 | quota-pressure degradation | **DIY** | Pressure 0.97 (pref=premium) → routed to `cheap` (safety valve wins). No load-aware router in Eino. |
+| 20 | cost meter (per-tenant) | **PARTIAL** | `schema.Message.ResponseMeta.Usage` is a BUILT-IN per-call field; per-tenant totals aggregated by our meter (no tenant dimension in Eino). |
+| 21 | OTel spans | **PARTIAL** | `callbacks.NewHandlerBuilder`+`WithCallbacks` captured 2 spans w/ timing+usage (BUILT-IN aspect). `tenant_id` on span only via our ctx; no native OTel `gen_ai` emitter (eino-ext backends external/PAID). |
+| 22 | health / readiness probe | **DIY** | DIY read-only readiness over facts+vector tiers (no LLM spend). Eino is a library with no server/health endpoint. |
+| 23 | product evaluation (IR) | **DIY** | P@2=1.00 R@2=1.00 over our retriever vs a labeled gold set. No eval harness in Eino. |
+| 24 | transactional outbox | **DIY** | Atomic msg+event append; crash-before-commit persists nothing; count invariant holds. No transactional store in Eino (aisotropy = BadgerDB ACID). |
+| 25 | async consolidation (dedup) | **DIY** | Offline dedup 5→2 unique. No sleep-cycle/consolidation in Eino (aisotropy = DataFusion Rust subprocess). |
+
+**Headline.** Only **3 of 25** are truly BUILT-IN — the multi-step ReAct agent loop, streaming, and
+typed tools. The memory story is the decisive gap: the **4-tier hierarchy by access temperature is
+NOT-POSSIBLE as a concept** — Eino gives one bare-string checkpoint KV plus retrieval **interface
+seams** (no store, no tenant dimension), so every memory tier (working/facts/vector/summary), the
+pre-spend gate, circuit breaker, quota-pressure degradation, transactional outbox, auth binding,
+health probe, response cache, and offline consolidation all had to be hand-built. Eino is a genuinely
+strong **Go orchestration library**; it is not a sovereign multi-tenant runtime, and this walk shows
+exactly where the DIY burden falls.

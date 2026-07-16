@@ -101,6 +101,63 @@ timestamp: 2026-07-15T00:00:00Z
   propagation + per-statement/key scoping + constitutional gate. No code path can issue an
   unscoped read.
 
+## Comprehensive feature-parity matrix (RUN-VERIFIED)
+
+`scripts/feature_parity_demo.py` exercises **25 executable features** from
+`arenas/ARENA-SPEC-v2.md` against pydantic-ai 2.10.0, fully offline
+(`TestModel`/`FunctionModel`, no network, no key). Every `[BUILT-IN]`/`[PARTIAL]`
+line **executes the framework**; every `[DIY]`/`[NOT-POSSIBLE]` line runs the
+fallback we had to write and labels it as ours. Run: `./.venv/bin/python
+scripts/feature_parity_demo.py` (exit 0 = all 25 assertions held).
+
+Run-verified tally: **5 BUILT-IN · 4 PARTIAL · 14 DIY · 2 NOT-POSSIBLE**.
+
+| # | Feature | Class | Run-verified evidence |
+|---|---|---|---|
+| 1 | Working memory (recent history/tenant/user/session) | **PARTIAL** | `message_history` threads prior turns into a run (BUILT-IN conduit); the store + `(tenant,user,session)` scoping is our dict (DIY half). |
+| 2 | Facts/episodic + keyword (FTS5-style) search | **DIY** | No facts store; our keyword index returned acme rows, 0 cross-tenant. |
+| 3 | Semantic/vector retrieval (RAG) | **DIY** | No vector store; our cosine over a DIY embedder ranked the target doc #1. BYO Chroma/Qdrant. |
+| 4 | Summary / rolling buffer | **DIY** | No buffer manager; our `condense()` folded 17 turns → summary + 3 recent. |
+| 5 | Importance × recency × relevance scoring | **DIY** | No scorer; our composite score picked the runbook over chitchat. |
+| 6 | Contradiction detection / supersede | **DIY** | No supersede; our upsert archived `postgres 15` → `postgres 16`. |
+| 7 | Knowledge ingestion (chunk + embed) | **DIY** | No ingestion path; our chunker produced chunks + embeddings. |
+| 8 | BYO embedder | **DIY** | No embedder seam (no vector tier to bring one into); you own it entirely. |
+| 9 | **Tiered memory by access temperature** | **NOT-POSSIBLE** | Framework ships **0** memory stores; `message_history` is a conduit, not a tier. aisotropy = 4 tiers (KV µs / FTS ms / vector / batch). |
+| 10 | Fail-closed reflection loop | **BUILT-IN** | Schema break → retried with the exact error (`RetryPromptPart`); on exhaustion raised `UnexpectedModelBehavior` (fails closed, no silent text). |
+| 11 | SSE streaming + immediate ctx-cancel | **BUILT-IN** | `run_stream` streamed deltas; `task.cancel()` stopped the upstream producer at 10/25 (no further emission) — spend cut, not just the write. |
+| 12 | Stateless response cache (per-tenant) | **DIY** | No cache; our LRU served the 2nd call with 0 generation, cross-tenant MISS. |
+| 13 | Scope-gated tools (absence-of-information) | **PARTIAL** | The `prepare` hook (BUILT-IN) hid the tool without scope and revealed it with scope; the scope **value** is developer-passed deps (DIY/CONVENTION, no identity enforcement). |
+| 14 | Multi-step agent loop | **BUILT-IN** | Framework auto-ran tool-call → result → continue to a final answer, no orchestration code from us. |
+| 15 | Typed tools + MCP | **PARTIAL** | Typed tools BUILT-IN (JSON schema auto-derived from the fn signature); MCP is the opt-in extra `pydantic-ai-slim[mcp]` (not installed here). |
+| 16 | Bearer-token → identity binding | **DIY** | Framework has **no** auth; our `verify_bearer` resolved identity but nothing binds it to deps — a forged deps tenant is not rejected. |
+| 17 | Per-tenant PRE-SPEND quota gate | **BUILT-IN** | `UsageLimits(count_tokens_before_request=True)` raised `UsageLimitExceeded` **before** generation (rejected turn: generation calls = 0). Per-RUN gate BUILT-IN; per-TENANT budget DIY. |
+| 18 | Circuit breaker | **DIY** | No breaker; our `Breaker` opened after 3 failures and fast-failed the 4th (upstream stayed at 3). |
+| 19 | Quota-pressure model degradation | **DIY** | Per-run `model=` swap is easy, but the pressure→cheap policy is our code (40% → primary, 97% → cheap). |
+| 20 | Per-tenant cost meter | **PARTIAL** | `result.usage` per call is BUILT-IN; our per-tenant sum separated acme (112) vs globex (55) tokens. |
+| 21 | OTel gen_ai spans | **BUILT-IN** | `instrument_pydantic_ai()` emitted gen_ai spans offline (model+usage+messages); `tenant_id` is **not** on them (DIY); hosted Logfire dashboard is PAID. |
+| 22 | Health / readiness probe | **DIY** | Framework is a library, not a server — no probe endpoint; our `readiness()` checks our stores. |
+| 23 | Product evaluation (IR + LLM-judge) | **DIY** | `pydantic-evals` is a separate/uninstalled package; our IR gave P@3 = 0.67, recall = 1.00; LLM-judge via structured output scored 8/10. |
+| 24 | Transactional outbox (atomic msg + event) | **NOT-POSSIBLE** | Framework has **no** persistence/txn primitive; our in-memory pair is not crash-durable ACID. aisotropy = one BadgerDB ACID txn. |
+| 25 | Async consolidation (dedup / contradictions) | **DIY** | No sleep-cycle; our pass folded 4 → 2 events (deduped + dropped noise). |
+
+### Reading of the matrix
+
+- **BUILT-IN (5):** reflection loop, streaming+cancel, multi-step agent loop,
+  per-RUN pre-spend gate, OTel gen_ai spans. These are Pydantic AI's genuine
+  strengths — the **agent loop + typed-output + spend/observability primitives**.
+- **PARTIAL (4):** working memory (conduit, no store), scope-gated tools (`prepare`
+  hook but unenforced scope), typed tools + MCP (typed yes, MCP opt-in), cost meter
+  (per-call usage yes, per-tenant no). The framework hands you the *primitive*; the
+  *runtime concern wrapped around it* is yours.
+- **DIY (14) + NOT-POSSIBLE (2):** the entire **memory-tier + consolidation** block.
+  Pydantic AI ships **zero** memory stores. A *tiered* hierarchy of different-nature
+  stores and a *transactional outbox* aren't just unshipped — they can't be expressed
+  against the framework at all (it has no persistence layer).
+
+This is the honest headline: on the **memory tiers** (aisotropy's four-DB
+"specialized tools by access temperature") Pydantic AI is a blank slate — 8 of 9
+memory rows are DIY and the tiered-hierarchy row is NOT-POSSIBLE.
+
 ## Summary
 
 Pydantic AI v2 is the **best-typed DX** of the three frameworks — but it's fundamentally an

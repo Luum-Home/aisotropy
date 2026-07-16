@@ -101,6 +101,57 @@ timestamp: 2026-07-15T00:00:00Z
   competitors. A namespace like `('acme',)` scans ALL tenants starting with `'acme'`.
   aisotropy's exact-key scoping + `Scope{}` value objects prevent this entirely.
 
+## Comprehensive feature parity (#1–#26) — RUN-VERIFIED via `feature_parity_demo.py`
+
+Run: `.venv/bin/python feature_parity_demo.py` (exit 0; 26 `FEATURE` lines; OFFLINE fake
+model + synthetic data). Verified against langgraph 1.2.9 / langchain 1.3.13 /
+langchain-core 1.4.9 / langsmith 0.10.5 / opentelemetry-sdk 1.43.0. Every row below is the
+class the demo **prints after actually executing** the framework (or the DIY version it had
+to write, labelled DIY/NOT-POSSIBLE).
+
+**Tally: BUILT-IN 8 · PARTIAL 6 · DIY 9 · NOT-POSSIBLE 3 (26 total).**
+
+| # | Feature | Class | Run-verified evidence |
+|---|---|---|---|
+| 1 | Temperature-tier hierarchy | PARTIAL | 2 KV-nature surfaces (checkpointer + Store); no FTS tier, no offline batch tier. aisotropy=4 stores of different nature |
+| 2 | Working memory (recent history) | BUILT-IN | `checkpointer(thread_id)` auto-hydrated 4 msgs across turns; unrelated thread isolated |
+| 3 | Facts memory w/ keyword/FTS search | NOT-POSSIBLE | Store has no full-text/BM25 tier; `search(query=)` vector-only, `search(filter=)` exact-dict. Closest = DIY substring scan |
+| 4 | Semantic / vector RAG | BUILT-IN | `Store(index=embed)` → `search(query=)` returned top vector hit (score 0.65) |
+| 5 | Summary / rolling buffer | PARTIAL | `trim_messages()` BUILT-IN but DROPS (kept 5/20); rolling SUMMARY condensation is DIY |
+| 6 | Importance×recency×relevance scoring | DIY | Store ranks by cosine only; composite Rel×Imp×Rec hand-rolled |
+| 7 | Contradiction detection / supersede | DIY | `Store.put` = key-upsert only; semantic supersede hand-rolled (near-score 0.4 → delete old) |
+| 8 | Knowledge ingestion (chunk+embed) | PARTIAL | embed-on-put + vector retrieval BUILT-IN; chunking is a separate splitter pkg (DIY here) |
+| 9 | Bring-your-own embedder | BUILT-IN | `index={'embed': <callable>}` accepts any fn; swapping embedders changed ranking |
+| 10 | Fail-closed reflection loop | PARTIAL | Pydantic parse/validate BUILT-IN (recovered in 2 tries); bounded retry+fail-closed LOOP is DIY (OutputFixingParser removed in LangChain 1.x) |
+| 11 | SSE / token streaming | BUILT-IN | `.astream(stream_mode=...)` yields incremental events; `messages` mode for tokens |
+| 12 | Immediate cancellation | BUILT-IN | `asyncio.CancelledError` propagates into the running node, cuts mid-flight, no partial persisted |
+| 13 | Response cache (stateless) | BUILT-IN | `set_llm_cache(InMemoryCache())` short-circuited identical prompt (2 invokes → 1 call). GLOBAL cache, no tenant partition (footgun); per-tenant partition DIY |
+| 14 | Scope-gated tools | DIY | you filter the tool list by scope before binding; `write_tasks` absent when scope missing. Gate is your code |
+| 15 | Multi-step agent loop | BUILT-IN | `create_react_agent(model, tools)` ran reason→act→observe; tool actually invoked |
+| 16 | Typed tools / MCP | PARTIAL | `@tool` derives typed JSON-Schema BUILT-IN; MCP is a separate adapter pkg (not core) |
+| 17 | Bearer-token → identity bind | NOT-POSSIBLE | OSS library has no auth; identity + must-agree bind is DIY middleware (Platform `@auth` is the paid hosted server) |
+| 18 | Pre-spend per-tenant quota gate | DIY | no `UsageLimits`/`check_before_request`; hand-rolled gate proven (allowed Δ=1, rejected Δ=0) |
+| 19 | Circuit breaker | DIY | no breaker (`with_fallbacks` is failure-fallback); hand-rolled breaker opened after 5 fails, rest fast-failed |
+| 20 | Quota-pressure degradation | DIY | `with_fallbacks` is failure-based not pressure-based; hand-rolled pressure router (0.97→cheap, 0.40→primary) |
+| 21 | Cost meter (per-tenant) | PARTIAL | `usage_metadata` per-call BUILT-IN; per-tenant aggregate DIY (helpers key by model name, no tenant) |
+| 22 | OTel gen_ai spans | BUILT-IN | 3 gen_ai-semconv spans captured offline in-memory; `tenant_id` on spans is DIY; managed LangSmith is PAID |
+| 23 | Health / readiness probe | DIY | library has no server; hand-rolled read-only tier probe (no LLM spend) |
+| 24 | Product evaluation (IR metrics) | DIY | no offline IR harness (LangSmith evaluators = SaaS/PAID); P@2/recall hand-computed over real Store retrieval |
+| 25 | Transactional outbox (atomic msg+event) | NOT-POSSIBLE | checkpointer + Store are separate stores, no shared ACID txn; msg+event can't be atomic (crash orphans one) |
+| 26 | Async consolidation (dedup offline) | DIY | no sleep-cycle engine; hand-rolled offline dedup+denoise pass (5→2 facts) |
+
+**Headline (memory tiers, the aisotropy differentiator):** LangGraph gives **2 tiers of the
+same nature** — a checkpointer (thread history) and a Store (namespaced KV + optional vector
+index). It has **no distinct full-text/FTS tier** (F3 NOT-POSSIBLE — `search` is vector-only
+or exact-dict, never keyword/BM25) and **no offline batch-consolidation engine** (F26 DIY).
+The **transactional outbox is NOT-POSSIBLE** (F25) because the checkpointer and Store share no
+ACID transaction, so a message and its consolidation event cannot be written atomically.
+aisotropy has **4 stores of different nature** (BadgerDB µs KV / SQLite+FTS5 keyword / Qdrant
+vector / DataFusion offline batch) plus an atomic BadgerDB outbox. What LangGraph genuinely
+ships BUILT-IN: working memory, vector RAG, BYO embedder, the agent loop, streaming +
+cancellation, an exact response cache, and gen_ai OTel spans. All governance (pre-spend gate,
+circuit breaker, pressure degradation, per-tenant meter, scope-gating) is DIY.
+
 ## Summary
 
 LangGraph has the **largest ecosystem** and the most mature checkpointing/story, but its
