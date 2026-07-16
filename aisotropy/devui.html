@@ -1,0 +1,273 @@
+<!doctype html>
+<!-- aisotropy-devui: built-in development chat UI. Development convenience only. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aisotropy Dev Chat</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #16181d;
+    --muted: #6b7280;
+    --border: #d7dbe0;
+    --panel: #f5f6f8;
+    --accent: #3b5bdb;
+    --user-bg: #e7ecfd;
+    --agent-bg: #f0f1f4;
+    --err: #c0392b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d;
+      --fg: #e8eaed;
+      --muted: #9aa0aa;
+      --border: #2c2f36;
+      --panel: #1e2127;
+      --accent: #7089f0;
+      --user-bg: #24304f;
+      --agent-bg: #23262d;
+      --err: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .badge {
+    font-size: 11px;
+    color: var(--err);
+    border: 1px solid var(--err);
+    border-radius: 4px;
+    padding: 1px 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .hint { font-size: 12px; color: var(--muted); }
+  form.ids {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  form.ids label {
+    display: flex;
+    flex-direction: column;
+    font-size: 11px;
+    color: var(--muted);
+    gap: 3px;
+  }
+  input, textarea {
+    font: inherit;
+    color: var(--fg);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+  }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  input.short { width: 130px; }
+  #log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .msg {
+    max-width: 80%;
+    padding: 8px 12px;
+    border-radius: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .msg.user { align-self: flex-end; background: var(--user-bg); }
+  .msg.agent { align-self: flex-start; background: var(--agent-bg); }
+  .msg.error { align-self: stretch; color: var(--err); font-size: 13px; }
+  .role { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  form.composer {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+  }
+  form.composer textarea { flex: 1; resize: none; min-height: 44px; max-height: 160px; }
+  button {
+    font: inherit;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: 0;
+    border-radius: 6px;
+    padding: 0 18px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Aisotropy Dev Chat</h1>
+  <span class="badge" title="Unauthenticated single-page tool. Not for production.">dev only</span>
+  <span class="hint">Streams from POST /v1/tenant/&lt;t&gt;/user/&lt;u&gt;/chat/stream</span>
+</header>
+
+<form class="ids" onsubmit="return false">
+  <label>tenant_id
+    <input id="tenant" class="short" value="acme" autocomplete="off">
+  </label>
+  <label>user_id
+    <input id="user" class="short" value="dev" autocomplete="off">
+  </label>
+  <label>product_id
+    <input id="product" class="short" value="dev-ui" autocomplete="off">
+  </label>
+  <label>session_id
+    <input id="session" class="short" value="dev-session" autocomplete="off">
+  </label>
+  <label>bearer token (optional)
+    <input id="token" class="short" placeholder="if auth is on" autocomplete="off">
+  </label>
+</form>
+
+<div id="log" aria-live="polite"></div>
+
+<form class="composer" id="composer">
+  <textarea id="prompt" placeholder="Type a message, Enter to send (Shift+Enter for newline)" autofocus></textarea>
+  <button type="submit" id="send">Send</button>
+</form>
+
+<script>
+(function () {
+  "use strict";
+
+  var log = document.getElementById("log");
+  var composer = document.getElementById("composer");
+  var promptEl = document.getElementById("prompt");
+  var sendBtn = document.getElementById("send");
+
+  function val(id) { return document.getElementById(id).value.trim(); }
+
+  function bubble(cls, role) {
+    var wrap = document.createElement("div");
+    wrap.className = "msg " + cls;
+    if (role) {
+      var r = document.createElement("div");
+      r.className = "role";
+      r.textContent = role;
+      wrap.appendChild(r);
+    }
+    var body = document.createElement("span");
+    wrap.appendChild(body);
+    log.appendChild(wrap);
+    log.scrollTop = log.scrollHeight;
+    return body;
+  }
+
+  // Parse a chunk of the SSE byte stream. The server emits named events
+  // (event: token|done|error) separated by a blank line, exactly the wire
+  // format internal/api/chat_stream.go registers. We accumulate across chunks
+  // because an event may straddle a read boundary.
+  function makeParser(onEvent) {
+    var buf = "";
+    return function (text) {
+      buf += text;
+      var idx;
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        var block = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        var name = "message", data = "";
+        block.split("\n").forEach(function (line) {
+          if (line.indexOf("event: ") === 0) name = line.slice(7);
+          else if (line.indexOf("data: ") === 0) data += line.slice(6);
+        });
+        onEvent(name, data);
+      }
+    };
+  }
+
+  async function send(prompt) {
+    var tenant = val("tenant"), user = val("user");
+    if (!tenant || !user) { bubble("error").textContent = "tenant_id and user_id are required."; return; }
+
+    bubble("user", "you").textContent = prompt;
+    var agent = bubble("agent", "agent");
+    var got = false;
+
+    var url = "/v1/tenant/" + encodeURIComponent(tenant) +
+              "/user/" + encodeURIComponent(user) + "/chat/stream";
+    var headers = { "Content-Type": "application/json", "Accept": "text/event-stream" };
+    var token = val("token");
+    if (token) headers["Authorization"] = "Bearer " + token;
+
+    var parse = makeParser(function (name, data) {
+      if (name === "token") {
+        try { agent.textContent += JSON.parse(data).text; got = true; }
+        catch (e) { /* ignore malformed fragment */ }
+      } else if (name === "error") {
+        var m = data; try { m = JSON.parse(data).message; } catch (e) {}
+        agent.parentNode.className = "msg error";
+        agent.textContent = "stream error: " + m;
+      }
+      log.scrollTop = log.scrollHeight;
+    });
+
+    try {
+      var resp = await fetch(url, { method: "POST", headers: headers,
+        body: JSON.stringify({ prompt: prompt, product_id: val("product"), session_id: val("session") }) });
+      if (!resp.ok) {
+        agent.parentNode.className = "msg error";
+        agent.textContent = "HTTP " + resp.status + " " + resp.statusText +
+          (resp.status === 401 ? " — set a bearer token, or run the app with WithAuthenticator(NoAuth())." : "");
+        return;
+      }
+      var reader = resp.body.getReader();
+      var dec = new TextDecoder();
+      for (;;) {
+        var r = await reader.read();
+        if (r.done) break;
+        parse(dec.decode(r.value, { stream: true }));
+      }
+      if (!got && agent.parentNode.className.indexOf("error") === -1) agent.textContent = "(no content)";
+    } catch (e) {
+      agent.parentNode.className = "msg error";
+      agent.textContent = "request failed: " + e;
+    }
+  }
+
+  composer.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var p = promptEl.value.trim();
+    if (!p) return;
+    promptEl.value = "";
+    sendBtn.disabled = true;
+    send(p).finally(function () { sendBtn.disabled = false; promptEl.focus(); });
+  });
+
+  promptEl.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); composer.requestSubmit(); }
+  });
+})();
+</script>
+</body>
+</html>

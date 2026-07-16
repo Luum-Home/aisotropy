@@ -141,6 +141,13 @@ type App struct {
 	// to explicitly run without a credential check.
 	authenticator Authenticator
 
+	// devUIPath backs WithDevUI / WithDevUIAt (aisotropy/devui.go): the
+	// non-/v1 route the built-in development chat page mounts on. Empty (the
+	// default) means the page is NOT registered — GET /ui 404s — so a default
+	// build has no dev surface and no drift. The page is a development
+	// convenience only (unauthenticated, single-page); see WithDevUI.
+	devUIPath string
+
 	// embedder / chunkSize / chunkOverlap back WithEmbedder / WithChunkSize
 	// (ADR-0018, aisotropy/knowledge.go). chunkSize <= 0 means "unset": the
 	// façade falls back to semantic.DefaultChunkOptions().
@@ -883,6 +890,17 @@ func (a *App) Run(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+
+	// Built-in development chat UI (WithDevUI / WithDevUIAt, aisotropy/devui.go),
+	// registered ONLY when opted in. Like /healthz it is a non-/v1 chi route, so
+	// it sits OUTSIDE the /v1 authn middleware installed below — which is exactly
+	// why it is a development convenience and NOT a production surface (see the
+	// WithDevUI doc). Inert by default: an empty devUIPath registers nothing, so
+	// GET /ui 404s in a stock build.
+	if a.devUIPath != "" {
+		router.Get(a.devUIPath, devUIHandler())
+		slog.Warn("development chat UI enabled (UNAUTHENTICATED, single-page — development convenience, NOT for production; build your own frontend on the /chat/agui or /chat/aisdk adapters for production)", "path", a.devUIPath)
+	}
 
 	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy", "0.1.0"))
 
