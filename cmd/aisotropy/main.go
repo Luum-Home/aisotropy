@@ -62,6 +62,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "plugins":
 		return runPlugins(args[1:], stdout, stderr)
+	case "task":
+		return runTask(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		usage(stdout)
 		return 0
@@ -80,6 +82,7 @@ Usage:
   aisotropy plugins add <path-or-dir>   Install a plugin manifest (parse+validate, then copy in)
   aisotropy plugins list                List installed plugin manifests
   aisotropy plugins remove <name>       Uninstall a plugin by name
+  aisotropy task run <repo-dir>         Run one sandboxed agentic coding task (--prompt required)
 
 Plugin directory:
   -dir overrides it per command. Otherwise $AISOTROPY_PLUGIN_DIR is used, or

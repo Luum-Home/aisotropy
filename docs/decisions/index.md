@@ -45,6 +45,7 @@ Decision log. Each ADR: **Context → Options considered → Decision → Conseq
 | [0035](0035-wasm-plugin-sandbox.md) | The WASM plugin sandbox: running an untrusted community tool in-process without handing it the process | **✅ accepted → `kind: wasm` runs on wazero (v1.12.0, Apache-2.0, pure Go, no CGO); no ambient host authority (no fs/net/clock/env); capabilities opt-in + enumerated (today `aisotropy.log`) — an ungranted host import fails to instantiate (the gate); small wasip1 ABI (`aisotropy_alloc`/`aisotropy_run`, JSON→JSON), language-agnostic; still scope-gated by manifest `requiredScope`** |
 | [0036](0036-sandboxed-task-agent-key-brokering.md) | Sandboxed task agent with key-brokering: `App.RunTask` runs an untrusted agent whose container never receives the API key | **✅ accepted → the inverse of the coding-CLI-in-a-box model: the LLM call runs HOST-SIDE (key spent in the host process), only the model's tool EXECUTIONS (run_shell/write_file/read_file/git_commit) run inside a throwaway Docker sandbox over an isolated git worktree; commits merge to HEAD. Broker invariant proven vs real Docker (`docker exec printenv` never shows the key while the task completes). `internal/sandbox` (Provider + Docker via CLI shell-out, zero new deps) + `internal/taskagent`. Minimal v1: one Docker provider, bind-mount, built-in hands — Vercel/Daytona/isolated/multi-repo are named follow-ons** |
 | [0037](0037-concurrent-sandboxed-task-agents.md) | Concurrent sandboxed task agents: `App.RunTasks` fans out N key-brokered task agents in parallel | **✅ accepted → the Go × isolation wedge — run N `RunTask`s concurrently from a Go service, each its own worktree + container (isolation by construction), each key-brokered; errgroup-bounded (no new dep), per-task error isolation (a failure doesn't kill the batch), merge-to-head serialized behind a per-repo mutex (concurrent merges can't corrupt HEAD), multiplexed `TaskEvent` stream. Proven vs real Docker (`TestRunTasks_ConcurrentDocker_KeyFree_NoHeadCorruption`)** |
+| [0038](0038-pluggable-sandbox-providers.md) | Pluggable sandbox providers: export the `SandboxProvider` seam, ship a Podman built-in, name the `Spec.Runtime` microVM knob | **✅ accepted → the sandbox backend is a pluggable seam — `aisotropy.SandboxProvider` (alias) selected per task via `TaskRequest.Provider`; two self-hostable built-ins `DockerSandbox()` (OrbStack transparently) / `PodmanSandbox()` (rootless, daemonless, Apache-2.0), both CLI shell-out, no new dep; `Spec.Runtime` shells a hardened OCI runtime (Kata `kata-runtime` = VM/container, gVisor `runsc` = user-space kernel) so microVM isolation is a config value, not a new provider; Kubernetes (Pod per task in a per-tenant namespace, `kubectl exec`/`cp`, delete on `Close`) + Firecracker/Cloud Hypervisor are documented bring-your-own extension points; cloud sandbox services (Vercel/Daytona-cloud) deliberately excluded from the core (would break self-hostable/no-lock-in). `aisotropy task run … --provider docker\|podman` CLI. Honest deltas: `Spec.Runtime` not yet a public `TaskRequest` field; k8s/Firecracker are doc sketches, not shipped** |
 
 > **Index gap (no backfill intended here):** ADRs **0025–0031** exist as files in this directory
 > (`0025-security-hardening-authn-ops` … `0031-embeddable-in-process-turn`) but are not yet reflected
@@ -275,6 +276,30 @@ These were closed in the original design and are documented as retroactive "acce
   time) while `started`/`step`/`shell` are live; no HTTP/SSE route (façade + callback only). Proven
   against real Docker (`TestRunTasks_ConcurrentDocker_KeyFree_NoHeadCorruption`); demo at
   `examples/task-fanout/`.
+
+- **[ADR-0038 — Pluggable sandbox providers](0038-pluggable-sandbox-providers.md):**
+  ✅ **accepted (2026-07-16)** — reconciled against shipped code. Makes the sandbox **backend** a
+  first-class pluggable seam over [ADR-0036](0036-sandboxed-task-agent-key-brokering.md) /
+  [ADR-0037](0037-concurrent-sandboxed-task-agents.md) (which shipped with **one** Docker provider). Three
+  moves: (1) **export** the provider contract on the public façade — `aisotropy.SandboxProvider` (alias for
+  `internal/sandbox.Provider`) plus `Sandbox` / `SandboxSpec` / the Exec I/O aliases — so a third party
+  brings their own backend by implementing one interface, selected per task via `TaskRequest.Provider`; (2)
+  **ship a second self-hostable built-in**, `PodmanSandbox()` (rootless, daemonless, Apache-2.0), alongside
+  `DockerSandbox()` (which already covers **OrbStack** transparently since both shell out to a stock CLI) —
+  **no new dependency**; (3) name the **`Spec.Runtime`** isolation-strength knob — a hardened OCI runtime
+  (**Kata** `kata-runtime` = a VM per container, **gVisor** `runsc` = a user-space kernel, both Apache-2.0)
+  emitted as `--runtime=<name>`, so microVM-grade isolation is a **config value, not a new provider**.
+  **Kubernetes** (a Pod per task in a **per-tenant namespace** via `kubectl exec`/`cp`, delete on `Close`)
+  and **Firecracker / Cloud Hypervisor** microVMs are documented **bring-your-own** extension points (a
+  reference sketch, not shipped code). **Cloud sandbox services (Vercel / Daytona-cloud) are deliberately
+  excluded** from the core — a vendor-hosted control-plane dependency would break the single-binary,
+  self-hostable, no-lock-in posture ([ADR-0020](0020-build-vs-adopt-lang-suite-mastra.md)); the seam stays
+  open so a consumer can write one themselves. Operator front door: `aisotropy task run <repo-dir> --prompt
+  "…" [--provider docker|podman] [--image X] [--max-steps N]` (`cmd/aisotropy/task.go`). Honest deltas:
+  `Spec.Runtime` is wired in `internal/sandbox` but not yet a field on the public `TaskRequest`; the
+  Kubernetes / Firecracker providers are **doc sketches**, not shipped implementations. As shipped:
+  `aisotropy/sandbox.go`, `internal/sandbox/{sandbox,docker,podman}.go`, `cmd/aisotropy/task.go`; as
+  documented: `docs/architecture/sandbox-providers.md`.
 
 ## Next ADRs to write
 
