@@ -11,6 +11,68 @@ MIT/Apache-2.0 stack, and a memory system organized by access temperature.
 > performance of Go + Rust, with tiered memory and granular control, without a single line of
 > opaque abstraction.
 
+## Quickstart: build your own agent
+
+Aisotropy is a **library first**: you import one package, register your bot's tools and persona,
+and call `Run`. **No API key and no database are required to boot** — with no LLM credential the
+runtime falls back to a *keyless stub* (a canned streaming response, Aisotropy's TestModel
+equivalent), and the in-process memory tiers default to in-memory. The program below runs as-is.
+
+```bash
+go mod init example.com/mybot
+go get github.com/Luum-Home/aisotropy/aisotropy@latest
+```
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/Luum-Home/aisotropy/aisotropy"
+)
+
+// forecastArgs is the tool's typed argument contract: its jsonschema tags drive
+// BOTH the JSON Schema the model is shown and the decode/validation of its reply.
+type forecastArgs struct {
+	City string `json:"city" jsonschema:"description=the city to look up"`
+}
+
+func main() {
+	app := aisotropy.New(
+		// One typed tool. The model is offered get_weather and its arguments are
+		// validated against forecastArgs before your handler ever runs.
+		aisotropy.WithTypedTool("get_weather", "look up the weather for a city", "",
+			func(ctx context.Context, args forecastArgs) (string, error) {
+				tenant, _ := aisotropy.TenantFromContext(ctx) // read-only identity
+				return fmt.Sprintf("Sunny, 22°C in %s (tenant %s)", args.City, tenant), nil
+			}),
+		// Keyless stub LLM (no ANTHROPIC_API_KEY) + NoAuth (trust the path
+		// identity — local/dev only) = boots and answers with zero credentials.
+		aisotropy.WithAuthenticator(aisotropy.NoAuth()),
+	)
+	if err := app.Run(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+```bash
+go run .          # serves :8080 — no credentials needed
+# In another shell — tenant + user are path params, product/session in the body:
+curl -N -X POST localhost:8080/v1/tenant/acme/user/alice/chat/stream \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"weather in Rosario?","product_id":"mybot","session_id":"s1"}'
+```
+
+`WithAuthenticator(aisotropy.NoAuth())` is what makes this runnable with zero setup: without an
+authenticator the runtime is **default-deny** and rejects every `/v1` request with 401. For
+production, swap `NoAuth()` for `aisotropy.NewJWTAuthenticator(secret)` and set `ANTHROPIC_API_KEY`
+(or `OPENROUTER_API_KEY`) to talk to a real model — nothing else changes. Full 5-minute
+walkthrough (typed tools → persona → auth → memory): [Build your own agent](docs/guides/build-your-own-agent.md).
+
 ## Why
 
 Building an *enterprise* AI agent — not a demo — demands four things that "magic" frameworks
@@ -75,9 +137,11 @@ The detailed ledgers are [docs/roadmap/milestones.md](docs/roadmap/milestones.md
 definition of done) and [docs/architecture/reality-ledger.md](docs/architecture/reality-ledger.md)
 (what runs by default vs. what is dormant behind an env var).
 
-## Quick start
+## Running the reference binary
 
-Requires Go 1.26+ (pinned via `.go-version`).
+The repo also ships `cmd/aisotropyd` — a thin ~50-line consumer of the same `aisotropy.App` builder
+(with demo tools) that doubles as the runnable reference. Requires Go 1.26+ (pinned via
+`.go-version`).
 
 ```bash
 # Build
