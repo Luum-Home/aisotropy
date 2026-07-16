@@ -109,23 +109,42 @@ func (a *App) ensureSemantic(ctx context.Context) (semantic.Store, semantic.Embe
 }
 
 // Close releases resources this App lazily memoized outside of Run's own
-// lifecycle — currently, the semantic store ensureSemantic built (a Qdrant
-// gRPC connection, when QDRANT_HOST is configured; a no-op for the default
-// in-memory store).
+// lifecycle. There are two such resources, in priority order:
 //
-// Run() manages its own graceful-shutdown lifecycle and already closes the
-// semantic store itself before returning, so Close only matters for SDK-only
-// consumers that call IngestKnowledge/IngestTenantKnowledge/DeleteKnowledge/
-// DeleteTenantKnowledge on an App that never calls Run — those callers
-// should `defer app.Close()` so the semantic store's underlying resources
-// are released when the App goes out of scope.
+//   - a Turn-built runtime (turn.go): if App.Turn was ever called, the App owns
+//     a full in-process runtime — the memory tiers, background workers, MCP
+//     clients, and tracer. Its teardown (rt.close) stops the workers before
+//     closing the stores they write to and shuts tracing, exactly as Run's
+//     graceful shutdown does. Because that runtime's semantic store IS the one
+//     ensureSemantic memoized on the App, rt.close already closes it — so Close
+//     delegates entirely and does NOT also close it a second time.
+//   - otherwise, the lazily-built semantic store alone: the SDK-only path
+//     (IngestKnowledge/IngestTenantKnowledge/DeleteKnowledge/DeleteTenantKnowledge
+//     on an App that called neither Turn nor Run). A Qdrant gRPC connection when
+//     QDRANT_HOST is configured; a no-op for the default in-memory store.
 //
-// Idempotent (safe to call more than once — a repeat call returns the same
-// result without closing twice) and nil-safe (an App whose semantic store
-// was never built, because neither IngestKnowledge nor Run ever ran,
-// returns nil without touching anything).
+// Run() manages its own graceful-shutdown lifecycle and tears down its OWN
+// (Run-local) runtime before returning, so a Run-served App does not need Close;
+// Close matters for embedded consumers that use Turn and/or the SDK ingestion
+// methods and should `defer app.Close()` so resources are released when the App
+// goes out of scope.
+//
+// Idempotent (closeOnce: a repeat call returns the same result without closing
+// twice) and nil-safe (an App that built neither a runtime nor a semantic store
+// returns nil without touching anything). Close must not race a concurrent Turn
+// call that is still building the runtime — call it during teardown, after all
+// Turn calls have returned.
 func (a *App) Close() error {
 	a.closeOnce.Do(func() {
+		if a.runtime != nil {
+			// A Turn-built runtime owns closing every store (including the
+			// semantic store below), stopping the workers, and shutting tracing.
+			// Give it a bounded deadline like Run's graceful shutdown does.
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+			defer cancel()
+			a.runtime.close(shutdownCtx)
+			return
+		}
 		if a.semanticStore != nil {
 			a.closeErr = a.semanticStore.Close()
 		}

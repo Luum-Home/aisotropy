@@ -13,10 +13,12 @@ MIT/Apache-2.0 stack, and a memory system organized by access temperature.
 
 ## Quickstart: build your own agent
 
-Aisotropy is a **library first**: you import one package, register your bot's tools and persona,
-and call `Run`. **No API key and no database are required to boot** — with no LLM credential the
-runtime falls back to a *keyless stub* (a canned streaming response, Aisotropy's TestModel
-equivalent), and the in-process memory tiers default to in-memory. The program below runs as-is.
+Aisotropy is a **library first**: the runtime is a value you build once and **call like a
+function** — `app.Turn(ctx, in)` runs one full chat turn in-process, no HTTP server in sight (the
+Aisotropy answer to Pydantic AI's `run_sync`). **No API key and no database are required to boot** —
+with no LLM credential the runtime falls back to a *keyless stub* (a canned response, Aisotropy's
+TestModel equivalent), and the in-process memory tiers default to in-memory. The program below runs
+as-is.
 
 ```bash
 go mod init example.com/mybot
@@ -34,44 +36,82 @@ import (
 	"github.com/Luum-Home/aisotropy/aisotropy"
 )
 
-// forecastArgs is the tool's typed argument contract: its jsonschema tags drive
-// BOTH the JSON Schema the model is shown and the decode/validation of its reply.
-type forecastArgs struct {
-	City string `json:"city" jsonschema:"description=the city to look up"`
-}
-
 func main() {
-	app := aisotropy.New(
-		// One typed tool. The model is offered get_weather and its arguments are
-		// validated against forecastArgs before your handler ever runs.
-		aisotropy.WithTypedTool("get_weather", "look up the weather for a city", "",
-			func(ctx context.Context, args forecastArgs) (string, error) {
-				tenant, _ := aisotropy.TenantFromContext(ctx) // read-only identity
-				return fmt.Sprintf("Sunny, 22°C in %s (tenant %s)", args.City, tenant), nil
-			}),
-		// Keyless stub LLM (no ANTHROPIC_API_KEY) + NoAuth (trust the path
-		// identity — local/dev only) = boots and answers with zero credentials.
-		aisotropy.WithAuthenticator(aisotropy.NoAuth()),
-	)
-	if err := app.Run(context.Background()); err != nil {
+	// Build the runtime once. With no options it uses the keyless stub LLM
+	// (no ANTHROPIC_API_KEY) and in-memory stores. Close releases it at exit.
+	app := aisotropy.New()
+	defer func() { _ = app.Close() }()
+
+	// Call it like a function. TenantID/UserID are the isolation identity: they
+	// enter context.Context inside Turn and scope every memory tier — never a body
+	// field. Reuse SessionID across calls to keep a conversation's working memory.
+	out, err := app.Turn(context.Background(), aisotropy.ChatInput{
+		TenantID:  "acme",
+		UserID:    "alice",
+		SessionID: "s1",
+		Prompt:    "weather in Rosario?",
+	})
+	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Println(out.Reply) // out.Stub == true while no real model is configured
 }
 ```
 
 ```bash
-go run .          # serves :8080 — no credentials needed
-# In another shell — tenant + user are path params, product/session in the body:
+go run .   # prints a reply — no server, no port, no credentials
+```
+
+The first `Turn` boots the shared runtime (memory tiers, guardrails, gateway, cost meter, rate
+limiter, background workers) and every later `Turn` reuses it, so working memory persists between
+calls and isolation between tenants holds **by construction** — a different `TenantID` can never
+read this one's data.
+
+**Add a tool** — a typed Go function is the whole ergonomic surface (Aisotropy's answer to
+`@agent.tool`). Its `jsonschema` tags drive BOTH the JSON Schema the model is shown and the
+validate/decode of the model's arguments before your handler runs:
+
+```go
+type forecastArgs struct {
+	City string `json:"city" jsonschema:"description=the city to look up"`
+}
+
+app := aisotropy.New(
+	aisotropy.WithTypedTool("get_weather", "look up the weather for a city", "",
+		func(ctx context.Context, args forecastArgs) (string, error) {
+			tenant, _ := aisotropy.TenantFromContext(ctx) // read-only identity
+			return fmt.Sprintf("Sunny, 22°C in %s (tenant %s)", args.City, tenant), nil
+		}),
+)
+```
+
+**Serve it over HTTP instead** — when you want the network boundary (a remote client, other
+services), the SAME runtime runs behind an HTTP contract via `app.Run(ctx)`. Over HTTP identity
+arrives from an untrusted client, so an authenticator is required — the runtime is **default-deny**
+(every `/v1` request is 401) until you configure one:
+
+```go
+app := aisotropy.New(
+	// NoAuth trusts the URL path identity — local/dev only. In production swap it
+	// for aisotropy.NewJWTAuthenticator(secret) (verifies + binds must-agree to the path).
+	aisotropy.WithAuthenticator(aisotropy.NoAuth()),
+)
+if err := app.Run(context.Background()); err != nil { // serves :8080, blocks
+	log.Fatal(err)
+}
+```
+
+```bash
+go run .          # serves :8080
+# tenant + user are path params, product/session in the body:
 curl -N -X POST localhost:8080/v1/tenant/acme/user/alice/chat/stream \
   -H 'content-type: application/json' \
   -d '{"prompt":"weather in Rosario?","product_id":"mybot","session_id":"s1"}'
 ```
 
-`WithAuthenticator(aisotropy.NoAuth())` is what makes this runnable with zero setup: without an
-authenticator the runtime is **default-deny** and rejects every `/v1` request with 401. For
-production, swap `NoAuth()` for `aisotropy.NewJWTAuthenticator(secret)` and set `ANTHROPIC_API_KEY`
-(or `OPENROUTER_API_KEY`) to talk to a real model — nothing else changes. Full 5-minute
-walkthrough (typed tools → persona → auth → memory): [Build your own agent](docs/guides/build-your-own-agent.md).
+Set `ANTHROPIC_API_KEY` (or `OPENROUTER_API_KEY`) to talk to a real model — nothing else changes,
+in-process or over HTTP. Full 5-minute walkthrough (in-process turns → typed tools → persona →
+memory → serve over HTTP): [Build your own agent](docs/guides/build-your-own-agent.md).
 
 ## Why
 
@@ -128,10 +168,11 @@ Phase 9 is partially delivered:**
   `cmd/aisotropyd` is a thin ~51-line consumer of it, and third parties build their own bot by
   importing `aisotropy/`.
 - **Phase 9 — composition surface (partial):** typed tool args (`WithTypedTool[T]`), MCP-backed
-  tools (`WithMCPServer`), a reference [`docker-compose.yml`](docs/deployment/docker-compose.md)
-  deployment that boots aisotropyd with rqlite + Qdrant active, and wiring-only YAML/JSON config
-  (`LoadConfigFile`/`OptionsFromConfig`) are delivered. The L2 composition SDK and the
-  embeddable `App.Turn` are pending.
+  tools (`WithMCPServer`), the embeddable in-process [`App.Turn`](docs/decisions/0031-embeddable-in-process-turn.md)
+  (call the full pipeline like a function, no HTTP hop), a reference
+  [`docker-compose.yml`](docs/deployment/docker-compose.md) deployment that boots aisotropyd with
+  rqlite + Qdrant active, and wiring-only YAML/JSON config (`LoadConfigFile`/`OptionsFromConfig`)
+  are delivered. The broader L2 composition SDK is pending.
 
 The detailed ledgers are [docs/roadmap/milestones.md](docs/roadmap/milestones.md) (per-phase
 definition of done) and [docs/architecture/reality-ledger.md](docs/architecture/reality-ledger.md)

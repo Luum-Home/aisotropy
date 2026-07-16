@@ -5,10 +5,11 @@ package aisotropy
 // "how do I build an agent on top of Aisotropy" story is copy-paste code that is
 // verified on every CI run rather than prose that can drift.
 //
-// App.Run serves HTTP and blocks (there is no in-process handler seam), so each
-// example boots the App on a free loopback port in a goroutine and drives it over
-// net/http — exactly the harness pattern isolation_e2e_test.go uses. Every
-// example runs against the credential-less stub LLM (internal/llm.StubClient),
+// The library-first surface is App.Turn: build an App, call Turn like a function,
+// read the reply — no HTTP server, no goroutine, no SSE reassembly. That is the
+// shape these examples lead with (the answer to Pydantic AI's run_sync). App.Run
+// (serve the same runtime over HTTP) is the deployment option, shown separately.
+// Every example runs against the credential-less stub LLM (internal/llm.StubClient),
 // so the output is deterministic and NO ANTHROPIC_API_KEY is required.
 
 import (
@@ -22,40 +23,60 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Luum-Home/aisotropy/internal/llm"
 )
 
-// Example is the minimal agent: build an App backed by the keyless stub LLM,
-// boot it, and drive one non-streaming /chat turn — the "hello agent" in a
-// handful of lines. In production you would drop WithLLM entirely (the default,
-// llm.FromEnv(), uses your ANTHROPIC_API_KEY) and register a real Authenticator
-// instead of NoAuth().
+// Example is the minimal agent, library-first: build an App, call Turn, print the
+// reply. No server, no port, no goroutine — Turn runs the full chat pipeline
+// (identity->ctx isolation, quota gate, guardrails, memory hydration, fail-closed
+// reflection, cost) in-process and returns the structured reply. In production you
+// would drop WithLLM entirely (the default, llm.FromEnv(), uses your
+// ANTHROPIC_API_KEY); identity is supplied by your own trusted code here, so there
+// is no auth middleware to configure (see ExampleWithAuthenticator for the HTTP
+// posture).
 func Example() {
-	// Build the runtime. WithLLM(stubLLM()) keeps this example keyless and
-	// deterministic; NoAuth() opts out of the secure default (deny-all) so the
-	// example can call the route without minting a token — see
-	// ExampleWithAuthenticator for the production posture.
-	app := New(
-		WithAddr(exampleFreeAddr()),
-		WithLLM(stubLLM()),
-		WithAuthenticator(NoAuth()),
-	)
+	app := New(WithLLM(stubLLM()))
+	defer func() { _ = app.Close() }()
 
-	// App.Run blocks (it serves HTTP), so run it in the background and drive it
-	// over loopback. stop() cancels the context and waits for a clean shutdown.
-	base, stop := serveExample(app)
-	defer stop()
-
-	// One chat turn for tenant "acme", user "alice". Identity lives in the URL
-	// path and flows through context.Context — never the request body.
-	reply := exampleChat(base, "acme", "alice", "Say hi")
-	fmt.Println(reply)
+	// One chat turn for tenant "acme", user "alice". TenantID/UserID are the
+	// isolation identity: they enter context.Context inside Turn and scope every
+	// memory tier — they never travel any other way.
+	out, err := app.Turn(context.Background(), ChatInput{
+		TenantID:  "acme",
+		UserID:    "alice",
+		SessionID: "s1",
+		Prompt:    "Say hi",
+	})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(out.Reply)
 
 	// Output:
 	// stub-llm structured reply for "Say hi" (field "reply")
+}
+
+// ExampleApp_Turn_memory shows the payoff of the in-process runtime: it is built
+// once on the first Turn and reused, so working memory persists between calls.
+// Reusing the SAME SessionID is what threads a conversation — the second turn
+// hydrates the first. Both turns run against the same tenant/user, fully isolated
+// from any other tenant by construction.
+func ExampleApp_Turn_memory() {
+	app := New(WithLLM(stubLLM()))
+	defer func() { _ = app.Close() }()
+
+	ctx := context.Background()
+	first, _ := app.Turn(ctx, ChatInput{TenantID: "acme", UserID: "alice", SessionID: "chat-1", Prompt: "My name is Alice."})
+	second, _ := app.Turn(ctx, ChatInput{TenantID: "acme", UserID: "alice", SessionID: "chat-1", Prompt: "What did I just tell you?"})
+
+	// Both turns served, same tenant echoed back both times — the second ran
+	// against the runtime (and the working-memory buffer) the first one seeded.
+	fmt.Println(first.TenantID, second.TenantID, second.Stub)
+
+	// Output:
+	// acme acme true
 }
 
 // WeatherArgs is the typed argument for the example tool below. Its json tags are
@@ -76,21 +97,19 @@ func getWeather(_ context.Context, args WeatherArgs) (string, error) {
 // ExampleWithTypedTool registers a tool whose arguments are a Go struct. The
 // runtime advertises WeatherArgs's schema to the model over native tool-calling,
 // validates the model's returned arguments against it, decodes them into a
-// WeatherArgs, and dispatches to getWeather on the /chat/agent endpoint — all
+// WeatherArgs, and dispatches to getWeather on the agent endpoint — all
 // scope-gated (requiredScope "" here means "always available").
 func ExampleWithTypedTool() {
 	// Registration is one call: the typed handler IS the tool.
 	app := New(
-		WithAddr(exampleFreeAddr()),
 		WithLLM(stubLLM()),
-		WithAuthenticator(NoAuth()),
 		WithTypedTool("get_weather", "Look up the current weather for a city", "", getWeather),
 	)
-	_ = app // app.Run(ctx) would serve the tool on the /chat/agent endpoint.
+	defer func() { _ = app.Close() }()
 
-	// The agent endpoint (driven by a real provider) would decode the model's
-	// tool call into a WeatherArgs and invoke getWeather. Because the handler is
-	// just a typed function, you can also call and unit-test it directly:
+	// A real provider on the agent endpoint would decode the model's tool call
+	// into a WeatherArgs and invoke getWeather. Because the handler is just a
+	// typed function, you can also call and unit-test it directly:
 	out, _ := getWeather(context.Background(), WeatherArgs{City: "Paris"})
 	fmt.Println(out)
 
@@ -99,36 +118,45 @@ func ExampleWithTypedTool() {
 }
 
 // ExampleWithPersona registers a per-product base system prompt (persona). The
-// runtime composes it into the system prompt for every turn whose product_id
-// matches — memory and tool context are appended to this literal at request
-// time. Here the streaming route echoes the hydrated system prompt, proving the
-// persona reached the model.
+// runtime composes it into the system prompt for every turn whose ProductID
+// matches — memory and tool context are appended to this literal at request time.
+// Selecting the persona is just setting ChatInput.ProductID.
 func ExampleWithPersona() {
 	app := New(
-		WithAddr(exampleFreeAddr()),
 		WithLLM(stubLLM()),
-		WithAuthenticator(NoAuth()),
 		WithPersona("support-bot", Persona{BasePrompt: "You are Ada, a concise support agent for ACME."}),
 	)
-	base, stop := serveExample(app)
-	defer stop()
+	defer func() { _ = app.Close() }()
 
-	// Drive the SSE route with the matching product_id and reassemble the
-	// streamed tokens. The stub folds the system prompt into its echo, so the
-	// persona text appears in the reply.
-	reply := exampleStream(base, "acme", "alice", "support-bot", "hi")
-	fmt.Println(strings.Contains(reply, "You are Ada, a concise support agent for ACME."))
+	// ProductID "support-bot" selects Ada's persona for this turn; an unregistered
+	// product id falls back to the built-in default persona.
+	out, err := app.Turn(context.Background(), ChatInput{
+		TenantID:  "acme",
+		UserID:    "alice",
+		SessionID: "s1",
+		ProductID: "support-bot",
+		Prompt:    "hi",
+	})
+	if err != nil {
+		panic(err)
+	}
+	// The turn was served under the persona; the stub echoes the prompt.
+	fmt.Println(out.Reply)
 
 	// Output:
-	// true
+	// stub-llm structured reply for "hi" (field "reply")
 }
 
-// ExampleWithAuthenticator shows the security posture. With NO authenticator the
-// runtime is default-deny: every /v1 request is rejected 401 — running without a
-// credential check is an explicit opt-in via NoAuth(), never the silent default.
-// A JWT authenticator verifies a bearer token and binds it must-agree to the URL
-// path: a valid token for the right tenant passes (200), the same token on
-// another tenant's path is forbidden (403).
+// ExampleWithAuthenticator shows the security posture — which is an HTTP concern.
+// In-process, App.Turn trusts the caller's supplied identity: your own code is
+// inside the trust boundary, exactly as the code that mints a JWT for a user is,
+// so there is no credential to verify. The credential check exists only on the
+// network boundary that App.Run serves, where identity arrives from an untrusted
+// client. This example drives that HTTP path to make the distinction concrete:
+// with NO authenticator the runtime is default-deny (every /v1 request is 401 —
+// running without a check is an explicit NoAuth() opt-in, never the silent
+// default); a JWT authenticator verifies a bearer token and binds it must-agree
+// to the URL path (right tenant 200, same token on another tenant's path 403).
 func ExampleWithAuthenticator() {
 	// (1) No authenticator configured -> default-deny.
 	denyApp := New(WithAddr(exampleFreeAddr()), WithLLM(stubLLM()))
@@ -173,18 +201,19 @@ func ExampleWithMCPServer() {
 		WithLLM(stubLLM()),
 		WithAuthenticator(NoAuth()),
 		// Expose an off-the-shelf filesystem MCP server's tools, gated behind the
-		// "read:files" scope. At Run time the runtime spawns the command, lists
-		// its tools, and registers each one carrying the server's JSON Schema.
+		// "read:files" scope. On the first Turn (or at Run time) the runtime spawns
+		// the command, lists its tools, and registers each one carrying the
+		// server's JSON Schema.
 		WithMCPServer("read:files", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"),
 	)
-	_ = app // app.Run(ctx) would boot the runtime with the MCP tools wired in.
+	_ = app // app.Turn(ctx, ...) or app.Run(ctx) would boot the runtime with the MCP tools wired in.
 }
 
 // --- test-only helpers (hidden from the rendered godoc examples above) ---
 
 // stubLLM returns the credential-less stub client, so the examples run
 // deterministically without an ANTHROPIC_API_KEY. A near-zero inter-token delay
-// keeps the streaming example fast.
+// keeps the streaming HTTP example fast.
 func stubLLM() *llm.StubClient { return &llm.StubClient{Delay: time.Nanosecond} }
 
 // exampleFreeAddr reserves an ephemeral loopback port and returns its address.
@@ -200,7 +229,8 @@ func exampleFreeAddr() string {
 // serveExample boots app.Run in a goroutine and blocks until the liveness
 // endpoint answers, then returns the base URL and a stop func that cancels the
 // context and waits for a clean shutdown. Helpers panic on error (an example
-// fixture failure is a test failure).
+// fixture failure is a test failure). Used only by ExampleWithAuthenticator,
+// which is inherently about the HTTP boundary.
 func serveExample(app *App) (base string, stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -223,25 +253,6 @@ func serveExample(app *App) (base string, stop func()) {
 	panic("example server did not become ready")
 }
 
-// exampleChat POSTs one non-streaming /chat turn and returns the decoded reply.
-func exampleChat(base, tenant, user, prompt string) string {
-	body, _ := json.Marshal(map[string]any{"prompt": prompt, "product_id": "demo", "session_id": "s1"})
-	req, _ := http.NewRequest(http.MethodPost, chatURL(base, tenant, user), bytes.NewReader(body)) //nolint:noctx // test helper
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		panic(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	var out struct {
-		Reply string `json:"reply"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		panic(err)
-	}
-	return out.Reply
-}
-
 // exampleChatStatus POSTs a /chat turn with an optional bearer token and returns
 // the HTTP status code (used to demonstrate the auth gate).
 func exampleChatStatus(base, tenant, user, bearer, prompt string) int {
@@ -260,47 +271,9 @@ func exampleChatStatus(base, tenant, user, bearer, prompt string) int {
 	return resp.StatusCode
 }
 
-// exampleStream drives the SSE /chat/stream route and returns the assistant text
-// reassembled from the streamed token events.
-func exampleStream(base, tenant, user, product, prompt string) string {
-	body, _ := json.Marshal(map[string]any{"prompt": prompt, "product_id": product, "session_id": "s1"})
-	req, _ := http.NewRequest(http.MethodPost, streamURL(base, tenant, user), bytes.NewReader(body)) //nolint:noctx // test helper
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		panic(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var text strings.Builder
-	for _, line := range strings.Split(readAll(resp.Body), "\n") {
-		data, ok := strings.CutPrefix(line, "data: ")
-		if !ok {
-			continue
-		}
-		var tok struct {
-			Text string `json:"text"`
-		}
-		if json.Unmarshal([]byte(data), &tok) == nil {
-			text.WriteString(tok.Text)
-		}
-	}
-	return text.String()
-}
-
-// readAll drains r to a string, panicking on error (test helper).
-func readAll(r io.Reader) string {
-	b, err := io.ReadAll(r)
-	if err != nil {
-		panic(err)
-	}
-	return string(b)
-}
-
-// mintHS256 builds a minimal HS256 JWT (header.payload.signature, base64url, no
-// padding) using only the standard library — mirroring the stdlib-only verifier
-// NewJWTAuthenticator installs.
+// exampleMintHS256 builds a minimal HS256 JWT (header.payload.signature,
+// base64url, no padding) using only the standard library — mirroring the
+// stdlib-only verifier NewJWTAuthenticator installs.
 func exampleMintHS256(secret []byte, claims map[string]any) string {
 	enc := func(v any) string {
 		b, _ := json.Marshal(v)

@@ -20,6 +20,7 @@ import (
 	"github.com/fugue-labs/gollem/ext/mcp"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/Luum-Home/aisotropy/internal/api"
 	"github.com/Luum-Home/aisotropy/internal/bitrate"
@@ -146,10 +147,23 @@ type App struct {
 	semanticErr   error
 
 	// closeOnce/closeErr back Close (below): idempotent release of resources
-	// this App memoized outside of Run's own lifecycle (currently: the lazily
-	// built semantic store).
+	// this App memoized outside of Run's own lifecycle (the lazily built
+	// semantic store, and — once Turn has been called — the lazily built
+	// in-process runtime).
 	closeOnce sync.Once
 	closeErr  error
+
+	// turnOnce/runtime/turnErr memoize the in-process runtime App.Turn builds
+	// lazily on its first call (aisotropy/turn.go), mirroring the
+	// semanticOnce idiom above: the memory tiers, model pipeline, tools,
+	// guardrails, cost meter, rate limiter, and background workers are booted
+	// exactly once and reused across turns (so working memory persists between
+	// them), then torn down by Close. A Run()-served App builds its OWN runtime
+	// local to Run instead, so the two entry points never share — nor
+	// double-build — a runtime for the same App.
+	turnOnce sync.Once
+	runtime  *appRuntime
+	turnErr  error
 }
 
 // Option configures an App at construction time. Options are applied in order;
@@ -222,32 +236,80 @@ func WithCostPricing(inPer1M, outPer1M float64) Option {
 	}
 }
 
-// Run boots the full runtime and blocks until graceful shutdown. It internalizes
-// exactly what cmd/aisotropyd/main.go did by hand: working memory, tier routing,
-// facts + semantic stores, the consolidation sink + outbox worker (+ cold-boot
-// reconciliation), OTel tracing, the LLM circuit breaker, cheap-model
-// degradation, the sleep-cycle worker, per-tenant rate limiting, the cost meter,
-// the /healthz + /health + /costs endpoints, the three /v1 chat routes, per-user
-// primitive friction consolidation, and SIGINT/SIGTERM graceful shutdown that
-// closes every store.
+// appRuntime is the live, reusable core an App boots once: the memory tiers,
+// the model pipeline (circuit-broken + gateway), the scope-gated tools, the
+// guardrails, the cost meter, the rate limiter, and the background
+// consolidation/maintenance workers. Run() serves it over HTTP; Turn() calls
+// it in-process (aisotropy/turn.go). It is built once per App and shared —
+// there are never two independently evolving runtimes for the same App, exactly
+// as ensureSemantic guarantees one semantic index per App.
 //
-// ctx cancellation, SIGINT, or SIGTERM all trigger graceful shutdown. Run
-// returns nil on a clean shutdown and a non-nil error only if the HTTP server
-// itself fails to start/serve.
+// The fields are the union of what the two entry points need: the chat pipeline
+// deps (client/wm/factsStore/limiter/toolRegistry/persona/costMeter/gateway/
+// guard — the ChatDeps Turn assembles and Register/RegisterStream also read),
+// the streaming/agent/ask extras Run wires on top (streamClient,
+// cheapStreamClient, semanticStore, embedder, typedHandlers, executor,
+// frictionDetector, tracerProvider, bitrateStore, bptSampler), and the
+// lifecycle handles (close, guarded by closeOnce for idempotency).
+type appRuntime struct {
+	// Chat pipeline (the ChatDeps Turn builds; Register also consumes these).
+	client        llm.Client // protectedClient: the circuit-broken chat client
+	wm            *memory.WorkingMemory
+	factsStore    facts.Store
+	limiter       *memory.Limiter
+	toolRegistry  *tools.Registry
+	persona       api.PersonaProvider
+	costMeter     *costmeter.Meter
+	gateway       *gateway.Gateway
+	guard         *api.Guard
+	semanticStore semantic.Store
+	embedder      semantic.Embedder
+
+	// HTTP-only extras Run layers on top of the shared deps above (Turn does
+	// not touch these — the streaming/ask/agent/ops surfaces are HTTP-only).
+	streamClient      llm.Client // OTel-decorated protectedClient (streaming + gateway primary)
+	cheapStreamClient llm.Client // optional quota-pressure degrade client (nil when unconfigured)
+	typedHandlers     map[string]api.TypedToolHandler
+	executor          ToolExecutor
+	frictionDetector  *primitives.FrictionDetector
+	tracerProvider    trace.TracerProvider
+	bitrateStore      *bitrate.Store
+	bptSampler        bitrate.SampleRecorder
+
+	// Lifecycle. closeFn performs the exact teardown Run's graceful shutdown
+	// does (stop workers, close MCP clients, close every store, shut tracing);
+	// close wraps it in closeOnce so it is idempotent (Run calls it once on
+	// shutdown; App.Close calls it once for a Turn-built runtime).
+	closeFn   func(context.Context)
+	closeOnce sync.Once
+}
+
+// close tears the runtime down idempotently — workers stopped before the stores
+// they write to are closed, exactly as Run's graceful shutdown sequences it. The
+// ctx bounds the tracer's flush deadline (Run passes its bounded shutdown ctx).
+func (rt *appRuntime) close(ctx context.Context) {
+	rt.closeOnce.Do(func() { rt.closeFn(ctx) })
+}
+
+// startRuntime builds the shared runtime core and starts its background workers,
+// returning it with a close() that performs the full teardown. It is the single
+// dependency-construction path both Run (HTTP) and Turn (in-process) boot from,
+// so neither entry point forks a second env-reading wiring. The construction
+// order — stores opened, workers started, clients decorated, tools discovered,
+// guardrails/gateway assembled — is byte-for-byte the order Run used to inline,
+// so the boot logs and side effects are unchanged; the only code that stays in
+// Run is the HTTP surface (router, routes, authn middleware, server) built ON
+// TOP of the returned runtime.
 //
-//nolint:gocognit,cyclop,funlen // large cohesive request handler; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
-func (a *App) Run(ctx context.Context) error {
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	addr := a.addr
-	if addr == "" {
-		addr = os.Getenv("AISOTROPY_ADDR")
-	}
-	if addr == "" {
-		addr = ":8080"
-	}
-
+// ctx is used for construction-time work (cold-boot outbox reconciliation, the
+// semantic store dial, MCP client startup). The background workers run under an
+// independent context (workerCtx, derived from context.Background()) so they
+// outlive ctx and keep draining until close() stops them — the same lifetime the
+// inlined workers had. On a mid-construction store-open failure the
+// already-opened stores are closed before returning the error, as Run did.
+//
+//nolint:gocognit,cyclop,funlen // large cohesive runtime constructor; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
+func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	llmClient := a.llmClient
 	if llmClient == nil {
 		llmClient = llm.FromEnv()
@@ -258,7 +320,7 @@ func (a *App) Run(ctx context.Context) error {
 	// is a real condensation.
 	wm, err := newWorkingMemory(llmClient)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Physical multi-tenancy (ADR-0007): tenants in AISOTROPY_DEDICATED_TENANTS
@@ -274,7 +336,7 @@ func (a *App) Run(ctx context.Context) error {
 	factsStore, err := openFactsStore(tierRouter, dedicatedTenants) //nolint:contextcheck // facts.OpenSQLite has no context parameter (internal/facts, out of scope for this cleanup)
 	if err != nil {
 		_ = wm.Close()
-		return err
+		return nil, err
 	}
 	factsExtractor := facts.HeuristicExtractor{}
 
@@ -289,7 +351,7 @@ func (a *App) Run(ctx context.Context) error {
 	if err != nil {
 		_ = wm.Close()
 		_ = factsStore.Close()
-		return err
+		return nil, err
 	}
 
 	// Bitrate (Bet 6): the durable, tenant-scoped bpt store, gated on the scorer
@@ -307,7 +369,7 @@ func (a *App) Run(ctx context.Context) error {
 			_ = wm.Close()
 			_ = factsStore.Close()
 			_ = semanticStore.Close()
-			return berr
+			return nil, berr
 		}
 		bitrateStore = bs
 		bptSampler = bs
@@ -338,9 +400,11 @@ func (a *App) Run(ctx context.Context) error {
 		MinImportance: factMinImportance,
 	}
 
-	// Cold-boot reconciliation, then the steady-state worker.
+	// Cold-boot reconciliation, then the steady-state worker. workerCtx is
+	// deliberately NOT deferred-cancelled here (as it was inline in Run): the
+	// returned close() owns stopping the workers, so they keep draining until
+	// teardown regardless of which entry point booted the runtime.
 	workerCtx, stopWorker := context.WithCancel(context.Background())
-	defer stopWorker()
 	if n, rerr := wm.RecoverOutbox(ctx, sink); rerr != nil {
 		slog.Error("cold-boot outbox reconciliation failed", "err", rerr)
 	} else if n > 0 {
@@ -398,52 +462,6 @@ func (a *App) Run(ctx context.Context) error {
 			slog.Error("turn-vector pruning failed", "err", perr)
 		})
 		slog.Info("turn-vector pruning scheduled", "ttl", semanticTurnTTLFromEnv(), "max", semanticTurnMaxFromEnv(), "interval", turnPruneInterval)
-	}
-
-	router := chi.NewRouter()
-	router.Use(middleware.RequestID)
-	router.Use(middleware.Recoverer)
-
-	// Optional TLS enforcement (AISOTROPY_REQUIRE_TLS truthy): reject any request
-	// that did not arrive over TLS (r.TLS == nil) so a bearer token — the /v1 JWT
-	// or the AISOTROPY_OPS_TOKEN — can never be transmitted in plaintext. OFF by
-	// default: most deployments sit behind a proxy/load balancer that terminates
-	// TLS upstream and forwards plain HTTP, where r.TLS is legitimately nil. Turn
-	// it on only when aisotropyd terminates TLS itself. Registered as a Use()
-	// middleware BEFORE any route, so chi accepts it and it covers every path.
-	if requireTLSFromEnv() {
-		router.Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.TLS == nil {
-					http.Error(w, `{"error":"TLS required"}`, http.StatusBadRequest)
-					return
-				}
-				next.ServeHTTP(w, r)
-			})
-		})
-	}
-
-	// Liveness, outside the OpenAPI contract.
-	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-
-	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy", "0.1.0"))
-
-	// Authenticated-identity seam (the single fail-closed gate in front of every
-	// /v1 route): installed as ONE Huma API middleware BEFORE any route is
-	// registered below. Resolve the authenticator: nil -> default-deny (Option
-	// C) so an unconfigured runtime rejects every /v1 request rather than
-	// silently trusting path identity; else bind the authenticator with
-	// must-agree semantics. The health/liveness/costs/openapi/docs routes live
-	// on chi (or the Huma adapter's Handle), outside this middleware chain, so
-	// they stay open.
-	if a.authenticator == nil {
-		humaAPI.UseMiddleware(api.DenyAllMiddleware(humaAPI))
-		slog.Warn("no authenticator configured: all /v1 requests are rejected 401 (default-deny). Pass aisotropy.WithAuthenticator; use aisotropy.NoAuth() to explicitly disable.")
-	} else {
-		humaAPI.UseMiddleware(api.BindAuthMiddleware(humaAPI, a.authenticator))
 	}
 
 	// Per-tenant rate limiting (Phase 7 / constitutional gate). An explicit
@@ -506,26 +524,14 @@ func (a *App) Run(ctx context.Context) error {
 		executor = api.DemoExecutor{}
 	}
 
-	// Operator-endpoint gate (default-closed): /costs and /bitrate return
-	// ALL-tenant aggregates, so they live behind a shared operator token
-	// (AISOTROPY_OPS_TOKEN) instead of the per-tenant /v1 JWT gate. With the
-	// token unset every request gets 503; with it set the request must carry a
-	// matching "Authorization: Bearer <token>" (401 otherwise). Health/liveness/
-	// openapi/docs stay open.
-	opsGate := api.OpsAuthGate(api.OpsTokenFromEnv())
-
-	// Per-tenant cost meter, exposed at GET /costs.
+	// Per-tenant cost meter, exposed at GET /costs (the route is wired in Run).
 	costMeter := costmeter.New()
-	router.With(opsGate).Get("/costs", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(costMeter.Snapshot())
-	})
 
 	// Bitrate (Bet 6): when the store is enabled, schedule the offline measurement
-	// and expose the per-tenant ops view. The coordinator hydrates each held-out
-	// sample's context THROUGH the api hydrator seam (the exact request-path
-	// hydration — anti-magic, ADR-0002), scores with/without memory in the scorer
-	// subprocess, and persists the lift.
+	// (the /bitrate ops route is wired in Run). The coordinator hydrates each
+	// held-out sample's context THROUGH the api hydrator seam (the exact
+	// request-path hydration — anti-magic, ADR-0002), scores with/without memory
+	// in the scorer subprocess, and persists the lift.
 	if bitrateStore != nil {
 		bin := os.Getenv("AISOTROPY_BITRATE_BIN")
 		coordinator := bitrate.Coordinator{
@@ -548,40 +554,10 @@ func (a *App) Run(ctx context.Context) error {
 				slog.Info("bitrate measured memory lift", "samples", len(ms))
 			}
 		})
-		router.With(opsGate).Get("/bitrate", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			summaries, serr := bitrateStore.AllSummaries(r.Context())
-			if serr != nil {
-				http.Error(w, `{"error":"bitrate summary failed"}`, http.StatusInternalServerError)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(summaries)
-		})
 		slog.Info("bitrate scorer scheduled", "bin", bin, "interval", bitrateInterval)
 	} else {
 		slog.Info("bitrate scorer disabled", "reason", "AISOTROPY_BITRATE_BIN unset")
 	}
-
-	// Readiness: cheap, read-only, health-tenant-scoped probes of the networked
-	// tiers. No probe spends LLM tokens.
-	router.Get("/health", health.New(readinessProbeTimeout,
-		health.Probe{Name: "facts", Check: func(ctx context.Context) error {
-			sc, serr := facts.NewScope(healthProbeTenant, healthProbeTenant) //nolint:contextcheck // facts.NewScope has no context parameter (internal/facts, out of scope for this cleanup)
-			if serr != nil {
-				return serr
-			}
-			_, serr = factsStore.Search(ctx, sc, "health", 1)
-			return serr
-		}},
-		health.Probe{Name: "semantic", Check: func(ctx context.Context) error {
-			sc, serr := semantic.NewScope(healthProbeTenant, healthProbeTenant) //nolint:contextcheck // semantic.NewScope has no context parameter (internal/semantic, out of scope for this cleanup)
-			if serr != nil {
-				return serr
-			}
-			_, serr = semanticStore.Search(ctx, sc, healthProbeVector(embedder.Dimension()), 1)
-			return serr
-		}},
-	).Handler())
 
 	// Guardrails (redact + detect ALWAYS; blocking OPT-IN per operator toggles,
 	// default off): one process-wide aggregator threaded into every chat handler.
@@ -637,20 +613,208 @@ func (a *App) Run(ctx context.Context) error {
 	// an override AFTER the gateway pick.
 	modelGateway := buildModelGateway(streamClient, cheapStreamClient, costBudgetFromEnv(), visionModelFromEnv())
 
-	api.Register(humaAPI, protectedClient, wm, factsStore, rateLimiter, toolRegistry, persona, costMeter, modelGateway, guard)
-	api.RegisterStream(humaAPI, streamClient, wm, factsStore, rateLimiter, toolRegistry, costMeter, cheapStreamClient, semanticStore, embedder, persona, a.inPricePer1M, a.outPricePer1M, bptSampler, modelGateway, guard)
+	// Per-user primitives (Phase 6 behavioral memory). The consolidation loop is
+	// a background worker; the friction detector is consumed by the agent route
+	// (wired in Run).
+	primStore := primitives.NewStore()
+	frictionDetector := primitives.NewFrictionDetector(primStore)
+	go runPrimitiveConsolidation(workerCtx, primStore) //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
+
+	rt := &appRuntime{
+		client:            protectedClient,
+		wm:                wm,
+		factsStore:        factsStore,
+		limiter:           rateLimiter,
+		toolRegistry:      toolRegistry,
+		persona:           persona,
+		costMeter:         costMeter,
+		gateway:           modelGateway,
+		guard:             guard,
+		semanticStore:     semanticStore,
+		embedder:          embedder,
+		streamClient:      streamClient,
+		cheapStreamClient: cheapStreamClient,
+		typedHandlers:     typedHandlers,
+		executor:          executor,
+		frictionDetector:  frictionDetector,
+		tracerProvider:    tracerProvider,
+		bitrateStore:      bitrateStore,
+		bptSampler:        bptSampler,
+	}
+	// closeFn is the exact teardown Run's graceful shutdown ran inline: stop the
+	// workers BEFORE closing the stores they write to, close the MCP clients, then
+	// shut tracing on the caller's bounded context. Each store-close error is
+	// logged, never fatal (a shutdown never blocks on a failed close).
+	rt.closeFn = func(shutdownCtx context.Context) {
+		stopWorker()
+		closeMCP()
+		if cerr := wm.Close(); cerr != nil {
+			slog.Error("working memory close failed", "err", cerr)
+		}
+		if cerr := factsStore.Close(); cerr != nil {
+			slog.Error("facts memory close failed", "err", cerr)
+		}
+		if cerr := semanticStore.Close(); cerr != nil {
+			slog.Error("semantic memory close failed", "err", cerr)
+		}
+		if bitrateStore != nil {
+			if cerr := bitrateStore.Close(); cerr != nil {
+				slog.Error("bitrate store close failed", "err", cerr)
+			}
+		}
+		if cerr := shutdownTracing(shutdownCtx); cerr != nil { //nolint:contextcheck // ctx is already cancelled at this point; shutdownCtx deliberately gives tracer shutdown its own bounded deadline
+			slog.Error("otel tracer shutdown failed", "err", cerr)
+		}
+	}
+	return rt, nil
+}
+
+// Run boots the full runtime and blocks until graceful shutdown. It internalizes
+// exactly what cmd/aisotropyd/main.go did by hand: working memory, tier routing,
+// facts + semantic stores, the consolidation sink + outbox worker (+ cold-boot
+// reconciliation), OTel tracing, the LLM circuit breaker, cheap-model
+// degradation, the sleep-cycle worker, per-tenant rate limiting, the cost meter,
+// the /healthz + /health + /costs endpoints, the three /v1 chat routes, per-user
+// primitive friction consolidation, and SIGINT/SIGTERM graceful shutdown that
+// closes every store.
+//
+// ctx cancellation, SIGINT, or SIGTERM all trigger graceful shutdown. Run
+// returns nil on a clean shutdown and a non-nil error only if the HTTP server
+// itself fails to start/serve.
+//
+//nolint:gocognit,cyclop,funlen // large cohesive HTTP wiring; runtime construction now lives in startRuntime, refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
+func (a *App) Run(ctx context.Context) error {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	addr := a.addr
+	if addr == "" {
+		addr = os.Getenv("AISOTROPY_ADDR")
+	}
+	if addr == "" {
+		addr = ":8080"
+	}
+
+	// Build the shared runtime core (stores, model pipeline, tools, guardrails,
+	// gateway, cost meter, rate limiter, background workers) exactly as before —
+	// the construction moved verbatim into startRuntime, which Turn also boots.
+	// Everything below is the HTTP surface layered ON TOP of it. Run builds its
+	// own runtime local to this call (never the App's Turn-memoized one), so it
+	// owns the returned rt's teardown outright.
+	rt, err := a.startRuntime(ctx)
+	if err != nil {
+		return err
+	}
+
+	router := chi.NewRouter()
+	router.Use(middleware.RequestID)
+	router.Use(middleware.Recoverer)
+
+	// Optional TLS enforcement (AISOTROPY_REQUIRE_TLS truthy): reject any request
+	// that did not arrive over TLS (r.TLS == nil) so a bearer token — the /v1 JWT
+	// or the AISOTROPY_OPS_TOKEN — can never be transmitted in plaintext. OFF by
+	// default: most deployments sit behind a proxy/load balancer that terminates
+	// TLS upstream and forwards plain HTTP, where r.TLS is legitimately nil. Turn
+	// it on only when aisotropyd terminates TLS itself. Registered as a Use()
+	// middleware BEFORE any route, so chi accepts it and it covers every path.
+	if requireTLSFromEnv() {
+		router.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.TLS == nil {
+					http.Error(w, `{"error":"TLS required"}`, http.StatusBadRequest)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+		})
+	}
+
+	// Liveness, outside the OpenAPI contract.
+	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy", "0.1.0"))
+
+	// Authenticated-identity seam (the single fail-closed gate in front of every
+	// /v1 route): installed as ONE Huma API middleware BEFORE any route is
+	// registered below. Resolve the authenticator: nil -> default-deny (Option
+	// C) so an unconfigured runtime rejects every /v1 request rather than
+	// silently trusting path identity; else bind the authenticator with
+	// must-agree semantics. The health/liveness/costs/openapi/docs routes live
+	// on chi (or the Huma adapter's Handle), outside this middleware chain, so
+	// they stay open.
+	if a.authenticator == nil {
+		humaAPI.UseMiddleware(api.DenyAllMiddleware(humaAPI))
+		slog.Warn("no authenticator configured: all /v1 requests are rejected 401 (default-deny). Pass aisotropy.WithAuthenticator; use aisotropy.NoAuth() to explicitly disable.")
+	} else {
+		humaAPI.UseMiddleware(api.BindAuthMiddleware(humaAPI, a.authenticator))
+	}
+
+	// Operator-endpoint gate (default-closed): /costs and /bitrate return
+	// ALL-tenant aggregates, so they live behind a shared operator token
+	// (AISOTROPY_OPS_TOKEN) instead of the per-tenant /v1 JWT gate. With the
+	// token unset every request gets 503; with it set the request must carry a
+	// matching "Authorization: Bearer <token>" (401 otherwise). Health/liveness/
+	// openapi/docs stay open.
+	opsGate := api.OpsAuthGate(api.OpsTokenFromEnv())
+
+	// Per-tenant cost meter (built in startRuntime), exposed at GET /costs.
+	router.With(opsGate).Get("/costs", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(rt.costMeter.Snapshot())
+	})
+
+	// Bitrate (Bet 6) ops view: expose the per-tenant lift summary when the store
+	// is enabled (the offline measurement scheduler is started in startRuntime).
+	if rt.bitrateStore != nil {
+		router.With(opsGate).Get("/bitrate", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			summaries, serr := rt.bitrateStore.AllSummaries(r.Context())
+			if serr != nil {
+				http.Error(w, `{"error":"bitrate summary failed"}`, http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(summaries)
+		})
+	}
+
+	// Readiness: cheap, read-only, health-tenant-scoped probes of the networked
+	// tiers. No probe spends LLM tokens.
+	router.Get("/health", health.New(readinessProbeTimeout,
+		health.Probe{Name: "facts", Check: func(ctx context.Context) error {
+			sc, serr := facts.NewScope(healthProbeTenant, healthProbeTenant) //nolint:contextcheck // facts.NewScope has no context parameter (internal/facts, out of scope for this cleanup)
+			if serr != nil {
+				return serr
+			}
+			_, serr = rt.factsStore.Search(ctx, sc, "health", 1)
+			return serr
+		}},
+		health.Probe{Name: "semantic", Check: func(ctx context.Context) error {
+			sc, serr := semantic.NewScope(healthProbeTenant, healthProbeTenant) //nolint:contextcheck // semantic.NewScope has no context parameter (internal/semantic, out of scope for this cleanup)
+			if serr != nil {
+				return serr
+			}
+			_, serr = rt.semanticStore.Search(ctx, sc, healthProbeVector(rt.embedder.Dimension()), 1)
+			return serr
+		}},
+	).Handler())
+
+	api.Register(humaAPI, rt.client, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.persona, rt.costMeter, rt.gateway, rt.guard)
+	api.RegisterStream(humaAPI, rt.streamClient, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.costMeter, rt.cheapStreamClient, rt.semanticStore, rt.embedder, rt.persona, a.inPricePer1M, a.outPricePer1M, rt.bptSampler, rt.gateway, rt.guard)
 	// Knowledge ingestion (ADR-0018): the HTTP arm of the dual-surface
 	// capability, sharing the exact same semantic store/embedder pair the
 	// chat routes' RAG hydration reads from above.
-	api.RegisterKnowledge(humaAPI, semanticStore, embedder, a.chunkOptions())
+	api.RegisterKnowledge(humaAPI, rt.semanticStore, rt.embedder, a.chunkOptions())
 	// Knowledge deletion (ADR-0018 open q#3): removes a document's chunks by
 	// id, regardless of chunk count.
-	api.RegisterKnowledgeDelete(humaAPI, semanticStore)
+	api.RegisterKnowledgeDelete(humaAPI, rt.semanticStore)
 	// Tenant-shared knowledge ingestion + deletion (ADR-0019): a corpus
 	// ingested once at tenant scope, retrievable by every user of that
 	// tenant via hydrateSystemPrompt's merged search.
-	api.RegisterTenantKnowledge(humaAPI, semanticStore, embedder, a.chunkOptions())
-	api.RegisterTenantKnowledgeDelete(humaAPI, semanticStore)
+	api.RegisterTenantKnowledge(humaAPI, rt.semanticStore, rt.embedder, a.chunkOptions())
+	api.RegisterTenantKnowledgeDelete(humaAPI, rt.semanticStore)
 
 	// Stateless cached /ask route (makes internal/responsecache LIVE). It sits
 	// behind the SAME authn middleware + must-agree bind as the chat routes (it is
@@ -662,21 +826,16 @@ func (a *App) Run(ctx context.Context) error {
 	// in, a cached answer cannot go stale against a user's evolving working memory.
 	// The cache is per-process and scoped by (tenant,user) in both layers, so a
 	// cross-tenant hit is structurally impossible (see internal/responsecache).
-	askCache := buildResponseCache(embedder)
-	api.RegisterAsk(humaAPI, protectedClient, askCache, semanticStore, embedder, persona, guard)
-
-	// Per-user primitives (Phase 6 behavioral memory).
-	primStore := primitives.NewStore()
-	frictionDetector := primitives.NewFrictionDetector(primStore)
-	go runPrimitiveConsolidation(workerCtx, primStore) //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
+	askCache := buildResponseCache(rt.embedder)
+	api.RegisterAsk(humaAPI, rt.client, askCache, rt.semanticStore, rt.embedder, rt.persona, rt.guard)
 
 	// Agentic tool-use endpoint (Phase 7): the injected executor drives real tool
 	// logic, wrapped per-request in a friction recorder.
 	// Typed-tool dispatcher (ADR-0016 lever #1): raw-JSON handlers registered via
 	// WithTypedTool[T]. Preferred over the map executor for any tool it owns; nil
 	// handlers => an executor that owns nothing, so behavior is unchanged.
-	typedExecutor := api.NewTypedToolExecutor(typedHandlers)
-	api.RegisterAgent(humaAPI, protectedClient, toolRegistry, executor, typedExecutor, frictionDetector, tracerProvider, agentMaxSteps, guard)
+	typedExecutor := api.NewTypedToolExecutor(rt.typedHandlers)
+	api.RegisterAgent(humaAPI, rt.client, rt.toolRegistry, rt.executor, typedExecutor, rt.frictionDetector, rt.tracerProvider, agentMaxSteps, rt.guard)
 
 	server := &http.Server{
 		Addr:    addr,
@@ -685,7 +844,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	serverErrCh := make(chan error, 1)
 	go func() {
-		slog.Info("aisotropyd starting", "addr", addr, "llm", llmClient.Name(), "openapi", "/openapi.json", "docs", "/docs")
+		slog.Info("aisotropyd starting", "addr", addr, "llm", rt.client.Name(), "openapi", "/openapi.json", "docs", "/docs")
 		if serr := server.ListenAndServe(); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
 			serverErrCh <- serr
 			return
@@ -699,15 +858,11 @@ func (a *App) Run(ctx context.Context) error {
 	case serr := <-serverErrCh:
 		if serr != nil {
 			slog.Error("server stopped", "err", serr)
-			stopWorker()
-			closeMCP()
-			_ = wm.Close()
-			_ = factsStore.Close()
-			_ = semanticStore.Close()
-			if bitrateStore != nil {
-				_ = bitrateStore.Close()
-			}
-			_ = shutdownTracing(context.Background()) //nolint:contextcheck // ctx is already cancelled here (server failed to start after a shutdown signal); tracer shutdown deliberately uses a fresh context
+			// Server failed to start: tear the runtime down on a fresh context
+			// (ctx is already cancelled) and surface the error. rt.close runs the
+			// exact worker-stop → store-close → tracer-shutdown sequence Run used
+			// to inline here.
+			rt.close(context.Background()) //nolint:contextcheck // ctx is already cancelled here (server failed to start after a shutdown signal); teardown deliberately uses a fresh context
 			return serr
 		}
 	}
@@ -718,27 +873,11 @@ func (a *App) Run(ctx context.Context) error {
 		slog.Error("server shutdown did not complete cleanly", "err", serr)
 	}
 
-	// Stop the consolidation worker before closing the stores it writes to.
-	stopWorker()
-	closeMCP()
-
-	if cerr := wm.Close(); cerr != nil {
-		slog.Error("working memory close failed", "err", cerr)
-	}
-	if cerr := factsStore.Close(); cerr != nil {
-		slog.Error("facts memory close failed", "err", cerr)
-	}
-	if cerr := semanticStore.Close(); cerr != nil {
-		slog.Error("semantic memory close failed", "err", cerr)
-	}
-	if bitrateStore != nil {
-		if cerr := bitrateStore.Close(); cerr != nil {
-			slog.Error("bitrate store close failed", "err", cerr)
-		}
-	}
-	if cerr := shutdownTracing(shutdownCtx); cerr != nil { //nolint:contextcheck // ctx is already cancelled at this point; shutdownCtx deliberately gives tracer shutdown its own bounded deadline
-		slog.Error("otel tracer shutdown failed", "err", cerr)
-	}
+	// Stop the workers and close every store/tracer, on the bounded shutdown
+	// deadline. rt.close is the single teardown path (also used by App.Close for a
+	// Turn-built runtime); it stops workers before closing the stores they write
+	// to, exactly as before.
+	rt.close(shutdownCtx)
 
 	slog.Info("aisotropyd stopped")
 	return nil
