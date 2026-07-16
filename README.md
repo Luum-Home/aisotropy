@@ -58,10 +58,15 @@ func main() {
 The Python and TypeScript worlds have great agent frameworks — Pydantic AI, Mastra, LangGraph. If you
 want a quick chatbot, use one of those. Aisotropy is for a different job, in a different language.
 
-**Go has agent libraries, but no agent _runtime_.** Eino (ByteDance) and ADK-Go orchestrate;
-Genkit-Go is tied to Firebase (and leaks across tenants — [we tested it](arenas/)); LangChainGo is a
-thin port. None of them is an _isolation-first, self-hostable runtime_ where multi-tenant isolation,
-sandboxing, and key-brokering are **structural, not bolted on**.
+**Go has agent libraries, but no agent _runtime_.** None of them is an _isolation-first,
+self-hostable runtime_ where multi-tenant isolation, sandboxing, and key-brokering are **structural,
+not bolted on**:
+
+| In Go | But |
+|---|---|
+| **Eino** (ByteDance) | serious orchestration, tied to the CloudWeGo/Volcengine ecosystem; no isolation-by-construction, no key-brokering |
+| **Genkit-Go** (Google) | Firebase-tethered; multi-tenancy is convention — we [reproduced a cross-tenant leak](arenas/genkit-go) in the arena |
+| **ADK-Go** (Google), **LangChainGo** | orchestration / a thin community port; no security spine |
 
 **The audience and the differentiator line up.** In Python you'd be selling isolation to people who
 want magic. In Go, the people building agents are backend, infra, and platform engineers — the ones
@@ -72,6 +77,9 @@ Aisotropy's edges are their defaults.
 agents_ — per-tenant, per-task, sometimes untrusted — embedded in your Go service, at scale. That is
 the pain no Go framework covers. Aisotropy does: `app.Turn` for in-process turns, `app.RunTask` for
 sandboxed key-brokered tasks, and tenant isolation by construction under all of it.
+
+> The full argument — the competitor table, why the audience aligns in Go, and the honest
+> not-yet-market-validated caveat — is [`docs/vision/why-go.md`](docs/vision/why-go.md).
 
 ## Quickstart: build your own agent
 
