@@ -34,6 +34,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/health"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
+	"github.com/Luum-Home/aisotropy/internal/plugin"
 	"github.com/Luum-Home/aisotropy/internal/primitives"
 	"github.com/Luum-Home/aisotropy/internal/responsecache"
 	"github.com/Luum-Home/aisotropy/internal/routing"
@@ -123,6 +124,15 @@ type App struct {
 	rateLimitSet  bool
 	inPricePer1M  float64
 	outPricePer1M float64
+
+	// ext groups the Wave-2 "bring your own" extension wiring: the consumer
+	// implementations registered via the WithGuardrailCheck / WithReranker /
+	// WithSummarizer / WithEvalJudge / WithModelPolicy / WithTenantRoutingPolicy
+	// options and the WithPlugin / WithPluginDir sources. Every field is
+	// inert-safe: unset leaves startRuntime byte-for-byte identical to the
+	// pre-Wave-2 boot. Its type and the options that populate it live in
+	// extend.go, alongside the seam aliases they implement.
+	ext appExt
 
 	// authenticator backs WithAuthenticator: the single fail-closed gate the
 	// auth middleware invokes in front of every /v1 route. nil means no
@@ -316,9 +326,10 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	}
 
 	// Working memory: on-disk BadgerDB when AISOTROPY_DATA_DIR is set, else
-	// in-memory. The summarizer is backed by the chat LLM so the condensed buffer
-	// is a real condensation.
-	wm, err := newWorkingMemory(llmClient)
+	// in-memory. The summarizer is the consumer's WithSummarizer when supplied,
+	// else the built-in memory.LLMSummarizer backed by the chat LLM so the
+	// condensed buffer is a real condensation.
+	wm, err := newWorkingMemory(llmClient, a.ext.summarizer)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +338,21 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	// get their own physical facts/semantic resource; everyone else shares the
 	// pool. Empty (default) = no routing.
 	dedicatedTenants := splitCSV(os.Getenv("AISOTROPY_DEDICATED_TENANTS"))
-	tierRouter := routing.NewRouter(routing.NewStaticPolicy(dedicatedTenants...))
+	// Tier policy: the consumer's WithTenantRoutingPolicy when supplied, else the
+	// static allowlist from AISOTROPY_DEDICATED_TENANTS (the default). The policy
+	// governs which tier the Router assigns a tenant. Note (honest scope): the
+	// PHYSICAL provisioning of dedicated facts/semantic stores is still keyed off
+	// the env allowlist below (openFactsStore/openSemanticStore receive
+	// dedicatedTenants) — a dynamic policy changes tier DECISIONS, but a tenant it
+	// promotes to Dedicated only gets a physically separate store when it is also
+	// in the env allowlist. With no dedicated tenants the runtime uses a pooled
+	// store directly and the Router (hence the policy) is never consulted.
+	var tierPolicy routing.Policy = routing.NewStaticPolicy(dedicatedTenants...)
+	if a.ext.tenantRoutingPolicy != nil {
+		tierPolicy = a.ext.tenantRoutingPolicy
+		slog.Info("custom tenant-routing policy installed (WithTenantRoutingPolicy); static allowlist bypassed for tier decisions")
+	}
+	tierRouter := routing.NewRouter(tierPolicy)
 	if len(dedicatedTenants) > 0 {
 		slog.Info("dedicated-tenant routing enabled", "tenants", dedicatedTenants)
 	}
@@ -509,8 +534,94 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 		}
 	}
 
+	// Plugins (ADR-0016 ecosystem scaffolding, internal/plugin): load each
+	// consumer-declared manifest — from WithPlugin file paths, from WithPluginDir
+	// directories, and from the AISOTROPY_PLUGIN_DIR env directory — and merge its
+	// contribution into the SAME toolset + typedHandlers the native and MCP tools
+	// populate, scope-gated identically. The loader reaches an MCP subprocess only
+	// through an injected connector (so internal/plugin imports no MCP client
+	// library); that connector is the exact mcp.NewStdioClient + client.Close path
+	// the WithMCPServer discovery loop above already uses. A plugin's subprocess
+	// closer is appended to mcpClosers so graceful shutdown tears it down with the
+	// MCP clients. Best-effort throughout: a manifest that fails to parse, a
+	// directory that fails to scan, or a plugin that fails to load is logged and
+	// skipped, never downing the runtime — matching the MCP loop's posture.
+	//
+	// Inert-safe: no WithPlugin/WithPluginDir and an unset AISOTROPY_PLUGIN_DIR
+	// means no manifests, so toolset/typedHandlers are byte-for-byte unchanged.
+	pluginDirs := append([]string(nil), a.ext.pluginDirs...)
+	if envDir := strings.TrimSpace(os.Getenv("AISOTROPY_PLUGIN_DIR")); envDir != "" {
+		pluginDirs = append(pluginDirs, envDir)
+	}
+	var pluginManifests []plugin.Manifest
+	for _, path := range a.ext.pluginPaths {
+		m, perr := plugin.ParseManifest(path)
+		if perr != nil {
+			slog.Error("plugin manifest parse failed; skipping", "path", path, "err", perr)
+			continue
+		}
+		pluginManifests = append(pluginManifests, m)
+	}
+	for _, dir := range pluginDirs {
+		reg, perr := plugin.Load(dir)
+		if perr != nil {
+			slog.Error("plugin directory scan failed; skipping", "dir", dir, "err", perr)
+			continue
+		}
+		pluginManifests = append(pluginManifests, reg.List()...)
+	}
+	if len(pluginManifests) > 0 {
+		// mcpConnect adapts gollem's stdio MCP client to plugin.MCPConnector — the
+		// one runtime capability internal/plugin injects rather than imports.
+		var mcpConnect plugin.MCPConnector = func(cctx context.Context, command string, args ...string) (api.MCPClient, func() error, error) {
+			client, cerr := mcp.NewStdioClient(cctx, command, args...)
+			if cerr != nil {
+				return nil, nil, cerr
+			}
+			return client, client.Close, nil
+		}
+		for _, m := range pluginManifests {
+			loaded, lerr := plugin.LoadTools(ctx, m, mcpConnect)
+			if lerr != nil {
+				slog.Error("plugin load failed; skipping its tools", "plugin", m.Name, "kind", m.Kind, "err", lerr)
+				continue
+			}
+			toolset = append(toolset, loaded.Tools...)
+			for k, v := range loaded.Handlers {
+				typedHandlers[k] = v
+			}
+			if loaded.Close != nil {
+				mcpClosers = append(mcpClosers, loaded.Close)
+			}
+			// Personas in a manifest are IDENTIFIERS ONLY — the YAML carries no
+			// prompt body (anti-magic: a manifest cannot ship a Go func or a prompt
+			// blob it expects the core to trust). NewMapPersonaProvider already
+			// resolves any unregistered product_id to the built-in default persona,
+			// so a declared identifier is usable with no wiring; supplying a distinct
+			// prompt for it stays a WithPersona/Go concern, exactly as manifest.go
+			// documents. We surface the declaration so an operator can see it, and
+			// deliberately do NOT fabricate a prompt.
+			if len(m.Personas) > 0 {
+				slog.Info("plugin declares persona identifiers (metadata only; supply prompt bodies via WithPersona)", "plugin", m.Name, "personas", m.Personas)
+			}
+			slog.Info("plugin tools registered", "plugin", m.Name, "kind", m.Kind, "tools", len(loaded.Tools), "handlers", len(loaded.Handlers))
+		}
+	}
+
+	// Reranker (WithReranker): HONEST SCOPE — the option is STORED but its
+	// retrieval-wiring is PENDING. The semantic hydration path
+	// (internal/api's hydrateSystemPrompt -> searchSemanticContext) does not yet
+	// consult a semantic.Reranker: threading one through requires internal/api
+	// surgery beyond this wave's app.go ownership. Rather than fake a wiring, the
+	// option captures the consumer's reranker on the App and this line records
+	// that it is not yet applied. When the api hydration seam accepts a reranker,
+	// this is where rt.reranker would be passed through.
+	if a.ext.reranker != nil {
+		slog.Warn("custom reranker registered but NOT yet applied: the semantic retrieval/hydration path does not consult a Reranker yet (internal/api wiring pending); the option is stored only")
+	}
+
 	// Scope-gated tool registry: the consumer's registered tools plus any
-	// MCP-discovered tools.
+	// MCP-discovered and plugin-contributed tools.
 	toolRegistry := tools.NewRegistry(toolset...)
 
 	// Persona provider composed over the consumer's registered personas, with the
@@ -565,28 +676,50 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	// request/response — redaction and detection run regardless.
 	blockOutput := guardrailsBlockFromEnv("AISOTROPY_GUARDRAILS_BLOCK_OUTPUT")
 
-	// The output-inspection tier: the built-in heuristics by default, plus an
-	// OPT-IN LLM-as-a-judge Safety check when AISOTROPY_GUARDRAILS_LLM_JUDGE is
-	// truthy (and an LLM client exists). The judge attaches through the
-	// api.EvalOutputCheck adapter over the guardrails.OutputCheck seam, so
-	// internal/guardrails still never imports internal/eval. The judge is driven
-	// by the RAW llmClient — deliberately NOT the circuit-broken chat client — so
-	// a flaky judge cannot trip the chat breaker. Its error posture tracks
-	// blockOutput (fail-open when annotating, fail-closed when hard-blocking); see
-	// api.NewEvalOutputCheck. Default off: keyless/stub runtimes are byte-for-byte
-	// unchanged.
-	guardrailsG := guardrails.Default()
-	if guardrailsBlockFromEnv("AISOTROPY_GUARDRAILS_LLM_JUDGE") && llmClient != nil {
-		if judge, jerr := eval.NewLLMJudge(llmClient, eval.Safety, eval.SafetyRubric, 0); jerr != nil {
+	// The output-inspection tier is assembled from up to three sources, appended
+	// in this order:
+	//
+	//  1. the consumer's own WithGuardrailCheck checks (Wave 2), and then
+	//  2. an OPTIONAL LLM-as-a-judge Safety check whose judge is EITHER the
+	//     consumer's WithEvalJudge (when set) OR — only when no consumer judge was
+	//     supplied — the built-in eval.NewLLMJudge, itself gated on the opt-in
+	//     AISOTROPY_GUARDRAILS_LLM_JUDGE toggle and an available LLM client.
+	//
+	// The judge attaches through the api.EvalOutputCheck adapter over the
+	// guardrails.OutputCheck seam, so internal/guardrails still never imports
+	// internal/eval. The built-in judge is driven by the RAW llmClient —
+	// deliberately NOT the circuit-broken chat client — so a flaky judge cannot
+	// trip the chat breaker. Its error posture tracks blockOutput (fail-open when
+	// annotating, fail-closed when hard-blocking); see api.NewEvalOutputCheck.
+	//
+	// Inert-safe: with no consumer checks, no consumer judge, and the env toggle
+	// off, outputChecks stays empty and guardrailsG is guardrails.Default() —
+	// byte-for-byte the pre-Wave-2 keyless/stub default.
+	outputChecks := append([]guardrails.OutputCheck(nil), a.ext.guardrailChecks...)
+
+	judge := a.ext.evalJudge
+	consumerJudge := judge != nil
+	if judge == nil && guardrailsBlockFromEnv("AISOTROPY_GUARDRAILS_LLM_JUDGE") && llmClient != nil {
+		if j, jerr := eval.NewLLMJudge(llmClient, eval.Safety, eval.SafetyRubric, 0); jerr != nil {
 			slog.Error("guardrails LLM judge disabled: judge construction failed; using built-in output heuristics only", "err", jerr)
-		} else if check, cerr := api.NewEvalOutputCheck(judge, guardrailsJudgeSafetyThreshold, blockOutput); cerr != nil {
+		} else {
+			judge = j
+		}
+	}
+	if judge != nil {
+		if check, cerr := api.NewEvalOutputCheck(judge, guardrailsJudgeSafetyThreshold, blockOutput); cerr != nil {
 			slog.Error("guardrails LLM judge disabled: adapter construction failed; using built-in output heuristics only", "err", cerr)
 		} else {
-			inspector := guardrails.NewOutputInspector(nil).WithChecks(check)
-			guardrailsG = guardrails.New(guardrails.Config{Output: inspector})
+			outputChecks = append(outputChecks, check)
 			slog.Info("guardrails LLM safety judge attached to the output inspector",
-				"criterion", eval.Safety.Name, "threshold", guardrailsJudgeSafetyThreshold, "fail_closed", blockOutput)
+				"threshold", guardrailsJudgeSafetyThreshold, "fail_closed", blockOutput, "consumer_supplied", consumerJudge)
 		}
+	}
+
+	guardrailsG := guardrails.Default()
+	if len(outputChecks) > 0 {
+		inspector := guardrails.NewOutputInspector(nil).WithChecks(outputChecks...)
+		guardrailsG = guardrails.New(guardrails.Config{Output: inspector})
 	}
 
 	// One process-wide aggregator threaded into every chat handler. The block
@@ -611,7 +744,7 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	// instruments that path (a no-op unless a tracer is configured). The
 	// streaming path's quota-pressure degrade (llm.DegradeAt) still applies as
 	// an override AFTER the gateway pick.
-	modelGateway := buildModelGateway(streamClient, cheapStreamClient, costBudgetFromEnv(), visionModelFromEnv())
+	modelGateway := buildModelGateway(streamClient, cheapStreamClient, costBudgetFromEnv(), visionModelFromEnv(), a.ext.modelPolicies)
 
 	// Per-user primitives (Phase 6 behavioral memory). The consolidation loop is
 	// a background worker; the friction detector is consumed by the agent route
@@ -1104,8 +1237,20 @@ const (
 // means "route images to primary" (AISOTROPY_VISION_MODEL unset). See the
 // ImageRule wiring below for the honest-scope caveat (the routing signal is
 // wired, but image bytes are not yet transmitted to the model).
-func buildModelGateway(primary, cheap llm.Client, budgetUSD float64, visionTarget string) *gateway.Gateway {
-	// OverridePolicy FIRST so an explicit caller preference (ChatRequest.
+func buildModelGateway(primary, cheap llm.Client, budgetUSD float64, visionTarget string, consumerPolicies []gateway.Policy) *gateway.Gateway {
+	// Consumer routing policies (WithModelPolicy) are chained FIRST. ChainPolicy
+	// returns the first non-abstaining Decision, so a consumer policy that names a
+	// concrete target wins over the built-in override/image/cost rules, while one
+	// that abstains (empty Target) falls through to them unchanged. This ordering
+	// lets a consumer express bespoke routing (per-tenant model pinning, an
+	// experiment split, a compliance override) ABOVE the built-ins, and keeps the
+	// built-in chain as the default for every request the consumer policies
+	// decline to route. Inert-safe: an empty consumerPolicies slice yields exactly
+	// the pre-Wave-2 chain (override -> image -> cost -> default).
+	policies := make([]gateway.Policy, 0, len(consumerPolicies)+3)
+	policies = append(policies, consumerPolicies...)
+
+	// OverridePolicy next so an explicit caller preference (ChatRequest.
 	// ModelPreference -> gateway.Request.UISelector) wins over the cost-budget
 	// rule. It is inert-safe: it abstains when UISelector is empty, so requests
 	// with no preference route exactly as before. The streaming path's
@@ -1113,7 +1258,7 @@ func buildModelGateway(primary, cheap llm.Client, budgetUSD float64, visionTarge
 	// safety valve), because it is applied AFTER the gateway pick (see
 	// RegisterStream). An unknown preference target resolves to the default at
 	// Route time, so a client value can never drop a request.
-	policies := []gateway.Policy{gateway.OverridePolicy{}}
+	policies = append(policies, gateway.OverridePolicy{})
 
 	// ImageRule (capability-based routing), chained AFTER the explicit override
 	// but BEFORE the cost-budget rule: an image-bearing request
@@ -1244,10 +1389,14 @@ func costBudgetFromEnv() float64 {
 }
 
 // newWorkingMemory opens on-disk BadgerDB-backed working memory when
-// AISOTROPY_DATA_DIR is set, or an in-memory instance otherwise, always with the
-// LLM-backed summarizer.
-func newWorkingMemory(client llm.Client) (*memory.WorkingMemory, error) {
-	summarizer := memory.LLMSummarizer{Client: client}
+// AISOTROPY_DATA_DIR is set, or an in-memory instance otherwise. The summary
+// buffer is condensed by summarizer when non-nil (the consumer's
+// WithSummarizer), else by the built-in memory.LLMSummarizer backed by the chat
+// client — so a nil summarizer reproduces the pre-Wave-2 behavior exactly.
+func newWorkingMemory(client llm.Client, summarizer memory.Summarizer) (*memory.WorkingMemory, error) {
+	if summarizer == nil {
+		summarizer = memory.LLMSummarizer{Client: client}
+	}
 	dataDir := os.Getenv("AISOTROPY_DATA_DIR")
 	if dataDir == "" {
 		return memory.OpenInMemory(0, summarizer)
