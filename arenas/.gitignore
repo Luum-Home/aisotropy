@@ -8,3 +8,15 @@ venv/
 # Node
 node_modules/
 *.lock
+
+# Go compiled binaries — arenas run via `go run`, never commit build output.
+# Anchored to arena roots so cmd/<name>/ source dirs are NOT ignored.
+/adk-go/parity
+/adk-go/costobs
+/adk-go/server
+/eino/parity
+/eino/costobs
+/eino/server
+/genkit-go/parity
+/genkit-go/costobs
+/genkit-go/server
