@@ -25,6 +25,13 @@ timestamp: 2026-07-15T00:00:00Z
 > sovereignty) — with 25 rows executed offline against each pinned upstream framework and a crisp
 > FINAL VERDICT — see [**`ARENA-SPEC-v2.md`**](ARENA-SPEC-v2.md).
 
+> **Companion analyses.** Cost governance & observability across the arenas:
+> [`COST-OBS.md`](COST-OBS.md). Framework-overhead & cost-governance-effectiveness benchmarks (model
+> held constant as the keyless stub, so measured time is the *framework's* overhead — plus a
+> token-counting proof that the pre-spend quota gate and response cache actually cut spend, and the
+> reproducible cross-framework method): [`BENCHMARKS.md`](BENCHMARKS.md), runnable via
+> [`scripts/run-overhead-bench.sh`](scripts/run-overhead-bench.sh).
+
 ## Feature-coverage matrix
 
 Rows are the 11-point Orbit checklist. Each cell is a **coverage class** + terse note.
