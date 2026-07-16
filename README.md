@@ -1,11 +1,53 @@
 # Aisotropy
 
-**A multi-tenant, local-first, sovereign AI-agent runtime in Go + Rust.**
+**Run untrusted AI agents that never touch your API keys — a single Go binary with multi-tenant
+isolation built in.**
 
-Aisotropy is not "a chat with an LLM." It's a precision-engineering runtime where a **single Go
-struct is the source of truth** that governs — all at once — HTTP validation, the OpenAPI 3.1
-schema, and the contract enforced on the LLM. Zero opaque abstractions ("anti-magic"), a 100%
-MIT/Apache-2.0 stack, and a memory system organized by access temperature.
+A multi-tenant, local-first, sovereign AI-agent runtime in Go + Rust. Aisotropy is not "a chat with
+an LLM." It's a precision-engineering runtime where a **single Go struct is the source of truth**
+that governs — all at once — HTTP validation, the OpenAPI 3.1 schema, and the contract enforced on
+the LLM. Zero opaque abstractions ("anti-magic"), a 100% MIT/Apache-2.0 stack, and a memory system
+organized by access temperature.
+
+## The differentiator: an agent that never holds your key
+
+Every other agent framework hands your API key to the agent. Aisotropy **brokers** it: the model
+call runs host-side (the key is spent in *your* process), and only the agent's actions — shell,
+file writes, git — run inside a throwaway Docker sandbox that never receives `ANTHROPIC_API_KEY`.
+Proven against real Docker (`TestRunTask_BrokerInvariant_KeyNeverEntersContainer`: `docker exec
+printenv` never shows the key while the task still completes and commits). See
+[ADR-0036](docs/decisions/0036-sandboxed-task-agent-key-brokering.md) and the runnable
+[`examples/task-agent`](examples/task-agent).
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/Luum-Home/aisotropy/aisotropy"
+)
+
+func main() {
+	// Your API key lives ONLY in this host process. Aisotropy runs the model here;
+	// the agent's actions run inside a throwaway Docker sandbox that never gets the key.
+	app := aisotropy.New() // real provider from the env, or the keyless stub
+
+	res, err := app.RunTask(context.Background(), aisotropy.TaskRequest{
+		RepoDir: "./my-repo",
+		Prompt:  "Add a CHANGELOG.md summarizing recent commits, then commit it.",
+		Scopes:  aisotropy.SandboxToolScopes(), // run_shell / write_file / read_file / git_commit
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("the agent made %d commit(s) on %q — and never saw your API key\n",
+		len(res.Commits), res.Branch)
+}
+```
 
 > Bring the sophistication of Pydantic AI (strict types + a reflection loop) to the physical
 > performance of Go + Rust, with tiered memory and granular control, without a single line of

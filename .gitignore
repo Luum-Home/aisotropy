@@ -54,3 +54,4 @@ external/
 # Rust build artifacts (sleep-cycle worker, ADR-0005)
 /crates/**/target/
 crates/*/target/
+/examples/task-agent/task-agent
