@@ -9,20 +9,22 @@ description: >
   MUST place the raw provider API key (ANTHROPIC_API_KEY etc.) inside the sandbox because the coding
   CLI calls the LLM from inside the container; aisotropy already runs inference HOST-SIDE
   (internal/llm), so RunTask dispatches only tool EXECUTION into the sandbox while the model call — and
-  the key — stay on the host. The container never sees the key. Design (v1/minimal): a new
-  internal/sandbox package with a Provider interface + one Docker provider that shells out to the
-  docker CLI via os/exec (no Docker SDK — the sandcastle pattern, keeps the 100%-permissive/no-new-dep
-  posture) + a git worktree per task; RunTask(ctx, TaskRequest) -> TaskResult{Commits, Branch, Steps};
-  a sandboxExecutor implementing agentloop.ToolExecutor whose Execute runs each of the model's tool
-  calls via `docker exec` on the container while the agentloop's LLM turns run host-side; a small
-  "hands" toolset (shell/read-file/write-file/git) scope-gated like every other tool; and a
-  merge-to-head branch strategy (each task on its own branch off HEAD, results returned as commits for
-  the host to merge). Honest scope: ONE Docker provider, bind-mount, a minimal hands-toolset — NOT the
-  6 coding CLIs, NOT Vercel/Daytona/Fly providers, NOT multi-repo; those are named follow-ons. The big
-  lift is real: the container subsystem is net-new (no internal/sandbox exists today). STATUS: draft —
-  verify against shipped code; the Phase-3 implementation agent finalizes this ADR against the code it
-  actually lands.
-tags: [decisions, adr, sandbox, task-agent, key-brokering, docker, agentloop, tool-execution, isolation, draft, phase-9]
+  the key — stay on the host. The container never sees the key. As shipped (v1/minimal): a new
+  internal/sandbox package (Provider interface + one DockerProvider that shells out to the docker CLI
+  via os/exec — no Docker SDK, the sandcastle pattern, keeps the 100%-permissive/no-new-dep posture +
+  a git Worktree per task) plus a new internal/taskagent package (the kernel: RunTask + sandboxExecutor
+  + the hands-toolset), fronted by the public aisotropy.App.RunTask(ctx, TaskRequest) ->
+  TaskResult{Commits, Branch, Steps, Output}. sandboxExecutor implements agentloop.ToolExecutor and
+  runs each of the model's file/shell tool calls via `docker exec` on the container while the
+  agentloop's LLM turns run host-side; a small four-tool hands-toolset (run_shell / write_file /
+  read_file / git_commit) scope-gated like every other tool; and a merge-to-head branch strategy (each
+  task on its own branch off HEAD; RunTask auto-merges the branch into HEAD with --no-ff when the run
+  produced commits, else discards it). Honest scope: ONE Docker provider, bind-mount, a minimal
+  hands-toolset — NOT the 6 coding CLIs, NOT Vercel/Daytona/Fly providers, NOT multi-repo; those are
+  named follow-ons. One honest deviation: git_commit runs host-side against the bind-mounted worktree
+  (the container writes files; the host snapshots them), documented not faked. STATUS: accepted —
+  reconciled against the shipped internal/sandbox + internal/taskagent + aisotropy façade code.
+tags: [decisions, adr, sandbox, task-agent, key-brokering, docker, agentloop, tool-execution, isolation, phase-9]
 timestamp: 2026-07-16T00:00:00Z
 ---
 
