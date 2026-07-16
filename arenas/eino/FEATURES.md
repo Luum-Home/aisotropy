@@ -181,3 +181,60 @@ pre-spend gate, circuit breaker, quota-pressure degradation, transactional outbo
 health probe, response cache, and offline consolidation all had to be hand-built. Eino is a genuinely
 strong **Go orchestration library**; it is not a sovereign multi-tenant runtime, and this walk shows
 exactly where the DIY burden falls.
+
+---
+
+# GAP 1 (RUN-VERIFIED) — multi-PRODUCT isolation, the 3rd axis — **NOT-POSSIBLE (by framework)**
+
+aisotropy scopes every memory read/write by the tuple **(tenant_id, user_id, session_id, product_id)**.
+The earlier isolation proof only exercised tenant/user; **product_id was never tested**. It is the same
+story one axis over — and this closes it, by RUNNING against the real Eino v0.9.12 checkpoint runtime.
+
+- **Real API (unchanged):** `compose.CheckPointStore { Get/Set(ctx, id string) }` + `compose.WithCheckPointID(string)`.
+  product_id is **not** a dimension the framework knows about — only a substring the developer concatenates
+  into the single checkpoint-ID string.
+- **Proof (exercised — `cmd/productiso/product_isolation_demo.go`, exit 0):**
+  - **(A) Positive control:** `acme/alice/productX` seeds a marker under the fully qualified key
+    `"acme:alice:productX:s-42"` and reads its OWN marker back. `acme/alice/productY`, using its OWN
+    fully qualified key `"acme:alice:productY:s-42"`, **MISSES** — isolation holds *only because the dev
+    remembered to put product in the key*. Eino ran no product check; it compared two different strings.
+  - **(B) CROSS-PRODUCT LEAK:** a one-line-apart mistake — the dev's key composer drops the product
+    segment (`productBlindKey` → `"acme:alice:s-42"`). productX seeds under that product-blind key; then
+    **same tenant + same user + WRONG product (productY)** reads the identical key and Eino hands back
+    **productX's secret** (`SECRET-productX-7b41e9a0c2`). Direct store probe: keyspace is `[acme:alice:s-42]`
+    — a bare `[]string`, **no product_id column/tag/filter anywhere** in `Get/Set(ctx, id string)`.
+- **Verdict:** `product_id` is **CONVENTION-ONLY** — a developer substring the framework binds to nothing.
+  A wrong product_id reads another product's private state. Identical failure mode to the tenant/user axis
+  already shown; the extra key buys zero enforcement.
+- **AISOTROPY:** all four axes (tenant/user/session/product) are scoped by construction; the leaky path
+  is unrepresentable.
+
+**Run:** `go run ./cmd/productiso` (from `arenas/eino/`) — exits 0, prints `LEAK CONFIRMED` for the wrong-product read.
+
+# GAP 2 (RUN-VERIFIED) — executable governance = dependency LICENSE posture — **PASS (holds the permissive line)**
+
+aisotropy's constitutional gate is "**100% MIT/Apache, no copyleft/BUSL/SSPL/ELv2**". This scans Eino's
+REAL dependency tree with the actual `github.com/google/go-licenses` tool — executed, not asserted.
+
+- **Tool / command (exit 0):** `go install github.com/google/go-licenses@latest` then
+  `go-licenses report ./...`, wrapped in `scripts/license-scan.sh`. Output is the tool's, not a guess.
+- **Result — 24 linked third-party packages, license mix:**
+
+  | License | Count | Class |
+  |---|---|---|
+  | MIT | 11 | permissive |
+  | BSD-3-Clause | 6 | permissive |
+  | Apache-2.0 | 6 | permissive |
+  | BSD-2-Clause | 1 | permissive |
+  | **copyleft (GPL/LGPL/AGPL/MPL)** | **0** | — |
+  | **restricted/source-available (BUSL/SSPL/ELv2/Commons-Clause)** | **0** | — |
+
+  Full module graph (`go list -m all`) = **77 modules** incl. indirect/test; the linked import graph
+  go-licenses classifies is 24. Core `github.com/cloudwego/eino` = **Apache-2.0**. **No non-permissive
+  package found** — the `grep -iE 'GPL|LGPL|AGPL|MPL|BUSL|SSPL|ELv2|Commons'` scan returns NONE.
+- **Verdict:** Eino's real dep tree is **100% permissive (MIT/BSD/Apache)** and would **pass** aisotropy's
+  license gate as-is. (Sovereignty caveat from feature #10 still stands: the code is Apache-2.0 and
+  self-hostable, but the framework is ByteDance-operated and its turnkey observability targets are
+  Volcengine/ByteDance SaaS — a data-residency concern that is orthogonal to the dependency-license mix.)
+
+**Run:** `./scripts/license-scan.sh` (from `arenas/eino/`) — exits 0, prints the mix + `NONE` for non-permissive.

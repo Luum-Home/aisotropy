@@ -30,6 +30,7 @@ paid/proprietary product) · `NOT-POSSIBLE` (framework cannot provide it by cons
 | # | Feature | Pydantic AI (Py) | Mastra (TS) | LangGraph (Py) | Eino (Go) | ADK Go (Go) | Genkit Go (Go) | Letta (Py) | **aisotropy (Go+Rust)** |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | **Multi-tenant isolation** | CONVENTION — `deps.tenant_id` | CONVENTION — `resourceId`/`threadId` | CONVENTION — prefix-match `Store.search` | **NOT-POSSIBLE** — bare `CheckPointStore` string key | CONVENTION — composite `(app,user,session)` key, **no tenant binding** | CONVENTION — **no primitive**, dev-built store | CONVENTION — optional dev-passed filters (per-user key = PAID) | **BY CONSTRUCTION** — ctx + per-statement/key scoping |
+| 1b | **Multi-product isolation** (4th scope axis, run-verified ▶) | CONVENTION — `deps.product_id`, bound to nothing | CONVENTION — product rides unkeyed metadata over 2-key memory | CONVENTION — unbound namespace element; shallow prefix scans past it | CONVENTION — folded into the bare `CheckPointStore` string; drop segment → leak | CONVENTION — no `ProductID`; folded into `userID`, trusted verbatim | CONVENTION — **no product primitive**; dev-built key | CONVENTION — no `product_id` param; only a dev-invented `product:<id>` tag | **BY CONSTRUCTION** — `product_id` rides ctx in `Scope` like tenant/user |
 | 2 | Structured output + retry | BUILT-IN — fail-closed `raise ModelRetry` | BUILT-IN — AI-SDK v5 | BUILT-IN — `OutputFixingParser` | PARTIAL — parser only, no repair loop | BUILT-IN — `OutputSchema` node validation | BUILT-IN — `GenerateData[T]`, no repair loop | BUILT-IN — `response_format` json_schema, no repair loop | BUILT-IN — Gollem reflection (fail-closed) |
 | 3 | Tools | BUILT-IN — function tools | BUILT-IN — native tool calling | BUILT-IN — graph nodes | BUILT-IN — `InferTool` + ReAct | BUILT-IN — `tool.Tool` (+MCP/A2A native) | BUILT-IN — `DefineTool` | BUILT-IN — LLM tool calls | BUILT-IN — `WithTypedTool[T]` (scope-gated) |
 | 4 | Streaming (SSE) | BUILT-IN — `AsyncAgent.stream` | BUILT-IN — `ai_sdk` | BUILT-IN — callback handler | BUILT-IN — `StreamReader` | BUILT-IN — `StreamingModeSSE` | BUILT-IN — `WithStreaming` | BUILT-IN — `stream=True` | BUILT-IN — Huma SSE + `ctx` cancel |
@@ -39,6 +40,7 @@ paid/proprietary product) · `NOT-POSSIBLE` (framework cannot provide it by cons
 | 8 | Cost governance | pre-spend gate BUILT-IN (`UsageLimits`, per-**run**); per-tenant DIY | DIY — usage BUILT-IN, tenant ledger + gate DIY | DIY — `usage_metadata` BUILT-IN, per-tenant + gate DIY | DIY — `ResponseMeta.Usage` BUILT-IN, no tenant, no gate | DIY — `UsageMetadata` BUILT-IN, no tenant, no gate | DIY — `resp.Usage` BUILT-IN, no tenant, no gate | DIY — `usage` visibility BUILT-IN, meter + gate DIY | **BUILT-IN — per-TENANT pre-spend gate (BadgerDB token-bucket→`429`, by construction) + `costmeter` per-tenant meter** |
 | 9 | Observability | BUILT-IN — OTel `gen_ai` spans offline; `tenant_id` DIY; Logfire PAID | BUILT-IN — `@mastra/observability` offline; `tenant_id` DIY; UI PAID | BUILT-IN spans offline (own exporter); `tenant_id` DIY; **dashboard PAID** (LangSmith) | BUILT-IN span/timing (callbacks); no native `gen_ai` emitter; `tenant_id` DIY; eino-ext PAID | BUILT-IN — OTel `gen_ai` semconv (13 spans, no config); `tenant.id` DIY | BUILT-IN OTel transport, `genkit:*` schema (no `gen_ai.*`); `tenant_id` DIY | BUILT-IN but SERVER-side (native trace = ClickHouse, NOT-POSSIBLE offline); client span DIY; dashboards PAID | **BUILT-IN — OTel `gen_ai` semconv with `tenant_id`/`user_id` NATIVE on the serving span** |
 | 10 | Sovereignty / licensing | MIT | Apache 2.0 | OSS MIT + platform SaaS-gated | Apache 2.0 (ByteDance; APMPlus caveat) | Apache 2.0 (Google; Vertex gradient) | Apache 2.0 (Google) | Apache 2.0 (self-host server) | 100% MIT/Apache, fully self-hostable |
+| 10b | **Dependency license posture** (real scan, run-verified ▶) | PERMISSIVE 51/53; +2 weak-copyleft MPL leaf (certifi, tqdm) = CAUTION; 0 strong-copyleft, 0 restricted | PERMISSIVE 276/277; 0 copyleft, 0 restricted | PERMISSIVE 51/53; +2 MPL (certifi, orjson-dual) = CAUTION; 0 strong-copyleft, 0 restricted | PERMISSIVE 24/24 linked; 0 copyleft, 0 restricted | PERMISSIVE 35/35 modules; 0 copyleft, 0 restricted | PERMISSIVE 24/24; 0 copyleft, 0 restricted | PERMISSIVE 21/22 (client tree); +1 MPL (certifi) = CAUTION; 0 strong-copyleft, 0 restricted | **100% MIT/Apache** — constitutional gate; no copyleft/BUSL without ADR |
 | 11 | Language | Python | TypeScript | Python | Go | Go | Go | Python | Go + Rust |
 
 **One correction vs. the earlier draft matrix:** ADK Go row 1 previously read "None (untyped
@@ -46,6 +48,34 @@ paid/proprietary product) · `NOT-POSSIBLE` (framework cannot provide it by cons
 *does* key by a composite `(appName, userID, sessionID)` — real construction. The accurate gap is
 that it binds **no tenant** and does not bind identity to an authenticated caller, so it is
 `CONVENTION`, not `NOT-POSSIBLE`. Corrected above and in the isolation-model table.
+
+**Rows 1b and 10b are run-verified (▶).** Each arena's product-isolation demo and license scan were
+*executed offline* (fake model / real installed dependency tree), all exit 0; per-arena evidence and
+pasted tool output live in each arena's `FEATURES.md`. Row 1b closes the multi-product gap: the
+matrix originally tested only tenant/user, and aisotropy scopes by four axes
+`(tenant_id, user_id, session_id, product_id)`. Row 10b scans the real dep tree with
+`pip-licenses`/`license-checker`/`go-licenses`.
+
+### Governance: executable vs architectural
+
+The constitutional-gate surface (see [`ARENA-SPEC-v2.md`](ARENA-SPEC-v2.md) §5.5) splits into gates
+you can *run* and gates you can only *classify*. **Three are now executable and run-verified** across
+all seven arenas + aisotropy, offline, every demo exit 0:
+
+- **Structured-output fail-closed** ✓ (already, row 2) — the reflection loop returns 502 rather than
+  garbage; a true fail-closed retry only in Pydantic AI and Mastra, PARTIAL/DIY elsewhere.
+- **Multi-product isolation** ✓ (row 1b) — the cross-product read is *executed* and leaks in every
+  arena (`product_id` is a developer-passed key the framework binds to nothing); in aisotropy it
+  rides `context.Context` in the `Scope` value object like tenant/user, so it is unrepresentable-to-get-wrong.
+- **Dependency license posture** ✓ (row 10b) — real license scans of the installed tree; all seven
+  clear the hard-blocker gate (0 GPL/AGPL/BUSL/SSPL/ELv2/Commons-Clause/FSL), aisotropy holds 100%
+  MIT/Apache by construction.
+
+The remaining constitutional gates stay **architectural — classified, not run** — they are
+structural properties no smoke can exercise: **single-binary sovereignty** (the complete zero-config
+runtime), **test-before-merge** (a CI/process gate, not a runtime behavior), and the
+**backward-compatible-contract** gate (the Go struct *is* the OpenAPI contract, so a JSON-tag/field
+change is a breaking-change gate). Honest classifications, not executed demos.
 
 ## Real integrations vs. honest simulations
 

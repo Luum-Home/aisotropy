@@ -27,6 +27,28 @@ paid/hosted service) · **NOT-POSSIBLE** (no path).
 - **AISOTROPY:** isolation by construction — ctx-propagated tenant + per-key/per-statement scoping;
   the unscoped read is unrepresentable (`Scope{}` has unexported fields).
 
+#### 1b. Third isolation axis — product_id — CONVENTION (run-verified `cmd/productiso`)
+- **Run:** `go run ./cmd/productiso` (from `arenas/genkit-go`). Exit **0**. Offline, real
+  `genkit.Generate`. Closes the gap that the earlier smoke only stressed tenant/user;
+  aisotropy scopes memory by **(tenant, user, session, product_id)** and the product axis
+  (two products of the *same* tenant+user — e.g. alice@acme's `orbit-crm` vs `orbit-helpdesk`)
+  was never tested here.
+- **Mechanism:** Genkit ships no product/session/memory primitive, so `product_id` is just
+  another developer-passed string. Nothing folds it into the store key; the framework binds it
+  to **nothing**.
+- **Proven — positive control:** `orbit-crm` seeds a marker and reads it back through the real
+  pipeline (`✓ POSITIVE CONTROL: orbit-crm read its own marker back through genkit.Generate`).
+- **Proven — CROSS-PRODUCT LEAK (label it a leak):** with the common `tenant:user:session` key
+  (product axis absent), a same-tenant+user request for a **different** product
+  (`orbit-helpdesk`) reads `orbit-crm`'s secret — the real model returns it verbatim
+  (`✗ CROSS-PRODUCT LEAK: a orbit-helpdesk request (same tenant+user) read orbit-crm's secret`).
+  Scenario 2 shows that folding product into the key *isolates* — but purely by convention:
+  mis-passing the product string (`orbit-crm`'s key on an `orbit-helpdesk` request) re-opens the
+  leak, and Genkit validates nothing (`✗ CONVENTION LEAK`).
+- **AISOTROPY:** `product_id` rides in `context.Context` alongside tenant/user/session and is
+  bound into the memory `Scope` by construction — a cross-product read is unrepresentable, not a
+  discipline the developer must remember. Genkit has no product primitive to enforce at all.
+
 ### 2. Structured output — BUILT-IN
 - **Mechanism:** `genkit.GenerateData[Out]` sets the output format to JSON, injects the schema,
   and validates the model response against it (rejects non-conforming JSON — observed live).
@@ -100,8 +122,20 @@ paid/hosted service) · **NOT-POSSIBLE** (no path).
   a separate service; local in-memory capture needs none of it.
 - **AISOTROPY:** OTel `gen_ai.*` semconv-aligned (ADR-0010) — market-standard *and* ahead of Genkit.
 
-### 10. Sovereignty / licensing — BUILT-IN (good)
+### 10. Sovereignty / licensing — BUILT-IN (good), run-verified against aisotropy's gate
 - Apache-2.0, Go-style stability promise, fully self-hostable. No SaaS lock-in for the core.
+- **Executable governance (`scripts/license_scan.sh`, exit 0).** aisotropy's constitutional gate
+  is "the stack is deliberately 100% MIT/Apache-2.0 ... no copyleft or source-available/BUSL
+  without an explicit ADR." Scanned THIS arena's **actual** dependency tree with
+  `go-licenses report ./...` (the REAL tool output, not a guess):
+  - **24 external deps** — **24 permissive, 0 copyleft, 0 restricted/source-available, 0 unclassified.**
+  - Breakdown: **13 Apache-2.0 · 6 MIT · 4 BSD-3-Clause · 1 ISC.**
+  - **No non-permissive package found** — no GPL/LGPL/AGPL/MPL, no BUSL/SSPL/ELv2/Commons-Clause.
+  - The 6 `genkit-go-arena/*` "Unknown" rows go-licenses prints are the arena's OWN packages
+    (no LICENSE file, correctly), excluded from the external tally.
+  - **Verdict: PASS** — Genkit Go's real dep tree HOLDS the permissive line aisotropy claims;
+    the whole framework (incl. `firebase/genkit/go` Apache-2.0, the `xeipuuv/*` JSON-schema stack
+    Apache-2.0, OpenTelemetry Apache-2.0, `dotprompt` Apache-2.0) stays inside the gate.
 
 ### 11. Language — Go
 - Idiomatic, generics-heavy, strongly typed. Same host language as aisotropy's core.

@@ -94,12 +94,71 @@ timestamp: 2026-07-15T00:00:00Z
   `context.Context`. Pydantic AI's tracing is comparable in span quality but is opt-in and
   tenant-unaware — the tenant dimension is your responsibility.
 
+### Dependency license posture (executable governance)
+- **Status:** RUN-VERIFIED — the real dep tree holds the permissive line aisotropy claims
+- aisotropy's constitutional gate is "100% MIT/Apache, no copyleft/BUSL/SSPL/ELv2". This is the
+  same gate executed against **this arena's actual dependency tree** (not a guess).
+- **RUN-VERIFIED** (`.venv/bin/python -m piplicenses --format=csv`, pip-licenses 5.5.5, exit 0):
+  - **53 packages** in the arena venv (pip-licenses excludes itself + its two deps
+    `prettytable`/`wcwidth`, which are scan tooling, not arena deps).
+  - **51 permissive** — MIT (26 incl. `pydantic`, `pydantic-ai-slim`, `pydantic-graph`, `anthropic`,
+    `fastapi`, `logfire`, `tiktoken`, `jiter`), BSD-2/BSD-3 (11 incl. `starlette`, `uvicorn`,
+    `httpx`, `click`, `protobuf`), Apache-2.0 (13 incl. all `opentelemetry-*`, `openai`, `requests`,
+    `distro`), ISC (1 `griffelib`), plus `typing_extensions` (**PSF-2.0**) and `regex`
+    (**Apache-2.0 AND CNRI-Python**) — PSF/CNRI are BSD-style permissive.
+  - **2 weak copyleft (MPL-2.0, file-level)** — `certifi` (Mozilla Public License 2.0) and `tqdm`
+    (`MPL-2.0 AND MIT`). Per aisotropy's own `license-policy.md`, MPL 2.0 is **CAUTION, not a
+    BLOCKER**: only changes to MPL-covered *files* must be published; both are used unmodified as
+    libraries, so no source-disclosure obligation attaches to arena code.
+  - **0 strong copyleft** (no GPL / LGPL / AGPL).
+  - **0 restricted / source-available** (no BUSL / SSPL / ELv2 / Commons-Clause / FSL).
+- **Notable non-MIT/Apache packages found (named, per task):** `certifi` (MPL-2.0), `tqdm`
+  (MPL-2.0 AND MIT), `typing_extensions` (PSF-2.0), `regex` (Apache-2.0 AND CNRI-Python). None is a
+  hard blocker under aisotropy's gate; the two MPL packages are the only copyleft and are CAUTION-tier.
+- **Verdict:** the framework's real dep tree **does** hold the permissive line — zero hard blockers,
+  the only copyleft is file-level MPL in leaf utilities (`certifi`, `tqdm`). aisotropy could adopt
+  this tree without tripping its "no copyleft/BUSL/SSPL" constitutional gate (the two MPL leaves
+  would need an explicit CAUTION note, consistent with the policy).
+
 ### Multi-tenant isolation
 - **Status:** Convention only
 - **Pattern:** Pass `tenant_id` through `RunContext[deps]` — developer responsibility
+- **RUN-VERIFIED** (`scripts/smoke.py`, exit 0): positive control passes, correct-key scoping
+  is safe, and the **cross-tenant leak reproduces** — a tenantB request with tenantA's deps
+  key reads tenantA's marker. The framework never checks that `deps.tenant_id` matches the
+  caller.
 - **AISOTROPY COMPARISON:** aisotropy enforces isolation by construction — `context.Context`
   propagation + per-statement/key scoping + constitutional gate. No code path can issue an
   unscoped read.
+
+### Multi-PRODUCT isolation (3rd axis — product_id)
+- **Status:** Convention only — `product_id` is just another developer-passed deps key
+- **RUN-VERIFIED** (`scripts/product_isolation_demo.py`, pydantic-ai 2.10.0, offline `TestModel`,
+  exit 0): aisotropy scopes memory by the 4-tuple `(tenant_id, user_id, session_id, product_id)`;
+  the arena smoke only covered tenant/user, so this demo adds the **product** axis and proves the
+  same structural truth one axis deeper.
+  - **(a) Positive control — PASS.** Seeded `tenantA/userA/PRODUCT-X` with a random marker; the
+    correct `(tenantA, userA, productX)` key reads it back.
+  - **Correct scoping — PASS.** Same tenant + same user + the *correct other product* (`productY`)
+    reads its own slice → NO marker. The product axis genuinely partitions **when the key is right**,
+    so the leak below is about a wrong key, not a broken store.
+  - **(b) CROSS-PRODUCT LEAK — reproduced.** A request that should be scoped to `productY`, but with
+    `deps.product_id` set to `productX` (SAME tenant, SAME user — only the product key differs),
+    silently reads productX's marker. `get_recent_messages()` (what the `get_context` tool calls)
+    trusts `deps` verbatim. Actual run output:
+    ```
+    [pydantic-ai] Demonstrating the CROSS-PRODUCT leak:
+      Request should be scoped to productY, but deps.product_id was set to 'productX'.
+      SAME tenant, SAME user — only the product key differs.
+      [LEAK] Cross-product leak confirmed: wrong product_id -> cross-product read
+    ```
+  - **Root cause:** `product_id` is no more privileged than `tenant_id` — the framework binds it to
+    nothing (no principal, no API surface, no auth). It is a dict key you chose to put in the lookup
+    tuple. A stale/copy-pasted/cached deps object or a one-line typo crosses the product boundary
+    with no framework objection. The framework enforces NOTHING on the extra key; it is convention.
+- **AISOTROPY COMPARISON:** aisotropy binds all four axes at the Huma handler boundary and propagates
+  them via `context.Context` — a wrong product_id can't be silently substituted downstream because
+  no read is issued without the ctx-scoped key.
 
 ## Comprehensive feature-parity matrix (RUN-VERIFIED)
 

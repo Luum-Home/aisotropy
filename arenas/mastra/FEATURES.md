@@ -150,6 +150,71 @@ quota-pressure degrade, identity-bind, health — is DIY here, though Mastra *do
 **approximate cost gate** (`CostGuardProcessor`) and a **per-tenant response cache** that the earlier
 notes missed.
 
+## Multi-PRODUCT isolation — the 3rd axis (run-verified)
+
+`scripts/product_isolation_demo.ts` (`npm run product-isolation`) — RUNS OFFLINE against
+**real `@mastra/memory` + `LibSQLStore`**. Extends the tenant/user isolation smoke to
+aisotropy's THIRD scoping axis, `product_id`. aisotropy keys every memory read/write on
+FOUR native `context.Context` axes — `(tenant_id, user_id, session_id, product_id)`. Mastra's
+memory layer keys on exactly **TWO** opaque developer-passed strings: `resourceId` + `threadId`.
+There is **no `product_id` axis** in the framework (grep for `productId|product_id|productScope`
+over `@mastra/{core,memory}/dist` = **0 hits**, executed by the demo).
+
+Executed evidence (exit 0):
+
+- **(a) Positive control** — `productX` under `(tenantA, userA, session-42)` reads its own
+  marker. ✓
+- **(b) CROSS-PRODUCT LEAK (reproduced)** — a request for `product_id="productY"`, same
+  tenant+user+session, reads `productX`'s private marker. **This is a real leak.** Root cause:
+  `product_id` was carried as request/tool metadata (the natural mapping that mirrors aisotropy's
+  tenant/user/session onto Mastra's 2 keys), and `memory.recall({resourceId, threadId})` never
+  keys on it — the extra axis is a **no-op in the framework**.
+- **(c) HONEST nuance — Mastra DOES enforce ONE guard** — folding product into the resourceId
+  (`tenantA:userA:productX`) is protected: Mastra binds a `threadId` to its owning `resourceId`
+  and **THREW** `validateThreadIsOwnedByResource` ("Thread ... is for resource ...:productX but
+  resource ...:productZZZ-typo was queried") on a cross-resource read. But that guard is
+  **thread↔resourceId ownership, not product-awareness** — product isolation only works when
+  product is *smuggled into the opaque resourceId*. `product_id` itself is never a framework
+  scoping axis.
+
+**Verdict:** `product_id` isolation in Mastra is CONVENTION over 2 keys, not construction over 4
+axes. With aisotropy's 4 axes and Mastra's 2 keys, whichever axis will not fit into
+`resourceId`/`threadId` is the one that leaks — here, product. aisotropy filters `product_id`
+server-side on every read, so a wrong product reads nothing **by construction**.
+
+## Executable governance — dependency LICENSE posture (run-verified)
+
+aisotropy's constitutional gate: **100% MIT/Apache, no copyleft/BUSL/SSPL/ELv2**. Ran the REAL
+tool over this arena's actual installed tree:
+
+```
+npx license-checker --summary   →   MIT: 219 · Apache-2.0: 31 · ISC: 11 · BSD-3-Clause: 7
+                                     BlueOak-1.0.0: 3 · BSD-2-Clause: 3 · (AFL-2.1 OR BSD-3-Clause): 1
+                                     0BSD: 1 · UNLICENSED: 1        (exit 0)
+```
+
+`--json` classification over **277 packages**:
+
+| Bucket | Count |
+|---|---|
+| Permissive (MIT/BSD/Apache/ISC/0BSD/BlueOak-1.0.0/AFL-or-BSD) | **276** |
+| Copyleft (GPL/LGPL/AGPL/MPL/EPL) | **0** |
+| Restricted / source-available (BUSL/SSPL/**ELv2**/Commons-Clause/FSL) | **0** |
+| Unknown/unlicensed | **1** — `mastra-arena@0.0.1` (this arena's own `private:true` root, not a dependency) |
+
+- **Explicit ELv2 check (task-requested):** grep of every package name+license for
+  `Elastic|ELv2|BUSL|SSPL|Commons-Clause|source-available|FSL|Prosperity` = **0 hits**. The
+  ELv2/source-available concern does **not** materialize in this arena's installed tree.
+- **Mastra core packages** are all Apache-2.0, verified individually: `@mastra/core@1.51.0`,
+  `@mastra/memory@1.23.0`, `@mastra/libsql@1.16.0`, `@mastra/observability@1.16.1`,
+  `@mastra/schema-compat@1.3.4` — **Apache-2.0** each.
+- `BlueOak-1.0.0` (3 pkgs) is a permissive, OSI-recognized model license — counted permissive.
+
+**Verdict:** Mastra's real dependency tree **holds the permissive line** aisotropy's license gate
+requires. Zero copyleft, zero source-available/BUSL/SSPL/ELv2. The only non-SPDX entry is the
+arena's own private root package. This framework would **pass** aisotropy's constitutional
+license gate as installed.
+
 ## Summary
 
 Mastra is the **most batteries-included** of the three — memory, vectors, tools, streaming,

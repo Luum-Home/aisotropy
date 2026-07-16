@@ -1,0 +1,41 @@
+# Letta arena — dependency license scan (pip-licenses, real venv output)
+# Generated: 2026-07-16T15:40:30Z | tool: pip-licenses 5.5.5 | python 3.13
+# Scanner tooling (pip-licenses/prettytable/wcwidth) excluded — not arena deps.
+
+ Name                                Version    License                              
+ Pygments                            2.20.0     BSD-2-Clause                         
+ annotated-types                     0.7.0      MIT License                          
+ anyio                               4.14.2     MIT                                  
+ certifi                             2026.6.17  Mozilla Public License 2.0 (MPL 2.0) 
+ distro                              1.9.0      Apache Software License              
+ h11                                 0.16.0     MIT License                          
+ httpcore                            1.0.9      BSD-3-Clause                         
+ httpx                               0.28.1     BSD License                          
+ idna                                3.18       BSD-3-Clause                         
+ iniconfig                           2.3.0      MIT                                  
+ letta-client                        1.12.1     Apache Software License              
+ opentelemetry-api                   1.43.0     Apache-2.0                           
+ opentelemetry-sdk                   1.43.0     Apache-2.0                           
+ opentelemetry-semantic-conventions  0.64b0     Apache-2.0                           
+ packaging                           26.2       Apache-2.0 OR BSD-2-Clause           
+ pluggy                              1.6.0      MIT License                          
+ pydantic                            2.13.4     MIT                                  
+ pydantic_core                       2.46.4     MIT                                  
+ pytest                              9.1.1      MIT                                  
+ sniffio                             1.3.1      Apache Software License; MIT License 
+ typing-inspection                   0.4.2      MIT                                  
+ typing_extensions                   4.16.0     PSF-2.0                              
+
+## Summary (counts by license)
+ License  Count                                
+ 1        Apache Software License; MIT License 
+ 1        Apache-2.0 OR BSD-2-Clause           
+ 1        BSD License                          
+ 1        BSD-2-Clause                         
+ 1        Mozilla Public License 2.0 (MPL 2.0) 
+ 1        PSF-2.0                              
+ 2        Apache Software License              
+ 2        BSD-3-Clause                         
+ 3        Apache-2.0                           
+ 3        MIT License                          
+ 6        MIT                                  

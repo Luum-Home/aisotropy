@@ -101,6 +101,57 @@ timestamp: 2026-07-15T00:00:00Z
   competitors. A namespace like `('acme',)` scans ALL tenants starting with `'acme'`.
   aisotropy's exact-key scoping + `Scope{}` value objects prevent this entirely.
 
+### Multi-PRODUCT isolation (3rd axis) — RUN-VERIFIED via `product_isolation_demo.py`
+Run: `.venv/bin/python product_isolation_demo.py` (exit 0; OFFLINE, no LLM). Verified against
+langgraph 1.2.9. aisotropy scopes memory by a **4-axis `Scope` value object**
+`(tenant_id, user_id, session_id, product_id)`, all bound to the verified identity at the
+handler boundary and carried via `context.Context`. The earlier smoke covered tenant/user;
+this demo isolates the **product_id** axis, which the arenas had never tested.
+
+- **Status:** Convention — `BaseStore` has **no `product` concept**. `product_id` is just one
+  more element the developer stuffs into the namespace tuple `(tenant, user, product)`.
+- **Positive control (verified):** exact `get(("acme","userA","productX"), key)` reads
+  productX's own private marker. Correct full-depth scoping works.
+- **CROSS-PRODUCT LEAK (both mechanisms reproduced, same tenant+user):**
+  - **2a — shallow-prefix:** a handler "serving productY" that scopes to
+    `search(("acme","userA"))` and **forgets the product element** scans *every* product under
+    that user — productX's private marker surfaced (2 namespaces returned). The framework never
+    forces the product element into the query.
+  - **2b — wrong-product substitution:** an exact `get()` built with the **wrong product
+    string** (`productX` where `productY` belonged) returns productX's data. Nothing validates
+    the product element against the authenticated caller — `product_id` is an unbound string.
+- **Honesty control (verified):** exact `get()` at the *correct* `(tenant,user,productY)` depth
+  does NOT see productX's marker. Exact scoping is safe **if** the developer supplies the right
+  product element every single time — that "if" is the entire risk surface.
+- **AISOTROPY COMPARISON:** `product_id` is a **field of the `Scope` value object**, constructed
+  from verified identity — a forgotten or wrong `product_id` is **unrepresentable**, not a
+  convention to remember. In LangGraph it is developer-owned namespace depth the framework
+  checks nowhere; a single missed/wrong tuple element = silent cross-product read.
+
+### Dependency LICENSE posture (executable governance) — RUN-VERIFIED via `scripts/license_scan.sh`
+Run: `./scripts/license_scan.sh` (exit 0; OFFLINE; reads installed venv metadata). Tool:
+`pip-licenses 5.5.5` over the real langchain/langgraph venv tree. aisotropy's constitutional
+gate: "100% MIT/Apache, no copyleft/BUSL". This scans whether the framework's **actual**
+dependency tree holds that line — reporting REAL `pip-licenses` output, not guesses.
+
+- **Total packages scanned:** **53** (transitive tree of langgraph 1.2.9 / langchain 1.3.13 /
+  langchain-anthropic / fastapi / uvicorn / opentelemetry, etc.).
+- **Permissive:** **51 / 53** — MIT (26), BSD-2/3-Clause + "BSD License" (14), Apache-2.0 +
+  "Apache Software License" (7 + dual `Apache-2.0 OR *`), plus PSF-2.0 (typing_extensions),
+  0BSD/Zlib/CC0 (inside numpy's dual tag). All SAFE under aisotropy's own `license-policy.md`.
+- **Strong copyleft (GPL/AGPL/LGPL):** **0.**
+- **Restricted / source-available (BUSL/SSPL/ELv2/Commons-Clause/FSL):** **0.**
+- **Weak copyleft (MPL-2.0):** **2** — `certifi` (`MPL-2.0`) and `orjson`
+  (`MPL-2.0 AND (Apache-2.0 OR MIT)`, i.e. dual-licensed, usable under a permissive option).
+  MPL-2.0 is file-level weak copyleft = **⚠️ CAUTION** per aisotropy's `license-policy.md`,
+  **not a BLOCKER** (the constitutional gate names GPL/AGPL + source-available specifically).
+- **Verdict:** The langgraph tree does **not literally** hold "100% MIT/Apache" — it is
+  ~96% permissive with BSD/PSF permissive licenses and **2 weak-copyleft MPL-2.0** packages
+  (`certifi`, `orjson`). It carries **zero** strong-copyleft and **zero** source-available/BUSL
+  packages, so it clears aisotropy's *hard* blocker gate; the two MPL-2.0 deps are the only
+  non-permissive items and are advisory (CAUTION), not fatal. The scan script exits non-zero
+  if any hard-blocker license ever enters the tree — governance you can run in CI.
+
 ## Comprehensive feature parity (#1–#26) — RUN-VERIFIED via `feature_parity_demo.py`
 
 Run: `.venv/bin/python feature_parity_demo.py` (exit 0; 26 `FEATURE` lines; OFFLINE fake

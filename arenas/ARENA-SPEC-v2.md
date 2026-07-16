@@ -222,6 +222,13 @@ transactional-outbox→idempotent consolidation, contradiction resolution, healt
 - **proof_type:** executable-demo.
 - **arena_test_idea:** Send a prompt containing an API key; assert the redacted form reaches the model and no memory tier stores the raw secret. Send an injection prompt; assert it's flagged (and blocked when the toggle is on).
 
+### 4.7 ★ Multi-product isolation (the 4th scope axis: tenant/user/session/product)
+- **What it is:** aisotropy scopes memory by *four* axes — `(tenant_id, user_id, session_id, product_id)`. The arenas were originally probed on tenant/user only; `product_id` is the axis they were never tested on. A single tenant+user operating multiple products must not read another product's slice.
+- **doc_reference:** `.claude/rules/architecture.md` §"Layer conventions" (the `Scope` value object); `docs/architecture/multi-tenancy.md`; each arena's `FEATURES.md` (run-verified product-isolation demo).
+- **aisotropy_mechanism:** `product_id` is a field of the `Scope` value object, built from verified identity and carried via `context.Context` exactly like `tenant_id`/`user_id`; every storage op filters on it. A wrong/forgotten `product_id` is *unrepresentable*, not merely discouraged — the same by-construction guarantee as the tenant/user axes (4.1–4.2).
+- **proof_type:** architectural-property in aisotropy (by-construction) — but **run-verified as an executable leak in every arena**: the cross-product read is *actually executed* offline (fake model + shared store), exit 0, in all seven.
+- **arena_test_idea:** Same tenant+user, seed product X's marker, read as product Y; a marker in Y's response is a leak. Run-verified: **all 7 arenas leak** — `product_id` is a developer-passed key the framework binds to nothing (Pydantic AI: a `deps` field; Mastra: rides unkeyed metadata over 2-key `resourceId`/`threadId` memory; LangGraph: an unbound namespace element a shallow prefix scans past; Eino: folded into a bare `CheckPointStore` string, dropped-segment leaks; ADK Go: no `ProductID`, folded into `userID`; Genkit Go: *no memory primitive at all*; Letta: no `product_id` API param, only a dev-invented `product:<id>` tag with a `match_all_tags=False` default). aisotropy = unrepresentable. Per-arena evidence in each `FEATURES.md`.
+
 ---
 
 ## Area 5 — Cost & governance (★ the constitutional gates + pre-spend)
@@ -267,6 +274,13 @@ transactional-outbox→idempotent consolidation, contradiction resolution, healt
 - **aisotropy_mechanism:** Dependency selection ADRs (0004 rqlite over Turso-BSL, 0006 BGE over jina-NC).
 - **proof_type:** architectural-property.
 - **arena_test_idea:** Classify each arena's license and whether multi-tenant self-hosting is unrestricted. aisotropy = fully self-hostable permissive; Dify/Flowise/LangGraph-platform have SaaS/paid gates.
+
+### 5.7 ★ Dependency license posture — run-verified scan of the real tree
+- **What it is:** The *executable* counterpart to the architectural license claim (5.6): the actual installed dependency tree of each arena, scanned by the ecosystem's own license tool, classified permissive vs weak-copyleft vs strong-copyleft vs restricted/source-available. Where 5.6 *classifies* the posture, this *runs* the scan.
+- **doc_reference:** `.claude/rules/constitutional-gates.md` §"License policy"; `.claude/rules/cos/license-policy.md`; each arena's `FEATURES.md` (pasted tool output).
+- **aisotropy_mechanism:** The constitutional gate itself — 100% MIT/Apache, no copyleft/BUSL without an explicit ADR, enforced repo-wide before merge.
+- **proof_type:** executable-demo for the arenas (`pip-licenses` 5.5.5 / `license-checker` / `go-licenses`, offline, all exit 0) / architectural-property for aisotropy (the gate).
+- **arena_test_idea:** Scan the real tree; assert zero hard blockers (GPL/AGPL/LGPL/BUSL/SSPL/ELv2/Commons-Clause/FSL). Run-verified: **all 7 arenas clear the hard-blocker gate** (zero strong-copyleft, zero restricted/source-available in every tree). Four hold a *pure* permissive line — Mastra (276/277), Eino (24/24 linked), ADK Go (35/35 modules), Genkit Go (24/24) — all MIT/BSD/Apache/ISC. Three carry file-level **weak-copyleft MPL-2.0 leaf utilities** (CAUTION not BLOCKER under aisotropy's own `license-policy.md`, used unmodified as libraries): Pydantic AI (51/53 permissive + certifi, tqdm), LangGraph (51/53 + certifi, orjson-dual), Letta (21/22 client tree + certifi). None literally matches aisotropy's strict "100% MIT/Apache" (BSD/PSF/ISC/MPL appear), but all pass the *hard* gate; aisotropy alone holds the strict MIT/Apache line by construction. Per-arena tables in each `FEATURES.md`.
 
 ---
 
@@ -356,10 +370,11 @@ transactional-outbox→idempotent consolidation, contradiction resolution, healt
 
 Each arena cell carries a coverage class (`BUILT-IN` / `CONVENTION` / `PARTIAL` / `DIY` / `PAID` /
 `NOT-POSSIBLE`) per the `arenas/README.md` legend. The **aisotropy** column states the built status
-(REAL / CODE-ONLY; every property that survives is `by-construction` where noted). **25 of the 41 rows
+(REAL / CODE-ONLY; every property that survives is `by-construction` where noted). **27 of the 43 rows
 are run-verified** against the pinned upstream framework (offline: fake model + synthetic data) via
 each arena's `feature_parity_demo` (all seven exit 0); the remaining 16 architectural rows are
-honest doc-grounded classification. The run-verified rows are marked `▶`.
+honest doc-grounded classification. Rows 4.7 and 5.7 are the two executable governance rows added on
+top of the original 41 (multi-product isolation; dependency license posture). The run-verified rows are marked `▶`.
 
 | # | Feature | proof_type | Pydantic AI | Mastra | LangGraph | Eino | ADK Go | Genkit Go | Letta | **aisotropy** |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -388,12 +403,14 @@ honest doc-grounded classification. The run-verified rows are marked `▶`.
 | 4.4 ▶ | Authenticated-identity seam (must-agree bind) | executable-demo | DIY | DIY | NOT-POSSIBLE | DIY | NOT-POSSIBLE | DIY | CONVENTION | REAL |
 | 4.5 | JWKS key rotation | executable-demo | DIY | DIY | DIY | DIY | DIY | DIY | DIY | REAL (CODE-ONLY default) |
 | 4.6 | Guardrails (redact/inject/output) | executable-demo | DIY | PARTIAL | DIY | DIY | PARTIAL | DIY | DIY | REAL |
+| 4.7 ▶ | Multi-product isolation (4th scope axis) | architectural-property | CONVENTION | CONVENTION | CONVENTION | CONVENTION | CONVENTION | CONVENTION | CONVENTION | REAL (by-construction; product_id rides ctx, leak run-reproduced in all 7 arenas) |
 | 5.1 ▶ | Per-tenant PRE-SPEND quota gate (429) | executable-demo | BUILT-IN (per-run) | PARTIAL | DIY | DIY | DIY | DIY | DIY | REAL (per-tenant, by-construction) |
 | 5.2 ▶ | Circuit breaker | executable-demo | DIY | DIY | DIY | DIY | DIY | DIY | DIY | REAL |
 | 5.3 ▶ | Quota-pressure model degradation | executable-demo | DIY | DIY | DIY | DIY | DIY | DIY | DIY | REAL |
 | 5.4 ▶ | Cost meter (per-tenant) | executable-demo | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | REAL |
 | 5.5 | Constitutional-gate governance surface | architectural-property | DIY | DIY | DIY | DIY | DIY | DIY | DIY | REAL |
 | 5.6 | License 100% MIT/Apache, self-hostable | architectural-property | BUILT-IN | BUILT-IN | PARTIAL | BUILT-IN | PARTIAL | BUILT-IN | PARTIAL | REAL |
+| 5.7 ▶ | Dependency license posture (scanned) † | executable-demo | PERMISSIVE +MPL leaf | PERMISSIVE | PERMISSIVE +MPL leaf | PERMISSIVE | PERMISSIVE | PERMISSIVE | PERMISSIVE +MPL leaf | REAL (100% MIT/Apache gate; 0 hard blockers) |
 | 6.1 ▶ | OTel gen_ai spans w/ tenant_id native | executable-demo | BUILT-IN (tenant DIY) | BUILT-IN (tenant DIY) | BUILT-IN (tenant DIY) | PARTIAL | BUILT-IN (tenant DIY) | PARTIAL | PARTIAL | REAL (tenant_id native) |
 | 6.2 ▶ | Health / readiness probes (no LLM spend) | executable-demo | DIY | DIY | DIY | DIY | DIY | DIY | PARTIAL | REAL |
 | 6.3 | Bits-per-token North Star (Bet 6) | executable-demo | DIY | DIY | DIY | DIY | DIY | DIY | DIY | CODE-ONLY |
@@ -405,16 +422,20 @@ honest doc-grounded classification. The run-verified rows are marked `▶`.
 | 8.3 | Go+Rust subprocess boundary | architectural-property | DIY | DIY | DIY | DIY | DIY | DIY | DIY | REAL |
 | 8.4 | Provider-agnostic LLM registry | architectural-property | BUILT-IN | BUILT-IN | BUILT-IN | BUILT-IN | BUILT-IN | BUILT-IN | PARTIAL | REAL |
 
-**Counts:** 41 features — **24 executable-demo**, **17 architectural-property**. **25 rows (▶)
+**Counts:** 43 features — **25 executable-demo**, **18 architectural-property**. **27 rows (▶)
 run-verified** against the pinned upstream framework, offline, all seven arenas exit 0.
 
-### BUILT-IN tally per arena (across all 41 rows)
+† Row 5.7 is scored on a *license-posture* scale (PERMISSIVE / weak-copyleft / restricted), not the
+coverage-class legend, so it is excluded from the BUILT-IN tally below. Row 4.7 (multi-product
+isolation) uses the coverage classes and contributes `+1 CONVENTION` to every arena.
+
+### BUILT-IN tally per arena (across the 42 coverage-class rows)
 
 | Class | Pydantic AI | Mastra | LangGraph | Eino | ADK Go | Genkit Go | Letta |
 |---|---|---|---|---|---|---|---|
 | BUILT-IN | 7 | 11 | 8 | 5 | 7 | 8 | 9 |
 | PARTIAL | 7 | 9 | 10 | 5 | 8 | 6 | 10 |
-| CONVENTION | 1 | 2 | 2 | 3 | 1 | 1 | 3 |
+| CONVENTION | 2 | 3 | 3 | 4 | 2 | 2 | 4 |
 | DIY | 24 | 17 | 18 | 26 | 18 | 25 | 18 |
 | PAID | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
 | NOT-POSSIBLE | 2 | 2 | 3 | 2 | 5 | 1 | 1 |
@@ -426,6 +447,28 @@ runtime. ADK Go carries the most **NOT-POSSIBLE (5)** — its rich memory is Ver
 matters here: **isolation,
 tiered memory, and pre-spend governance** — where every arena either falls to CONVENTION/DIY or
 hits a structural NOT-POSSIBLE, and aisotropy is by-construction.
+
+### Governance: executable vs architectural
+
+The constitutional-gate surface (§5.5) splits into gates you can *run* and gates you can only
+*classify*. Three governance gates are now **executable and run-verified** across all seven arenas +
+aisotropy, offline, every demo exit 0:
+
+- **Structured-output fail-closed** (§2.2 ✓) — the reflection loop returns 502 rather than garbage;
+  BUILT-IN as a true fail-closed retry in only Pydantic AI and Mastra, PARTIAL/DIY elsewhere.
+- **Multi-product isolation** (§4.7 / row 4.7 ✓) — the 4th scope axis. The cross-product read was
+  *executed* in every arena and leaks (CONVENTION / developer-passed on a key the framework binds to
+  nothing); in aisotropy `product_id` rides `context.Context` in the `Scope` value object like
+  tenant/user, so the wrong-product read is unrepresentable.
+- **Dependency license posture** (§5.7 / row 5.7 ✓) — real `pip-licenses`/`license-checker`/
+  `go-licenses` scans of the installed tree; all seven clear the hard-blocker gate, aisotropy holds
+  100% MIT/Apache by construction.
+
+The remaining constitutional gates stay **architectural — classified, not run**, because they are
+structural properties no smoke can exercise: **single-binary sovereignty** (§8.1, the complete
+zero-config runtime), **test-before-merge** (a CI/process gate, not a runtime behavior), and the
+**backward-compatible-contract** gate (§2.1 — the Go struct *is* the OpenAPI contract, so a JSON-tag
+or field change is a breaking-change gate). These are honest classifications, not executed demos.
 
 ---
 

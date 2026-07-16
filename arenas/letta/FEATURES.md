@@ -163,6 +163,98 @@ CONVENTION 1 · NOT-POSSIBLE 1.
 aisotropy's governance-by-construction — pre-spend gate, fail-closed reflection,
 isolation binding, and the transactional outbox are DIY / CONVENTION / NOT-POSSIBLE.
 
+## Multi-PRODUCT isolation — the 3rd scope axis (RUN-VERIFIED, CROSS-PRODUCT LEAK)
+
+aisotropy scopes every memory read/write by **four** keys —
+`(tenant_id, user_id, session_id, product_id)` — bound once at the Huma boundary and
+propagated via `context.Context`. The isolation smoke here already showed the tenant/user
+axes leak in Letta (developer-passed convention). This closes the gap on the **product**
+axis, which the arena had never tested.
+
+**Finding: `product_id` is just another developer-passed key the framework never binds to
+anything.** Letta's real list/search API surface —
+`client.blocks.list(project_id=, identity_id=, label=, tags=, match_all_tags=)` and
+`client.passages.search(query=, tags=, tag_match_mode=, archive_id=)` — has **no
+`product_id` parameter at all**. The only place a product boundary can live is a
+developer-invented `product:<id>` tag that must be passed (with `match_all_tags=True`) on
+*every* read. Miss it once and a sibling product reads your data.
+
+Run:
+```bash
+arenas/letta/.venv/bin/python arenas/letta/scripts/product_isolation_demo.py   # exit 0
+arenas/letta/.venv/bin/python -m pytest arenas/letta/tests/test_product_isolation.py -q  # 6 passed
+```
+
+RUN-VERIFIED output — same tenant `acme`, same user `alice`, two products
+(`checkout` seeded, `analytics` reading):
+
+```
+[letta] Seeding (tenant=acme, user=alice, product=checkout) marker: lt-82a1934cf5713b89
+  OK  Positive control: product 'checkout' saw its own marker
+[letta] Leak #1 — product 'analytics' scopes by tenant+user (Letta has no product filter):
+  LEAK 'analytics' saw 'checkout' marker (product axis not enforced)
+[letta] Leak #2 — 'analytics' passes its OWN full tags but default OR match (real API default):
+  LEAK ANY-tag default matched checkout via shared tenant/user tags
+[letta] Leak #3 — client.blocks.retrieve(id) from a product-'analytics' path:
+  LEAK retrieve-by-id returned checkout's block, no product check
+[letta] Leak #4 — passages.search() scoped by tenant/user (no product):
+  LEAK archival search crossed the product boundary
+
+Result: CROSS-PRODUCT LEAK CONFIRMED — same tenant+user, wrong product reads the marker
+```
+
+Four independent cross-product reads confirmed: (1) the natural Letta-native scope
+(project=tenant + tenant/user tags) omits product because there is no product filter to
+pass; (2) the real API default `match_all_tags=False` matches on shared tenant/user tags
+even when the caller passes its own `product:analytics` tag; (3) `blocks.retrieve(id)`
+performs no product check; (4) archival vector search on tenant/user tags crosses the
+boundary too. The positive control holds (harness healthy); the leak is the expected finding.
+
+- **AISOTROPY COMPARISON:** `product_id` is one of four ctx-propagated scope keys, enforced
+  per-statement — the cross-product read is **unrepresentable**, not one forgotten tag away.
+  In Letta the product axis is convention on top of convention: a tag on the tenant/user
+  tags that are *themselves* only convention. Class: **CONVENTION** (product isolation).
+
+## Dependency license posture — executable governance gate (RUN-VERIFIED)
+
+aisotropy's constitutional gate (`.claude/rules/constitutional-gates.md`) is **"100%
+MIT/Apache, no copyleft/BUSL/SSPL/ELv2"**. This scans **this arena's real venv dependency
+tree** with `pip-licenses` and reports the actual license mix — no guessed licenses.
+
+Run:
+```bash
+arenas/letta/.venv/bin/pip-licenses --ignore-packages pip-licenses prettytable wcwidth
+# record: arenas/letta/scripts/license_scan.txt
+```
+
+**Note on scope:** this arena pins `letta-client==1.12.1` (the thin, Stainless-generated
+REST SDK) plus `pytest` and `opentelemetry-sdk` — **not** the full `letta` server package.
+So the scanned tree is the **client** tree (22 packages), not the heavy server tree. The
+scanner tooling itself (`pip-licenses`/`prettytable`/`wcwidth`) is excluded from the count.
+
+**Real pip-licenses result — 22 packages:**
+
+| Bucket | Count | Packages |
+|---|---|---|
+| Permissive (MIT / BSD / Apache-2.0 / ISC / PSF-2.0) | **21** | annotated-types, anyio, distro, h11, httpcore, httpx, idna, iniconfig, letta-client (Apache-2.0), opentelemetry-api/-sdk/-semantic-conventions (Apache-2.0), packaging (Apache-2.0 OR BSD), pluggy, pydantic, pydantic_core, pytest, sniffio (Apache;MIT), typing-inspection, typing_extensions (PSF-2.0), Pygments (BSD-2) |
+| Weak copyleft (MPL 2.0) | **1** | **certifi** — Mozilla Public License 2.0 |
+| Strong copyleft (GPL / LGPL / AGPL) | **0** | — |
+| Restricted / source-available (BUSL / SSPL / ELv2 / Commons-Clause / FSL) | **0** | — |
+
+**The one non-permissive package: `certifi` (MPL 2.0).** MPL 2.0 is *file-level* weak
+copyleft — it obligates publishing modifications to the MPL-covered files themselves, but
+does not reach into separately-licensed code and does **not** trigger SaaS source-disclosure
+(unlike AGPL/SSPL). Under aisotropy's own `license-policy.md` it is classified ⚠️ **CAUTION**,
+not a 🚫 BLOCKER. certifi is a ubiquitous CA-bundle transitive dep pulled by `httpx`; it is
+the single technical exception to the literal "100% MIT/Apache" wording.
+
+- **AISOTROPY COMPARISON:** the executed scan confirms Letta's client tree essentially holds
+  the permissive line aisotropy claims — **zero** strong-copyleft, **zero** BUSL/SSPL/ELv2,
+  and the only deviation is weak-copyleft certifi (CAUTION, not blocked), which aisotropy's
+  own dependency tree also carries transitively via any HTTPS client. Letta itself is
+  Apache-2.0 (feature #10). Verdict: **license gate PASSES** on this arena's real tree, with
+  certifi/MPL-2.0 named as the sole caution.
+
 ## Summary
 
 Letta is the **closest conceptual neighbor** to aisotropy. Its memory hierarchy

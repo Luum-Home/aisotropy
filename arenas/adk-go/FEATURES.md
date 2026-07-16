@@ -32,6 +32,38 @@ but by developer discipline), **PARTIAL**, **DIY**, **PAID**, **NOT-POSSIBLE**.
 - **Correction:** the prior arena claim ("no scoping / untyped `map[string]any`")
   was factually wrong about the real framework and is fixed here.
 
+## #1b Multi-PRODUCT isolation (3rd axis) — CONVENTION (no product binding)
+
+**RUN-VERIFIED** by `orbit/product_isolation.go` + `cmd/productiso/product_isolation_demo.go`
+(`go run ./cmd/productiso`, exit 0) and `orbit/product_isolation_test.go`
+(`go test ./orbit`, ok) against the real runner + `session.Service`.
+
+- **The axis:** aisotropy scopes memory by the composite
+  `(tenant_id, user_id, session_id, product_id)`. The prior arenas only tested
+  tenant/user; `product_id` — the axis a single tenant+user uses to keep two of
+  *their own* products' memory apart — was never tested here until now.
+- **Real mechanism:** ADK Go's key is `(appName, userID, sessionID)`. There is
+  **no `ProductID` field**. `product_id` can only exist as a 4th string the
+  developer hand-folds into the ADK key (e.g. `userID = "acme|alice|productX"`),
+  and the framework binds it to nothing — trusted verbatim.
+- **Positive control (passes):** `acme|alice|productX` writes a marker and reads
+  it back — `marker present`.
+- **Correct-path isolation (passes):** with product folded into the key,
+  `acme|alice|productY` (SAME tenant+user, different product) reads → `no marker`.
+  The raw `session.Service` probe confirms `Get(acme|alice|productY, s1)` is a
+  miss.
+- **CROSS-PRODUCT LEAK (proven, actually happens):** drop `product_id` from the
+  key — the *natural* bug, since ADK has no product slot to remind you it should
+  be there — and productX's write + productY's read collapse onto the same
+  `(acme|alice, s-shared)` session. **`productY reads productX's marker`**
+  (`LEAK*` row, run-verified). Nothing in the framework prevents it; `product_id`
+  is a convention label, not a boundary. The raw probe also shows any caller that
+  names productX's exact key gets productX's session (no identity binding).
+- **AISOTROPY COMPARISON:** aisotropy makes `product_id` a first-class scope axis
+  carried through `context.Context`, so the product-less read is unrepresentable.
+  In ADK Go the 3rd axis is pure developer discipline — and, like the tenant
+  axis, the leaky path is one line shorter than the correct one.
+
 ## #2 Structured output + retry — BUILT-IN
 
 - **Real mechanism:** `llmagent.Config.OutputSchema *genai.Schema` +
@@ -133,12 +165,30 @@ spans ADK emits (ADK's `internal/telemetry` acquires its tracer from
   (proprietary schema). aisotropy's spans carry `tenant_id` by construction
   (it's in `context.Context`); on ADK it's a developer enrichment.
 
-## #10 Sovereignty / licensing
+## #10 Sovereignty / licensing — RUN-VERIFIED dep-tree scan (100% permissive)
 
-- Apache 2.0 (Google). Self-hostable core (in-mem/sqlite session + memory);
-  the rich memory/session backends are Vertex-tethered. Google ownership +
-  the "works standalone, works best on Vertex" gradient is a buyer
-  consideration for non-Google shops.
+**RUN-VERIFIED** by `scripts/license-scan.sh` (`google/go-licenses report ./...`,
+exit 0; raw output in `licenses.csv`) — the REAL tool output, no guessed
+licenses. aisotropy's constitutional gate is "100% MIT/Apache, no
+copyleft/BUSL"; this scans THIS arena's actual dependency tree to test whether
+ADK Go's real deps hold that line.
+
+- **Result: 35 third-party modules classified, 100% permissive.**
+  Histogram: **18 Apache-2.0 · 13 BSD-3-Clause · 3 MIT · 1 BSD-2-Clause.**
+  **0 copyleft** (GPL/LGPL/AGPL/MPL) · **0 restricted** (BUSL/SSPL/ELv2/Commons
+  Clause). No non-permissive package found.
+- The two headline deps both land permissive: `google.golang.org/adk/v2` →
+  **Apache-2.0** (Google), `google.golang.org/genai` → **Apache-2.0**. Transitive
+  tree is Google/OTel/`golang.org/x` infra — all Apache-2.0 or BSD.
+  *(The 6 `adk-go-arena/*` rows go-licenses marks `Unknown` are this arena's own
+  packages — no `LICENSE` file — not dependencies; excluded from the tally.)*
+- **AISOTROPY COMPARISON:** on the license gate, ADK Go **passes** — the dep tree
+  is as permissive as aisotropy's own stack claims to be. The sovereignty caveat
+  is orthogonal to license and lives at the *service* layer: Apache-2.0 core is
+  self-hostable (in-mem/sqlite session + memory), but the rich vector/session
+  backends are Vertex-tethered. Google ownership + the "works standalone, works
+  best on Vertex" gradient is the buyer consideration for non-Google shops — not
+  a copyleft/source-available risk.
 
 ## #11 Language — Go
 
