@@ -62,3 +62,4 @@ crates/*/target/
 /examples/knowledge-rag/knowledge-rag
 /examples/serve-http/serve-http
 /examples/guardrail-policy/guardrail-policy
+/examples/domain-assistant/domain-assistant
