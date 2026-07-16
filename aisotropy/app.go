@@ -822,9 +822,10 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 // facts + semantic stores, the consolidation sink + outbox worker (+ cold-boot
 // reconciliation), OTel tracing, the LLM circuit breaker, cheap-model
 // degradation, the sleep-cycle worker, per-tenant rate limiting, the cost meter,
-// the /healthz + /health + /costs endpoints, the three /v1 chat routes, per-user
-// primitive friction consolidation, and SIGINT/SIGTERM graceful shutdown that
-// closes every store.
+// the /healthz + /health + /costs endpoints, the /v1 chat routes (native,
+// streaming, agent, plus the Vercel AI-SDK and AG-UI protocol-adapter costumes
+// over the same streaming pipeline), per-user primitive friction consolidation,
+// and SIGINT/SIGTERM graceful shutdown that closes every store.
 //
 // ctx cancellation, SIGINT, or SIGTERM all trigger graceful shutdown. Run
 // returns nil on a clean shutdown and a non-nil error only if the HTTP server
@@ -951,6 +952,18 @@ func (a *App) Run(ctx context.Context) error {
 
 	api.Register(humaAPI, rt.client, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.persona, rt.costMeter, rt.gateway, rt.guard)
 	api.RegisterStream(humaAPI, rt.streamClient, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.costMeter, rt.cheapStreamClient, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, a.inPricePer1M, a.outPricePer1M, rt.bptSampler, rt.gateway, rt.guard)
+	// Frontend-UI protocol adapters (Phase 2A/2B): the Vercel AI SDK "UI Message
+	// Stream" and the AG-UI (CopilotKit) event stream. Both are PROTOCOL COSTUMES
+	// over the exact same StreamCore pipeline RegisterStream drives — their
+	// parameter lists mirror RegisterStream one-for-one and they are handed the
+	// IDENTICAL dependencies here, so they mount on the same /v1 path behind the
+	// same authn middleware + must-agree identity bind and re-encode nothing but
+	// the output wire format. Tenant/user isolation, the quota gate, guardrails,
+	// tenant-scoped hydration, and cost accounting are all inside StreamCore, so
+	// the adapters cannot drift from the native endpoint's constitutional
+	// guarantees (see internal/api/aisdk.go, internal/api/agui.go).
+	api.RegisterAISDK(humaAPI, rt.streamClient, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.costMeter, rt.cheapStreamClient, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, a.inPricePer1M, a.outPricePer1M, rt.bptSampler, rt.gateway, rt.guard)
+	api.RegisterAGUI(humaAPI, rt.streamClient, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.costMeter, rt.cheapStreamClient, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, a.inPricePer1M, a.outPricePer1M, rt.bptSampler, rt.gateway, rt.guard)
 	// Knowledge ingestion (ADR-0018): the HTTP arm of the dual-surface
 	// capability, sharing the exact same semantic store/embedder pair the
 	// chat routes' RAG hydration reads from above.

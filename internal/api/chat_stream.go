@@ -22,7 +22,6 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
@@ -162,238 +161,53 @@ func RegisterStream(api huma.API, client llm.Client, wm *memory.WorkingMemory, s
 		sseEventDone:  StreamDoneEvent{},
 		"error":       StreamErrorEvent{},
 	}, func(ctx context.Context, in *ChatInput, send sse.Sender) {
-		ctx, err := withIdentity(ctx, in.TenantID, in.UserID, in.Body.SessionID)
-		if err != nil {
-			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("invalid tenant/user/session identity: %v", err)})
-			return
+		// The entire pipeline — identity->ctx, quota gate, input guardrail,
+		// gateway selection + quota-pressure degrade, hydration, streaming LLM,
+		// output guardrail, cost — lives in StreamCore (stream_core.go) so this
+		// SSE endpoint and the Vercel-AI-SDK / AG-UI protocol adapters all run
+		// the SAME isolation/key-brokering path and only differ in how they
+		// RE-ENCODE the output (one pipeline, no drift). This closure is now just
+		// the aisotropy-SSE encoder: it maps each StreamCore sink call to the
+		// pre-existing named SSE events (token/done/error), byte-for-byte as
+		// before.
+		deps := StreamDeps{
+			Client:        client,
+			WM:            wm,
+			Store:         store,
+			Limiter:       limiter,
+			ToolReg:       toolReg,
+			Meter:         meter,
+			CheapClient:   cheapClient,
+			SemStore:      semStore,
+			Embedder:      embedder,
+			Reranker:      reranker,
+			Persona:       persona,
+			InPricePer1M:  inPricePer1M,
+			OutPricePer1M: outPricePer1M,
+			BPTSampler:    bptSampler,
+			GW:            gw,
+			Guard:         guard,
 		}
-		// In addition to the api-layer ctx injection above (withIdentity,
-		// consumed via TenantFromContext/UserFromContext in this package),
-		// set the same identity through internal/llm's own ctx carrier so
-		// the WithOTel decorator (internal/llm/otel.go) can attribute its
-		// gen_ai span with tenant_id/user_id without internal/llm importing
-		// internal/api (see ADR-0010's "Observability decision" and
-		// internal/llm/context.go).
-		ctx = llm.WithTenant(ctx, in.TenantID)
-		ctx = llm.WithUser(ctx, in.UserID)
-		key := memory.Key{Tenant: in.TenantID, User: in.UserID, Session: in.Body.SessionID}
-		// Facts memory (Phase 3) is scoped per (tenant, user) — not per
-		// session: an Engram journal persists across a user's sessions.
-		// NewScope validates identity through internal/tenancy (ADR-0011).
-		scope, err := facts.NewScope(in.TenantID, in.UserID) //nolint:contextcheck // facts.NewScope has no context parameter (internal/facts, out of scope for this cleanup)
-		if err != nil {
-			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("invalid tenant/user identity: %v", err)})
-			return
+		sink := StreamSink{
+			// Each delivered delta becomes a named "token" SSE event. Returning
+			// send.Data's error lets StreamCore abort exactly where the old inline
+			// loop did on a failed write (client disconnect): no done event, no
+			// cost recorded, partial reply not persisted.
+			OnToken: func(text string) error {
+				return send.Data(StreamTokenEvent{Text: text})
+			},
+			// Terminal success -> the named "done" SSE event carrying tenant_id,
+			// unchanged from before. Best-effort, mirroring the old `_ = send.Data`.
+			OnDone: func(final StreamFinal) {
+				_ = send.Data(StreamDoneEvent{TenantID: final.TenantID})
+			},
 		}
-
-		// Quota gate (Phase 7 / constitutional gate): reject BEFORE any LLM call
-		// so a tenant over its rate limit never spends tokens. Per-tenant token
-		// bucket in BadgerDB (internal/memory.Limiter).
-		if limiter != nil {
-			allowed, err := limiter.Allow(ctx, in.TenantID)
-			if err != nil {
-				_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("quota check failed: %v", err)})
-				return
-			}
-			if !allowed {
-				slog.WarnContext(ctx, "chat stream rate-limited", "tenant_id", in.TenantID)
-				_ = send.Data(StreamErrorEvent{Message: "rate limit exceeded for tenant " + in.TenantID})
-				return
-			}
-		}
-
-		// Input guardrail (redact + detect ALWAYS; block opt-in). forwarded is
-		// the REDACTED prompt: it — never the raw prompt — hydrates the system
-		// prompt, persists to working memory (and the consolidation outbox /
-		// bitrate held-out sample), and reaches the model, so a secret in the
-		// prompt never leaks into the model or any memory tier. A suspicious
-		// injection verdict is annotated by default and only rejected when
-		// BlockInjection is enabled.
-		forwarded, blocked := guard.checkInput(ctx, in.TenantID, in.UserID, in.Body.Prompt)
-		if blocked {
-			_ = send.Data(StreamErrorEvent{Message: "request blocked by input guardrail (possible prompt injection)"})
-			return
-		}
-
-		slog.InfoContext(ctx, "chat stream request",
-			"tenant_id", in.TenantID,
-			"user_id", in.UserID,
-			"session_id", in.Body.SessionID,
-			"product_id", in.Body.ProductID,
-			"prompt_len", len(in.Body.Prompt),
-			"llm", client.Name(),
-		)
-
-		system, err := hydrateSystemPrompt(ctx, wm, store, semStore, embedder, reranker, persona, key, scope, in.Body.ProductID, forwarded)
-		if err != nil {
-			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("failed to hydrate working memory: %v", err)})
-			return
-		}
-
-		// Scope-gated tools (Phase 7): inject only the tools the caller's scopes
-		// permit. A forbidden tool never appears in the payload, so the model
-		// cannot know it exists (docs/architecture/granular-control.md). The
-		// scopes are the AUTHORITATIVE ones (effectiveScopes): under a real
-		// authenticator a client cannot escalate via body scopes; under NoAuth
-		// the body scopes are the fallback.
-		if toolReg != nil {
-			if frag := toolReg.PromptFragment(effectiveScopes(ctx, in.Body.Scopes)); frag != "" {
-				system += "\n\n" + frag
-			}
-		}
-
-		// Persist the user's turn AND its consolidation intent in a single
-		// BadgerDB transaction (Transactional Outbox, Phase 5): the message
-		// lands in working memory and a pending event is queued for the async
-		// worker to distil into the facts + semantic tiers
-		// (internal/consolidation). The two writes are atomic — a crash cannot
-		// keep one without the other — and this happens before the LLM call
-		// because the user's message is real input that already happened.
-		ref := outboxRef(key, forwarded)
-		if bptSampler != nil && bitrate.ShouldSample(ref) {
-			// Held-out bitrate sample (Bet 6): reserve this turn for offline
-			// surprisal measurement and DO NOT enqueue it for facts/semantic
-			// consolidation. The user message still enters working memory (it
-			// really happened); replacing the consolidation enqueue with the
-			// reservation is what keeps the scored text out of the tenant's
-			// long-term memory, so the later lift is not spurious (leakage).
-			if err := wm.Append(ctx, key, memory.Message{Role: roleUser, Content: forwarded}); err != nil {
-				slog.ErrorContext(ctx, "failed to append held-out user message", "err", err)
-			}
-			if err := bptSampler.Reserve(ctx, in.TenantID, in.UserID, in.Body.SessionID, ref, forwarded); err != nil {
-				slog.ErrorContext(ctx, "failed to reserve bitrate held-out sample", "err", err)
-			}
-		} else {
-			event := memory.NewOutboxEvent(key, ref, forwarded, time.Now().UTC())
-			if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: roleUser, Content: forwarded}, event); err != nil {
-				slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
-			}
-		}
-
-		// Model selection through the gateway seam first (nil gw -> the passed
-		// client). This is where routing policy (e.g. cost-budget shaping) picks
-		// the target.
-		active := selectClient(ctx, gw, client, meter, in.TenantID, in.UserID, forwarded, in.Body.ModelPreference, len(in.Body.Images) > 0)
-
-		// Quota-pressure degradation (Phase 7) applies as an OVERRIDE on top of
-		// the gateway pick: when this tenant is near its limit, route to the
-		// cheaper model instead of the gateway-chosen one — graceful degradation
-		// rather than a hard 429. Requires a configured cheap model
-		// (AISOTROPY_CHEAP_MODEL); otherwise cheapClient is nil and the gateway
-		// pick stands.
-		if cheapClient != nil && limiter != nil {
-			if pressure, perr := limiter.Pressure(ctx, in.TenantID); perr == nil {
-				if choice := llm.DegradeAt(pressure, llm.DefaultDegradeThreshold, active.Name(), cheapClient.Name()); choice.Degraded {
-					active = cheapClient
-					slog.WarnContext(ctx, "degrading to cheap model under quota pressure",
-						"tenant_id", in.TenantID, "pressure", pressure, "model", cheapClient.Name())
-				}
-			}
-		}
-
-		tokens, err := active.StreamChat(ctx, system, forwarded)
-		if err != nil {
-			_ = send.Data(StreamErrorEvent{Message: fmt.Sprintf("failed to start stream: %v", err)})
-			return
-		}
-
-		// Hard output-blocking mode (opt-in, AISOTROPY_GUARDRAILS_BLOCK_OUTPUT):
-		// when ON, tokens are ACCUMULATED WITHOUT being flushed to the client, so
-		// the assembled response can be inspected before a single byte is emitted.
-		// Tradeoff: buffering the full response sacrifices token-streaming latency
-		// (TTFT) for the guarantee that unsafe (toxic/leaky) output is never sent.
-		// When OFF (default), tokens flush live as they arrive (no latency change)
-		// and the assembled text is inspected annotate-only afterward — a streamed
-		// response cannot be un-sent.
-		blocking := guard.outputBlockingEnabled()
-
-		var assistantReply strings.Builder
-		for {
-			select {
-			case <-ctx.Done():
-				// The client closed the connection (or the request expired).
-				// There is nothing else to do here: the `tokens` channel is
-				// closed by its own producer upon observing the same
-				// ctx.Done() (see internal/llm/stub.go and anthropic.go) —
-				// token spend is cut there, not here. The partial
-				// assistant reply accumulated so far is deliberately NOT
-				// persisted: a cancelled/failed turn is not a completed one.
-				slog.InfoContext(ctx, "chat stream cancelled", "tenant_id", in.TenantID, "user_id", in.UserID)
-				return
-			case tok, ok := <-tokens:
-				if !ok {
-					return
-				}
-				if tok.Err != nil {
-					// Mid-stream failure: surface it as an SSE error event and stop,
-					// so the client never mistakes a truncated stream for success.
-					// The partial reply is not persisted (see above). In blocking
-					// mode nothing has been flushed, so no toxic partial escaped.
-					_ = send.Data(StreamErrorEvent{Message: tok.Err.Error()})
-					return
-				}
-				if tok.Done {
-					// Only a clean, complete stream gets its assistant turn
-					// persisted to working memory.
-					if blocking {
-						// Buffered path: nothing has been flushed yet. Inspect the
-						// assembled text via checkOutput, which returns it unchanged
-						// when safe or the safe refusal when it tripped a guardrail.
-						// ONLY that (safe) text is emitted and persisted — the
-						// toxic/leaky text never reaches the wire nor memory,
-						// mirroring the non-streaming route.
-						if assistantReply.Len() > 0 {
-							safe := guard.checkOutput(ctx, in.TenantID, in.UserID, forwarded, assistantReply.String(), system)
-							if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: safe}); err != nil {
-								slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
-							}
-							if err := send.Data(StreamTokenEvent{Text: safe}); err != nil {
-								// Client disconnected before the buffered reply
-								// could be emitted; stop without persisting cost.
-								return
-							}
-						}
-					} else {
-						if assistantReply.Len() > 0 {
-							if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: assistantReply.String()}); err != nil {
-								slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
-							}
-							// Output guardrail on the ASSEMBLED final text
-							// (annotate-only: the stream was already sent token by
-							// token, so a refusal can't replace it here — that is
-							// exactly what blocking mode above trades latency for).
-							guard.annotateOutput(ctx, in.TenantID, in.UserID, forwarded, assistantReply.String(), system)
-						}
-					}
-					// Per-tenant cost accounting (Phase 7 observability): record the
-					// real provider token usage carried on the terminal token, so
-					// the /costs view can show cost per token per tenant.
-					if meter != nil && tok.Usage != nil {
-						inP, outP := costInputPricePer1M, costOutputPricePer1M
-						if inPricePer1M > 0 {
-							inP = inPricePer1M
-						}
-						if outPricePer1M > 0 {
-							outP = outPricePer1M
-						}
-						cost := costmeter.EstimateCostUSD(tok.Usage.InputTokens, tok.Usage.OutputTokens, inP, outP)
-						meter.Record(in.TenantID, tok.Usage.InputTokens, tok.Usage.OutputTokens, cost)
-					}
-					_ = send.Data(StreamDoneEvent{TenantID: in.TenantID})
-					return
-				}
-				assistantReply.WriteString(tok.Text)
-				if !blocking {
-					// Live flush. In blocking mode this is deliberately skipped:
-					// the token is buffered above and emitted (or refused) only
-					// after the full response has been inspected.
-					if err := send.Data(StreamTokenEvent{Text: tok.Text}); err != nil {
-						// Client disconnected mid-write: there is no way to keep
-						// writing, so we stop. The partial reply is not persisted.
-						return
-					}
-				}
-			}
+		// StreamCore returns plain errors whose message is exactly the string the
+		// old inline handler put in each StreamErrorEvent, so the "error" event is
+		// byte-identical. A clean end-of-stream and a client cancellation both
+		// return nil (no error event) — same as before.
+		if err := StreamCore(ctx, deps, in, sink); err != nil {
+			_ = send.Data(StreamErrorEvent{Message: err.Error()})
 		}
 	})
 }
