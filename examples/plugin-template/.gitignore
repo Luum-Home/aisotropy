@@ -1,0 +1,5 @@
+# This template is copy-me source only — nothing here is generated. But an author
+# who reaches for the official MCP SDK will produce these; keep them out of git.
+node_modules/
+package-lock.json
+*.log

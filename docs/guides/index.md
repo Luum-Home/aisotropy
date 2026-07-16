@@ -19,3 +19,7 @@ concepts and the [decisions](../decisions/index.md) log).
 - [Importing Agent Skills](importing-agent-skills.md) — Map an open `SKILL.md` skill folder to
   Aisotropy's typed primitives + a **literal** persona (no hidden injection), with the `cmd/skill-import`
   PoC ([ADR-0022](../decisions/0022-agent-config-standards-import-surfaces.md)).
+- [Writing a plugin](writing-a-plugin.md) — Ship a capability without recompiling the core: the
+  `aisotropy-plugin.yaml` manifest, the trust model, scope-gating, and the license gate, with a
+  runnable `kind: mcp` template ([`examples/plugin-template`](../../examples/plugin-template),
+  ADR-0016 lever #2).

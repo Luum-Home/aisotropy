@@ -1,0 +1,60 @@
+# aisotropy plugin manifest — the copy-me template.
+#
+# A plugin is a unit of capability Aisotropy loads WITHOUT recompiling the core.
+# This one is an MCP-server plugin (kind: mcp): the runtime launches `run.command`
+# as a subprocess, discovers its tools over stdio, and re-exposes each as a
+# scope-gated Aisotropy tool. Because the tool runs out-of-process, it can be
+# written in any language — here, a zero-dependency Node script (server.js).
+#
+# Field reference: docs/guides/writing-a-plugin.md
+
+# Identity. `name` is the stable id the registry uses (and the planned
+# `aisotropy plugins` CLI will use); `version` is semver; `author` is you.
+name: word-tools
+version: 0.1.0
+author: Your Name <you@example.com>
+
+# License gate (constitutional). Aisotropy's stack is 100% MIT/Apache-2.0/BSD/ISC;
+# a plugin declaring a copyleft or source-available license (GPL/AGPL/BSL/SSPL)
+# is refused at load. Keep this permissive.
+license: MIT
+
+# Execution kind. `mcp` = an out-of-process MCP server (this template, the
+# polyglot no-recompile path). The other runnable kind is `go-import` (a
+# first-party Go plugin whose handlers are linked in at compile time; the
+# manifest contributes governance-scoped tool descriptors). `wasm` is a reserved
+# enum for a future sandbox and is not yet runnable.
+kind: mcp
+
+# Trust tier. `sandboxed` = the plugin runs as an MCP subprocess, isolated from
+# the Go core's address space; the runtime still owns identity and scoping. This
+# is the only honest tier for third-party MCP plugins today. `trusted-inproc` is
+# for first-party Go plugins only (Go cannot reduce its own in-process privilege,
+# so there is no sandbox to claim). A WASM strong-sandbox tier is a named
+# follow-on — see the guide.
+trust: sandboxed
+
+# How to launch the MCP server. `command` + `args` are executed as a subprocess
+# with the plugin directory as the working directory. No build step: `node` runs
+# server.js directly.
+run:
+  command: node
+  args:
+    - server.js
+
+# The tools this plugin contributes. Each entry MUST match a tool the MCP server
+# actually exposes over `tools/list` (name is the join key). `required_scope`
+# gates the tool: unless the request's granted scopes include it, the tool never
+# enters the model's payload — a forbidden tool is invisible, not just refused.
+# Omit required_scope (or leave it empty) to make a tool always available.
+tools:
+  - name: word_count
+    description: Count the words and characters in a piece of text.
+    required_scope: text:analyze
+
+# Personas this plugin ships — persona identifiers (metadata only). The runtime
+# records them for discovery; the literal base-prompt bodies are supplied in Go
+# via WithPersona, not carried in this manifest (a YAML file cannot hold runtime
+# behavior — the anti-magic rule, ADR-0002).
+personas:
+  - editor
