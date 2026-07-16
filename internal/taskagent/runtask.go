@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	osexec "os/exec"
+	"sync"
 
 	oteltrace "go.opentelemetry.io/otel/trace"
 
@@ -82,6 +84,22 @@ type Request struct {
 	// cleanup, assert the container env, attach observability); it must not retain
 	// the Sandbox past RunTask's return. A returned error aborts the task.
 	OnReady func(ctx context.Context, sb sandbox.Sandbox) error
+
+	// repoGate, when non-nil, serializes this task's SHARED-REPO git-metadata
+	// mutations — the worktree Add and the merge-to-HEAD — against sibling tasks
+	// running concurrently against the SAME RepoDir. It is set only by RunTasks
+	// (one gate per distinct RepoDir); a standalone RunTask leaves it nil and needs
+	// no gate. The gate is held only for the brief git plumbing; the container
+	// work, the agent loop, and the in-worktree commits all run concurrently and
+	// ungated (git writes loose objects into the shared object store atomically, so
+	// only HEAD/branch-ref/index mutations need serializing). This is what keeps N
+	// concurrent merges from corrupting HEAD — see RunTasks.
+	repoGate sync.Locker
+
+	// onStep, when non-nil, is invoked after each successfully-run hand with the
+	// tool name and its result — the live per-step hook RunTasks uses to emit a
+	// "step" event. Set only by RunTasks; nil for a standalone RunTask.
+	onStep func(tool, result string)
 }
 
 // Result is the outcome of a RunTask run.
@@ -138,9 +156,12 @@ func RunTask(ctx context.Context, client llm.Client, tracer oteltrace.TracerProv
 		provider = sandbox.NewDockerProvider()
 	}
 
-	// Isolated worktree on a fresh task branch.
+	// Isolated worktree on a fresh task branch. Creating a worktree mutates the
+	// shared repo (a new branch ref, the worktree admin dir, a HEAD reflog entry),
+	// so under a fan-out it is serialized per-repo via repoGate — concurrent
+	// `git worktree add` on one repo can otherwise race on the repo lock.
 	wt := sandbox.Worktree{}
-	add, err := wt.Add(ctx, req.RepoDir, "")
+	add, err := gatedWorktreeAdd(ctx, wt, req.repoGate, req.RepoDir)
 	if err != nil {
 		return Result{}, fmt.Errorf("taskagent: worktree add: %w", err)
 	}
@@ -182,7 +203,7 @@ func RunTask(ctx context.Context, client llm.Client, tracer oteltrace.TracerProv
 		}
 	}
 
-	exec := &sandboxExecutor{sb: sb, worktreeDir: add.Path, onLine: req.OnLine}
+	exec := &sandboxExecutor{sb: sb, worktreeDir: add.Path, onLine: req.OnLine, onStep: req.onStep}
 	registry := handsRegistry()
 
 	steps, err := runLoop(ctx, client, tracer, registry, exec, req.Scopes, req.Prompt, maxSteps)
@@ -205,11 +226,45 @@ func RunTask(ctx context.Context, client llm.Client, tracer oteltrace.TracerProv
 		// checkout does not race the linked worktree.
 		_ = sb.Close(context.WithoutCancel(ctx))
 		cleanup()
-		if err := wt.MergeToHead(ctx, req.RepoDir, add.Branch); err != nil {
+		if err := gatedMergeToHead(ctx, wt, req.repoGate, req.RepoDir, add.Branch); err != nil {
 			return res, fmt.Errorf("taskagent: merge to head: %w", err)
 		}
 	}
 	return res, nil
+}
+
+// gatedWorktreeAdd runs Worktree.Add under gate (when non-nil) so concurrent
+// fan-out tasks on one repo do not race the repo lock. The gate is released the
+// moment Add returns — the isolated worktree is then operated on ungated.
+func gatedWorktreeAdd(ctx context.Context, wt sandbox.Worktree, gate sync.Locker, repoDir string) (sandbox.AddResult, error) {
+	if gate != nil {
+		gate.Lock()
+		defer gate.Unlock()
+	}
+	return wt.Add(ctx, repoDir, "")
+}
+
+// gatedMergeToHead runs MergeToHead under gate (when non-nil) so at most one merge
+// touches the shared repo HEAD at a time — the fix for the concurrent-merge race.
+// If a gated merge FAILS (most often a genuine content conflict between two task
+// branches, which git leaves half-applied), it best-effort `git merge --abort`s so
+// the shared HEAD is restored to a clean state and the NEXT gated task's merge is
+// not poisoned by a lingering conflicted index. The original merge error still
+// propagates as this task's failure. A standalone (ungated) RunTask keeps the
+// prior behavior: the error surfaces and the caller resolves out of band.
+func gatedMergeToHead(ctx context.Context, wt sandbox.Worktree, gate sync.Locker, repoDir, branch string) error {
+	if gate == nil {
+		return wt.MergeToHead(ctx, repoDir, branch)
+	}
+	gate.Lock()
+	defer gate.Unlock()
+	err := wt.MergeToHead(ctx, repoDir, branch)
+	if err != nil {
+		// Restore HEAD; ignore the abort's own error (there may be nothing to
+		// abort if the merge failed before starting).
+		_ = osexec.CommandContext(context.WithoutCancel(ctx), "git", "-C", repoDir, "merge", "--abort").Run()
+	}
+	return err
 }
 
 // runLoop drives the host-side agent loop, choosing the native tool-calling path

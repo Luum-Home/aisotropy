@@ -110,12 +110,30 @@ type sandboxExecutor struct {
 	// produced (the SSE fan-out hook); it is threaded straight into
 	// sandbox.ExecOptions.OnLine.
 	onLine func(line string)
+	// onStep, when non-nil, is invoked AFTER each successfully-run hand with the
+	// tool name and its result text — the live per-step hook the fan-out (RunTasks)
+	// uses to emit a "step" event as each task progresses. It fires only when the
+	// tool RAN (a non-zero exit is still a run, folded into result); an
+	// infrastructure error that stops the loop emits no step. The callback runs on
+	// the task's own goroutine and must not block.
+	onStep func(tool, result string)
 }
 
 // Execute dispatches one model-selected hand. Unknown tool names return an error
 // (the double scope-gate upstream means this can only happen on a wiring bug, not
-// a scope bypass).
+// a scope bypass). On a successful run it fires the optional onStep hook so a
+// fan-out consumer sees the step live.
 func (e *sandboxExecutor) Execute(ctx context.Context, name string, args map[string]string) (string, error) {
+	res, err := e.dispatch(ctx, name, args)
+	if err == nil && e.onStep != nil {
+		e.onStep(name, res)
+	}
+	return res, err
+}
+
+// dispatch maps one model-selected hand to its concrete side effect. It is the
+// pure tool→action switch; Execute wraps it with the onStep notification.
+func (e *sandboxExecutor) dispatch(ctx context.Context, name string, args map[string]string) (string, error) {
 	switch name {
 	case ToolRunShell:
 		return e.runShell(ctx, args["cmd"])

@@ -253,6 +253,28 @@ These were closed in the original design and are documented as retroactive "acce
   literal persona (never auto-injected). Rejects both ignoring the standards and adopting opaque
   progressive-disclosure injection. Importer itself is scoped future work.
 
+- **[ADR-0037 — Concurrent sandboxed task agents](0037-concurrent-sandboxed-task-agents.md):**
+  ✅ **accepted (2026-07-16)** — reconciled against shipped code. Adds the concurrency wedge on top of
+  [ADR-0036](0036-sandboxed-task-agent-key-brokering.md): **`aisotropy.App.RunTasks`** fans N sandboxed
+  agentic tasks out **in parallel** from one Go process, bounded by a concurrency limit, and — because
+  it builds directly **on** `RunTask` — keeps every single-task guarantee **per task**: each gets its
+  **own** git worktree, its **own** container, and the **key-broker invariant** (the provider key never
+  enters any container). The "Go × isolation" wedge: N untrusted agents run concurrently, key-free,
+  from a library call — the inverse of N coding-CLIs-in-a-box (which would mean N copies of the raw key,
+  one per box). v1: `internal/taskagent.RunTasks` drives the fan-out with `golang.org/x/sync/errgroup` +
+  `SetLimit` as a slot-limited `WaitGroup` (**no new dependency** — `x/sync` already in `go.mod`);
+  **per-task error isolation** (a task's failure rides on its own `Outcome.Err`, the batch continues);
+  parent-`ctx` cancellation is the **sole** top-level error; the **merge race** is closed by serializing
+  the two shared-repo git-metadata steps (worktree-add + merge-to-HEAD) behind a per-repo lock with
+  `git merge --abort` on conflict so HEAD is never corrupted; and a **multiplexed, index-tagged event
+  stream** (`started`/`step`/`shell`/`commit`/`done`/`error`) with serialized emission so `OnEvent` need
+  not be goroutine-safe. Honest scope: serialize-and-merge (auto-merge preserved, not branch-only);
+  automatic cross-branch conflict **resolution** is a named follow-on (a real conflict surfaces as that
+  task's `Err` with HEAD aborted-clean); `commit` events derive at completion (SHAs settle at merge
+  time) while `started`/`step`/`shell` are live; no HTTP/SSE route (façade + callback only). Proven
+  against real Docker (`TestRunTasks_ConcurrentDocker_KeyFree_NoHeadCorruption`); demo at
+  `examples/task-fanout/`.
+
 ## Next ADRs to write
 
 - New ones arising from the research phase (e.g., the codec format for [Bet 2](../research/bet-02-working-memory-codec.md)).

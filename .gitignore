@@ -55,3 +55,4 @@ external/
 /crates/**/target/
 crates/*/target/
 /examples/task-agent/task-agent
+/examples/task-fanout/task-fanout
