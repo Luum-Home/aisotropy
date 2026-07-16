@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,28 +69,7 @@ func (p *DockerProvider) Create(ctx context.Context, spec Spec) (Sandbox, error)
 		name = "aisotropy-sbx-" + name
 	}
 
-	// docker run -d --name <name> -w <workdir> [--user u:g] [-v src:tgt[:ro]]
-	//   [-e K=V] <image> sleep infinity
-	args := []string{"run", "-d", "--name", name, "-w", workdir}
-	if spec.User != "" {
-		args = append(args, "--user", spec.User)
-	}
-	for _, m := range spec.BindMounts {
-		v := m.Source + ":" + m.Target
-		if m.ReadOnly {
-			v += ":ro"
-		}
-		args = append(args, "-v", v)
-	}
-	// Spec.Env is NON-SECRET config only — the broker invariant forbids a
-	// provider key here (see Spec.Env). We pass what we are given verbatim and
-	// add nothing from the host environment.
-	for k, val := range spec.Env {
-		args = append(args, "-e", k+"="+val)
-	}
-	args = append(args, spec.Image, "sleep", "infinity")
-
-	out, err := p.run(ctx, args...)
+	out, err := p.run(ctx, dockerRunArgs(name, workdir, spec)...)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: docker run: %w", err)
 	}
@@ -122,6 +102,62 @@ func (p *DockerProvider) CleanupAll(ctx context.Context) {
 	for _, sb := range victims {
 		_ = sb.Close(ctx)
 	}
+}
+
+// dockerRunArgs builds the argv (after the `docker` binary) for the detached
+// idle container that Create launches:
+//
+//	run -d --name <name> -w <workdir> [--user u:g] [--runtime=<rt>]
+//	    [-v src:tgt[:ro]…] [-e K=V…] <image> sleep infinity
+//
+// It is a pure function of (name, workdir, spec) with no I/O, so the flag
+// wiring — notably the [Spec.Runtime] `--runtime=` knob — can be asserted in a
+// unit test without a Docker daemon. Docker's default image entrypoint does not
+// swallow the trailing `sleep infinity`, so the command is appended directly
+// (contrast the Podman provider, which must override the entrypoint).
+func dockerRunArgs(name, workdir string, spec Spec) []string {
+	args := []string{"run", "-d", "--name", name, "-w", workdir}
+	if spec.User != "" {
+		args = append(args, "--user", spec.User)
+	}
+	if spec.Runtime != "" {
+		// The OCI-runtime knob: shell the operator-chosen runtime (e.g. kata,
+		// runsc) straight through. Empty leaves docker's default (runc).
+		args = append(args, "--runtime="+spec.Runtime)
+	}
+	for _, m := range spec.BindMounts {
+		v := m.Source + ":" + m.Target
+		if m.ReadOnly {
+			v += ":ro"
+		}
+		args = append(args, "-v", v)
+	}
+	// Spec.Env is NON-SECRET config only — the broker invariant forbids a
+	// provider key here (see Spec.Env). We pass what we are given verbatim and
+	// add nothing from the host environment. Keys are emitted in sorted order so
+	// the constructed argv is deterministic (reproducible logs, testable).
+	args = append(args, envFlags(spec.Env)...)
+	args = append(args, spec.Image, "sleep", "infinity")
+	return args
+}
+
+// envFlags renders a NON-SECRET env map as a stable, sorted `-e K=V` flag
+// sequence shared by the Docker and Podman run-arg builders. Sorting makes the
+// argv deterministic regardless of Go's randomized map iteration.
+func envFlags(env map[string]string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	flags := make([]string, 0, 2*len(keys))
+	for _, k := range keys {
+		flags = append(flags, "-e", k+"="+env[k])
+	}
+	return flags
 }
 
 // run executes `docker <args…>` and returns combined-safe stdout, surfacing

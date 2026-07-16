@@ -93,12 +93,14 @@ func (a *App) RunTasks(ctx context.Context, reqs []TaskRequest, opts RunTasksOpt
 	ireqs := make([]taskagent.Request, len(reqs))
 	for i, r := range reqs {
 		ireqs[i] = taskagent.Request{
-			RepoDir:  r.RepoDir,
-			Prompt:   r.Prompt,
-			Image:    r.Image,
-			MaxSteps: r.MaxSteps,
-			Scopes:   r.Scopes,
-			OnLine:   r.OnLine,
+			RepoDir:        r.RepoDir,
+			Prompt:         r.Prompt,
+			Image:          r.Image,
+			MaxSteps:       r.MaxSteps,
+			Scopes:         r.Scopes,
+			OnLine:         r.OnLine,
+			Provider:       r.Provider,
+			BranchStrategy: r.BranchStrategy,
 		}
 	}
 

@@ -106,6 +106,115 @@ func (w Worktree) MergeToHead(ctx context.Context, repoDir, branch string) error
 	return nil
 }
 
+// BranchStrategy decides what happens to a sandboxed task's branch once the run
+// finishes. It is the honest, closed set of dispositions the sandbox layer will
+// perform on behalf of the task runner (which selects one and passes it to
+// [Worktree.Finalize]); anything outside this set is deliberately not offered.
+//
+// A conspicuous OMISSION: there is no "head" strategy in which the agent writes
+// straight into the operator's host checkout. That would defeat the entire
+// point of the worktree — the isolation boundary that lets a run be reviewed or
+// thrown away — so it is intentionally not modelled here.
+type BranchStrategy int
+
+const (
+	// MergeToHead is the default: after the run, merge the task branch into the
+	// currently checked-out branch of the repo with an explicit merge commit
+	// (--no-ff) IF the run produced commits, and otherwise do nothing (the
+	// branch carried no work, so there is nothing to land — it is simply
+	// discarded by the caller's worktree Cleanup). This is the "accept the
+	// work automatically" disposition: the run's output flows into HEAD as one
+	// reviewable, revertable merge.
+	MergeToHead BranchStrategy = iota
+
+	// ReturnBranch keeps the task branch and does NOT merge it. Finalize leaves
+	// the branch present and unmerged and hands it back in
+	// [FinalizeResult.Branch] for the caller to review, merge, open a PR from,
+	// or delete out of band. This is the "human/caller decides" disposition:
+	// the sandbox produced isolated work on a named branch and stops there,
+	// touching neither HEAD nor the operator's working copy. (Also reachable as
+	// the alias [NamedBranch].)
+	ReturnBranch
+)
+
+// NamedBranch is an alias for [ReturnBranch]: both name the "leave the task
+// branch present and unmerged, return it to the caller" disposition. The two
+// spellings exist because callers reason about it either as "give me back the
+// named branch" or as "return the branch, don't merge".
+const NamedBranch = ReturnBranch
+
+// String renders the strategy for logs/errors.
+func (s BranchStrategy) String() string {
+	switch s {
+	case MergeToHead:
+		return "merge-to-head"
+	case ReturnBranch:
+		return "return-branch"
+	default:
+		return fmt.Sprintf("BranchStrategy(%d)", int(s))
+	}
+}
+
+// FinalizeResult reports what [Worktree.Finalize] did with a run's branch.
+type FinalizeResult struct {
+	// Strategy is the disposition that was applied.
+	Strategy BranchStrategy
+	// Branch is the task branch. For [ReturnBranch] this is the still-present,
+	// unmerged branch the caller now owns; for [MergeToHead] it is the branch
+	// that was merged (or that carried no commits).
+	Branch string
+	// Commits are the SHAs the run produced on the branch (newest first, from
+	// [Worktree.CommitsSince]). Empty means the run committed nothing.
+	Commits []string
+	// Merged reports whether Finalize merged the branch into HEAD. It is true
+	// only for [MergeToHead] with a non-empty Commits set; [ReturnBranch] never
+	// merges, and a MergeToHead run that produced no commits has nothing to
+	// merge.
+	Merged bool
+}
+
+// Finalize applies strategy to a completed run's branch, reading the run's
+// commits from worktreeDir (against base) and, for [MergeToHead], merging into
+// repoDir's HEAD when there is work to land. It is the single entry point the
+// task runner calls after a sandbox exits, so the branch-disposition policy
+// lives in one place rather than being re-implemented per caller.
+//
+//   - MergeToHead: if the run produced commits, merge the branch into HEAD
+//     (--no-ff, via [Worktree.MergeToHead]) and report Merged=true; if it
+//     produced none, do nothing and report Merged=false (the empty branch is
+//     left for the caller's Cleanup to discard).
+//   - ReturnBranch / NamedBranch: never merge; report the branch and its
+//     commits so the caller can review or merge it itself. Merged=false.
+//
+// A merge conflict under MergeToHead surfaces as an error carrying git's
+// stderr, exactly as [Worktree.MergeToHead] documents.
+func (w Worktree) Finalize(ctx context.Context, repoDir, worktreeDir, branch, base string, strategy BranchStrategy) (FinalizeResult, error) {
+	commits, err := w.CommitsSince(ctx, worktreeDir, base)
+	if err != nil {
+		return FinalizeResult{}, fmt.Errorf("sandbox: finalize %s: %w", strategy, err)
+	}
+	res := FinalizeResult{Strategy: strategy, Branch: branch, Commits: commits}
+
+	switch strategy {
+	case MergeToHead:
+		if len(commits) == 0 {
+			// Nothing to land; leave HEAD untouched. The empty task branch is
+			// the caller's to discard via the worktree Cleanup.
+			return res, nil
+		}
+		if err := w.MergeToHead(ctx, repoDir, branch); err != nil {
+			return res, err
+		}
+		res.Merged = true
+		return res, nil
+	case ReturnBranch:
+		// Isolated work stays on its named branch; the caller decides its fate.
+		return res, nil
+	default:
+		return res, fmt.Errorf("sandbox: unknown branch strategy %s", strategy)
+	}
+}
+
 // CommitsSince returns the SHAs of commits on worktreeDir reachable from HEAD
 // but not from base — i.e. exactly the commits the sandboxed run produced —
 // newest first. An empty slice means the run committed nothing.

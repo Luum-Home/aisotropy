@@ -31,6 +31,14 @@ type TaskRequest struct {
 	// OnLine, when non-nil, receives each line of a run_shell's stdout live — the
 	// hook to fan tool output into an SSE stream. Optional.
 	OnLine func(line string)
+	// Provider is the sandbox backend. nil defaults to DockerSandbox(); pass
+	// PodmanSandbox() for rootless Podman, or your own SandboxProvider (e.g. a
+	// Kubernetes or Firecracker backend). The API key never enters it.
+	Provider SandboxProvider
+	// BranchStrategy decides what happens to the commits the task produced: the
+	// zero value MergeToHead merges the task branch into the repo's HEAD;
+	// ReturnBranch leaves them on the task branch for you to review/merge.
+	BranchStrategy BranchStrategy
 }
 
 // TaskResult is the outcome of App.RunTask.
@@ -87,12 +95,14 @@ func (a *App) RunTask(ctx context.Context, req TaskRequest) (TaskResult, error) 
 	}
 
 	out, err := taskagent.RunTask(ctx, client, nil, taskagent.Request{
-		RepoDir:  req.RepoDir,
-		Prompt:   req.Prompt,
-		Image:    req.Image,
-		MaxSteps: req.MaxSteps,
-		Scopes:   req.Scopes,
-		OnLine:   req.OnLine,
+		RepoDir:        req.RepoDir,
+		Prompt:         req.Prompt,
+		Image:          req.Image,
+		MaxSteps:       req.MaxSteps,
+		Scopes:         req.Scopes,
+		OnLine:         req.OnLine,
+		Provider:       req.Provider,
+		BranchStrategy: req.BranchStrategy,
 	})
 	if err != nil {
 		return TaskResult{}, err

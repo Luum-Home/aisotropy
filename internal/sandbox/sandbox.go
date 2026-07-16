@@ -192,6 +192,28 @@ type Spec struct {
 	// caller, not root.
 	User string
 
+	// Runtime selects the OCI runtime the backend hands the container to,
+	// emitted as `--runtime=<Runtime>` on `docker run` / `podman run`. Empty
+	// (the default) leaves the backend's own default runtime (runc / crun) in
+	// place.
+	//
+	// This is the isolation-strength knob. The default runtime shares the host
+	// kernel; naming a hardened runtime here upgrades a sandbox to VM- or
+	// sandboxed-kernel isolation WITHOUT a new Provider, because Kata Containers
+	// (a lightweight VM per container, runtime "kata"/"kata-runtime") and gVisor
+	// (a user-space kernel, runtime "runsc") are themselves OCI runtimes that
+	// slot in under the existing Docker/Podman CLI. It is a config value, not a
+	// code path: aisotropy shells the name through to the backend and the
+	// operator is responsible for having installed and registered that runtime
+	// on the host. An unknown/uninstalled runtime surfaces as a normal backend
+	// error from Create, not a panic.
+	//
+	// Both Kata (Apache-2.0) and gVisor (Apache-2.0) fit the constitutional
+	// license gate; neither is a dependency of this module — they are host
+	// binaries the operator opts into. Kubernetes/Firecracker-style orchestration
+	// is a separate, out-of-scope extension point, not modelled here.
+	Runtime string
+
 	// Name, when set, is used to derive the backing container name; empty lets
 	// the provider generate a unique one. Mainly a test/observability hook.
 	Name string

@@ -76,6 +76,10 @@ type Request struct {
 	Scopes []string
 	// Provider is the sandbox backend; nil defaults to a Docker provider.
 	Provider sandbox.Provider
+	// BranchStrategy decides what happens to the commits the run produced: the
+	// zero value sandbox.MergeToHead merges the task branch into HEAD (the prior
+	// behavior); sandbox.ReturnBranch leaves them on the task branch, unmerged.
+	BranchStrategy sandbox.BranchStrategy
 	// OnLine, when non-nil, receives each line of a run_shell's stdout live (the
 	// SSE fan-out hook). Optional.
 	OnLine func(line string)
@@ -226,8 +230,13 @@ func RunTask(ctx context.Context, client llm.Client, tracer oteltrace.TracerProv
 		// checkout does not race the linked worktree.
 		_ = sb.Close(context.WithoutCancel(ctx))
 		cleanup()
-		if err := gatedMergeToHead(ctx, wt, req.repoGate, req.RepoDir, add.Branch); err != nil {
-			return res, fmt.Errorf("taskagent: merge to head: %w", err)
+		// MergeToHead (the default/zero value) lands the work into HEAD;
+		// ReturnBranch leaves the commits on the task branch for the caller to
+		// merge/review/PR — removing the worktree does not remove the branch.
+		if req.BranchStrategy == sandbox.MergeToHead {
+			if err := gatedMergeToHead(ctx, wt, req.repoGate, req.RepoDir, add.Branch); err != nil {
+				return res, fmt.Errorf("taskagent: merge to head: %w", err)
+			}
 		}
 	}
 	return res, nil

@@ -220,6 +220,37 @@ func TestDocker_ExecEmptyArgvErrors(t *testing.T) {
 	}
 }
 
+// TestDockerRunArgs_RuntimeKnob asserts the --runtime flag is emitted only when
+// Spec.Runtime is set — the OCI-runtime knob wiring — with no daemon needed.
+func TestDockerRunArgs_RuntimeKnob(t *testing.T) {
+	withRT := dockerRunArgs("box", DefaultWorkdir, Spec{Image: "alpine", Runtime: "runsc"})
+	if !argvContains(withRT, "--runtime=runsc") {
+		t.Fatalf("expected --runtime=runsc in argv, got %v", withRT)
+	}
+	noRT := dockerRunArgs("box", DefaultWorkdir, Spec{Image: "alpine"})
+	for _, a := range noRT {
+		if strings.HasPrefix(a, "--runtime") {
+			t.Fatalf("expected no --runtime flag when Runtime empty, got %v", noRT)
+		}
+	}
+	// Tail is `<image> sleep infinity` (docker keeps the command form).
+	if j := strings.Join(noRT, " "); !strings.HasSuffix(j, "alpine sleep infinity") {
+		t.Fatalf("expected `alpine sleep infinity` tail, got %v", noRT)
+	}
+}
+
+// TestEnvFlags_Sorted asserts env flags render in deterministic sorted order.
+func TestEnvFlags_Sorted(t *testing.T) {
+	got := envFlags(map[string]string{"B": "2", "A": "1", "C": "3"})
+	want := []string{"-e", "A=1", "-e", "B=2", "-e", "C=3"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("envFlags = %v, want %v", got, want)
+	}
+	if envFlags(nil) != nil {
+		t.Fatal("envFlags(nil) should be nil")
+	}
+}
+
 func TestCurrentUserSpec(t *testing.T) {
 	if got := CurrentUserSpec(1000, 1000); got != "1000:1000" {
 		t.Fatalf("CurrentUserSpec = %q", got)
