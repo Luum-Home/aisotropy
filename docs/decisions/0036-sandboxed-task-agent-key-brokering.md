@@ -32,20 +32,19 @@ timestamp: 2026-07-16T00:00:00Z
 
 ## Status
 
-🟡 **Draft — proposed 2026-07-16.** This ADR records the *decision to build* a native sandboxed
-task-agent primitive and the shape it takes; the code is **net-new** (no `internal/sandbox` package
-exists in the tree yet — verified at draft time). It is the agentic sibling of
+✅ **Accepted — shipped 2026-07-16** (`internal/sandbox`, `internal/taskagent`, and the
+`aisotropy.App.RunTask` façade are in the tree with tests). It is the agentic sibling of
 [ADR-0035](0035-wasm-plugin-sandbox.md): where 0035 isolates a **pure `JSON -> JSON` plugin tool**
 in-process (wazero), this ADR isolates an **agent doing real work with real hands** (shell / git /
 file ops against a checkout) in a **container**. The two sit on the same execution-isolation axis and
 are deliberately different tiers of it.
 
-> **STATUS: draft — verify against shipped code.** Every symbol named below (`internal/sandbox`,
-> `Provider`, `RunTask`, `TaskRequest`, `TaskResult`, `sandboxExecutor`) is a **design target**, not
-> a shipped API. The Phase-3 implementation agent MUST reconcile this document with the code it
-> actually lands — rename to match reality, delete claims the code does not honor, and flip the
-> status to Accepted only once the named files exist with tests. Treat any divergence between this
-> draft and the tree as a defect in this draft.
+> **The key-brokering invariant is proven against real Docker**, not asserted:
+> `TestRunTask_BrokerInvariant_KeyNeverEntersContainer` boots the sandbox with a provider key set in
+> the host env and asserts `docker exec … printenv` never contains it while the task still runs to
+> completion; `TestRunTask_RejectsBrokerSecretInEnv` rejects placing a secret in the sandbox env. The
+> `internal/sandbox` Docker/worktree tests and the `App.RunTask` façade test pass; Docker-dependent
+> tests `t.Skip` when the daemon is absent.
 
 This ADR **extends** [ADR-0033](0033-open-core-extension-seams.md)'s trust model (the honest
 statement that Go cannot sandbox in-process code, so untrusted *agentic* work needs a real OS
@@ -185,8 +184,8 @@ client in the box.
 
 ### 1. A new `internal/sandbox` package (net-new subsystem)
 
-`internal/sandbox` is created from scratch (it does not exist today). It owns the container lifecycle
-and the task contract. Its public shape (draft — verify against shipped code):
+`internal/sandbox` owns the container lifecycle and the worktree; `internal/taskagent` owns the task
+contract and the host-side loop. Their public shape (as shipped):
 
 - **`Provider`** — the pluggable boundary over *where* a sandbox runs. v1 method set (indicative):
   `Create(ctx, spec) (Session, error)` to stand up an isolated environment over a worktree, and a
@@ -301,6 +300,7 @@ because inference was host-side from ADR-0009 onward.
 - **Prior art inverted:** sandcastle and the coding-CLI-in-a-box family (Claude Code / Codex / Aider /
   Cursor / Gemini CLI / OpenCode) — they run the LLM client, and therefore the API key, *inside* the
   sandbox; this ADR runs the brain host-side and brokers only the hands into the box.
-- **Design targets (net-new, verify against shipped code):** `internal/sandbox` (`Provider`,
-  `dockerProvider`, `RunTask`, `TaskRequest`, `TaskResult`, `sandboxExecutor`) — none present at draft
-  time; the Phase-3 implementation agent reconciles this ADR with the code it lands.
+- **As shipped:** `internal/sandbox` (`Provider`/`Sandbox` interfaces, the Docker provider, the git
+  worktree) + `internal/taskagent` (`RunTask`, `sandboxExecutor`, the hands-toolset) + the public
+  `aisotropy.RunTask`/`TaskRequest`/`TaskResult` façade — all present with tests; the broker invariant
+  is proven against real Docker.
