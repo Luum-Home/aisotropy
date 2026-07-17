@@ -119,6 +119,44 @@ change that adds the `RunTask` surface. See [ADR-0036](decisions/0036-sandboxed-
 the build-tag note in [deployment](deployment/index.md), and the runnable
 [`examples/task-agent`](../examples/task-agent).
 
+## Two ways to adopt it — and which to pick
+
+Aisotropy is **one engine exposed through two faces** (the dual surface of
+[ADR-0016](decisions/0016-dual-surface-sealed-runtime-composition-sdk.md), built on the sealed
+façade of [ADR-0013](decisions/0013-public-extension-surface-facade-vs-promote.md)). Both faces run
+the *same* pipeline — there is no second implementation to drift
+([ADR-0031](decisions/0031-embeddable-in-process-turn.md)). The golden rule holds for both: a
+consumer only ever imports `github.com/Luum-Home/aisotropy/aisotropy`, never `internal/*` — and
+because they are separate Go modules, the compiler *physically* forbids reaching a private package,
+so "public surface only" is enforced by `go build`, not by convention.
+
+- **Face A — library / SDK (Go).** `go get` the module, build the runtime once with the `App`
+  builder (`WithTool` / `WithToolExecutor` / `WithPersona` / `WithLLM` / `WithAuthenticator` / …),
+  then run it either **in-process** (`app.Turn(ctx, in)` — one chat turn as a function call, no
+  server, tools executed in µs) or **served** (`app.Run(ctx)` — the same runtime over HTTP with
+  Huma/chi, SSE, `/health`, `/costs`, graceful shutdown). The stock `cmd/aisotropyd` binary is
+  itself a ~97-line consumer of this exact builder (the runtime is dogfooded through its own public
+  surface). Rungs 00–07 of the [tutorial](tutorial/index.md) are in-process; rung 09
+  (`examples/serve-http`) serves.
+- **Face B — standalone service.** Run the prebuilt `aisotropyd` (or `docker compose up`) and talk
+  to it over the HTTP API (`POST /v1/tenant/{t}/user/{u}/chat`, `.../chat/stream`, …) from a client
+  in **any language**. Because the Go struct *is* the OpenAPI 3.1 contract (Huma), you codegen a
+  typed client straight from `/openapi.json`.
+
+Which is optimal depends on the integrator:
+
+| You are… | Optimal path | Why |
+|---|---|---|
+| Writing **Go**, want deep control — custom tools executed in-process, custom persona, embedded in your own service | **Face A (library)** — `go get` + `App` builder, `app.Turn` (or `app.Run` to serve) | one binary, tools in µs, no network hop, tenant isolation carried natively by `context.Context` |
+| **Not Go** (Python / TS / …), or you want Aisotropy as a separate deployable | **Face B (service)** — run `aisotropyd`, call the HTTP API | language-decoupled; the OpenAPI 3.1 contract gives you client codegen for free |
+
+**Key detail either way:** the memory backends (working / facts / semantic) are selected **by
+environment variable, not by code injection** — deliberately, because exposing `facts.Store` in the
+public API would leak the cross-tenant `ExportAll`. So "optimal" always means: import the façade,
+bring your own tools / persona / LLM / authenticator, and choose the backend tier via env. And past
+localhost, an authenticator is **required** — the runtime refuses to boot unauthenticated on a
+non-loopback bind (see [deployment](deployment/index.md)).
+
 ## Next: the tutorial
 
 You've seen the substrate (`Turn` + isolation by construction) and its flagship demonstration
