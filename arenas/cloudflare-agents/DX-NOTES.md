@@ -48,12 +48,16 @@ things it ships that most arenas make you assemble.
 
 ### Isolation *feels* automatic but the binding is a bare string
 This is the trap. Because each object has its own SQLite, you *feel* isolated — and you are,
-at the object level. But `getAgentByName(ns, name)` binds `name` to nothing. I reproduced the
-leak in four lines: assemble the name without `product_id` and two products share one object.
-The framework will not stop you, warn you, or type-check you. It is the same
-mis-assembled-key failure as every other arena, just hidden behind a boundary that *looks*
-airtight. A regulated multi-tenant team has to add its own name-construction discipline and
-tests — the framework gives no `Scope` value object to make the wrong key unrepresentable.
+at the object level. But `getAgentByName(ns, name)` binds `name` to nothing. Assemble the name
+without `product_id` and two products address one object — a same-key developer bug (true of
+any name→object map, not a framework defect). To its credit, the SDK *does* give the fix: the
+routing entry points run `onBeforeConnect`/`onBeforeRequest` before the DO wakes (the installed
+`.d.ts` is explicit that `getAgentByName` itself does not — the check belongs on the routing
+path). I wired the strong path in four lines (`resolveVerifiedName`, PART C): verify a token,
+derive the name from the *verified claims*, must-agree-reject a mismatched URL scope. What it
+still won't do is *type-check* you — there is no `Scope` value object to make a dropped axis a
+compile error, so a regulated team owns the name-construction discipline and its tests. That's
+the honest gap vs aisotropy: the seam exists; the type-level guarantee does not.
 
 ### It's a rented runtime, full stop
 Durable Objects run only on Cloudflare. Local dev is real (`workerd`/`miniflare`), but you
@@ -82,7 +86,8 @@ consolidation engine — `schedule()` gives you the trigger, the logic is yours.
 Cloudflare Agents is the **best isolation substrate** in the field and a genuinely pleasant,
 high-fidelity runtime — MCP, scheduling, streaming, and a real in-process SQLite, all testable
 offline in the actual production engine. Its price is twofold: the identity→object **binding
-is developer convention** (mis-assemble the name → leak, which I proved), and the runtime is
+is developer convention** (a mis-assembled name is a same-key bug, closable via the SDK's
+`onBeforeConnect` seam but not guarded by the type system — PART C), and the runtime is
 **rented**, not self-hostable. Above the runtime, the whole memory-tiering and governance
 surface is DIY or another rented product.
 

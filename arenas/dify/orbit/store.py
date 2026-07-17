@@ -81,7 +81,10 @@ def list_segments_scoped(s: Session, current_tenant_id: str) -> list[DocumentSeg
     )
 
 
-# ── The LEAKY reads (all one clause away from the correct ones) ────────────────
+# ── The LEAKY reads (the naive developer's omission, not Dify's own code) ──────
+# These reproduce what a careless caller writes: they DROP the ownership gate that
+# Dify's real services keep. This is the standard shared-schema-no-RLS failure mode
+# (identical on any hand-built SQL table), not evidence that Dify itself leaks.
 
 def list_conversations_by_app_id_UNCHECKED(s: Session, app_id: str) -> list[Conversation]:
     """

@@ -30,9 +30,13 @@ crash-safe conversation memory + a durable submission queue.**
 2. **Memory TIERS: DIY.** `[DOC]` Flue's database stores the conversation stream, accepted
    submissions, attachments, and workflow runs — explicitly **not** "application-owned business data
    unless your own tools store it." There is no facts/FTS tier, no vector tier, no sleep/batch tier.
-3. **Multi-tenancy: CONVENTION, not construction.** `[RAN][DOC]` The only external scoping axis is the
-   opaque agent-instance `id`; tenant/user/product are substrings the developer folds in, and auth is
-   a `route` guard the developer writes. Cross-product leak reproduced through the real runtime.
+3. **Multi-tenancy: CONVENTION, not construction — honestly narrowed.** `[RAN][DOC]` The per-instance
+   conversation stream is isolated *by construction*; what's convention is the **binding** between a
+   verified identity and the id reached — tenant/user/product are substrings the developer composes,
+   and auth is a `route` guard the developer writes (Flue's documented seam). The isolation smoke runs
+   the naive path (a hand-named id slips to the wrong stream — a wrong-key dev bug, true of any
+   id→instance map) and the strong path (server derives the id from verified identity, per Flue's own
+   docs) at equal weight. The cross-product read is a developer bug, not a Flue defect.
 
 ## Feature-by-feature (43 rows: 41 catalog + multi-product + license posture)
 
@@ -74,13 +78,13 @@ crash-safe conversation memory + a durable submission queue.**
 
 | # | Feature | Class | Evidence |
 |---|---|---|---|
-| 4.1 | Multi-tenant isolation BY CONSTRUCTION | **CONVENTION** | `[RAN][DOC]` Conversation stream isolated per instance `id` by construction, but tenant/user/product are folded into that one opaque string by the dev. Distinct ids isolate; a dropped/typo'd segment leaks. |
+| 4.1 | Multi-tenant isolation BY CONSTRUCTION | **CONVENTION** | `[RAN][DOC]` Conversation stream isolated per instance `id` **by construction** (distinct ids never cross); tenant/user/product are folded into that one string by the dev. A hand-named/dropped segment reaches the wrong stream — a wrong-key dev bug, not Flue returning the wrong thing. The strong path (`deriveInstanceId` from verified identity) makes the slip unreachable. |
 | 4.2 | Value-object Scope (unforgeable) | **DIY** | `[SRC]` The `id` is a bare string; `AgentDispatchRequest = {id, input}`. No scope type, no unexported fields. |
 | 4.3 | Qdrant in-scan payload filter | **DIY** | `[SRC]` No vector tier to filter. |
 | 4.4 | Authenticated-identity seam (must-agree bind) | **CONVENTION** | `[RAN][DOC]` Flue provides the `route: AgentRouteHandler` seam and docs mandate "your application must verify that the caller can access the selected `id`"; the bind is developer code (Orbit's guard 401s on token≠id-identity). Flue authenticates nothing itself. |
 | 4.5 | JWKS key rotation | **DIY** | `[SRC]` No JWT/JWKS primitive; verify in your route guard. |
 | 4.6 | Guardrails (redact / inject / output) | **DIY** | `[SRC]` No guardrail surface. |
-| 4.7 | Multi-product isolation (4th axis) — run-verified ▶ | **CONVENTION** | `[RAN]` `product_id` is not a Flue concept; folded into the `id`. Cross-product leak reproduced: a billing request routed to the analytics instance id read the analytics secret. |
+| 4.7 | Multi-product isolation (4th axis) — run-verified ▶ | **CONVENTION** | `[RAN]` `product_id` is not a Flue concept; folded into the `id`. Naive path: a billing request hand-routed to the analytics id read the analytics secret (wrong-key dev bug). Strong path: server-derived `p=billing` id sees only the billing stream. Both run at equal weight. |
 
 ### Area 5 — Cost & governance
 
@@ -145,13 +149,19 @@ Executed evidence:
   `p=billing`, and wrong tenant/user) get **distinct canonical streams**; none read another's secret. ✓
 - **(B) Auth is developer-written** — a bearer token mismatched to the id's identity → **401**;
   missing token → **401**. The guard is Orbit's `route` export; Flue verifies nothing itself. ✓
-- **(C) CROSS-PRODUCT LEAK (reproduced)** — a *billing* conversation routed to the *analytics*
-  instance id read `ORBIT-SECRET-A`. Root cause: the `id` is an opaque string Flue binds to nothing;
-  `product` is characters, not a scope. One typo (`analytics`↔`billing`) collapses two products. ✓
+- **(C) NAIVE path (client names the id)** — a *billing* conversation hand-routed to the *analytics*
+  instance id read `ORBIT-SECRET-A`. This is a **wrong-key developer bug**: Flue faithfully returned
+  the stream for the id it was handed, exactly as any id→instance map (incl. aisotropy's own BadgerDB)
+  returns whatever is under the key you query. `product` folded into the id is characters, not a
+  framework scope. ✓
+- **(D) STRONG path (server derives the id)** — the config Flue's own docs teach: derive the id from
+  the verified identity + request product via `deriveInstanceId`. A billing request derives `p=billing`
+  and sees only the billing stream — the cross-product read is structurally unreachable. ✓
 
 **Verdict:** `product_id` isolation is `CONVENTION` over one opaque id, not construction over four
-axes. aisotropy filters `product_id` server-side on every read from an unforgeable `Scope` — the
-wrong-product read is unrepresentable.
+axes — but the per-instance stream itself isolates by construction, and the strong path closes the
+binding gap. aisotropy filters `product_id` server-side on every read from an unforgeable `Scope`, so
+the naive (C) slip is unrepresentable rather than one convention away.
 
 ## Dependency LICENSE posture (run-verified ▶)
 
@@ -189,7 +199,8 @@ Flue is a **durable agent harness**, and a good one: durable, crash-safe **conve
 a durable submission queue are real, BUILT-IN, and run-verified — the closest any arena comes to
 aisotropy's crash-durability thesis for the conversation itself. But it is **not a multi-tenant
 runtime**: there are no memory tiers (facts/vector/sleep), no per-tenant cost/quota governance, and
-isolation is `CONVENTION` — one opaque instance `id` plus a developer-written `route` guard, with
-tenant/user/product folded into a string the framework binds to nothing. **vs aisotropy:** Flue wins
+isolation is `CONVENTION` — the per-instance stream isolates by construction, but the identity→id
+binding (composing tenant/user/product into the id + the `route` guard) is developer code Flue leaves
+to you, authenticating nothing by default. **vs aisotropy:** Flue wins
 on TS DX and durable-conversation ergonomics; aisotropy wins on tiered memory, isolation-by-
 construction, per-tenant governance, and the atomic message+consolidation outbox.

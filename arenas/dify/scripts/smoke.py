@@ -17,13 +17,20 @@ reconstructed from the genuine Dify source (see orbit/models.py, orbit/store.py
 for the exact file:line anchors). If DIFY_API_URL + DIFY_API_KEY are set, we
 additionally attempt a REAL read-only ping and report it honestly.
 
+What this is NOT: proof that "Dify leaks." The leaky paths below are the *naive
+developer's* omission of the ownership gate — the same same-key/wrong-key bug you'd
+hit building this on any shared-schema store with no RLS (a bare SQL table, or
+aisotropy's own BadgerDB if you skipped the Scope filter). Dify's OWN services write
+the gate. What the smoke measures is a property of the shared-schema pattern (the
+unscoped read is *available*), not a Dify code defect.
+
 Pattern (mirrors aisotropy's isolation_e2e_test.go):
   1. Seed tenant acme with a unique marker (real App + Conversation + segment).
   2. Positive control: acme reads its own tenant-scoped views -> marker MUST appear.
   3. Negative probe: globex reads with its OWN correct scope -> marker MUST NOT appear.
-  4. Leaky paths (all real Dify query shapes): conversation-by-app_id without the
-     app-ownership gate / raw conversation-by-id / unscoped segment scan
-     -> marker DOES appear = cross-tenant LEAK.
+  4. Naive-omission paths (all real Dify query shapes with the gate DROPPED):
+     conversation-by-app_id without the app-ownership gate / raw conversation-by-id /
+     unscoped segment scan -> marker reappears = the cross-read the pattern permits.
 """
 
 from __future__ import annotations
@@ -166,11 +173,14 @@ if __name__ == "__main__":
     print("-" * 68)
 
     if passed:
-        print("\nResult: no leak on the tested paths this run")
+        print("\nResult: no cross-read on the tested paths this run")
     else:
-        print("\nResult: LEAK CONFIRMED — cross-tenant reads via app-layer convention")
-        print("Root cause: multi-tenancy is a tenant_id column + hand-written .where();")
-        print("            no RLS/schema isolation. Forget the clause (or the app gate) = cross read.")
+        print("\nResult: shared-schema cross-read reproduced (naive-omission path)")
+        print("What this shows: multi-tenancy is a tenant_id column + hand-written .where(),")
+        print("            no RLS/schema isolation — so an UNGATED read is *available*. Drop the")
+        print("            clause (or the app gate) and it cross-reads. This is the standard")
+        print("            shared-schema tradeoff, not a Dify defect: Dify's own services keep")
+        print("            the gate; aisotropy makes the ungated read unrepresentable instead.")
 
     harness_ok = bool(details) and any("Positive control: acme saw" in d for d in details)
     sys.exit(0 if harness_ok else 1)

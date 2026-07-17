@@ -27,6 +27,10 @@ is named `LICENSE` and starts with "Apache License 2.0."
 
 ## The good
 
+> Steelman, run-verified where the offline path allows: `python scripts/strengths_demo.py`
+> (membership bind + data planes + streaming payload run-verified; product surface
+> DESCRIBED/NOT-RUN) — exit 0.
+
 ### The broadest product surface in the arena set
 Dify is a genuine low-code LLM *platform*, not a library. Out of the box you get a
 visual app builder, RAG knowledge bases (~15 vector backends via `vector_factory`),
@@ -54,14 +58,19 @@ hand-roll.
 ### Isolation is shared-schema convention, and the chat plane is worse
 Tenant isolation is a `tenant_id` **column** plus a hand-written
 `.where(tenant_id==?)` on every query. There is **no Postgres RLS and no
-schema-per-tenant** (0 `CREATE POLICY`/`ENABLE ROW` in `api/`). Worse, `Conversation`
+schema-per-tenant** (0 `CREATE POLICY`/`ENABLE ROW` in `api/`). `Conversation`
 and `Message` have **no `tenant_id` column at all** — they key on `app_id` and inherit
 tenant scope transitively. Dify's own `conversation_service.py:51` filters
-`.where(Conversation.app_id == app_model.id)` and trusts that `app_model` was
-tenant-resolved upstream. A handler that holds an `app_id` and skips that upstream
-check reads across tenants, and nothing in the schema stops it. The correct read and
-the leak are one clause apart — the same structural liability the whole arena set
-keeps finding, here on a mature, widely-deployed platform.
+`.where(Conversation.app_id == app_model.id)` and **keeps** the upstream tenant gate
+(`app_model` is tenant-resolved first). A handler that holds an `app_id` and *skips*
+that gate reads across tenants — but that is the naive caller's omission, not Dify's
+code: this is the **standard shared-schema-multi-tenant tradeoff** (identical on a bare
+SQL table or aisotropy's own BadgerDB if you dropped the Scope filter), correct when the
+developer writes the gate and cross-reading when they don't. What differs across
+frameworks is only whether the ungated read is *unrepresentable* (aisotropy's
+ctx-propagated Scope) or merely *available* (shared-schema `.where()`). Dify sits in the
+second, mainstream, camp — the tradeoff every widely-deployed shared-schema platform
+makes for operational simplicity.
 
 ### There is no product axis
 The schema has exactly two boundaries: workspace (`tenant_id`) and app (`app_id`).

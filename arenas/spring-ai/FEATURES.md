@@ -130,13 +130,19 @@ No cost/capability router. You pick the `ChatModel` bean (multiple can coexist).
 ## Area 4 — Isolation & auth (the crux)
 
 ### 4.1 Multi-tenant isolation BY CONSTRUCTION — **CONVENTION** · RAN
-Memory keyed by a single opaque `conversationId` String, bound to no principal. **Executed leak**
-(`SmokeMain`): a globex caller on acme's key reads acme's secret; `findConversationIds()` enumerates
-every tenant's conversations; `findByConversationId(rawKey)` reads with no tenant check. Correct and
-leaky reads are one argument apart. aisotropy = by-construction (ctx + per-key/statement scoping).
+Memory keyed by a `conversationId` String with no framework-enforced identity binding — isolation is
+a convention the developer constructs, not a framework default. **Executed, two-sided** (`SmokeMain`):
+*Part A* (naive convention) reproduces the developer bug — a globex caller reusing acme's key reads
+acme's secret (the same under-authorized-key property any keyed store has, aisotropy's own included);
+`findConversationIds()` is labelled for what it is, an **admin/maintenance API, not the request path**.
+*Part B* (correct construction) derives the `conversationId` from the verified principal and reads
+through an identity-binding facade — a globex principal is then structurally unable to reach acme's
+memory and a smuggled foreign id is refused. CONVENTION because the framework guarantees neither
+posture; the developer picks. aisotropy ships Part B by default (ctx + per-key/statement scoping).
 
 ### 4.2 Value-object Scope (unforgeable) — **DIY** · SOURCE
-`conversationId` is a bare `String` — forgeable and collidable (see 4.7 leak 3). No value object with
+`conversationId` is a bare `String` — forgeable and collidable under a naive flat-key format (see 4.7
+Part A bug 2; a structured/escaped key removes the collision). No value object with
 unexported fields. DIY (all arenas are DIY here).
 
 ### 4.3 Vector metadata filter (in-scan, not post-filter) — **CONVENTION** · SOURCE
@@ -160,12 +166,16 @@ SafeGuardAdvisor.class` confirmed) + `ModerationModel` (output moderation abstra
 narrow: no PII/secret redaction that rewrites what downstream sees, no injection detector. PARTIAL.
 
 ### 4.7 Multi-product isolation (4th scope axis) — **CONVENTION** · RAN
-No product concept; product is one more unescaped segment of the `conversationId` string.
-**Executed** (`ProductIsolationMain`): controls held; **3 cross-product leaks reproduced** with the
-same tenant+user — (1) wrong-product substitution, (2) org-wide `findConversationIds()` scan,
-(3) **delimiter-injection collision** where two distinct identities map to the same flat key
-(`"acme|alice|productX|s1"`). aisotropy's `product_id` rides `context.Context` in the `Scope` value
-object; a wrong/forgotten product is unrepresentable.
+No product concept; product is a developer-owned segment of the `conversationId`. **Executed,
+two-sided** (`ProductIsolationMain`): *Part A* (naive flat key) reproduces two **developer
+key-composition bugs** — (1) wrong-product substitution (a dropped/mis-passed segment) and (2)
+**delimiter forgery**, where the flat *unescaped* `"|"` join lets two distinct identities serialize
+to the same string (`"acme|alice|productX|s1"`). Bug (2) is an artifact of the flat-key *format the
+developer chose*, not a Spring AI flaw. *Part B* switches to a structured/escaped, context-derived
+key and both bugs vanish (`productY` cannot read `productX`; no identity can forge a collision).
+CONVENTION: the framework has no product primitive, so the developer owns the (one-line) discipline.
+aisotropy's `product_id` rides `context.Context` in the `Scope` value object; a wrong/forgotten
+product is unrepresentable by default.
 
 ---
 

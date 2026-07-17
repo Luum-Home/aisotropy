@@ -109,13 +109,79 @@ export class OrbitAgent extends Agent<Env, OrbitState> {
 }
 
 /**
- * Compose the Durable Object name from the Orbit scope. THIS is the entire
- * isolation surface in the Agents SDK: a developer-assembled string. The `|`
- * separator and the inclusion of every axis are the developer's discipline —
- * the framework binds the name to nothing.
+ * Compose the Durable Object name from the Orbit scope. In the Agents SDK the
+ * name is the isolation surface: a plain string the framework binds to nothing.
+ * The `|` separator and the inclusion of every axis are the developer's
+ * discipline. This is the NAIVE path — fine when the caller is already trusted,
+ * unsafe when the segments come straight off an untrusted request (see the
+ * strong path below).
  */
 export function orbitName(tenant: string, user: string, product: string): string {
   return `${tenant}|${user}|${product}`;
+}
+
+// ---------------------------------------------------------------------------
+// The STRONG path: bind the object name to VERIFIED identity.
+//
+// The naive path takes the scope straight off the URL, so the name is only as
+// trustworthy as the caller. The SDK gives a first-class seam to fix this: the
+// routing entry points (`routeAgentRequest` / a custom `fetch`) can run an
+// `onBeforeConnect` / `onBeforeRequest` check that verifies a credential BEFORE
+// the Durable Object wakes. (Source-verified in the installed `.d.ts`:
+// `getAgentByName` itself does NOT run `onBeforeConnect` — "the caller is
+// assumed to have performed whatever access checks are needed" — so the check
+// belongs on the routing path, not on the RPC stub.)
+//
+// The competent-dev pattern:
+//   1. verify a bearer token  -> trusted claims
+//   2. build the DO name FROM the claims, never from caller-supplied path text
+//   3. must-agree: if the URL scope disagrees with the claims, reject (403)
+// This mirrors aisotropy's must-agree JWT bind (ADR-0024). The name is still a
+// bare string — Cloudflare offers no value-object to make a dropped axis a
+// compile error — but it is now minted from verified identity, so a caller
+// cannot address a scope it was not authorized for.
+// ---------------------------------------------------------------------------
+
+export type OrbitClaims = { tenant: string; user: string; product: string };
+
+/**
+ * Stub verifier standing in for HS256/JWKS signature verification. Returns the
+ * trusted claims or null. A real implementation checks a signature; the SHAPE of
+ * the result (a trusted claims object) is what matters for the binding pattern.
+ * Arena token format: "tok:tenant|user|product" (a signed JWT in production).
+ */
+export function verifyOrbitToken(token: string | null): OrbitClaims | null {
+  if (!token) return null;
+  const bearer = token.replace(/^Bearer\s+/i, "");
+  const m = bearer.match(/^tok:([^|]+)\|([^|]+)\|([^|]+)$/);
+  if (!m) return null;
+  return { tenant: m[1], user: m[2], product: m[3] };
+}
+
+/** Derive the DO name from VERIFIED claims — the identity-bound naming path. */
+export function nameFromClaims(c: OrbitClaims): string {
+  return orbitName(c.tenant, c.user, c.product);
+}
+
+/**
+ * Must-agree bind: the scope the client asked for (URL path) must match the
+ * verified identity (token claims), or the request is rejected before any object
+ * is addressed. Returns the identity-bound DO name on success.
+ */
+export function resolveVerifiedName(
+  pathScope: OrbitClaims,
+  token: string | null,
+): { ok: true; name: string } | { ok: false; status: number } {
+  const claims = verifyOrbitToken(token);
+  if (!claims) return { ok: false, status: 401 }; // no/invalid credential
+  if (
+    claims.tenant !== pathScope.tenant ||
+    claims.user !== pathScope.user ||
+    claims.product !== pathScope.product
+  ) {
+    return { ok: false, status: 403 }; // path scope disagrees with verified identity
+  }
+  return { ok: true, name: nameFromClaims(claims) };
 }
 
 export default {
@@ -128,7 +194,22 @@ export default {
     if (request.method === "POST" && m) {
       const [, tenant, user, product] = m;
       const body = (await request.json().catch(() => ({}))) as { prompt?: string };
-      const name = orbitName(tenant, user, product);
+
+      // Strong path: if the caller presents a credential, enforce the must-agree
+      // bind and derive the name from VERIFIED claims. This is the routing-side
+      // `onBeforeConnect`-style check the SDK expects before waking the DO.
+      const auth = request.headers.get("Authorization");
+      let name: string;
+      if (auth) {
+        const r = resolveVerifiedName({ tenant, user, product }, auth);
+        if (!r.ok) return new Response("Forbidden", { status: r.status });
+        name = r.name;
+      } else {
+        // Naive path (no credential): the URL is trusted as-is. Documented and
+        // demonstrated so the trade-off is visible, not hidden.
+        name = orbitName(tenant, user, product);
+      }
+
       const agent = await getAgentByName(env.OrbitAgent, name);
       await agent.bind(name);
       const out = await agent.chat(body.prompt ?? "");

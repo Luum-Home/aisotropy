@@ -14,15 +14,20 @@ import { lookupTicket } from '../shared/tickets.ts';
 
 export const description = 'Orbit multi-tenant support assistant (aisotropy arena).';
 
-// Route guard: THIS is the entire authorization boundary. Flue authenticates
-// nothing on its own. A bearer token must match the tenant/user folded into the
-// id, or the request is rejected. Comment out the check and every caller can
-// read every instance — the leak is one deleted middleware away.
+// Route guard: this is where identity gets bound to the id. Flue authenticates
+// nothing on its own by design (docs: guide/routing — "add src/app.ts when your
+// application needs authentication"; guide/building-agents — "Your application
+// must verify that the caller can access the selected agent `id`"). The seam is a
+// standard Hono middleware (`AgentRouteHandler = MiddlewareHandler`), and Flue's
+// own docs show exactly this pattern: authenticate the caller, then check they may
+// access the selected `id`. Below is that check with a toy token; the strong path
+// pairs it with `deriveInstanceId` so the caller can't name a raw id at all.
 export const route: AgentRouteHandler = async (c, next) => {
 	const id = c.req.param('id') ?? '';
 	const scope = parseInstanceId(id);
 	const token = c.req.header('authorization')?.replace(/^Bearer\s+/i, '');
-	// Toy "auth": token is `tenant:user`. Real deployments verify a real JWT here.
+	// Toy "auth": token is `tenant:user`. Real deployments verify a real JWT here
+	// and check the verified principal is authorized for this id (incl. product).
 	const expected = `${scope.tenant}:${scope.user}`;
 	if (!token || token !== expected) {
 		return c.json({ error: 'Unauthorized', reason: 'token does not match id identity' }, 401);

@@ -13,8 +13,17 @@ timestamp: 2026-07-16T00:00:00Z
 > [`README.md`](./README.md) and [`DX-NOTES.md`](./DX-NOTES.md)). Every class below
 > is grounded in the genuine Dify backend source at HEAD (commit `1aea3460`,
 > 2026-07-16). Concrete anchors are cited as `api/<path>:<line>`. The isolation and
-> product rows are additionally proven by an **executable** smoke that transcribes
+> product rows are additionally exercised by an **executable** smoke that transcribes
 > Dify's real schema and query contract into its own ORM (SQLAlchemy 2.0).
+>
+> **Honesty caveat:** in this pass the *structural* claims (which tables carry
+> `tenant_id`, `Conversation`/`Message` app_id-only, the membership-checked
+> account→tenant bind, the absence of `product_id`, the LICENSE §1a clause) were
+> **independently re-verified against Dify's live source**. The exact `:<line>`
+> offsets at the pinned commit were **not** re-checked (the clone was unavailable to
+> re-open) — treat them as approximate pointers. The smoke reproduces the *naive
+> developer's* omission of the ownership gate against the transcribed contract; it is
+> the standard shared-schema-no-RLS tradeoff, **not** proof that Dify's own code leaks.
 
 ## Coverage classes
 
@@ -26,7 +35,7 @@ enterprise tier) · **NOT-POSSIBLE** (framework cannot provide it by constructio
 
 | # | Feature | Class | Real Dify source / note |
 |---|---|---|---|
-| 1 | Multi-tenant isolation | **CONVENTION** | Shared-schema `tenant_id` column (`App`/`Dataset`/`Document`/`DocumentSegment`) + hand-written `.where(tenant_id==?)`; **no Postgres RLS, no schema-per-tenant** (0 `CREATE POLICY`/`ENABLE ROW` in `api/`). `Conversation`/`Message` have **no tenant_id** — scope is transitive through `app_id` (`model.py:1141`). Leak proven in `scripts/smoke.py` + `tests/`. |
+| 1 | Multi-tenant isolation | **CONVENTION** | Shared-schema `tenant_id` column (`App`/`Dataset`/`Document`/`DocumentSegment`) + hand-written `.where(tenant_id==?)`; **no Postgres RLS, no schema-per-tenant** (0 `CREATE POLICY`/`ENABLE ROW` in `api/`). `Conversation`/`Message` have **no tenant_id** — scope is transitive through `app_id` (`model.py:1141`, structurally re-verified vs live Dify). Naive-omission cross-read reproduced in `scripts/smoke.py` + `tests/` — the standard shared-schema tradeoff, not a Dify defect (Dify's own services keep the gate). |
 | 2 | Structured output + retry | **PARTIAL** | Workflow LLM node has structured-output extraction + per-node retry config, but no fail-closed schema reflection loop at the API contract level |
 | 3 | Tool calling | **BUILT-IN** | Agent apps (function-calling / ReAct) + built-in tools + custom OpenAPI tools + workflow-as-tool + MCP (`core/tools`, `core/mcp`) |
 | 4 | Streaming (SSE) | **BUILT-IN** | `POST /v1/chat-messages response_mode=streaming` (SSE) + a stop-generation endpoint (server-side cancel, not a client ctx spend-cutoff) |
@@ -41,7 +50,7 @@ enterprise tier) · **NOT-POSSIBLE** (framework cannot provide it by constructio
 ## Comprehensive feature-parity matrix (43 rows, SOURCE-VERIFIED)
 
 Grounded in the real Dify backend source. Rows marked **▶** are additionally
-proven by an executable smoke against Dify's transcribed schema + real ORM
+exercised by an executable smoke against Dify's transcribed schema + real ORM
 (`scripts/smoke.py`, `scripts/product_isolation_demo.py`, `scripts/license_scan.txt`,
 `tests/` — 9 passed, all exit 0). The rest are honest source classification.
 
@@ -72,7 +81,7 @@ proven by an executable smoke against Dify's transcribed schema + real ORM
 | 4.4 | Authenticated-identity seam (must-agree bind) | exec | **PARTIAL** | **real** account↔tenant membership bind — `set_tenant_id_with_session` verifies a `TenantAccountJoin` row (`account.py:166`); stronger than most arenas. But per-request data queries then trust `current_tenant_id` by convention; per-app API keys scope to one app |
 | 4.5 | JWKS key rotation | exec | **DIY** | console JWT is app-issued; enterprise SSO/OIDC exists; no proven JWKS-rotation seam in OSS |
 | 4.6 | Guardrails (redact/inject/output) | exec | **PARTIAL** | input + output **moderation** built-in (`core/moderation`: keyword + OpenAI moderation); structured PII-redaction / injection-detection limited |
-| 4.7 ▶ | Multi-product isolation (4th scope axis) | arch | **CONVENTION** | **no `product_id` anywhere** — workspace=tenant is the only boundary; a "product" is app_id convention (leaky) or an unbound tag; RAG plane has no product column. Cross-product leak run-reproduced |
+| 4.7 ▶ | Multi-product isolation (4th scope axis) | arch | **CONVENTION** | **no `product_id` anywhere** — workspace=tenant is the only boundary; a "product" is app_id convention or an unbound tag; RAG plane has no product column. Missing-axis cross-read run-reproduced (unmodeled boundary, not a defect) |
 | 5.1 | Per-tenant PRE-SPEND quota gate (429) | exec | **PARTIAL** | per-APP `api_rpm`/`api_rph` request-rate gate (`model.py:431`) rejects pre-spend; per-**tenant** token/$ budget is billing-tier (PAID) |
 | 5.2 | Circuit breaker | exec | **DIY** | credential load-balancing failover, but no provider circuit breaker |
 | 5.3 | Quota-pressure degradation | exec | **DIY** | no load-based model downgrade |
@@ -110,12 +119,16 @@ Conversation has no tenant_id), there is no product axis, the transactional outb
 is NOT-POSSIBLE, and it is a heavy multi-container runtime, the opposite of a
 single zero-config binary.
 
-## Multi-PRODUCT isolation — the 4th scope axis (RUN-VERIFIED, CROSS-PRODUCT LEAK)
+## Multi-PRODUCT isolation — the 4th scope axis (RUN-VERIFIED: the axis is UNMODELED)
 
 aisotropy scopes every read/write by four keys `(tenant_id, user_id, session_id,
 product_id)` via `context.Context`. Dify's schema has exactly **two** boundaries —
 workspace (`tenant_id`, LICENSE §1a "one tenant == one workspace") and app
-(`app_id`). **There is no `product_id` column anywhere in `api/models`.**
+(`app_id`). **There is no `product_id` column anywhere in `api/models`** (structurally
+re-verified against live Dify: `account.py` and `model.py` carry no such column). This
+isn't a "leak" so much as a **missing axis** — Dify simply does not model a fourth
+product boundary, so there is nothing to enforce and the tenant-correct read still
+crosses products.
 
 Run:
 ```bash
@@ -127,7 +140,7 @@ RUN-VERIFIED output — same tenant `acme`, same user `alice`, two products mode
 as two Apps (the only sub-tenant boundary Dify offers):
 
 ```
-[dify] Seeding (tenant=acme, user=alice, product=checkout app=e66dacef) marker: df-cd0f38ec79c08b8e
+[dify] Seeding (tenant=acme, user=alice, product=checkout app=319b6140) marker: df-c7d7ed4a03643e6b
   OK  Positive control: product 'checkout' saw its own marker
 [dify] Leak #1 — RAG segments scoped by tenant only (no product/app column exists):
   LEAK 'analytics' read 'checkout' segment via the shared tenant KB (no product axis)
@@ -136,7 +149,8 @@ as two Apps (the only sub-tenant boundary Dify offers):
 [dify] Leak #3 — get_conversation(id): no product_id column to check against:
   LEAK retrieve-by-id has no product dimension to enforce
 
-Result: CROSS-PRODUCT LEAK CONFIRMED — same tenant+user, wrong product reads the marker
+Result: no product boundary exists to enforce — same tenant+user, wrong product
+  reads the marker (a MISSING AXIS, not a Dify defect — no product_id anywhere).
 ```
 
 `test_no_product_id_column_exists` asserts structurally that **no** Orbit/Dify

@@ -2,11 +2,15 @@
 
 > **Framework:** [Spring AI](https://github.com/spring-projects/spring-ai) — real dependencies:
 > `spring-ai-client-chat` / `spring-ai-model` / `spring-ai-commons` **2.0.0** (Apache-2.0, Java/JVM).
-> **Positioning:** The enterprise-JVM entrant. Spring-idiomatic `ChatClient` + advisor pipeline,
-> Micrometer observability native, Spring Boot autoconfig — but chat memory is a thin layer keyed by
-> a single opaque `conversationId` string with **zero tenant/principal binding**.
-> **Threat level:** Broad, production-grade generation/advisor ergonomics; isolation is entirely
-> developer convention, matching (not beating) aisotropy's surviving differentiator.
+> **Positioning:** The enterprise-JVM entrant, and the JVM's richest, fully self-hostable,
+> 100%-permissive agent SDK. Spring-idiomatic `ChatClient` + advisor pipeline, Micrometer
+> observability native, Spring Boot autoconfig, a `VectorStore` RAG abstraction, and the new 2.0
+> self-correcting structured output. Chat memory is keyed by a single `conversationId` string that
+> the developer owns — there is **no framework-enforced identity binding** on it.
+> **The honest, narrow point:** isolation here is a convention the developer *constructs* (identity-
+> derived `conversationId`), not a default the framework *guarantees* — which matches, not beats,
+> aisotropy's isolation-by-default. On the axes Spring AI is built for (JVM ecosystem, maturity,
+> self-hostable license) it is genuinely strong and aisotropy does not compete.
 
 ## What is real here (read this first)
 
@@ -26,13 +30,14 @@ memory window, and the structured-output converter all run through the actual fr
 | Streaming cancellation, Micrometer→OTel bridge | **Source-verified, not executed** — interfaces confirmed via `javap`; labelled as such in `FEATURES.md` |
 
 **Why a fake model.** A real Spring AI chat turn calls out to an LLM provider (needs a key + network).
-Everything that makes this arena's point — how memory is keyed, whether a wrong tenant/user/product
-leaks, how structured output and the window work — lives in the **in-process** advisor/memory/converter
-layer, which runs fully offline. The `EchoChatModel` echoes back every user message it is handed,
-so whatever conversation history the memory advisor injects surfaces verbatim in the reply: a
-cross-tenant read of the wrong `conversationId` prints the other tenant's secret. The heavier Spring
-Boot starter path (`spring-ai-starter-model-openai`, autoconfig, a real provider) is out of scope for
-an offline keyless run; the core is exercised directly.
+Everything that makes this arena's point — how memory is keyed, whether a naive key composition
+cross-reads and how an identity-derived key closes it, how structured output and the window work —
+lives in the **in-process** advisor/memory/converter layer, which runs fully offline. The
+`EchoChatModel` echoes back every user message it is handed, so whatever conversation history the
+memory advisor injects surfaces verbatim in the reply: a naive read of the wrong `conversationId`
+prints the other tenant's secret; an identity-derived read cleanly misses. The heavier Spring Boot
+starter path (`spring-ai-starter-model-openai`, autoconfig, a real provider) is out of scope for an
+offline keyless run; the core is exercised directly.
 
 ## Setup
 
@@ -47,78 +52,98 @@ mvn compile                 # resolves the real Spring AI 2.0.0 tree, compiles O
 ## Run the demos (offline, no key)
 
 ```bash
-./scripts/run.sh smoke      # tenant/user isolation smoke   -> exit 0, LEAK CONFIRMED
-./scripts/run.sh product    # 4th scope axis (product)      -> exit 0, 3 leaks reproduced
-./scripts/run.sh features   # memory / structured output    -> exit 0, all checks pass
-./scripts/run.sh all        # all three
-./scripts/license_scan.sh   # real dependency license scan  -> exit 0, 100% permissive
+./scripts/run.sh smoke      # tenant/user isolation: 2 postures    -> exit 0
+./scripts/run.sh product    # 4th scope axis (product): 2 postures  -> exit 0
+./scripts/run.sh features   # memory / structured output            -> exit 0, all checks pass
+./scripts/run.sh strengths  # STEELMAN: what Spring AI does well     -> exit 0
+./scripts/run.sh all        # all four
+./scripts/license_scan.sh   # real dependency license scan          -> exit 0, 100% permissive
 ```
 
-Each demo is a plain `main` implementing the arena's `leak = exit non-zero` contract: it exits `0`
-only when the harness is healthy AND the expected leaks reproduced (positive/honesty controls held).
+Each demo is a plain `main`. The two isolation demos are **two-sided**: Part A reproduces the
+naive-convention bug (a developer key-composition mistake, true of any keyed store), Part B shows the
+correct identity-derived construction that closes it. They exit `0` only when the harness is healthy
+AND both postures behave as claimed (positive/honesty controls held). `strengths` steelmans the
+framework — the real capabilities where Spring AI is strong and aisotropy does not compete.
 
-## Isolation model
+## Isolation model — two postures, both executed at equal weight
 
-**Convention — memory keyed by a single opaque `conversationId` string, bound to no principal.**
+**Spring AI gives you a keyed memory primitive; you supply the identity layer above it.** The
+`conversationId` is a developer-owned string with no framework-enforced identity binding. That is the
+honest, narrow point — and it cuts both ways: composed naively it cross-reads, composed correctly it
+isolates by construction. The demos run *both*.
 
-Spring AI's entire memory contract (verified via `javap` against the 2.0.0 jars) is:
+Spring AI's memory contract (verified via `javap` against the 2.0.0 jars):
 
 ```java
 interface ChatMemory {
     void add(String conversationId, List<Message> messages);
-    List<Message> get(String conversationId);          // <- raw string key, no tenant
+    List<Message> get(String conversationId);          // keyed lookup by a developer-owned string
     void clear(String conversationId);
 }
 interface ChatMemoryRepository {
-    List<String> findConversationIds();                // <- NO filter: every tenant's ids
-    List<Message> findByConversationId(String id);     // <- raw lookup, no tenant check
+    List<String> findConversationIds();                // ADMIN/maintenance surface — NOT the request path
+    List<Message> findByConversationId(String id);     // keyed lookup
     void saveAll(String conversationId, List<Message> messages);
     void deleteByConversationId(String id);
 }
 ```
 
-There is no tenant, user, product, or authenticated-principal dimension anywhere. `conversationId`
-is a developer-chosen string; the `MessageChatMemoryAdvisor` requires it as the
-`ChatMemory.CONVERSATION_ID` advisor param and throws if it is absent — but it validates nothing
-about *who* is allowed to pass a given value. The correct read and the leaky read are one argument
-apart. Three structural leaks, all executed in `SmokeMain` on the real memory plane:
+**Posture A — naive convention (the developer bug).** If the app lets a caller supply or reuse the
+`conversationId` directly, a wrong caller reads the wrong memory. This is the same
+under-authorized-key property **any** keyed store has when no identity layer sits above it —
+aisotropy's own BadgerDB / rqlite / Qdrant included. It is a developer bug, not a Spring AI defect.
+`SmokeMain` Part A reproduces it (globex reusing acme's key reads acme's secret) and labels
+`findConversationIds()` for what it is: an **admin/maintenance API, not a per-request read** — a
+request handler should never call it with a foreign id.
 
-```java
-orbit.chat(acmeKey, "hi");                              // any caller with the same string reads acme's memory
-orbit.repository().findConversationIds();              // org-wide scan: returns EVERY tenant's convo ids
-orbit.repository().findByConversationId(acmeKey);      // raw read, no tenant check at all
-```
+**Posture B — identity-derived construction (the correct path).** A competent dev derives the
+`conversationId` from the **verified principal** (never from caller input) and reads through a facade
+that recomputes the key server-side and refuses a mismatched foreign id. `SmokeMain` Part B shows a
+globex principal structurally unable to reach acme's memory, and a smuggled foreign key refused. This
+is plain application code — the direct analogue of aisotropy's Scope, which ships it by default. The
+idiomatic JVM wiring is Spring Security producing the principal and the key derived from it.
 
-To scope Orbit by four axes the developer hand-concatenates them into that one string
-(`Orbit.convId(tenant,user,product,session) -> "acme|alice|billing|s1"`). That flat, **unescaped**
-join *is* the isolation boundary — see `ProductIsolationMain` for the product axis (wrong-product
-substitution, org-wide scan, and a delimiter-injection collision where two distinct identities map
-to the same key).
+For the product axis (`ProductIsolationMain`): Part A reproduces two **key-composition bugs** — a
+dropped/mis-passed product segment, and a **delimiter forgery** where `Orbit.convId(...)`'s flat,
+unescaped `"|"` join lets two distinct identities serialize to the same string. That forgery is an
+artifact of the **flat-key format the developer chose**, not a Spring AI flaw: Part B switches to a
+structured/escaped, context-derived key and both bugs vanish (`productY` cannot read `productX`, and
+no identity can forge a collision). aisotropy binds `product_id` in an unforgeable `Scope` value
+object by default; here the developer owns that one-line discipline.
 
 ## What actually executed (closed loop)
 
 Offline, JDK 26 + Maven 3.9.16, no provider key. Pasted output below is verbatim.
 
 ```
-$ mvn compile
+$ mvn clean compile
 [INFO] BUILD SUCCESS
 
 $ ./scripts/run.sh smoke
+---- PART A: naive convention (caller-controlled conversationId) ----
 [positive control] acme/alice re-reads own convo -> secret present: true
-[LEAK 1: shared conversationId] globex caller on acme's key sees secret: true
-[LEAK 2: org-wide scan] findConversationIds() returns all 1 convos incl. acme's: true
-[LEAK 2: raw read] findByConversationId(acmeKey) exposes secret: true
-[honesty control] correctly-scoped globex key does NOT see acme secret: true
-RESULT: exit 0 — harness healthy, LEAK CONFIRMED (convention-based, real memory plane).
+[naive cross-read] globex caller on acme's key sees secret: true  <- developer bug: any keyed store leaks under an unauthorized key
+[admin API, not request path] repository.findConversationIds() lists 1 id(s) — an admin/maintenance surface, not a per-request read
+[honesty control] a correctly-composed globex key does NOT see acme secret: true
+---- PART B: identity-derived conversationId (correct construction) ----
+[positive control] acme principal reads its own derived-key memory: true
+[by construction] globex principal cannot reach acme's memory (derived key differs): true
+[by construction] a smuggled foreign conversationId is refused server-side: true
+RESULT: exit 0 — harness healthy, both postures behaved as claimed (real memory plane).
 exit=0
 
 $ ./scripts/run.sh product
+---- PART A: naive flat key (unescaped join, caller-composed) ----
 [positive control] exact (acme,alice,productX) reads its own marker: true
 [honesty control] exact (acme,alice,productY) does NOT see productX marker: true
-[LEAK 1: wrong-product substitution] productY handler using productX string leaks: true
-[LEAK 2: org-wide scan] findConversationIds() + raw read crosses to productX: true
-[LEAK 3: delimiter-injection collision] distinct identity maps to productX's key: true
-RESULT: exit 0 — controls held, all 3 cross-product leaks reproduced on the real memory plane.
+[bug 1: wrong-product substitution] productY handler using productX string reads X: true  <- dropped/mis-passed segment, a key-composition bug
+[bug 2: delimiter forgery] distinct identity serializes to productX's key: true  <- artifact of a flat UNESCAPED key format the developer chose
+---- PART B: structured, escaped, identity-derived key ----
+[positive control] structured (acme,alice,productX) reads its own marker: true
+[by construction] productY cannot read productX (product bound from context): true
+[by construction] structured key blocks delimiter forgery (no collision): true
+RESULT: exit 0 — Part A reproduced the naive bugs, Part B closed them (real memory plane).
 exit=0
 
 $ ./scripts/run.sh features
@@ -127,6 +152,14 @@ $ ./scripts/run.sh features
 [3 structured output] BeanOutputConverter format+schema present: true; convert() -> Ticket{billing,2}: true
 [4 cost probe] model invocations this run (bounded bot): 6 | Usage tokens live on ChatResponse.getMetadata() (source-verified)
 RESULT: exit 0 — all feature checks passed on the real Spring AI API.
+exit=0
+
+$ ./scripts/run.sh strengths
+[S1 fluent ChatClient + advisor] turn 2 auto-hydrated turn-1 order id: true
+[S2 fluent structured output] call().entity(Ticket.class) -> Ticket{billing,2}: true
+[S3 bounded window] after 6 turns kept 3 msgs (<=4): true; seeded SystemMessage retained across eviction: true
+[S4 2.0 self-correcting seam] StructuredOutputChatOptions carries the JSON schema to the model layer: true (full provider-native repair loop = SOURCE)
+RESULT: exit 0 — all executable strengths ran against the real Spring AI API.
 exit=0
 
 $ ./scripts/license_scan.sh
@@ -141,6 +174,38 @@ Result: PASS — no hard-blocker licenses; tree is fully permissive.
 Micrometer→OTel span bridge (needs `micrometer-tracing` + an exporter). The interfaces
 (`StreamingChatModel.stream(Prompt) : Flux<ChatResponse>`, `ChatClientObservationConvention`,
 `ChatResponseMetadata.getUsage()`) were confirmed with `javap` against the shipped jars.
+
+## What Spring AI does genuinely well — RUN-VERIFIED via `StrengthsMain`
+
+Isolation-by-default is the one narrow axis where aisotropy differs. On the axis Spring AI is built
+for — the JVM's richest, fully self-hostable, 100%-permissive agent SDK — Spring AI is genuinely
+strong and aisotropy is **not trying to compete**. Saying so plainly is what makes the rest of this
+arena credible. `./scripts/run.sh strengths` (exit 0, offline, no key) exercises four of them against
+the pinned 2.0.0 API and prints the observed result:
+
+- **S1 — Fluent `ChatClient` + advisor pipeline (RAN).** `ChatClient.builder(model).defaultSystem(…)
+  .defaultAdvisors(MessageChatMemoryAdvisor.builder(memory).build())` wires memory once; a multi-turn
+  conversation auto-hydrates prior history. This is the ergonomic core, and it is excellent.
+- **S2 — Structured output the fluent way (RAN).** `call().entity(Ticket.class)` runs the real
+  `BeanOutputConverter` end-to-end: schema-into-prompt → model JSON → typed Java `record` back.
+- **S3 — Bounded working memory (RAN).** `MessageWindowChatMemory` turn-aware eviction keeps the
+  window at `maxMessages` and — unlike naive FIFO — retains a `SystemMessage` in the store across
+  evictions (the demo seeds one and observes it survive 6 overflowing turns).
+- **S4 — The NEW Spring AI 2.0 self-correcting-output seam (RAN API / SOURCE loop).**
+  `StructuredOutputChatOptions` (2.0-only, confirmed on the shipped classpath) carries the JSON schema
+  down to the model layer for provider-native + schema-validated repair. The demo builds the real
+  options object and reads the schema back; the **full retry loop is provider-native** (needs a real
+  provider — SOURCE, see `FEATURES.md` 2.2 and the [2.0 blog](https://spring.io/blog/2026/06/23/spring-ai-self-correcting-structured-output/)).
+- **VectorStore RAG abstraction (SOURCE).** A first-class Spring AI strength (`QuestionAnswerAdvisor`,
+  `FilterExpressionBuilder`), but it ships in the separate `spring-ai-vector-store` module not on this
+  minimal chat classpath — covered source-verified in `FEATURES.md` 1.4, not executed here.
+
+**Where aisotropy differs vs. where Spring AI is strong.** aisotropy differs on isolation-by-default
+(all four scope axes bound from `context.Context` as an unforgeable `Scope`), per-tenant pre-spend
+governance, and a Go single-binary footprint. Spring AI wins the **mature JVM ecosystem** (Spring
+Security, Actuator, Micrometer, `@Transactional` all one dependency away), is **fully permissive and
+self-hostable** with no SaaS gate anywhere, and — uniquely among the arenas — its transaction model
+lets you *build* atomic consolidation the Python arenas cannot. Different tools for different jobs.
 
 ## Version note
 
@@ -157,8 +222,11 @@ wired here.
 
 - [`FEATURES.md`](./FEATURES.md) — all 41 ARENA-SPEC-v2 features classified for Spring AI (ran vs source-verified).
 - [`DX-NOTES.md`](./DX-NOTES.md) — honest enterprise-JVM developer-experience assessment.
-- `pom.xml`, `src/main/java/orbit/*.java` — the real integration.
-- `scripts/run.sh`, `scripts/license_scan.sh` — reproducible run + governance scan.
+- `pom.xml`, `src/main/java/orbit/*.java` — the real integration. `SmokeMain` / `ProductIsolationMain`
+  are two-sided (naive-convention Part A + correct identity-derived Part B); `StrengthsMain` steelmans
+  the framework; `FeatureDemoMain` exercises the memory / structured-output primitives.
+- `scripts/run.sh` (`smoke|product|features|strengths|all`), `scripts/license_scan.sh` — reproducible
+  run + governance scan.
 
 ## Sources
 

@@ -9,24 +9,47 @@ direct transcription of the genuine Dify source at HEAD
 (langgenius/dify @ 1aea3460, 2026-07-16). The point of the exercise is to
 reproduce Dify's *isolation contract* exactly, then show where it leaks.
 
-Source anchors (real Dify files, verified line-by-line):
+Source anchors (real Dify files, transcribed from the pinned clone):
   - api/models/account.py:260  class Tenant(TypeBase)            __tablename__="tenants"
   - api/models/account.py:299  class TenantAccountJoin(TypeBase) tenant_id + account_id
   - api/models/account.py:166  Account.set_tenant_id_with_session -> membership-checked bind
   - api/models/model.py:402    class App(Base)   tenant_id: Mapped[str]  (app_tenant_id_idx)
   - api/models/model.py:1141   class Conversation(Base)  app_id ONLY — *no tenant_id column*
   - api/models/model.py:1506   class Message(Base)       app_id + conversation_id, no tenant_id
-  - api/models/dataset.py:166  class Dataset(Base)       tenant_id: Mapped[str]
-  - api/models/dataset.py:905  class DocumentSegment     tenant_id: Mapped[str]
+  - api/models/dataset.py:180  class Dataset(Base)       tenant_id: Mapped[str]
+  - api/models/dataset.py:919  class DocumentSegment     tenant_id: Mapped[str]
 
-THE CRUX (verified): Dify uses the *shared-schema, discriminator-column* pattern.
+PROVENANCE / HONESTY (read this): the `api/<path>:<line>` anchors are transcribed
+from the pinned clone `1aea3460` (2026-07-16). In the honesty pass, the STRUCTURAL
+claims below were independently re-verified against Dify's live source
+(langgenius/dify): `Conversation`/`Message` carry app_id but NO tenant_id, `App`
+carries tenant_id, `Account.set_tenant_id_with_session` membership-checks a
+`TenantAccountJoin` row, and no `product_id` column exists — all confirmed. The
+exact LINE NUMBERS at that commit were NOT re-checked in this pass and may have
+drifted; where two files disagreed they were reconciled to a single value. Treat
+the line offsets as approximate pointers into the pinned clone, not as re-verified.
+
+THE CRUX (structurally re-verified): Dify uses the *shared-schema,
+discriminator-column* pattern.
 `tenant_id` is a plain column on top-level rows (App, Dataset, Document,
 DocumentSegment). There is NO Postgres Row-Level-Security, NO schema-per-tenant
 (grep for `CREATE POLICY` / `ENABLE ROW` across the whole api/ tree = 0 hits).
 Isolation is therefore 100% *application-layer*: every service query must carry
 `.where(Model.tenant_id == current_tenant_id)` by hand. Conversation/Message do
 not even have a tenant_id — they inherit tenant scope transitively through
-`app_id`, so a query that forgets to re-verify app ownership crosses tenants.
+`app_id`, so a read that skips the app-ownership gate the developer is expected to
+write can return another tenant's rows.
+
+NOT A DIFY DEFECT — the standard shared-schema tradeoff. This is correct when the
+developer writes the ownership gate and cross-reads when they skip it. Dify's OWN
+services DO write it (conversation_service.py resolves the app under the tenant
+first). The `_UNCHECKED` / `_UNSCOPED` reads in orbit/store.py are the *naive
+developer's omission*, reproduced against this transcribed contract — the identical
+same-key/wrong-key failure mode of ANY shared-schema-no-RLS store, including a bare
+hand-built SQL table or aisotropy's own BadgerDB if you skipped the Scope filter.
+What differs across frameworks is only whether the store makes the unscoped read
+*unrepresentable* (aisotropy's ctx-propagated Scope) or merely *available*
+(shared-schema `.where()`). Dify is in the second, mainstream, camp.
 """
 
 from __future__ import annotations
@@ -121,7 +144,7 @@ class Message(Base):
 # ── Knowledge / RAG plane (Dify api/models/dataset.py) ─────────────────────────
 
 class Dataset(Base):
-    """Dify api/models/dataset.py:166. tenant_id IS a column here."""
+    """Dify api/models/dataset.py:180. tenant_id IS a column here."""
     __tablename__ = "datasets"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"))
@@ -130,7 +153,7 @@ class Dataset(Base):
 
 class DocumentSegment(Base):
     """
-    Dify api/models/dataset.py:905. tenant_id column present. But the vector
+    Dify api/models/dataset.py:919. tenant_id column present. But the vector
     plane (core/rag/datasource/vdb) filters retrieval by *dataset_id* into a
     per-dataset collection (vector_factory.py:38 class_prefix=collection_name);
     tenant scope there is transitive through Dataset.tenant_id, not a filter on

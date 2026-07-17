@@ -1,23 +1,33 @@
 #!/usr/bin/env node
-// Adversarial isolation + runtime smoke for the Vercel eve arena.
+// Runtime + DIY-memory smoke for the Vercel eve arena.
 //
 // Runs against a REAL, built eve server (Nitro + Workflow-SDK durable sessions +
 // the real tool loop). The ONLY faked component is the AI-SDK model (offline
-// deterministic mock in agent/lib/model.ts) — every isolation-relevant layer
-// (session durability, tool dispatch, channel auth, streaming) is genuine eve.
+// deterministic mock in agent/lib/model.ts) — every runtime layer (session
+// durability, tool dispatch, channel auth, streaming) is genuine eve.
 //
-// It proves eve's isolation posture for the 4th scope axis (tenant,user,PRODUCT):
-//   eve binds NO tenant/user/product to its durable memory. Per-customer,
-//   per-product memory is a DEVELOPER-built store keyed by a hand-concatenated
-//   string (see agent/tools/orbit_memory.ts). Whether it isolates depends
-//   entirely on the developer's key builder:
-//     * strict key `${t}:${u}:${p}` isolates products
-//     * leaky key `${t}:${u}` (product dropped — one edit away) LEAKS
-//   The framework validates neither. That is CONVENTION, not construction.
+// What this demonstrates about eve's scope (NOT a defect in eve):
+//   eve is a SESSION-SCOPED durable-agent runtime. It ships session working
+//   memory (`defineState`, session-scoped BY CONSTRUCTION) but has NO
+//   tenant/user/product axis anywhere — multi-tenant memory is out of its scope
+//   by design, exactly like Pydantic AI / Eino. So per-customer, per-product
+//   memory is a store the DEVELOPER builds (see agent/tools/orbit_memory.ts),
+//   keyed by a string the developer computes. Whether it partitions is a
+//   property of the developer's key, not of eve:
+//     * correct key `${t}:${u}:${p}` partitions products
+//     * naive  key `${t}:${u}` (product segment dropped) collides them
+//   This is the same-key/wrong-key developer bug that is TRUE OF ANY key-value
+//   store — including aisotropy's own BadgerDB if a dev drops a scope segment.
+//   It is not something eve "fails" to validate; eve has no tenancy primitive to
+//   validate against. A competent dev uses the composite key (or binds identity
+//   at the channel) and it partitions fine. What aisotropy adds on ITS narrow
+//   axis is that `product_id` rides context.Context inside an unforgeable Scope,
+//   so the naive read is unrepresentable rather than merely discouraged.
 //
 // Contract: prints PASS/FAIL lines; exits 0 when the demonstration completes
-// (both the positive control and the proven leak are expected outcomes here —
-// this arena documents the leak rather than exiting non-zero on it).
+// (the positive control, the correct-key partition, and the naive-key collision
+// are all EXPECTED outcomes — the collision is the documented DIY footgun, not a
+// framework failure, so it does not exit non-zero).
 
 import { Client } from "eve/client";
 import crypto from "node:crypto";
@@ -60,7 +70,7 @@ function recalledSecret(text) {
   }
 }
 
-let leaks = 0;
+let collisions = 0;
 let checks = 0;
 function assert(name, cond, detail) {
   checks++;
@@ -80,45 +90,50 @@ async function main() {
   const hello = await run("hello Orbit");
   assert("runtime.turn", /Orbit here/.test(hello), JSON.stringify(hello).slice(0, 80));
 
-  console.log("\n## Isolation — 4th scope axis (tenant, user, PRODUCT)\n");
+  console.log("\n## DIY memory partitioning — the (tenant,user,product) axis eve does not have\n");
 
   const secX = marker("checkoutSecret");
   const secB = marker("billingSecret");
-  const secLeak = marker("leakyCheckout");
+  const secNaive = marker("naiveCheckout");
 
-  // Seed two products for the SAME (tenant,user) via the strict key builder.
+  // Seed two products for the SAME (tenant,user) via the correct composite key.
   await run(`MEM: REMEMBER mode=strict t=acme u=alice p=checkout secret=${secX}`);
   await run(`MEM: REMEMBER mode=strict t=acme u=alice p=billing  secret=${secB}`);
 
-  // Positive control: strict recall of the SAME product returns its own secret.
+  // Positive control: correct-key recall of the SAME product returns its own secret.
   const okX = recalledSecret(await run(`MEM: RECALL mode=strict t=acme u=alice p=checkout`));
-  assert("strict.positive_control", okX.secret === secX, `key=${okX.key} secret=${okX.secret}`);
+  assert("correct_key.positive_control", okX.secret === secX, `key=${okX.key} secret=${okX.secret}`);
 
-  // Product isolation under the strict key: reading product=billing must NOT
-  // return the checkout secret (and vice versa).
+  // Correct composite key partitions products: reading product=billing must NOT
+  // return the checkout secret (and vice versa). This is the competent-dev path.
   const okB = recalledSecret(await run(`MEM: RECALL mode=strict t=acme u=alice p=billing`));
-  assert("strict.product_isolated", okB.secret === secB && okB.secret !== secX,
+  assert("correct_key.product_partitioned", okB.secret === secB && okB.secret !== secX,
     `billing key=${okB.key} secret=${okB.secret}`);
 
-  // THE LEAK: the "one edit cheaper" key builder drops the product segment.
-  // Seed under product=checkout with the leaky key (key becomes acme:alice)...
-  await run(`MEM: REMEMBER mode=leaky t=acme u=alice p=checkout secret=${secLeak}`);
-  // ...then RECALL under a DIFFERENT product=billing with the same leaky builder.
-  const leaky = recalledSecret(await run(`MEM: RECALL mode=leaky t=acme u=alice p=billing`));
-  const leaked = leaky.secret === secLeak;
-  assert("leaky.cross_product_read", leaked,
-    `recall(product=billing) returned product=checkout secret? key=${leaky.key} secret=${leaky.secret}`);
-  if (leaked) {
-    leaks++;
-    console.log("      ^ LEAK: product_id is unbound. Dropping `:${product}` from the developer key");
-    console.log("        crosses products, and TypeScript/eve validate nothing. CONVENTION, not construction.");
+  // THE NAIVE-KEY COLLISION: a key builder that drops the product segment. This
+  // is the same-key/wrong-key developer bug of ANY string-keyed KV (incl.
+  // aisotropy's BadgerDB) — not an eve defect; eve has no tenancy axis to bind.
+  // Seed under product=checkout with the naive key (key becomes acme:alice)...
+  await run(`MEM: REMEMBER mode=naive t=acme u=alice p=checkout secret=${secNaive}`);
+  // ...then RECALL under a DIFFERENT product=billing with the same naive builder.
+  const naive = recalledSecret(await run(`MEM: RECALL mode=naive t=acme u=alice p=billing`));
+  const collided = naive.secret === secNaive;
+  assert("naive_key.product_collision", collided,
+    `recall(product=billing) hit product=checkout's slot? key=${naive.key} secret=${naive.secret}`);
+  if (collided) {
+    collisions++;
+    console.log("      ^ Expected: the naive key `${t}:${u}` drops product, so two products share");
+    console.log("        one slot. Same-key/wrong-key dev bug, true of ANY KV incl. BadgerDB — the");
+    console.log("        correct composite key above partitions fine. eve has no tenancy axis by design.");
   }
 
   console.log("\n## Summary");
-  console.log(`checks=${checks}  proven_cross_product_leaks=${leaks}`);
-  console.log("verdict: eve isolation for (tenant,user,product) = CONVENTION (developer-passed key).");
-  console.log("         Session-to-session isolation IS by-construction (runtime-owned sessionId),");
-  console.log("         but there is no tenant/user/product axis in the runtime to bind.");
+  console.log(`checks=${checks}  naive_key_collisions=${collisions}  (expected: 1 — the documented DIY footgun)`);
+  console.log("verdict: eve is session-scoped by design; multi-tenant (tenant,user,product) memory is");
+  console.log("         DIY / OUT-OF-SCOPE (no tenancy primitive), like Pydantic AI / Eino — NOT a defect.");
+  console.log("         Session-to-session isolation IS by-construction (runtime-owned sessionId); the");
+  console.log("         correct composite key partitions products. aisotropy's narrow add: product_id");
+  console.log("         rides context.Context in an unforgeable Scope, so the naive read cannot compile.");
 }
 
 main().then(

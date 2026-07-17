@@ -67,17 +67,21 @@ Flue gives you **one** external scoping axis: the agent-instance `id` in `POST /
 The docs are refreshingly blunt: *"It's up to the developer to decide what `id` means"* and *"Your
 application must verify that the caller can access the selected agent `id`."*
 
-Concretely, to make Orbit multi-tenant I had to:
-1. Fold `(tenant,user,product)` into the one id string (`t=acme;u=bob;p=analytics`) and parse it back.
-2. Write the entire auth check myself in the agent's `route` handler (bearer token → id identity).
+Concretely, to make Orbit multi-tenant the strong config is:
+1. **Derive** the id from verified identity — `deriveInstanceId(principal, product)` — so the caller
+   never names a raw id (the client-names-the-id path is the naive one).
+2. Write the auth check in the agent's `route` handler: authenticate the caller, then verify they may
+   access the selected id. This is Flue's own documented pattern (`guide/building-agents`).
 3. Keep every tool closed over the *parsed* scope so the model can't choose the customer.
 
-Miss any of these and it leaks. The smoke reproduces the cross-product leak: route a *billing*
-conversation to the *analytics* instance id — one token different — and it reads the analytics
-secret, because Flue binds the id to nothing. The good news is the per-instance stream *is* isolated
-by construction and the `route` seam is a clean place to hang auth; the bad news is that "clean place
-to hang auth" is doing all the work, and there's no tenant/product concept, no value-object scope, no
-identity binding to catch a slip. This is the same `CONVENTION` class as the Go-native arenas.
+The isolation smoke runs two paths at equal weight. **Naive:** the client hand-names the id and a
+dropped/typo'd segment (a *billing* conversation sent to the *analytics* id) reaches the wrong stream —
+but that's a wrong-key developer bug, the same as querying any id→instance map with the wrong key, not
+Flue returning the wrong thing. **Strong:** the server derives `p=billing`, so the request can only
+touch the billing stream and the slip is unreachable. The honest read: the per-instance stream *is*
+isolated by construction and the `route` seam is a clean, documented place to bind auth; what's on you
+is composing the id from verified identity and writing that guard — there's no tenant/product concept
+or value-object scope to catch a slip for you. Same `CONVENTION` class as the Go-native arenas.
 
 ## Offline testing story — better than most
 

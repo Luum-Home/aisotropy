@@ -35,8 +35,10 @@ thesis, which is exactly why it's worth testing here.
    external scoping axis is the agent-instance **`id`** (one path segment: `POST /agents/orbit/<id>`).
    The conversation stream is isolated per-id *by construction*, but **tenant / user / product are
    not framework concepts** — "It's up to the developer to decide what `id` means" (docs:
-   `guide/building-agents`). Orbit folds all four aisotropy axes into that one opaque string, and the
-   `route` guard is the entire authorization boundary. `scripts/isolation.mjs` proves both halves.
+   `guide/building-agents`). Orbit folds all four aisotropy axes into that one string, and a `route`
+   guard binds the caller's identity to the id. `scripts/isolation.mjs` runs both the **naive** path (a
+   hand-named id slips to the wrong stream — a wrong-key dev bug) and the **strong** path (the server
+   derives the id from verified identity, per Flue's own docs) at equal weight.
 
 ## The Orbit build (real Flue API)
 
@@ -86,7 +88,7 @@ crash-safe conversation memory — Flue's headline, executed. (Note: a hard `SIG
 lose the un-checkpointed last turn — expected SQLite behavior; the docs promise a graceful
 turn-boundary stop, which is what the smoke exercises.)
 
-### Smoke 2 — isolation: by-construction stream vs. convention scoping (exit 0)
+### Smoke 2 — isolation: by-construction stream vs. convention binding (exit 0)
 
 ```
 [A] positive control + by-construction isolation (distinct id ⇒ distinct stream)
@@ -94,21 +96,37 @@ turn-boundary stop, which is what the smoke exercises.)
   PASS  WRONG TENANT cannot read it (separate canonical stream)
   PASS  WRONG USER cannot read it
   PASS  WRONG PRODUCT cannot read it (when product is folded into the id correctly)
-[B] the authorization boundary is 100% developer-written (route guard)
+[B] the authorization boundary is developer-written (route guard)
   PASS  mismatched bearer token ⇒ 401 (our guard; Flue authenticates nothing itself)
   PASS  missing bearer token ⇒ 401
-[C] THE LEAK — the id is an opaque string Flue binds to NOTHING
-  PASS  CROSS-PRODUCT LEAK reproduced: billing request reading analytics secret
+[C] NAIVE path — the client names the opaque id by hand
+  PASS  a hand-named wrong id reaches the analytics stream (dev bug, not framework leak)
+[D] STRONG path — the SERVER derives the id from verified identity (Flue's own doc pattern)
+  PASS  server-derived billing id sees the billing stream, NOT the analytics secret
 == isolation smoke PASSED (all assertions held) ==
 ```
 
-**Reading it:** distinct instance ids get distinct, isolated canonical streams — that part is
-*by construction*. But every axis (tenant, user, product) is a substring the developer folds into
-that one id, and authorization is a route guard the developer writes. Route a *billing* conversation
-to the *analytics* instance id — a one-token slip the framework has no product concept to catch — and
-product B reads product A's secret. In aisotropy, `product_id` is a field of the unforgeable `Scope`
-value object carried in `context.Context`; the wrong-product read is *unrepresentable*, not one typo
-away.
+**Reading it — both paths run at equal weight.** Distinct instance ids get distinct, isolated
+canonical streams — that part is *by construction*, and Flue never crosses them. What is *convention*
+is the **binding** between a caller's verified identity and the id they reach: tenant/user/product are
+substrings the developer composes into that one id, and authorization is a `route` guard the developer
+writes.
+
+- **[C] Naive path** — the client names the opaque id directly and a dropped/typo'd segment (route a
+  *billing* conversation to the *analytics* id) reaches the wrong stream. That is a **wrong-key
+  developer bug**, the same class as querying *any* id→instance map — including aisotropy's own
+  BadgerDB — with the wrong key. Flue faithfully returns the stream for the id it was handed; it is not
+  the framework returning the wrong thing.
+- **[D] Strong path** — the config a competent dev ships, and the one **Flue's own docs teach**
+  (`guide/building-agents`: *"Your application must verify that the caller can access the selected agent
+  `id`"*): the server **derives** the id from an already-verified identity (incl. product) via
+  `deriveInstanceId`, so the caller never names a raw id. A billing request derives `p=billing` and can
+  only touch the billing stream — the cross-product read is structurally unreachable.
+
+The honest, narrower point stands: per-instance stream isolation is **by construction**, but the
+identity→instance binding is **convention** Flue leaves to you (it authenticates nothing by default).
+aisotropy closes the same gap upstream: `product_id` is a field of the unforgeable `Scope` value object
+carried in `context.Context`, so the naive [C] path is *unrepresentable*, not one convention away.
 
 ## Isolation model (vs. the arena)
 
@@ -117,23 +135,43 @@ away.
 | External scoping axes | **1** — the opaque instance `id` string | **4** — `(tenant,user,session,product)` in a value-object `Scope` |
 | Conversation isolation | **By construction** per instance id (separate canonical stream) | By construction per full Scope |
 | tenant/user/product isolation | **Convention** — folded into the id by the dev | **By construction** — Scope fields on `context.Context` |
-| Auth / identity binding | **Developer-written** `route` guard; Flue verifies nothing itself | Fail-closed auth seam, must-agree bind to path identity |
-| Failure mode | Drop/typo an id segment, or a wrong route guard → cross-read | Unrepresentable — `Scope{}` has unexported fields |
+| Auth / identity binding | **Developer-written** `route` guard (Flue's documented seam); Flue verifies nothing itself | Fail-closed auth seam, must-agree bind to path identity |
+| Failure mode (naive path) | Hand-name the id and drop/typo a segment → cross-read (wrong-key dev bug) | Unrepresentable — `Scope{}` has unexported fields |
+| Strong path | Server `deriveInstanceId(principal, product)` + guard checks caller may access it → slip unreachable | Same discipline, enforced by the type system rather than convention |
 
-**Verdict:** same class as the Go-native arenas (Eino / ADK / Genkit) — **isolation is
-`CONVENTION`** — with the honest nuance that Flue's per-instance canonical stream *does* isolate the
-conversation by construction and gives you a `route` seam to hang auth on. It just has no
-tenant/user/product concept of its own.
+**Verdict — `CONVENTION`, honestly narrowed.** Same class as the Go-native arenas (Eino / ADK /
+Genkit): the per-instance canonical stream *does* isolate the conversation **by construction**, and
+Flue ships a documented `route` seam plus the `deriveInstanceId` discipline to close the binding gap.
+What stays convention is that gap itself — the (tenant,user,product)→id mapping and the auth check are
+developer code, because Flue has no tenant/user/product concept of its own and authenticates nothing by
+default. The cross-product read is a wrong-key developer bug (true of any id→instance map), not a Flue
+defect; aisotropy's edge is that it makes the same bug *unrepresentable* via an unforgeable `Scope`.
 
-## Where Flue genuinely leads the field
+## What Flue does genuinely well (steelman — RUN-VERIFIED)
 
-- **Durable, crash-safe conversation memory** is real and BUILT-IN (proven above). Of the 8 arenas,
-  only Letta ships productized durable/sleep-time memory; Flue's durable-stream recovery is a
-  distinct, stronger *runtime* durability story for the conversation itself.
-- **Durable submission queue** (`dispatch` → ordered canonical stream, at-least-once, conservative
-  recovery, app idempotency keys) is the closest any arena comes to aisotropy's transactional
-  outbox — though it durably links *submission → conversation*, not *message → memory-tier
-  consolidation-intent* in one atomic write (that stays DIY on top).
+A fair comparison has two sides. Flue is the Astro team's **durable-execution agent framework**, and
+on its home axis — *crash-safe, durable conversation runtime for long-running agents* — it is the
+strongest entrant in this arena set. aisotropy is a multi-tenant *runtime* with tiered memory and
+isolation-by-construction; on durable single-/few-tenant conversation execution, **Flue is the
+reference, and this is a real strength, not a consolation prize.** Each item below is executed by the
+committed smokes (exit 0), not asserted from docs:
+
+| Strength | Real 1.0.0-beta.9 surface | Run-verified evidence |
+|---|---|---|
+| **Durable, crash-safe conversation memory** | file-backed `sqlite(...)` adapter over the append-only canonical stream (`src/db.ts`, `@flue/runtime/node`) | `[RAN]` `pnpm run smoke`: process P1 seeds a secret then **dies**; a *separate* process P2 on the same db recalls it, context rebuilt from the stream (`seen_msgs` 2→4). Of the arenas, only Letta ships productized durable/sleep-time memory; Flue's stream-replay recovery is a distinct, stronger *runtime* durability story for the conversation itself. |
+| **Durable submission queue (closest thing to a transactional outbox)** | `dispatch(...)` → one ordered durable queue → canonical stream; at-least-once, conservative crash recovery, app-owned idempotency keys | `[RAN][DOC]` The smokes drive the same ordered-durable-stream path. This is the closest any arena comes to aisotropy's transactional outbox — though it durably couples *submission → conversation*, not *message → memory-tier consolidation-intent* in one atomic write (that stays DIY on top, because there are no memory tiers to consolidate into). |
+| **Valibot-typed agents & tools** | `defineTool({ input: v.object({...}), output })`, `session.prompt(text, { result })` validated structured output | `[RAN][SRC]` Orbit's `lookup_ticket` tool is valibot-typed input/output; the fake-model path exercises tool calls end to end. Type-safe I/O without a codegen step. |
+| **Hono app + clean `route` seam** | `src/app.ts` is an ordinary Hono app; agents expose a `route: AgentRouteHandler` (= Hono `MiddlewareHandler`) | `[RAN][SRC]` `/health` is app-owned; the per-instance guard is a middleware Flue calls before every prompt — exactly where the docs say to authenticate. A tasteful, standard-web ingress model. |
+| **Durable-agent runtime model + offline provider registry** | one addressable agent instance = one canonical stream; `registerProvider(id, { api: 'openai-completions', baseUrl })` | `[RAN][DOC]` The whole arena runs **with no API key** through the documented custom-provider path (Ollama uses the same one). The durable-instance mental model is coherent and well-documented (97 docs ship in the CLI). |
+
+**Where aisotropy does NOT compete:** aisotropy has no durable-execution / stream-replay recovery for
+the *live conversation* — its crash-durability thesis is the transactional **outbox → async
+consolidation** into memory tiers, a different guarantee. For a long-running or webhook-driven agent
+whose transcript must survive a process death, Flue's model is genuinely better, and this arena says so.
+
+This does not soften the isolation finding — the two sit side by side. **Flue is great at durable
+conversation execution; it simply has no tenant/user/product runtime and no memory tiers**, which is
+the space aisotropy is built around.
 
 ## Where it's DIY / convention (the multi-tenant-runtime gaps)
 

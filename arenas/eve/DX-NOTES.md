@@ -59,15 +59,18 @@ Vercel Workflow / Vercel Sandbox / AI Gateway / Vercel Connect / Vercel Observab
 is documented (`@workflow/world-postgres` + docker/microsandbox) but is the off-road path. For a
 sovereignty-first multi-tenant runtime this is the opposite of aisotropy's single-binary posture.
 
-### No memory tiers, and memory has no tenant/user/product axis
-This is the big one for multi-tenant products. eve gives you a **session-scoped** durable KV
-(`defineState`) and append-only history — and that's the memory story. No vector RAG, no facts/FTS
-journal, no embedder, no consolidation. Worse for isolation: **there is no tenant/user/product
-concept anywhere in the runtime**. `ctx.session` exposes `{id, turn, auth, parent}` — no tenant. So
-per-customer, per-product memory is a store *you* build, keyed by a string *you* concatenate, and the
-leaky key is one dropped segment from the correct one (I ran the leak). aisotropy's entire value
-proposition — memory scoped by (tenant,user,product) by construction — is precisely the thing eve
-leaves to developer discipline.
+### No memory tiers, and memory has no tenant/user/product axis (by design)
+This is the big one *if you are building a multi-tenant product* — but it is a scope choice, not a
+bug. eve gives you a **session-scoped** durable KV (`defineState`) and append-only history — and
+that's the memory story. No vector RAG, no facts/FTS journal, no embedder, no consolidation. And
+**there is no tenant/user/product concept anywhere in the runtime**: `ctx.session` exposes
+`{id, turn, auth, parent}` — no tenant. So per-customer, per-product memory is **out of eve's scope**
+(DIY), the same posture as Pydantic AI (stateless lib) or Eino (orchestration lib). You build the
+store and compute the key; the correct composite key `${t}:${u}:${p}` partitions and a naive
+`${t}:${u}` collides — the same-key/wrong-key bug of any KV, including aisotropy's own BadgerDB, not
+an eve defect (I ran both paths; the correct one partitions cleanly). aisotropy's value proposition —
+memory scoped by (tenant,user,product) *by construction* — is precisely the axis eve leaves to you,
+because eve is a durable session runtime, not a multi-tenant memory substrate.
 
 ### No cost governance
 Usage arrives *after* the step. There's no per-tenant token bucket, no pre-spend 429, no
@@ -93,9 +96,9 @@ backend agent** — long tasks, HITL, tool-heavy, on Vercel — it is a delight 
 for days and survives redeploys" is the requirement.
 
 **Worst for:** a sovereign, self-hosted, **multi-tenant** product where memory must be tiered and
-scoped by (tenant, user, product) and spend gated per tenant. eve has none of those as primitives;
-you'd rebuild the entire aisotropy differentiator by hand, and the isolation you'd build would be
-CONVENTION (a developer key) rather than construction.
+scoped by (tenant, user, product) and spend gated per tenant. eve has none of those as primitives —
+they are out of its scope by design — so you'd rebuild the entire aisotropy differentiator by hand
+(DIY), and the isolation you'd build would rest on developer key discipline rather than construction.
 
 **vs. aisotropy:** eve wins on durable execution, authoring ergonomics, and channel/session security;
 aisotropy wins on tiered memory, tenant/user/product isolation-by-construction, pre-spend governance,

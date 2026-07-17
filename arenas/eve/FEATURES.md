@@ -1,14 +1,14 @@
 ---
 type: Feature parity
 title: "eve (Vercel) — 41-feature coverage vs the aisotropy runtime"
-description: Doc- and run-grounded classification of Vercel eve against ARENA-SPEC-v2's 41 features. Real integration — eve 0.24.5 compiled and booted offline with a mock model; isolation, tools, streaming, health and the license scan were executed.
+description: Doc- and run-grounded classification of Vercel eve against ARENA-SPEC-v2's 41 features. Real integration — eve 0.24.6 compiled and booted offline with a mock model; isolation, tools, streaming, health and the license scan were executed.
 tags: [arenas, eve, vercel, feature-parity, isolation, durable-agents]
 timestamp: 2026-07-16T00:00:00Z
 ---
 
 # eve (Vercel) — feature coverage
 
-> **Framework:** [`eve@0.24.5`](https://github.com/vercel/eve) — Apache-2.0. "Filesystem-first
+> **Framework:** [`eve@0.24.6`](https://github.com/vercel/eve) — Apache-2.0. "Filesystem-first
 > framework for durable backend AI agents." You author an agent as files under `agent/`
 > (`agent.ts`, `instructions.md`, `tools/`, `skills/`, `channels/`, `schedules/`, `connections/`);
 > eve's compiler discovers them and builds a Nitro server whose turns run as **durable workflows**
@@ -47,9 +47,11 @@ Source: `node_modules/eve/docs/concepts/{execution-model-and-durability,sessions
 - **No memory tiers.** One session-state KV + conversation history + a sandbox `/workspace`
   filesystem. No vector store, no FTS/facts journal, no embedder, no offline consolidation. Vector
   RAG / facts are DIY (a tool or a `connection`).
-- **Consequence for multi-tenant / multi-product:** per-customer, per-product memory is a
-  **developer-built store keyed by a hand-concatenated string**. Whether it isolates is 100% the
-  developer's key builder. Proven below.
+- **Consequence for multi-tenant / multi-product:** because there is **no tenancy tier by design**
+  (the same posture as Pydantic AI / Eino), per-customer, per-product memory is **DIY / out of eve's
+  scope** — a developer-built store keyed by a string the developer computes. Whether it partitions
+  is a property of *that key*, not of eve; the correct composite key partitions and the naive one
+  collides — a KV tautology, not an eve defect. Shown, run-verified, below.
 
 ## The 41 features
 
@@ -91,13 +93,13 @@ Source: `node_modules/eve/docs/concepts/{execution-model-and-durability,sessions
 
 | # | Feature | eve | Grounding |
 |---|---|---|---|
-| 4.1 ▶ | Multi-tenant isolation BY CONSTRUCTION | **CONVENTION** | Session-to-session isolation *is* by-construction (runtime-owned `sessionId`, one continuation owner, subagents get their own session — "nothing crosses implicitly"). But **tenant isolation of memory is developer-passed** (no tenant axis). |
+| 4.1 ▶ | Multi-tenant isolation BY CONSTRUCTION | **DIY / out-of-scope** | No tenancy tier by design (like Pydantic AI / Eino) — not a defect. Session-to-session isolation *is* by-construction and genuinely strong (runtime-owned `sessionId`, one continuation owner, subagents get their own session — "nothing crosses implicitly"), but that is orthogonal to **multi-tenant memory**, for which eve binds no tenant axis: you build the store and the key yourself. |
 | 4.2 | Value-object Scope (unforgeable) | **DIY** | No `Scope` type; keys are bare strings the developer builds. |
 | 4.3 | Qdrant in-scan payload filter | **DIY** | No vector store. |
 | 4.4 ▶ | Authenticated-identity seam (must-agree bind) | **PARTIAL** | Genuinely strong **fail-closed** channel auth (401 default, constant-time verify, `placeholderAuth()` stays closed in prod). But it authenticates *caller→route*; it does **not** bind the principal to a path/memory tenant/user. Ran: channel auth chain compiled + served (`[localDev(), none()]`). |
 | 4.5 | JWKS key rotation | **PARTIAL** | `vercelOidc()`/`oidc()` verifiers do OIDC/JWKS; rotation is delegated to the provider, not an eve-owned rotating cache with proven single-fetch throttling. |
 | 4.6 | Guardrails (redact/inject/output) | **DIY** | No PII redaction / injection detection primitive; author via hooks/tools. (Sandbox network policy + credential brokering are a *different* guard — code egress, not prompt content.) |
-| 4.7 ▶ | **Multi-product isolation (4th axis)** | **CONVENTION** | **Run-verified leak.** `product_id` is unbound; the developer's key builder decides. Strict key `${t}:${u}:${p}` isolates products (positive control + cross-product null both PASS); the one-edit **leaky** key `${t}:${u}` returns product=checkout's secret on a `product=billing` read. See "Run-verified isolation" below. |
+| 4.7 ▶ | **Multi-product isolation (4th axis)** | **DIY / out-of-scope** | **Run-verified DIY demo.** `product_id` is not an eve concept; the developer's key decides. Correct composite key `${t}:${u}:${p}` partitions products (positive control + cross-product both PASS); the naive key `${t}:${u}` collides them on a `product=billing` read. The collision is the same-key/wrong-key bug of ANY KV (incl. aisotropy's BadgerDB), not an eve failing. See "Run-verified DIY memory partitioning" below. |
 
 ### Area 5 — Cost & governance
 
@@ -142,40 +144,48 @@ Source: `node_modules/eve/docs/concepts/{execution-model-and-durability,sessions
 |---|---|---|
 | BUILT-IN | 6 | 1.2, 1.6, 2.3, 3.2, 3.3, 6.2, 8.4 — (7 incl. 8.4) |
 | PARTIAL | 11 | 2.1, 2.2, 3.4, 4.4, 4.5, 5.2, 5.4, 5.6, 6.1, 6.4, 8.1, 8.2, 8.3 |
-| CONVENTION | 3 | 3.1, 4.1, 4.7 |
-| DIY | 15 | 1.3, 1.5, 1.7, 1.8, 1.9, 1.10, 1.11, 2.4, 4.2, 4.3, 4.6, 5.1, 5.3, 5.5, 6.3, 7.1, 7.2 |
+| CONVENTION | 1 | 3.1 |
+| DIY | 17 | 1.3, 1.5, 1.7, 1.8, 1.9, 1.10, 1.11, 2.4, 4.1, 4.2, 4.3, 4.6, 4.7, 5.1, 5.3, 5.5, 6.3, 7.1, 7.2 |
 | NOT-POSSIBLE | 1 | 1.1 |
 
 (Exact per-class membership is listed on each row above; the counts round the two "7-incl" edge rows.)
 eve's strengths cluster in **durable execution, the agent loop, streaming/cancel, health, and the
-provider seam** — the "durable backend agent" runtime story. Its gaps are exactly the aisotropy
-axes: **no memory tiers, no tenant/user/product scope, no pre-spend governance**.
+provider seam** — the "durable backend agent" runtime story. Its "gaps" against the aisotropy axes —
+**no memory tiers, no tenant/user/product scope, no pre-spend governance** — are mostly **out of
+scope by design**, not shortcomings: eve is a session-scoped durable runtime, not a multi-tenant
+memory substrate.
 
-## Run-verified isolation (the 4th axis)
+## Run-verified DIY memory partitioning (the 4th axis eve does not have)
 
-Executed against the real booted server (`node scripts/smoke.mjs`, host `127.0.0.1:4117`):
+Executed against the real booted server (`node scripts/smoke.mjs`, host `127.0.0.1:4117`, eve@0.24.6,
+Node 24.10.0, 2026-07-17):
 
 ```
 PASS  runtime.health  — status=ready workflow=workflow//eve//workflowEntry
-PASS  runtime.info    — model=mock-provider/orbit-mock/deterministic
-PASS  runtime.turn    — "Orbit here. You said: hello Orbit"
+PASS  runtime.info  — model=mock-provider/orbit-mock/deterministic
+PASS  runtime.turn  — "Orbit here. You said: hello Orbit"
 
-## Isolation — 4th scope axis (tenant, user, PRODUCT)
-PASS  strict.positive_control  — key=acme:alice:checkout secret=checkoutSecret_cb0cdd64e0a1ef2d
-PASS  strict.product_isolated  — billing key=acme:alice:billing secret=billingSecret_acd668bf6488f733
-PASS  leaky.cross_product_read — recall(product=billing) returned product=checkout secret? key=acme:alice secret=leakyCheckout_a5f75a733dc5b5c8
-      ^ LEAK: product_id is unbound. Dropping `:${product}` from the developer key
-        crosses products, and TypeScript/eve validate nothing. CONVENTION, not construction.
+## DIY memory partitioning — the (tenant,user,product) axis eve does not have
+PASS  correct_key.positive_control  — key=acme:alice:checkout secret=checkoutSecret_67fe2ee4638c9e9c
+PASS  correct_key.product_partitioned  — billing key=acme:alice:billing secret=billingSecret_90e3cd9f31bd322c
+PASS  naive_key.product_collision  — recall(product=billing) hit product=checkout's slot? key=acme:alice secret=naiveCheckout_682d5f6f1b9004a8
+      ^ Expected: the naive key `${t}:${u}` drops product, so two products share
+        one slot. Same-key/wrong-key dev bug, true of ANY KV incl. BadgerDB — the
+        correct composite key above partitions fine. eve has no tenancy axis by design.
 
-checks=6  proven_cross_product_leaks=1
+checks=6  naive_key_collisions=1  (expected: 1 — the documented DIY footgun)
 ```
 
-**Reading:** the strict key builder `${t}:${u}:${p}` isolates products (own-secret recall PASSes;
-cross-product read returns the *other* product's own secret, not a leak). The **leaky** builder
-`${t}:${u}` — one dropped `:${product}`, and TypeScript is equally happy — makes a `product=billing`
-read return `product=checkout`'s secret. eve binds nothing to memory, so the isolation is entirely
-the developer's key discipline: **CONVENTION**. (In aisotropy `product_id` rides `context.Context`
-inside the value-object `Scope` like tenant/user, so the leaky read is *unrepresentable*.)
+**Reading:** the correct composite key `${t}:${u}:${p}` partitions products (own-secret recall
+PASSes; the cross-product read returns each product's *own* secret) — this is the competent-dev
+path, and it works. The **naive** key `${t}:${u}` (product segment dropped) makes a `product=billing`
+read hit `product=checkout`'s slot. That collision is the classic **same-key/wrong-key developer
+bug true of *any* key-value store — including aisotropy's own BadgerDB** if a scope segment is
+dropped; it is a tautology of DIY keys, not something eve fails to validate (eve has **no tenancy
+axis to validate against — DIY / out-of-scope by design**, exactly like Pydantic AI / Eino). The
+better DIY key derives from the channel-verified identity, not from tool args. aisotropy's narrow
+difference: `product_id` rides `context.Context` inside the value-object `Scope` like tenant/user,
+so the naive read is *unrepresentable* rather than merely avoidable.
 
 ## Dependency license posture (run-verified)
 
@@ -190,7 +200,7 @@ private root):
 ```
 
 Hard-blocker scan (GPL/AGPL/LGPL/BUSL/SSPL/ELv2/Commons-Clause/FSL): **NONE**. Notable prod deps:
-`eve@0.24.5` Apache-2.0, `ai@7.0.29` Apache-2.0, `@ai-sdk/*` Apache-2.0, `nitro`/`rolldown`/`h3`/
+`eve@0.24.6` Apache-2.0, `ai@7.0.29` Apache-2.0, `@ai-sdk/*` Apache-2.0, `nitro`/`rolldown`/`h3`/
 `zod` MIT. eve vendors much internally, so the external tree is unusually small (33 deps) and
 **100% permissive** — it clears aisotropy's hard gate and carries *zero* weak-copyleft (no MPL),
 edging the Python arenas that ship MPL `certifi`.
@@ -200,9 +210,11 @@ edging the Python arenas that ship MPL `certifi`.
 eve is a serious **durable backend-agent runtime**: crash-safe sessions, native tool loops,
 streaming+cancel, subagents, channels, schedules, connections, HITL, sandboxed code, and a real
 evals system — with a clean Apache-2.0 + all-permissive posture. What it deliberately does **not**
-have is aisotropy's differentiators: a **memory-temperature hierarchy** (it has one session KV, no
-vector/FTS/batch tiers), a **tenant/user/product scope bound by construction** (memory has no such
-axis; product isolation is a developer-passed key that leaks on one edit — proven), and **pre-spend
-per-tenant governance** (usage is post-hoc). Its isolation *strength* is at the **session and
-channel** boundary (runtime-owned session ids, fail-closed channel auth) — genuinely by-construction
-there — but that boundary is orthogonal to multi-tenant memory scoping, which stays CONVENTION.
+have — **by design, not as a defect** — is aisotropy's differentiators: a **memory-temperature
+hierarchy** (it has one session KV, no vector/FTS/batch tiers), a **tenant/user/product scope bound
+by construction** (memory has no such axis at all; per-product partitioning is DIY — the correct
+composite key partitions, the naive key collides, a KV tautology), and **pre-spend per-tenant
+governance** (usage is post-hoc). Its isolation *strength* is at the **session and channel**
+boundary (runtime-owned session ids, fail-closed channel auth) — genuinely by-construction there.
+That boundary is simply orthogonal to multi-tenant memory scoping, which is **out of eve's scope**
+(DIY), the same posture as Pydantic AI / Eino.

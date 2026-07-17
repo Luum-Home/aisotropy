@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Build Orbit and run one of its demos against the REAL Spring AI API (no key).
-#   ./scripts/run.sh smoke     -> orbit.SmokeMain            (tenant/user isolation)
-#   ./scripts/run.sh product   -> orbit.ProductIsolationMain (4th scope axis)
+#   ./scripts/run.sh smoke     -> orbit.SmokeMain            (tenant/user isolation, 2 postures)
+#   ./scripts/run.sh product   -> orbit.ProductIsolationMain (4th scope axis, 2 postures)
 #   ./scripts/run.sh features  -> orbit.FeatureDemoMain      (memory / structured output)
-#   ./scripts/run.sh all       -> all three
+#   ./scripts/run.sh strengths -> orbit.StrengthsMain        (STEELMAN: what Spring AI does well)
+#   ./scripts/run.sh all       -> all four
 #
 # Needs network on first run (to fetch Spring AI jars into ~/.m2); offline after.
 set -euo pipefail
@@ -19,12 +20,14 @@ CP="target/classes:$(cat cp.txt)"
 run() { echo "############ $1 ############"; java -cp "$CP" "$2" 2>/dev/null; echo "exit=$?"; echo; }
 
 case "${1:-all}" in
-  smoke)    run "SMOKE (tenant/user)"        orbit.SmokeMain ;;
-  product)  run "PRODUCT ISOLATION (axis 4)" orbit.ProductIsolationMain ;;
-  features) run "FEATURE DEMO"               orbit.FeatureDemoMain ;;
+  smoke)     run "SMOKE (tenant/user)"        orbit.SmokeMain ;;
+  product)   run "PRODUCT ISOLATION (axis 4)" orbit.ProductIsolationMain ;;
+  features)  run "FEATURE DEMO"               orbit.FeatureDemoMain ;;
+  strengths) run "STRENGTHS (steelman)"       orbit.StrengthsMain ;;
   all)
     run "SMOKE (tenant/user)"        orbit.SmokeMain
     run "PRODUCT ISOLATION (axis 4)" orbit.ProductIsolationMain
-    run "FEATURE DEMO"               orbit.FeatureDemoMain ;;
-  *) echo "usage: $0 {smoke|product|features|all}" >&2; exit 2 ;;
+    run "FEATURE DEMO"               orbit.FeatureDemoMain
+    run "STRENGTHS (steelman)"       orbit.StrengthsMain ;;
+  *) echo "usage: $0 {smoke|product|features|strengths|all}" >&2; exit 2 ;;
 esac

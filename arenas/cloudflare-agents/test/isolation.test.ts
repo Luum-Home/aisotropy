@@ -12,13 +12,29 @@
 //
 //   PART B — the tenant/user/product -> object MAPPING is developer convention:
 //     the name is a string the developer assembles. Drop the product_id segment
-//     and two products collapse onto ONE object and share ONE SQLite -> leak.
-//     The framework binds the name to nothing. Same failure class as the others.
+//     and two products collapse onto ONE object and share ONE SQLite. This is a
+//     same-key collision — a developer bug, NOT a framework defect. It is
+//     tautologically true of ANY name->object map (aisotropy's own Scope
+//     included): build the wrong key, address the wrong store. Same failure
+//     CLASS as Eino's dropped checkpoint segment or LangGraph's short prefix.
+//
+//   PART C — the STRONG path closes PART B: derive the DO name from VERIFIED
+//     claims (must-agree bind) instead of caller-supplied path text, so a caller
+//     cannot address a scope it was not authorized for. The SDK gives the seam
+//     (`onBeforeConnect` on the routing path); binding it to identity is the
+//     developer's middleware — the same shape as aisotropy's ADR-0024 JWT bind.
 
 import { env } from "cloudflare:test";
 import { getAgentByName } from "agents";
 import { describe, expect, it } from "vitest";
-import { orbitName, type Env, type OrbitAgent } from "../src/index";
+import {
+  orbitName,
+  nameFromClaims,
+  resolveVerifiedName,
+  verifyOrbitToken,
+  type Env,
+  type OrbitAgent,
+} from "../src/index";
 
 const ns = () => env.OrbitAgent;
 const SECRET = "ORBIT-SECRET-acme-alice-productX-42";
@@ -71,7 +87,7 @@ describe("Cloudflare Agents — per-Durable-Object SQLite isolation", () => {
     expect(hist.every((t) => !t.text.includes("productX"))).toBe(true);
   });
 
-  it("PART B: DROPPING product_id from the name collapses two products onto ONE object (LEAK)", async () => {
+  it("PART B: dropping the product axis makes two products share ONE object (same-key collision, a developer bug — not a framework defect)", async () => {
     // The "buggy" developer assembles the name WITHOUT the product axis.
     // Both productX and productY now resolve to the SAME Durable Object.
     const buggyName = (tenant: string, user: string) => `${tenant}|${user}`; // product_id forgotten
@@ -80,21 +96,63 @@ describe("Cloudflare Agents — per-Durable-Object SQLite isolation", () => {
     await asProductX.remember("secret", SECRET); // written "as productX"
 
     const asProductY = await agent(buggyName("acme", "alice")); // "serving productY"
-    const leaked = await asProductY.recall("secret");
+    const collided = await asProductY.recall("secret");
 
-    // productY reads productX's secret — because they share one object/SQLite.
-    // The framework did nothing wrong; the developer-assembled key was wrong.
-    expect(leaked).toBe(SECRET);
+    // productY reads productX's secret — because the wrong key addressed the same
+    // object. The framework did nothing wrong; the developer built the wrong key.
+    // This is true of ANY name->object map, aisotropy's Scope included.
+    expect(collided).toBe(SECRET);
   });
 
-  it("PART B: WRONG product substitution addresses the wrong (but still isolated) object", async () => {
+  it("PART B: asking for the wrong object returns the wrong object (addressing, not a leak — a tautology of any name->object map)", async () => {
     const px = await agent(orbitName("acme", "alice", "productX"));
     await px.remember("secret", SECRET);
 
-    // A handler that is *supposed* to serve productY but builds the name with
-    // productX reads productX's data. Nothing validates the product segment
-    // against the authenticated caller — product_id is an unbound string.
-    const wrong = await agent(orbitName("acme", "alice", "productX")); // should have been productY
-    expect(await wrong.recall("secret")).toBe(SECRET);
+    // A handler that *intends* to serve productY but builds the name with
+    // productX simply addresses productX. There is no cross-object read here —
+    // "ask for X, get X" is not a leak, it is what addressing means. The real
+    // fix is not in the store; it is binding the name to a verified caller
+    // (PART C), so the wrong name can never be built in the first place.
+    const asked = await agent(orbitName("acme", "alice", "productX")); // intended productY
+    expect(await asked.recall("secret")).toBe(SECRET);
+  });
+});
+
+describe("Cloudflare Agents — the STRONG path: bind the name to verified identity", () => {
+  it("PART C: the DO name is derived from VERIFIED claims, not caller-supplied path text", async () => {
+    const claims = verifyOrbitToken("Bearer tok:acme|alice|productX");
+    expect(claims).toEqual({ tenant: "acme", user: "alice", product: "productX" });
+
+    const a = await agent(nameFromClaims(claims!));
+    await a.remember("secret", SECRET);
+    expect(await a.recall("secret")).toBe(SECRET);
+  });
+
+  it("PART C: must-agree bind REJECTS a caller asking for a product its token does not authorize (403, before any object is addressed)", async () => {
+    // URL says productY; the token only authorizes productX. Rejected on the
+    // routing path — the DO is never woken, so PART B's mis-address is unreachable.
+    const r = resolveVerifiedName(
+      { tenant: "acme", user: "alice", product: "productY" },
+      "Bearer tok:acme|alice|productX",
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.status).toBe(403);
+  });
+
+  it("PART C: a self-consistent, verified request resolves to exactly its own object and no other", async () => {
+    const r = resolveVerifiedName(
+      { tenant: "acme", user: "alice", product: "productX" },
+      "Bearer tok:acme|alice|productX",
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const a = await agent(r.name);
+      await a.remember("k", "v");
+
+      // The rejected wrong-product caller can never reach this object; a
+      // correctly-named sibling is still a physically separate SQLite.
+      const py = await agent(orbitName("acme", "alice", "productY"));
+      expect(await py.recall("k")).toBeNull();
+    }
   });
 });

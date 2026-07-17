@@ -93,11 +93,14 @@ def run() -> bool:
 
     print()
     if leaked:
-        print("Result: CROSS-PRODUCT LEAK CONFIRMED — same tenant+user, wrong product reads the marker")
-        print("  Dify has NO product_id anywhere; a 'product' is app_id convention (leaky) or an")
-        print("  unbound tag. The RAG/knowledge plane has no product boundary at all.")
+        print("Result: no product boundary exists to enforce — same tenant+user, wrong product")
+        print("  reads the marker. This is not a Dify 'leak' so much as a MISSING AXIS: Dify has")
+        print("  NO product_id anywhere, so 'product' can only be app_id convention (the same")
+        print("  shared-schema gate a dev may drop) or an unbound tag. The RAG/knowledge plane")
+        print("  has no product column at all, so even the tenant-CORRECT read crosses products.")
     print("  vs. aisotropy: product_id rides ctx in the Scope value-object like tenant/user —")
-    print("  enforced per-statement; the cross-product read is unrepresentable.")
+    print("  enforced per-statement; the cross-product read is unrepresentable. (A framework")
+    print("  without the axis isn't 'buggy' — it just doesn't model this fourth boundary.)")
     return leaked
 
 

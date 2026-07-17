@@ -49,16 +49,28 @@ build one honestly.
 
 ## The painful
 
-### `conversationId` binds to nothing — the isolation story is entirely yours
-This is the crux. The whole memory contract is keyed by a single opaque `String conversationId`
-(`ChatMemory.get(String)`), and `ChatMemoryRepository.findConversationIds()` returns **every
-tenant's** ids with no filter. Nothing binds a conversation to an authenticated principal. To scope
-Orbit by (tenant, user, product, session) you hand-concatenate them into that one string — and that
-flat, **unescaped** join is the entire isolation boundary. I reproduced three leaks on the real
-memory plane with the same tenant+user: wrong-product substitution, org-wide enumeration, and a
-**delimiter-injection collision** where `user="alice|productX"` and `product="alice", "productX"`
-map to the identical key. The framework validates none of it. Spring Security makes the *correct*
-path idiomatic to wire — but the leaky path is one string away and the type system does nothing.
+### `conversationId` has no framework-enforced identity binding — the isolation story is yours to construct
+This is the crux, stated fairly. The memory contract is keyed by a `String conversationId`
+(`ChatMemory.get(String)`) that the developer owns; nothing in the framework binds it to an
+authenticated principal. That cuts both ways, and I ran both:
+
+- **Naive convention (the bug).** If you let a caller supply/reuse the id, or fold four axes into a
+  flat *unescaped* `"|"` join, you get the failures I reproduced: a wrong caller reads the wrong
+  memory, a dropped/mis-passed product segment substitutes, and a delimiter forgery lets
+  `user="alice|productX"` serialize to another identity's key. But this is a **developer
+  key-composition bug**, not a Spring AI defect — any keyed store (aisotropy's own BadgerDB/rqlite/
+  Qdrant included) behaves the same under an unauthorized key, and the collision is an artifact of a
+  key *format* I chose. Note too that `findConversationIds()` is an **admin/maintenance surface**,
+  not something a request handler should ever call with a foreign id.
+- **Correct construction (the fix, one screen of code).** Derive the `conversationId` from the
+  verified principal, read through a facade that recomputes it server-side, and use a
+  structured/escaped key. In Part B of both demos the cross-tenant and cross-product reads become
+  structurally impossible and a smuggled foreign id is refused. Spring Security producing the
+  principal makes this the *most* idiomatic DIY of any arena.
+
+So the honest, narrower point is not "it leaks" but: **isolation here is a convention you construct,
+not a default the framework guarantees.** aisotropy ships the equivalent of Part B by default as an
+unforgeable `Scope`; Spring AI gives you excellent rails to build it and lets you skip them.
 
 ### One memory nature, not a hierarchy
 `ChatMemory` is a message window; `VectorStore` is a separate module. There is no full-text/facts

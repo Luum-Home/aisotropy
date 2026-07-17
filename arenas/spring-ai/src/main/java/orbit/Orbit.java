@@ -29,12 +29,17 @@ import org.springframework.ai.chat.prompt.Prompt;
  *   chatModel  = EchoChatModel   // deterministic fake, implements the real ChatModel
  * </pre>
  *
- * <p><b>The isolation crux is visible right here.</b> Spring AI keys ALL conversation memory
- * by a single opaque {@code String conversationId} (see {@link ChatMemory#get(String)} and
+ * <p><b>The isolation surface is visible right here.</b> Spring AI keys conversation memory by a
+ * single opaque {@code String conversationId} (see {@link ChatMemory#get(String)} and
  * {@link ChatMemoryRepository#findByConversationId(String)}). There is no tenant, user, product,
- * or authenticated-principal dimension anywhere in the memory API. To scope Orbit's memory by
- * four axes the developer must hand-concatenate them into that one string — {@link #convId} —
- * and the framework validates NOTHING about it.
+ * or authenticated-principal dimension in the memory API itself: the {@code conversationId} is a
+ * developer-owned string with no framework-enforced identity binding. Isolation is therefore a
+ * convention the developer constructs, not a default the framework guarantees. Done naively
+ * (caller-controlled / flat-unescaped key) a wrong key cross-reads — the same property any keyed
+ * store has with no auth layer above it (see {@code SmokeMain} Part A). Done correctly
+ * (conversationId derived from a verified principal, read through an identity-binding facade) the
+ * cross-read is unrepresentable (Part B). {@link #convId} shows the naive flat join; the demos
+ * show both postures.
  */
 public final class Orbit {
 
@@ -90,10 +95,13 @@ public final class Orbit {
     }
 
     /**
-     * The developer-authored composite key. Spring AI has no notion of these four axes — this
-     * flat join is the ENTIRE isolation boundary, unescaped and unvalidated. Two distinct
-     * identities whose segments collide across the delimiter map to the same key (see
-     * {@code ProductIsolationMain} leak 3).
+     * The developer-authored composite key, shown in its NAIVE flat form. Spring AI has no notion of
+     * these four axes, so the developer composes them. This particular format — a bare "|" join with
+     * no escaping — is a footgun the developer controls: two distinct identities whose segments
+     * embed the delimiter can serialize to the same string (see {@code ProductIsolationMain} Part A
+     * bug 2). A structured/escaped key derived from a verified identity ({@code ProductIsolationMain}
+     * Part B, {@code SmokeMain} Part B) removes that; the flat join here is deliberately the weak
+     * form so the demos can contrast it with the correct one.
      */
     public static String convId(String tenant, String user, String product, String session) {
         return tenant + "|" + user + "|" + product + "|" + session;
