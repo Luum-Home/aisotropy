@@ -1,0 +1,6 @@
+# Live-arena shared embed server deps. All permissive (MIT/BSD/Apache-2.0),
+# passes the repo constitutional license gate.
+fastapi>=0.110          # MIT
+uvicorn>=0.29           # BSD-3
+pydantic>=2.6           # MIT
+sentence-transformers>=2.7  # Apache-2.0  (pulls torch BSD-3 + transformers Apache-2.0)

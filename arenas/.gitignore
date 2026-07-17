@@ -33,3 +33,8 @@ target/
 # misc build/cache
 dist/
 .turbo/
+
+# live arena — compiled adapter/runner binaries (built on demand, never committed)
+/live/aisotropy/adapter-bin
+/live/runner/runner
+/live/*/adapter-bin
