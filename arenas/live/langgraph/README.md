@@ -736,6 +736,20 @@ is unchanged by this build. `crash_recovery` also adds **zero new dependencies**
 same `langgraph-checkpoint-sqlite` package `memory` mode already depends on, against a separate
 on-disk file.
 
+### LangChain suite: what this entrant uses vs the rest of the ecosystem
+
+This adapter is ONE competing framework (**LangGraph**), using five MIT LangChain-ecosystem packages:
+`langgraph` (the runtime), `langchain-core` (base abstractions + the callback system bridged to OTel),
+`langchain-openai` (`ChatOpenAI` → agnes), `langchain-qdrant` (RAG retriever), and
+`langgraph-checkpoint-sqlite` (the `SqliteSaver` checkpointer behind `memory` + `crash_recovery`).
+
+The rest of the Lang\* suite is **deliberately out of scope**: **LangSmith** and **LangGraph Platform /
+Studio** are hosted SaaS observability/deploy products, not in-process runtimes — they cannot be an
+apples-to-apples stdin→stdout adapter and would export arena data off-box; **LangServe** is deprecated;
+**Deep Agents** is an OSS layer *on top of* LangGraph (LangGraph is the fair base to test); **LangFlow**
+is a separate project (not LangChain, Inc.). Full ecosystem map + rationale:
+`docs/research/langchain-suite-map-2026-07-17.md`.
+
 ### Direct dependencies
 
 | Package | Version | License | Added for |
