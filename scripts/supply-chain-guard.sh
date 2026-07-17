@@ -26,16 +26,20 @@
 #   3. build-context secret scan    — ADVISORY. Flags tracked files matching the
 #      patterns .dockerignore excludes (.env, *.pem, *.key, *secret*), so a secret
 #      is noticed before a COPY . . in any builder stage could bake it into a layer.
+#   4. example modules build        — BLOCKING. `go build -tags keybroker ./...` +
+#      `go vet` in each examples/* module. Catches public-API rot: a break in the
+#      aisotropy/ façade that a copied example would hit — the root `go test ./...`
+#      never descends into the separate example modules, so nothing else catches it.
 #
-# NOTE ON MODULES: only the ROOT module is scanned (internal/…, aisotropy, cmd/…).
-# arenas/* and examples/* are separate Go modules (runnable demos, not the shipped
-# runtime) and are out of scope here, matching .github/workflows/ci.yml.
+# NOTE ON MODULES: only the ROOT module is vuln-scanned (internal/…, aisotropy, cmd/…);
+# arenas/* stay out of scope. examples/* are separate modules but ARE build-gated
+# (check 4), so a public-surface break that would hit a copied demo fails the push.
 #
 # USAGE:   scripts/supply-chain-guard.sh        # run all checks from anywhere in the repo
 #          Installed as .git/hooks/pre-push by scripts/install-hooks.sh.
 # BYPASS:  SKIP_SUPPLY_CHAIN_GUARD=1 git push …   (emergency escape; or git push --no-verify)
 # EXIT:    0 = clean (advisories may still have printed)
-#          1 = BLOCKED (govulncheck found a reachable known-exploitable CVE)
+#          1 = BLOCKED (reachable known-exploitable CVE, or an example module failed to build)
 #          2 = usage / environment error
 set -uo pipefail
 
@@ -95,12 +99,33 @@ else
   echo "   no tracked files match .env / *.pem / *.key / *secret*."
 fi
 
+# --- 4. example modules build (BLOCKING) ---
+echo
+echo "4) example modules build  (examples/* — catch public-surface rot in the demos)"
+ex_fail=""
+for gm in examples/*/go.mod; do
+  [ -f "$gm" ] || continue
+  ex_dir="$(dirname "$gm")"
+  # -tags keybroker so the RunTask/RunTasks demos (task-agent, task-fanout) compile too.
+  if ! ( cd "$ex_dir" && go build -tags keybroker ./... && go vet -tags keybroker ./... ) >/dev/null 2>&1; then
+    ex_fail="$ex_fail ${ex_dir}"
+  fi
+done
+if [ -n "$ex_fail" ]; then
+  echo "   BUILD FAILED for example module(s):$ex_fail"
+  echo "   A public-surface change in aisotropy/ broke a demo an adopter would copy."
+  echo "   Fix the example (or 'go mod tidy' in it if a dependency drifted)."
+  BLOCKED=1
+else
+  echo "   all example modules build + vet clean."
+fi
+
 # --- VERDICT ---
 echo
 echo "==================================================================="
 if [ "$BLOCKED" -eq 1 ]; then
-  echo " VERDICT: BLOCKED — fix the reachable vulnerability before pushing."
-  echo " (bump the affected module, or bypass once with SKIP_SUPPLY_CHAIN_GUARD=1 / --no-verify.)"
+  echo " VERDICT: BLOCKED — fix the failing check(s) above before pushing."
+  echo " (bump the affected module / fix the example, or bypass once with SKIP_SUPPLY_CHAIN_GUARD=1 / --no-verify.)"
   echo "==================================================================="
   exit 1
 fi
