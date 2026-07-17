@@ -21,18 +21,24 @@
 // tenant's) audit entries. Retention, rotation, and access control of the sink
 // (the JSONL file or the log pipeline) are operator responsibilities.
 //
-// Tamper-evidence (honest residual): the JSONL file sink is append-only and
+// Tamper-evidence (honest residual): the plain JSONL file sink is append-only and
 // retained, but it is NOT cryptographically tamper-evident — an operator (or an
 // attacker with write access to the file) can edit or truncate it, and nothing in
-// the file proves that it was not. A hash-chained / WORM sink (each line commits
-// to the prior line's digest, or an append-only object store with an
-// object-lock/retention policy) is the named follow-on for deployments that need
-// tamper-EVIDENCE, not merely retention. Do not represent this sink as tamper-proof.
+// the file proves that it was not. The opt-in HashChainedSink (ADR-0056, selected
+// by AISOTROPY_AUDIT_HASHCHAIN; see hashchain.go) closes that gap for edits,
+// removals, and reorders of PAST records: each line commits to the prior line's
+// digest, and VerifyChain re-walks the chain to detect any break. Its residual is
+// stated honestly: a hash chain is tamper-EVIDENT, not tamper-PROOF — an attacker
+// with write access can recompute the whole chain forward (or truncate the tail),
+// so a true append-only/WORM store or an external anchor (periodic notarization of
+// the head digest to an independent system) is the further follow-on. Do not
+// represent either sink as tamper-proof.
 package audit
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -53,6 +59,15 @@ const EnvLogPath = "AISOTROPY_AUDIT_LOG"
 // whole point of this package is that the DEFAULT always produces a trail, so an
 // operator must set this consciously to turn auditing off.
 const EnvDisable = "AISOTROPY_AUDIT_DISABLE"
+
+// EnvHashChain, when truthy (per strconv.ParseBool), upgrades the durable JSONL
+// file sink to the tamper-EVIDENT HashChainedSink (ADR-0056): each record commits
+// to the prior record's digest, so any edit, removal, or reorder of a past record
+// is detectable by re-verifying the chain (see VerifyChain). It requires a durable
+// file — AISOTROPY_AUDIT_LOG must also be set, because a hash chain has no meaning
+// without a persisted sequence to chain over; FromEnv fails closed if it is not.
+// The chain is tamper-evident, not tamper-proof: see the package doc and ADR-0056.
+const EnvHashChain = "AISOTROPY_AUDIT_HASHCHAIN"
 
 // Event is one access-audit record: identity + request metadata for a single
 // served request. It carries NO prompt body, NO model response, NO headers, NO
@@ -95,8 +110,10 @@ type Sink interface {
 // FromEnv selects the audit sink from the environment:
 //
 //   - AISOTROPY_AUDIT_DISABLE truthy            -> NopSink (explicit opt-out).
+//   - AISOTROPY_AUDIT_HASHCHAIN truthy          -> tamper-evident HashChainedSink
+//     at AISOTROPY_AUDIT_LOG (which MUST be set; fails closed otherwise).
 //   - AISOTROPY_AUDIT_LOG=<path> set            -> durable JSONLSink at <path>.
-//   - neither                                   -> SlogSink on a dedicated
+//   - none                                      -> SlogSink on a dedicated
 //     "access_audit" logger (the default: always an access trail).
 //
 // A set-but-unopenable AISOTROPY_AUDIT_LOG returns an error rather than silently
@@ -108,12 +125,24 @@ func FromEnv() (Sink, error) {
 		slog.Warn("access-audit log DISABLED via " + EnvDisable + ": no durable who-accessed-what-tenant-when trail is being recorded")
 		return NopSink{}, nil
 	}
-	if path := os.Getenv(EnvLogPath); path != "" {
+	path := os.Getenv(EnvLogPath)
+	if hashChain, _ := strconv.ParseBool(os.Getenv(EnvHashChain)); hashChain {
+		if path == "" {
+			return nil, fmt.Errorf("audit: %s is set but %s is not: a tamper-evident hash chain requires a durable file to chain over (fail closed)", EnvHashChain, EnvLogPath)
+		}
+		sink, err := NewHashChainedSink(path)
+		if err != nil {
+			return nil, fmt.Errorf("audit: open tamper-evident hash-chain log %q (%s): %w", path, EnvLogPath, err)
+		}
+		slog.Info("access-audit log: tamper-evident hash-chained JSONL file sink enabled", "path", path)
+		return sink, nil
+	}
+	if path != "" {
 		sink, err := NewJSONLSink(path)
 		if err != nil {
 			return nil, fmt.Errorf("audit: open durable log %q (%s): %w", path, EnvLogPath, err)
 		}
-		slog.Info("access-audit log: durable JSONL file sink enabled", "path", path)
+		slog.Info("access-audit log: durable JSONL file sink enabled (set "+EnvHashChain+"=1 to upgrade to a tamper-evident hash chain)", "path", path)
 		return sink, nil
 	}
 	slog.Info("access-audit log: slog sink enabled (set " + EnvLogPath + "=<path> to upgrade to a durable, retained JSONL file)")
@@ -152,12 +181,23 @@ func (s *JSONLSink) Record(e Event) {
 		return
 	}
 	line = append(line, '\n')
-	s.mu.Lock()
-	_, werr := s.f.Write(line)
-	s.mu.Unlock()
-	if werr != nil {
+	if werr := s.writeLine(line); werr != nil {
 		slog.Error("audit: write event failed; dropping", "err", werr)
 	}
+}
+
+// writeLine appends a single pre-marshaled, newline-terminated line to the
+// O_APPEND file under the mutex, so concurrent callers cannot interleave partial
+// lines. It is the shared write primitive reused by HashChainedSink. It returns
+// an error (rather than logging) so the caller decides how to surface it.
+func (s *JSONLSink) writeLine(line []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.f == nil {
+		return errors.New("audit: sink is closed")
+	}
+	_, err := s.f.Write(line)
+	return err
 }
 
 // Close fsyncs and closes the underlying file. A Sync error is logged but does
