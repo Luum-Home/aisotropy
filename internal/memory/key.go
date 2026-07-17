@@ -41,6 +41,26 @@ func ValidateIdentityComponent(field, value string) error {
 	return nil
 }
 
+// SubjectPrefix returns the BadgerDB key prefix that bounds EVERY
+// working-memory key for a single (tenant,user) subject across ALL of that
+// subject's sessions: "tenant:{tenant}:user:{user}:". It is the primitive
+// behind subject-level erasure (GDPR Art.17, see WorkingMemory.EraseSubject):
+// both components are validated by the same reserved-character rule
+// Key.Validate applies, so a blank or malformed identity is rejected here
+// rather than producing a wildcard prefix that could span subjects. The
+// trailing ":" delimiter makes the prefix exact — user "a" can never match
+// user "ab", because the reserved ":" cannot appear inside a component, so
+// "tenant:t:user:a:" is not a prefix of "tenant:t:user:ab:".
+func SubjectPrefix(tenant, user string) ([]byte, error) {
+	if err := ValidateIdentityComponent("tenant", tenant); err != nil {
+		return nil, err
+	}
+	if err := ValidateIdentityComponent("user", user); err != nil {
+		return nil, err
+	}
+	return []byte(fmt.Sprintf("tenant:%s:user:%s:", tenant, user)), nil
+}
+
 // Key identifies a single chat session's working-memory buffer, scoped by
 // tenant and user. All three components are mandatory and explicit by
 // design: a Key must never be built by ad hoc string concatenation

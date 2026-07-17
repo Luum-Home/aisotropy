@@ -105,7 +105,9 @@ func (p *PodmanProvider) Create(ctx context.Context, spec Spec) (Sandbox, error)
 // idle container that Create launches:
 //
 //	run -d --name <name> -w <workdir> [--userns=keep-id…] [--user u:g]
-//	    [--runtime=<rt>] [-v src:tgt[:ro]…] [-e K=V…]
+//	    [--runtime=<rt>] --network=none --cap-drop=ALL
+//	    --security-opt=no-new-privileges --read-only --tmpfs /tmp
+//	    --pids-limit 256 --memory 512m --cpus 1.0 [-v src:tgt[:ro]…] [-e K=V…]
 //	    --entrypoint sleep <image> infinity
 //
 // It is a pure function of (name, workdir, spec) with no I/O, so both the
@@ -138,6 +140,11 @@ func (p *PodmanProvider) podmanRunArgs(name, workdir string, spec Spec) []string
 		// runsc) straight through. Empty leaves podman's default (crun/runc).
 		args = append(args, "--runtime="+spec.Runtime)
 	}
+	// Secure-by-default isolation + resource limits (shared with docker). Applied
+	// to every container unless the Spec explicitly widens a knob. See hardening.go.
+	// These compose with rootless podman: cap-drop/no-new-privileges/read-only and
+	// the resource caps sit on top of the user-namespace isolation keep-id gives.
+	args = append(args, hardeningFlags(spec)...)
 	for _, m := range spec.BindMounts {
 		v := m.Source + ":" + m.Target
 		if m.ReadOnly {

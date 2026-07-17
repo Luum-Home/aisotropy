@@ -219,6 +219,24 @@ func (s *RqliteStore) Delete(ctx context.Context, sc Scope, ids []string) error 
 	return nil
 }
 
+// EraseScope deletes every fact — current and superseded — for sc's
+// (tenant,user) in one rqlite request, returning the number of rows removed.
+// See facts.ScopeEraser. The scope predicate is the isolation gate; idempotent
+// (a subject with no rows returns (0, nil)).
+func (s *RqliteStore) EraseScope(ctx context.Context, sc Scope) (int, error) {
+	wr, err := s.conn.WriteOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
+		Query:     eraseScopeSQL,
+		Arguments: []any{sc.Tenant(), sc.User()},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("facts: rqlite erase scope: %w", err)
+	}
+	if wr.Err != nil {
+		return 0, fmt.Errorf("facts: rqlite erase scope: %w", wr.Err)
+	}
+	return int(wr.RowsAffected), nil
+}
+
 // Close closes the HTTP connection to rqlite.
 func (s *RqliteStore) Close() error {
 	s.conn.Close()

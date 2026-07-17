@@ -22,6 +22,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"strconv"
@@ -30,20 +31,73 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/api"
 )
 
+// defaultAddr mirrors aisotropy.App.Run's fallback when AISOTROPY_ADDR is unset,
+// so the boot-time NoAuth non-loopback guard evaluates the SAME address the server
+// will actually bind. (App.Run: default AISOTROPY_ADDR, or ":8080".)
+const defaultAddr = ":8080"
+
+// authBootDecision is the boot-time outcome of resolving authentication from the
+// environment: either PROCEED (a non-nil Authenticator + a mode label for logging)
+// or REFUSE to boot with an operator-facing reason. refuse is empty on success and,
+// when set, never contains secret material (the underlying config errors report
+// lengths/paths/formats only, never key bytes).
+type authBootDecision struct {
+	authr  aisotropy.Authenticator
+	mode   string
+	refuse string
+}
+
+// resolveAuthBoot turns AuthenticatorFromEnv plus the NoAuth non-loopback guard into
+// a single, testable boot decision. It is pure w.r.t. process state (reads only the
+// environment via the aisotropy helpers) and performs NO logging or os.Exit, so the
+// exact refuse/allow policy can be unit-tested without driving main(). addr is the
+// resolved listen address the server will bind.
+func resolveAuthBoot(addr string) authBootDecision {
+	authr, mode, err := aisotropy.AuthenticatorFromEnv()
+	switch {
+	case errors.Is(err, aisotropy.ErrNoAuthenticator):
+		// No JWT configured and NoAuth was not explicitly opted into: refuse to
+		// come up wide open by omission.
+		return authBootDecision{refuse: "no authentication is configured. Set AISOTROPY_JWT_SECRET " +
+			"(HS256), AISOTROPY_JWT_PUBLIC_KEY[_FILE] (RS256), or AISOTROPY_JWT_JWKS_URL (RS256 JWKS) to " +
+			"enable JWT authentication, OR explicitly set AISOTROPY_ALLOW_NOAUTH=1 to run WITHOUT " +
+			"authentication (local dev only — path tenant_id/user_id are then trusted with no credential)."}
+	case err != nil:
+		// Malformed/weak config (short HS256 secret, bad max-ttl, ambiguous modes,
+		// unparseable key). err reports lengths/formats/paths only, never the secret.
+		return authBootDecision{refuse: "invalid authentication configuration " +
+			"(check AISOTROPY_JWT_SECRET length and AISOTROPY_JWT_MAX_TTL format): " + err.Error()}
+	}
+	if mode == "noauth" {
+		// NoAuth was explicitly opted in; still refuse on a non-loopback bind unless
+		// the operator ALSO set AISOTROPY_ALLOW_NOAUTH_NONLOCAL=1.
+		if gErr := aisotropy.NoAuthNonLocalGuard(addr); gErr != nil {
+			return authBootDecision{refuse: "NoAuth (no credential verification) requested on the " +
+				"non-loopback bind address " + addr + ". Bind AISOTROPY_ADDR to loopback " +
+				"(127.0.0.1/localhost/::1) for local dev, configure a JWT authenticator, or set " +
+				"AISOTROPY_ALLOW_NOAUTH_NONLOCAL=1 to override (STRONGLY discouraged)."}
+		}
+	}
+	return authBootDecision{authr: authr, mode: mode}
+}
+
 func main() {
-	// Authentication is SECURABLE BY CONFIG: AuthenticatorFromEnv reads
-	// AISOTROPY_JWT_SECRET and returns either a real HS256 JWT authenticator or
-	// the explicit NoAuth opt-out, so an operator can secure the shipped binary
-	// without forking or embedding the library. A weak signing secret (below the
-	// HS256 minimum) or a malformed AISOTROPY_JWT_MAX_TTL is a fatal config fault:
-	// the binary REFUSES TO BOOT rather than come up on a brute-forceable key.
-	// The error never contains the secret value.
-	authr, authMode, authErr := aisotropy.AuthenticatorFromEnv()
-	if authErr != nil {
-		slog.Error("aisotropyd refusing to start: invalid authentication configuration "+
-			"(check AISOTROPY_JWT_SECRET length and AISOTROPY_JWT_MAX_TTL format)", "err", authErr)
+	// Authentication is SECURABLE BY CONFIG and SECURE BY DEFAULT: AuthenticatorFromEnv
+	// returns a real JWT authenticator when a secret/key is set, and NoAuth ONLY when
+	// AISOTROPY_ALLOW_NOAUTH=1 is explicitly set. Absent both, resolveAuthBoot reports a
+	// refusal and the binary exits non-zero rather than coming up wide open by omission.
+	// A weak signing secret, a malformed AISOTROPY_JWT_MAX_TTL, or NoAuth on a
+	// non-loopback interface are likewise fatal. No refusal message contains the secret.
+	addr := os.Getenv("AISOTROPY_ADDR")
+	if addr == "" {
+		addr = defaultAddr
+	}
+	dec := resolveAuthBoot(addr)
+	if dec.refuse != "" {
+		slog.Error("aisotropyd refusing to start: " + dec.refuse)
 		os.Exit(1)
 	}
+	authr, authMode := dec.authr, dec.mode
 
 	app := aisotropy.New(
 		// Scope-gated demo tools (Phase 7 behavior axis): read_financials and
@@ -73,8 +127,8 @@ func main() {
 		slog.Info("aisotropyd authentication enabled: verifying RS256 bearer JWTs against a static RSA public key (AISOTROPY_JWT_PUBLIC_KEY[_FILE] is set).")
 	case "jwt-rs256-jwks":
 		slog.Info("aisotropyd authentication enabled: verifying RS256 bearer JWTs against a JWKS endpoint (AISOTROPY_JWT_JWKS_URL is set).")
-	default:
-		slog.Warn("aisotropyd is running in NoAuth (insecure) mode: path tenant_id/user_id are trusted with no credential verification. " +
+	default: // "noauth" — reached only via an explicit AISOTROPY_ALLOW_NOAUTH=1 opt-in
+		slog.Warn("aisotropyd is running in NoAuth (insecure) mode: path tenant_id/user_id are trusted with no credential verification (AISOTROPY_ALLOW_NOAUTH is set). " +
 			"Set AISOTROPY_JWT_SECRET (HS256), AISOTROPY_JWT_PUBLIC_KEY[_FILE] (RS256), or AISOTROPY_JWT_JWKS_URL (RS256 JWKS) to enable JWT authentication for any non-local deployment.")
 	}
 

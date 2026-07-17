@@ -78,4 +78,11 @@ FROM facts WHERE superseded_by = '' ORDER BY id;`
 	// deleteSQL removes one fact by id within scope (isolation gate on the
 	// cleanup write). Unknown ids no-op.
 	deleteSQL = `DELETE FROM facts WHERE tenant_id = ? AND user_id = ? AND id = ?;`
+
+	// eraseScopeSQL removes EVERY fact — current and superseded — for a
+	// (tenant,user), the subject-erasure primitive behind GDPR Art.17
+	// (ScopeEraser). Unlike deleteSQL it is not keyed by id: it clears the whole
+	// subject in one statement. The scope predicate is the isolation gate, and
+	// the FTS5 delete trigger keeps the external-content index in sync row by row.
+	eraseScopeSQL = `DELETE FROM facts WHERE tenant_id = ? AND user_id = ?;`
 )

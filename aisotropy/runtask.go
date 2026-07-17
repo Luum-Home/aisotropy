@@ -4,10 +4,22 @@ package aisotropy
 
 import (
 	"context"
+	"time"
 
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/taskagent"
 )
+
+// DefaultTaskTimeout is the wall-clock deadline applied to a task whose caller
+// supplied neither a ctx deadline nor a TaskRequest.MaxDuration. It bounds a
+// runaway sandboxed task (an injected loop, a hung command) so it cannot idle the
+// host process forever. ctx cancellation already tears down `docker exec`; this
+// guarantees the cancellation actually fires without an operator watching.
+//
+// It re-exports taskagent.DefaultTaskTimeout — the single source of truth. The
+// deadline is enforced inside the task runner (taskagent.RunTask) so it bounds
+// both a single RunTask AND each task of a RunTasks fan-out identically.
+const DefaultTaskTimeout = taskagent.DefaultTaskTimeout
 
 // TaskRequest is the input to App.RunTask: a sandboxed, agentic coding task run
 // against a git repository. It is the public, provider-agnostic projection of the
@@ -26,6 +38,15 @@ type TaskRequest struct {
 	Image string
 	// MaxSteps bounds the agent loop; <= 0 uses the runtime default.
 	MaxSteps int
+	// MaxDuration is the wall-clock deadline for the whole task. <= 0 applies
+	// DefaultTaskTimeout when the caller's ctx has no deadline of its own (a
+	// caller-supplied ctx deadline is always respected). It is the time-based
+	// companion to MaxSteps: MaxSteps caps agent iterations, MaxDuration caps how
+	// long a single command (or the whole run) may take before ctx cancellation
+	// tears the sandbox down. Honored by App.RunTask AND per-task in the
+	// App.RunTasks batch fan-out — one runaway task in a batch is bounded exactly
+	// like a single RunTask, independent of the batch's own ctx. Optional.
+	MaxDuration time.Duration
 	// Scopes are the granted tool scopes gating which hands the model may use. Pass
 	// SandboxToolScopes() for the full set, or a subset to restrict it. An empty
 	// slice offers the model no tools (it can only answer directly).
@@ -40,6 +61,15 @@ type TaskRequest struct {
 	// BranchStrategy decides what happens to the commits the task produced: the
 	// zero value MergeToHead merges the task branch into the repo's HEAD;
 	// ReturnBranch leaves them on the task branch for you to review/merge.
+	//
+	// SECURITY (supply chain): the zero value auto-merges an agent's commits into
+	// your HEAD with no human gate. When the Prompt is UNTRUSTED
+	// (attacker-influenced, from an end user, an issue tracker, etc.) that is a
+	// supply-chain risk — the model can be steered into committing hostile code
+	// that then lands in HEAD automatically. For untrusted prompts set
+	// ReturnBranch (review-before-merge) and merge only after inspecting the
+	// branch; reserve the MergeToHead default for trusted/reviewed task sources.
+	// See docs/architecture/task-branch-strategy-trust.md.
 	BranchStrategy BranchStrategy
 
 	// SessionID, when non-empty AND paired with a non-nil SessionStore, enrolls
@@ -154,11 +184,16 @@ func (a *App) RunTask(ctx context.Context, req TaskRequest) (TaskResult, error) 
 		client = llm.FromEnv()
 	}
 
+	// The per-task wall-clock deadline (req.MaxDuration, or DefaultTaskTimeout when
+	// the ctx has no deadline of its own) is enforced inside taskagent.RunTask —
+	// the single task-runner entry point — so a single RunTask and each task of a
+	// RunTasks fan-out are bounded identically. It is threaded through as a field.
 	out, err := taskagent.RunTask(ctx, client, nil, taskagent.Request{
 		RepoDir:        req.RepoDir,
 		Prompt:         req.Prompt,
 		Image:          req.Image,
 		MaxSteps:       req.MaxSteps,
+		MaxDuration:    req.MaxDuration,
 		Scopes:         req.Scopes,
 		OnLine:         req.OnLine,
 		Provider:       req.Provider,

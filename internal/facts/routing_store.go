@@ -3,6 +3,7 @@ package facts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 )
@@ -192,6 +193,23 @@ func (rs *RoutingStore) Delete(ctx context.Context, sc Scope, ids []string) erro
 		return err
 	}
 	return s.Delete(ctx, sc, ids)
+}
+
+// EraseScope dispatches subject erasure to the physical Store for sc's tenant
+// tier. It returns an error if that store does not implement ScopeEraser — every
+// built-in facts store does, so this only fires for a misconfigured custom
+// backend, and it fails loudly rather than silently leaving a subject's rows.
+// See facts.ScopeEraser.
+func (rs *RoutingStore) EraseScope(ctx context.Context, sc Scope) (int, error) {
+	s, err := rs.storeFor(sc.Tenant())
+	if err != nil {
+		return 0, err
+	}
+	eraser, ok := s.(ScopeEraser)
+	if !ok {
+		return 0, fmt.Errorf("facts: routed store %T does not support subject erasure", s)
+	}
+	return eraser.EraseScope(ctx, sc)
 }
 
 // ExportAll unions ExportAll across every physical Store provisioned so far (the

@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"os"
 	osexec "os/exec"
+	"strings"
 	"sync"
+	"time"
 
 	oteltrace "go.opentelemetry.io/otel/trace"
 
@@ -28,6 +30,39 @@ const (
 	defaultMaxSteps = 8
 )
 
+// DefaultTaskTimeout is the wall-clock deadline applied to a task whose caller
+// supplied neither a ctx deadline nor a Request.MaxDuration. It bounds a runaway
+// sandboxed task (an injected loop, a hung command) so it cannot idle the host
+// process forever. ctx cancellation already tears down `docker exec`; this
+// guarantees the cancellation actually fires without an operator watching.
+//
+// It is the single source of truth for the default bound: every task run —
+// whether a standalone RunTask or one task of a RunTasks fan-out — is bounded by
+// taskDeadline inside RunTask, so a batch task is bounded EXACTLY like a single
+// one. The public aisotropy façade re-exports this value.
+const DefaultTaskTimeout = 10 * time.Minute
+
+// taskDeadline derives the effective ctx + cancel for one task run, enforcing a
+// wall-clock bound so the task cannot run unbounded:
+//
+//   - max > 0 (explicit Request.MaxDuration): always WithTimeout(ctx, max).
+//     WithTimeout already honors an earlier parent deadline, so this both caps
+//     the task AND respects a tighter caller/batch ctx.
+//   - max <= 0 and the ctx already has a deadline (a caller timeout, or the
+//     batch's parent ctx): respect it as-is.
+//   - max <= 0 and no deadline at all: apply DefaultTaskTimeout (secure default).
+//
+// The returned cancel is always safe (and required) to call.
+func taskDeadline(ctx context.Context, max time.Duration) (context.Context, context.CancelFunc) {
+	if max > 0 {
+		return context.WithTimeout(ctx, max)
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, DefaultTaskTimeout)
+}
+
 // taskSystemPrompt frames the sandboxed coding task for the host-side model. The
 // tools themselves are conveyed structurally (native tool-calling) or via the
 // agentloop system fragment, not spelled out here.
@@ -36,15 +71,87 @@ const taskSystemPrompt = "You are a coding agent working inside an isolated sand
 	"your work with git_commit. Call a tool only when it helps; when the task is done, answer " +
 	"directly without calling a tool."
 
-// forbiddenEnvKeys are provider-secret environment variable names that MUST NEVER
-// be handed to a sandbox (the broker invariant). RunTask asserts a Spec's Env
-// contains none of these before Create — a defense-in-depth check on top of the
+// knownForbiddenEnvKeys are well-known provider/credential environment variable
+// names that MUST NEVER be handed to a sandbox (the broker invariant). This exact
+// list is kept for readability and audit; it is NOT the whole check — the
+// pattern rules in forbiddenEnvKey below are what actually make the guard
+// resistant to a NEW provider key nobody has enumerated yet. RunTask asserts a
+// Spec's Env trips none of these before Create — defense-in-depth on top of the
 // fact that RunTask never populates Spec.Env from host secrets in the first place.
-var forbiddenEnvKeys = []string{
-	"ANTHROPIC_API_KEY",
-	"OPENAI_API_KEY",
-	"OPENROUTER_API_KEY",
-	"AISOTROPY_JWT_SECRET",
+//
+// Keys are compared case-insensitively (see forbiddenEnvKey), so entries here are
+// written upper-case.
+var knownForbiddenEnvKeys = map[string]bool{
+	// Model providers.
+	"ANTHROPIC_API_KEY":    true,
+	"OPENAI_API_KEY":       true,
+	"OPENROUTER_API_KEY":   true,
+	"GEMINI_API_KEY":       true,
+	"GOOGLE_API_KEY":       true,
+	"COHERE_API_KEY":       true,
+	"MISTRAL_API_KEY":      true,
+	"DEEPSEEK_API_KEY":     true,
+	"GROQ_API_KEY":         true,
+	"XAI_API_KEY":          true,
+	"AZURE_OPENAI_API_KEY": true,
+	// Cloud credentials (their standard SDK env names).
+	"AWS_ACCESS_KEY_ID":              true,
+	"AWS_SECRET_ACCESS_KEY":          true,
+	"AWS_SESSION_TOKEN":              true,
+	"GOOGLE_APPLICATION_CREDENTIALS": true,
+	// Aisotropy's own signing secret.
+	"AISOTROPY_JWT_SECRET": true,
+}
+
+// forbiddenKeySubstrings are case-insensitive substrings whose PRESENCE in an env
+// key name marks it as secret-shaped. These catch the naming universe of
+// credentials regardless of provider — a var literally named with "SECRET",
+// "TOKEN", "PASSWORD", or "CREDENTIAL" is refused so a new provider's key cannot
+// silently slip through an enumerated allowlist.
+var forbiddenKeySubstrings = []string{
+	"SECRET",      // AWS_SECRET_ACCESS_KEY, *_CLIENT_SECRET, *_SECRET
+	"TOKEN",       // *_API_TOKEN, HF_TOKEN, AWS_SESSION_TOKEN, *_ACCESS_TOKEN
+	"PASSWORD",    // *_PASSWORD
+	"PASSWD",      // *_PASSWD
+	"CREDENTIAL",  // GOOGLE_APPLICATION_CREDENTIALS, *_CREDENTIALS
+	"PRIVATE_KEY", // *_PRIVATE_KEY (RSA/EC signing material)
+}
+
+// forbiddenKeySuffixes are case-insensitive suffixes that mark a key as an API or
+// access credential. Provider keys are near-universally named "<X>_API_KEY"; cloud
+// access keys end "_ACCESS_KEY[_ID]". Suffix-matching (not exact-matching) is what
+// keeps a brand-new "SOMENEWPROVIDER_API_KEY" from passing.
+var forbiddenKeySuffixes = []string{
+	"_API_KEY",
+	"_APIKEY",
+	"_ACCESS_KEY",
+	"_ACCESS_KEY_ID",
+}
+
+// forbiddenEnvKey reports whether an env var NAME is secret-shaped and thus must
+// never enter a sandbox. It is deliberately fail-closed (a pattern/denylist that
+// over-matches an ambiguous name is safer than one that lets a real credential
+// through): the exact known-key set, plus substring and suffix pattern rules.
+// Only the NAME is inspected — the value is never read or logged.
+func forbiddenEnvKey(name string) bool {
+	u := strings.ToUpper(strings.TrimSpace(name))
+	if u == "" {
+		return false
+	}
+	if knownForbiddenEnvKeys[u] {
+		return true
+	}
+	for _, sub := range forbiddenKeySubstrings {
+		if strings.Contains(u, sub) {
+			return true
+		}
+	}
+	for _, suf := range forbiddenKeySuffixes {
+		if strings.HasSuffix(u, suf) {
+			return true
+		}
+	}
+	return false
 }
 
 // AgentStep is one iteration of the loop: the tool the model chose and its result.
@@ -72,6 +179,13 @@ type Request struct {
 	Image string
 	// MaxSteps bounds the agent loop; <= 0 defaults to defaultMaxSteps.
 	MaxSteps int
+	// MaxDuration is the wall-clock deadline for this task run. <= 0 applies
+	// DefaultTaskTimeout when the ctx has no deadline of its own (a caller/batch
+	// ctx deadline is always respected). It is the time-based companion to
+	// MaxSteps and is enforced inside RunTask via taskDeadline, so it bounds a
+	// standalone RunTask AND each task of a RunTasks fan-out identically — one
+	// runaway task in a batch is torn down exactly like a runaway single task.
+	MaxDuration time.Duration
 	// Scopes are the granted tool scopes (see HandScopes). A hand whose scope is
 	// not granted is never offered to the model nor executable.
 	Scopes []string
@@ -80,6 +194,13 @@ type Request struct {
 	// BranchStrategy decides what happens to the commits the run produced: the
 	// zero value sandbox.MergeToHead merges the task branch into HEAD (the prior
 	// behavior); sandbox.ReturnBranch leaves them on the task branch, unmerged.
+	//
+	// SECURITY: the zero value auto-merges an agent's commits into the operator's
+	// HEAD. When the PROMPT is untrusted (attacker-influenced), that is a
+	// supply-chain path — the model can be steered to commit hostile code that
+	// then lands in HEAD with no human gate. For untrusted task sources set
+	// ReturnBranch (review-before-merge); reserve MergeToHead for trusted/reviewed
+	// prompts. See docs/architecture/task-branch-strategy-trust.md.
 	BranchStrategy sandbox.BranchStrategy
 	// OnLine, when non-nil, receives each line of a run_shell's stdout live (the
 	// SSE fan-out hook). Optional.
@@ -170,6 +291,16 @@ func RunTask(ctx context.Context, client llm.Client, tracer oteltrace.TracerProv
 	if req.RepoDir == "" {
 		return Result{}, errors.New("taskagent: Request.RepoDir is required")
 	}
+
+	// Enforce the per-task wall-clock deadline HERE, at the single task-runner
+	// entry point, so every task is bounded identically: a standalone RunTask and
+	// each task of a RunTasks fan-out (which calls RunTask per task) both get the
+	// same treatment relative to their ctx. This bounds worktree/sandbox creation,
+	// the agent loop, and the merge alike; ctx cancellation tears down the live
+	// `docker exec`, and this guarantees the cancellation actually fires.
+	ctx, cancel := taskDeadline(ctx, req.MaxDuration)
+	defer cancel()
+
 	image := req.Image
 	if image == "" {
 		image = defaultImage
@@ -399,12 +530,16 @@ func lastResult(steps []AgentStep) string {
 	return ""
 }
 
-// assertNoProviderSecret fails if env carries any known provider-secret key — the
-// broker invariant's last line of defense before a Spec reaches the provider.
+// assertNoProviderSecret fails if env carries any secret-shaped key — the broker
+// invariant's last line of defense before a Spec reaches the provider. It iterates
+// the ACTUAL env (not a fixed denylist) and applies forbiddenEnvKey's pattern
+// rules, so an unenumerated provider key (GEMINI/AWS/AZURE/… or any *_API_KEY /
+// *_SECRET / *_TOKEN) is caught rather than silently passing. Only the offending
+// key NAME is surfaced in the error; the value is never read or logged.
 func assertNoProviderSecret(env map[string]string) error {
-	for _, k := range forbiddenEnvKeys {
-		if _, ok := env[k]; ok {
-			return fmt.Errorf("taskagent: refusing to run: sandbox Spec.Env carries provider secret %q (broker invariant: the provider key must never enter the sandbox)", k)
+	for k := range env {
+		if forbiddenEnvKey(k) {
+			return fmt.Errorf("taskagent: refusing to run: sandbox Spec.Env carries a secret-shaped key %q (broker invariant: no provider credential may enter the sandbox)", k)
 		}
 	}
 	return nil

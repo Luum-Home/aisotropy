@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,15 @@ func (r fakeAuthRequest) Header(name string) string {
 	}
 	return ""
 }
+
+// pathIdentityRequest carries only path tenant/user (no credential) — enough to
+// exercise NoAuth, which returns the path identity verbatim.
+type pathIdentityRequest struct{ tenant, user string }
+
+func (r pathIdentityRequest) PathTenant() string        { return r.tenant }
+func (r pathIdentityRequest) PathUser() string          { return r.user }
+func (r pathIdentityRequest) TLS() *tls.ConnectionState { return nil }
+func (r pathIdentityRequest) Header(string) string      { return "" }
 
 // mintHS256 signs claims into an HS256 JWT with the stdlib only, mirroring the
 // verifier in internal/auth/jwt.go, so tests can prove options are applied.
@@ -281,18 +291,22 @@ func TestAuthenticatorFromEnv(t *testing.T) {
 		}
 	})
 
-	t.Run("secret unset defaults to noauth", func(t *testing.T) {
+	t.Run("no JWT and no explicit opt-in refuses (ErrNoAuthenticator)", func(t *testing.T) {
+		// The zero-config-insecure hole is closed: absent any JWT var AND absent an
+		// explicit AISOTROPY_ALLOW_NOAUTH opt-in, the selector returns
+		// ErrNoAuthenticator so the binary refuses to boot rather than run NoAuth.
 		t.Setenv("AISOTROPY_JWT_SECRET", "")
+		t.Setenv("AISOTROPY_ALLOW_NOAUTH", "")
 
 		authr, mode, err := AuthenticatorFromEnv()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		if !errors.Is(err, ErrNoAuthenticator) {
+			t.Fatalf("err = %v, want ErrNoAuthenticator", err)
+		}
+		if authr != nil {
+			t.Error("expected a nil Authenticator when no auth is configured and NoAuth is not opted in")
 		}
 		if mode != "noauth" {
-			t.Errorf("mode = %q, want %q", mode, "noauth")
-		}
-		if authr == nil {
-			t.Fatal("AuthenticatorFromEnv() returned a nil Authenticator when unset")
+			t.Errorf("mode = %q, want %q (the refused-mode label)", mode, "noauth")
 		}
 	})
 
@@ -320,6 +334,103 @@ func TestAuthenticatorFromEnv(t *testing.T) {
 			t.Error("expected a nil Authenticator when max-ttl is rejected")
 		}
 	})
+}
+
+// TestAuthenticatorFromEnv_NoAuthExplicitOptIn is acceptance criterion (b): with
+// NO JWT configured, an explicit AISOTROPY_ALLOW_NOAUTH opt-in — and only that —
+// yields the NoAuth authenticator ("noauth"). It also proves the opt-in is strict:
+// a non-boolean value ("yes") does NOT enable NoAuth (it still refuses).
+func TestAuthenticatorFromEnv_NoAuthExplicitOptIn(t *testing.T) {
+	for _, truthy := range []string{"1", "true", "TRUE", "t"} {
+		t.Run("AISOTROPY_ALLOW_NOAUTH="+truthy+" returns noauth", func(t *testing.T) {
+			t.Setenv("AISOTROPY_JWT_SECRET", "")
+			t.Setenv("AISOTROPY_ALLOW_NOAUTH", truthy)
+
+			authr, mode, err := AuthenticatorFromEnv()
+			if err != nil {
+				t.Fatalf("unexpected error with explicit NoAuth opt-in: %v", err)
+			}
+			if mode != "noauth" {
+				t.Errorf("mode = %q, want %q", mode, "noauth")
+			}
+			if authr == nil {
+				t.Fatal("expected a non-nil NoAuth Authenticator with the opt-in set")
+			}
+			// NoAuth trusts the path identity verbatim (must-agree tautology).
+			p, aerr := authr.Authenticate(context.Background(), pathIdentityRequest{tenant: "acme", user: "alice"})
+			if aerr != nil {
+				t.Fatalf("NoAuth rejected a request: %v", aerr)
+			}
+			if p.TenantID != "acme" || p.UserID != "alice" || p.ScopesVerified {
+				t.Errorf("principal = %+v, want {acme, alice, ScopesVerified:false}", p)
+			}
+		})
+	}
+
+	t.Run("non-boolean opt-in does NOT enable NoAuth", func(t *testing.T) {
+		t.Setenv("AISOTROPY_JWT_SECRET", "")
+		t.Setenv("AISOTROPY_ALLOW_NOAUTH", "yes") // not a Go bool
+
+		_, _, err := AuthenticatorFromEnv()
+		if !errors.Is(err, ErrNoAuthenticator) {
+			t.Fatalf("err = %v, want ErrNoAuthenticator (a non-boolean value must not opt in)", err)
+		}
+	})
+}
+
+// TestAuthenticatorFromEnv_JWTIgnoresAllowNoAuth is acceptance criterion (c): when a
+// JWT secret IS set, the authenticator is the real one and AISOTROPY_ALLOW_NOAUTH is
+// ignored — the insecure opt-in cannot downgrade a configured authenticator.
+func TestAuthenticatorFromEnv_JWTIgnoresAllowNoAuth(t *testing.T) {
+	t.Setenv("AISOTROPY_JWT_SECRET", validSecret)
+	t.Setenv("AISOTROPY_ALLOW_NOAUTH", "1")
+
+	authr, mode, err := AuthenticatorFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mode != "jwt-hs256" {
+		t.Errorf("mode = %q, want jwt-hs256 (ALLOW_NOAUTH must be ignored when a JWT is configured)", mode)
+	}
+	if authr == nil {
+		t.Fatal("expected a live HS256 authenticator, not NoAuth")
+	}
+	// A real authenticator rejects an unauthenticated request (NoAuth would accept it).
+	if _, aerr := authr.Authenticate(context.Background(), fakeAuthRequest{authorization: ""}); aerr == nil {
+		t.Error("expected the JWT authenticator to reject a request with no bearer token")
+	}
+}
+
+// TestNoAuthNonLocalGuard proves the second gate: NoAuth is permitted on loopback
+// binds, refused on non-loopback binds, and permitted on non-loopback only with the
+// explicit AISOTROPY_ALLOW_NOAUTH_NONLOCAL=1 override.
+func TestNoAuthNonLocalGuard(t *testing.T) {
+	loopback := []string{":0", "127.0.0.1:8080", "localhost:8080", "[::1]:8080", "127.0.0.1"}
+	// Note: ":8080"/":0" (empty host, wildcard bind) is NOT loopback — see below.
+	for _, addr := range loopback[1:] { // exclude ":0" here; it's a wildcard, tested as non-local
+		t.Run("loopback "+addr+" passes", func(t *testing.T) {
+			t.Setenv("AISOTROPY_ALLOW_NOAUTH_NONLOCAL", "")
+			if err := NoAuthNonLocalGuard(addr); err != nil {
+				t.Errorf("NoAuthNonLocalGuard(%q) = %v, want nil (loopback is safe for local dev)", addr, err)
+			}
+		})
+	}
+
+	nonLocal := []string{":8080", "0.0.0.0:8080", "10.0.0.5:8080", "[::]:8080", "example.com:8080"}
+	for _, addr := range nonLocal {
+		t.Run("non-loopback "+addr+" refuses without override", func(t *testing.T) {
+			t.Setenv("AISOTROPY_ALLOW_NOAUTH_NONLOCAL", "")
+			if err := NoAuthNonLocalGuard(addr); !errors.Is(err, ErrNoAuthNonLocal) {
+				t.Errorf("NoAuthNonLocalGuard(%q) = %v, want ErrNoAuthNonLocal", addr, err)
+			}
+		})
+		t.Run("non-loopback "+addr+" passes with explicit override", func(t *testing.T) {
+			t.Setenv("AISOTROPY_ALLOW_NOAUTH_NONLOCAL", "1")
+			if err := NoAuthNonLocalGuard(addr); err != nil {
+				t.Errorf("NoAuthNonLocalGuard(%q) with override = %v, want nil", addr, err)
+			}
+		})
+	}
 }
 
 // TestAuthenticatorFromEnv_OptionsApplied proves the aud/iss/max-ttl env vars

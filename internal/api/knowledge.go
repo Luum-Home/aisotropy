@@ -6,6 +6,8 @@ package api
 
 import (
 	"context"
+	"log/slog"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -54,14 +56,15 @@ type KnowledgeOutput struct {
 // chat_stream.go), so an ingested document is retrievable via chat
 // immediately, with no separate wiring. opts tunes chunking (size/overlap in
 // runes; semantic.DefaultChunkOptions() is a sensible default).
-func RegisterKnowledge(api huma.API, store semantic.Store, emb semantic.Embedder, opts semantic.ChunkOptions) {
+func RegisterKnowledge(api huma.API, store semantic.Store, emb semantic.Embedder, opts semantic.ChunkOptions, guard *Guard) {
 	huma.Register(api, huma.Operation{
 		OperationID: "ingest-knowledge",
 		Method:      httpMethodPost,
 		Path:        "/v1/tenant/{tenant_id}/user/{user_id}/knowledge",
 		Summary:     "Ingest documents into the semantic tier (KindDocument, ADR-0018)",
-		Description: "Validates the contract, isolates by tenant/user via ctx, chunks each " +
-			"document's content, embeds the chunks (BYO Embedder), and upserts them as " +
+		Description: "Validates the contract, isolates by tenant/user via ctx, scans each " +
+			"document for prompt-injection payloads (stored/indirect injection guardrail), " +
+			"chunks each document's content, embeds the chunks (BYO Embedder), and upserts them as " +
 			"KindDocument vectors scoped to (tenant_id, user_id). Idempotent: re-ingesting " +
 			"the same document id replaces its chunks in place. Ingested documents are " +
 			"retrievable immediately via the chat/chat-stream routes' semantic RAG hydration.",
@@ -78,6 +81,14 @@ func RegisterKnowledge(api huma.API, store semantic.Store, emb semantic.Embedder
 		ctx = context.WithValue(ctx, tenantCtxKey{}, in.TenantID)
 		ctx = context.WithValue(ctx, userCtxKey{}, in.UserID)
 
+		// Stored / indirect prompt-injection gate (Gap 3): score each document's
+		// text BEFORE it is embedded/stored. A flagged doc is always logged (a
+		// signal in the record); with injection-blocking enabled the whole ingest
+		// is rejected rather than silently poisoning tenant/user memory.
+		if berr := scanDocumentsForInjection(ctx, guard, in.TenantID, in.UserID, in.Body.Documents); berr != nil {
+			return nil, berr
+		}
+
 		n, err := semantic.Ingest(ctx, store, emb, sc, opts, documentsFromRequest(in.Body.Documents))
 		if err != nil {
 			return nil, huma.Error500InternalServerError("knowledge ingestion failed", err)
@@ -87,6 +98,39 @@ func RegisterKnowledge(api huma.API, store semantic.Store, emb semantic.Embedder
 		out.Body.ChunksIngested = n
 		return out, nil
 	})
+}
+
+// scanDocumentsForInjection runs the injection detector over each document's
+// content before it is embedded/stored — the stored/indirect prompt-injection
+// gate (Gap 3). It ALWAYS logs a WARN naming the flagged doc id + fired signals
+// (so a flagged document is never persisted without a signal in the record) and,
+// when the operator has injection-blocking enabled (guard.BlockInjection),
+// returns a 400 naming the flagged docs so the whole ingest is rejected. A nil
+// guard (or nil aggregator) is a pass-through, so wiring that passes nil — and
+// the tests that do — is unchanged. user may be empty for the tenant-shared
+// route (no user path segment).
+func scanDocumentsForInjection(ctx context.Context, guard *Guard, tenant, user string, docs []KnowledgeDocument) error {
+	if guard == nil || guard.G == nil {
+		return nil
+	}
+	det := guard.G.Detector()
+	var flagged []string
+	for _, d := range docs {
+		v := det.Inspect(d.Content)
+		if !v.Suspicious {
+			continue
+		}
+		flagged = append(flagged, d.ID)
+		slog.WarnContext(ctx, "knowledge ingest flagged possible prompt injection in document content",
+			"tenant_id", tenant, "user_id", user,
+			"doc_id", d.ID, "signals", v.Signals, "score", v.Score,
+			"blocking", guard.BlockInjection,
+		)
+	}
+	if len(flagged) > 0 && guard.BlockInjection {
+		return huma.Error400BadRequest("document(s) rejected by ingest guardrail (possible prompt injection): " + strings.Join(flagged, ", "))
+	}
+	return nil
 }
 
 // documentsFromRequest maps the wire KnowledgeDocument batch onto
@@ -158,13 +202,15 @@ type TenantKnowledgeInput struct {
 // so every user of tenant retrieves the same corpus without re-ingesting it
 // — hydrateSystemPrompt merges this bucket's KindDocument points into every
 // user's RAG hydration. store/emb/opts mirror RegisterKnowledge exactly.
-func RegisterTenantKnowledge(api huma.API, store semantic.Store, emb semantic.Embedder, opts semantic.ChunkOptions) {
+func RegisterTenantKnowledge(api huma.API, store semantic.Store, emb semantic.Embedder, opts semantic.ChunkOptions, guard *Guard) {
 	huma.Register(api, huma.Operation{
 		OperationID: "ingest-tenant-knowledge",
 		Method:      httpMethodPost,
 		Path:        "/v1/tenant/{tenant_id}/knowledge",
 		Summary:     "Ingest documents into the tenant-shared semantic bucket (KindDocument, ADR-0019)",
-		Description: "Validates the contract, chunks each document's content, embeds the chunks " +
+		Description: "Validates the contract, scans each document for prompt-injection payloads " +
+			"(stored/indirect injection guardrail — critical here because a tenant-shared doc " +
+			"reaches EVERY user of the tenant), chunks each document's content, embeds the chunks " +
 			"(BYO Embedder), and upserts them as KindDocument vectors scoped to a tenant-only, " +
 			"empty-user Scope (semantic.NewTenantScope) — visible to every user of tenant_id via " +
 			"the chat/chat-stream routes' semantic RAG hydration merge. Idempotent, exactly like " +
@@ -175,6 +221,14 @@ func RegisterTenantKnowledge(api huma.API, store semantic.Store, emb semantic.Em
 			return nil, huma.Error422UnprocessableEntity("invalid tenant identity", err)
 		}
 		ctx = context.WithValue(ctx, tenantCtxKey{}, in.TenantID)
+
+		// Stored / indirect prompt-injection gate (Gap 3). A tenant-shared
+		// document is the highest-blast-radius ingest surface: a single poisoned
+		// doc would be hydrated into every user's context (cross-user hijack), so
+		// scan before it is embedded/stored.
+		if berr := scanDocumentsForInjection(ctx, guard, in.TenantID, "", in.Body.Documents); berr != nil {
+			return nil, berr
+		}
 
 		n, err := semantic.Ingest(ctx, store, emb, sc, opts, documentsFromRequest(in.Body.Documents))
 		if err != nil {

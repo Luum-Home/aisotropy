@@ -251,6 +251,33 @@ func (s *scopedDocStore) Delete(ctx context.Context, sc Scope, ids []string) err
 	return s.backend.Delete(ctx, namespaceFor(sc), ids)
 }
 
+// EraseScope deletes every document — current and superseded — in sc's
+// namespace, implementing subject erasure (GDPR Art.17) for a community
+// DocBackend WITHOUT widening the DocBackend interface: it Scans the namespace
+// and Deletes every key it finds. The namespace IS the (tenant,user) seal
+// (namespaceFor), so this can only ever touch sc's own subject — a colliding
+// key under another tenant lives in a different namespace the backend is never
+// asked about. Returns the number of documents removed; a subject with no
+// documents returns (0, nil). See facts.ScopeEraser.
+func (s *scopedDocStore) EraseScope(ctx context.Context, sc Scope) (int, error) {
+	ns := namespaceFor(sc)
+	docs, err := s.backend.Scan(ctx, ns)
+	if err != nil {
+		return 0, err
+	}
+	if len(docs) == 0 {
+		return 0, nil
+	}
+	keys := make([]string, 0, len(docs))
+	for _, d := range docs {
+		keys = append(keys, d.Key)
+	}
+	if err := s.backend.Delete(ctx, ns, keys); err != nil {
+		return 0, err
+	}
+	return len(keys), nil
+}
+
 // Close releases the wrapped backend.
 func (s *scopedDocStore) Close() error { return s.backend.Close() }
 

@@ -246,9 +246,9 @@ func newKnowledgeErrRouter(t *testing.T, store semantic.Store, emb semantic.Embe
 	t.Helper()
 	router := chi.NewRouter()
 	api := humachi.New(router, huma.DefaultConfig("knowledge-err-test", "0.1.0"))
-	RegisterKnowledge(api, store, emb, semantic.DefaultChunkOptions())
+	RegisterKnowledge(api, store, emb, semantic.DefaultChunkOptions(), nil)
 	RegisterKnowledgeDelete(api, store)
-	RegisterTenantKnowledge(api, store, emb, semantic.DefaultChunkOptions())
+	RegisterTenantKnowledge(api, store, emb, semantic.DefaultChunkOptions(), nil)
 	RegisterTenantKnowledgeDelete(api, store)
 	return router
 }

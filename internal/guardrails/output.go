@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // OutputCheckInput is the payload every OutputCheck receives: the original user
@@ -77,9 +78,15 @@ func NewOutputInspector(redactor *Redactor) *OutputInspector {
 		redactor:     redactor,
 		toxKeywords:  builtinToxKeywords,
 		toxThreshold: 0.5,
-		minLeakLen:   24,
+		minLeakLen:   20,
 	}
 }
+
+// minLeakNormalizedLen is the floor on a system-prompt segment's length AFTER
+// normalization (whitespace/separators stripped) before it is used for the
+// echo check. It guards against a segment that is long in raw characters but
+// collapses to a trivially short, incidentally-matching normalized string.
+const minLeakNormalizedLen = 16
 
 // WithToxicKeywords returns a copy of the inspector with extra toxicity terms
 // appended to the built-in list. Words are matched case-insensitively as
@@ -219,24 +226,61 @@ func (o *OutputInspector) Inspect(ctx context.Context, input, output, systemProm
 }
 
 // segmentEchoed reports whether any line or sentence of src at least minLen
-// characters long appears verbatim (case-insensitively) inside dst. This is the
-// system-prompt-leak heuristic: it catches a model reproducing a chunk of its
-// instructions without flagging on short, incidental word overlap.
+// characters long is reproduced inside dst. This is the system-prompt-leak
+// heuristic: it catches a model echoing back a chunk of its instructions
+// without flagging on short, incidental word overlap.
+//
+// Both the segment and dst are NORMALIZED before comparison (lower-cased and all
+// whitespace/common separators removed), so trivial evasions — different casing
+// and inserted spaces/dashes/dots between the same words ("You  Must  Never..."
+// or "n-e-v-e-r r-e-v-e-a-l") — no longer slip past the old verbatim substring
+// match. HONEST RESIDUAL: this is still a substring/normalization check, so a
+// genuine SEMANTIC paraphrase (reworded, translated, or base64-encoded echo of
+// the system prompt) is NOT caught — that requires an LLM/classifier judge (the
+// opt-in OutputCheck seam). See docs/security/ai-layer-guardrails.md.
 func segmentEchoed(src, dst string, minLen int) bool {
 	if len(src) < minLen || dst == "" {
 		return false
 	}
-	lowerDst := strings.ToLower(dst)
+	normDst := normalizeForLeak(dst)
+	if normDst == "" {
+		return false
+	}
 	for _, seg := range splitSegments(src) {
 		seg = strings.TrimSpace(seg)
 		if len(seg) < minLen {
 			continue
 		}
-		if strings.Contains(lowerDst, strings.ToLower(seg)) {
+		normSeg := normalizeForLeak(seg)
+		if len(normSeg) < minLeakNormalizedLen {
+			continue
+		}
+		if strings.Contains(normDst, normSeg) {
 			return true
 		}
 	}
 	return false
+}
+
+// normalizeForLeak lower-cases text and strips whitespace plus the separator
+// punctuation an evader inserts between characters, collapsing a segment to its
+// bare letters/digits. It is the equalizer that lets segmentEchoed see through
+// casing and spacing tricks while still requiring the same underlying content.
+func normalizeForLeak(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsSpace(r) {
+			continue
+		}
+		switch r {
+		case '-', '_', '*', '.', ',', ':', ';', '|', '/', '\\', '"', '\'', '`', '(', ')', '[', ']', '{', '}', '~', '#':
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // splitSegments breaks text into candidate segments on line breaks and common

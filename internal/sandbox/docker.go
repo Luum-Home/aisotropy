@@ -108,13 +108,17 @@ func (p *DockerProvider) CleanupAll(ctx context.Context) {
 // idle container that Create launches:
 //
 //	run -d --name <name> -w <workdir> [--user u:g] [--runtime=<rt>]
+//	    --network=none --cap-drop=ALL --security-opt=no-new-privileges
+//	    --read-only --tmpfs /tmp --pids-limit 256 --memory 512m --cpus 1.0
 //	    [-v src:tgt[:ro]…] [-e K=V…] <image> sleep infinity
 //
-// It is a pure function of (name, workdir, spec) with no I/O, so the flag
-// wiring — notably the [Spec.Runtime] `--runtime=` knob — can be asserted in a
-// unit test without a Docker daemon. Docker's default image entrypoint does not
-// swallow the trailing `sleep infinity`, so the command is appended directly
-// (contrast the Podman provider, which must override the entrypoint).
+// The middle block is the secure-by-default hardening (see hardeningFlags);
+// each flag is a Spec knob an operator can widen. It is a pure function of
+// (name, workdir, spec) with no I/O, so the flag wiring — the [Spec.Runtime]
+// `--runtime=` knob and the hardening defaults — can be asserted in a unit test
+// without a Docker daemon. Docker's default image entrypoint does not swallow
+// the trailing `sleep infinity`, so the command is appended directly (contrast
+// the Podman provider, which must override the entrypoint).
 func dockerRunArgs(name, workdir string, spec Spec) []string {
 	args := []string{"run", "-d", "--name", name, "-w", workdir}
 	if spec.User != "" {
@@ -125,6 +129,9 @@ func dockerRunArgs(name, workdir string, spec Spec) []string {
 		// runsc) straight through. Empty leaves docker's default (runc).
 		args = append(args, "--runtime="+spec.Runtime)
 	}
+	// Secure-by-default isolation + resource limits (shared with podman). Applied
+	// to every container unless the Spec explicitly widens a knob. See hardening.go.
+	args = append(args, hardeningFlags(spec)...)
 	for _, m := range spec.BindMounts {
 		v := m.Source + ":" + m.Target
 		if m.ReadOnly {

@@ -303,6 +303,31 @@ func (s *scopedVectorStore) PruneTurns(ctx context.Context, sc Scope, maxAge tim
 	return len(ids), nil
 }
 
+// EraseScope deletes every point in sc's namespace — the subject-erasure
+// primitive (GDPR Art.17) for a community VectorBackend. The namespace IS the
+// (tenant,user) seal (namespaceFor), so scanning it and deleting every id can
+// only ever touch sc's own subject: a tenant-shared document lives under a
+// different, empty-user namespace and is untouched. Returns the number removed;
+// a subject with no points returns (0, nil). See semantic.ScopeEraser.
+func (s *scopedVectorStore) EraseScope(ctx context.Context, sc Scope) (int, error) {
+	ns := namespaceFor(sc)
+	all, err := s.backend.Scan(ctx, ns)
+	if err != nil {
+		return 0, err
+	}
+	if len(all) == 0 {
+		return 0, nil
+	}
+	ids := make([]string, 0, len(all))
+	for _, bv := range all {
+		ids = append(ids, bv.ID)
+	}
+	if err := s.backend.Delete(ctx, ns, ids); err != nil {
+		return 0, err
+	}
+	return len(ids), nil
+}
+
 // Close releases the wrapped backend.
 func (s *scopedVectorStore) Close() error { return s.backend.Close() }
 

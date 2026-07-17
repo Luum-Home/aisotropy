@@ -4,11 +4,24 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+// argvPair reports whether argv contains the adjacent pair [flag, value] as two
+// consecutive elements — the "--flag value" (space-separated) form docker/podman
+// use for --tmpfs/--pids-limit/--memory/--cpus.
+func argvPair(argv []string, flag, value string) bool {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == flag && argv[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
 
 // testImage is a tiny stock image with sh. Overridable so a fully-offline CI
 // can point at an image it has cached.
@@ -117,14 +130,24 @@ func TestDocker_RoundTrip(t *testing.T) {
 	}
 
 	// 4) CopyIn a host file, read it back inside the sandbox.
+	//
+	// The stage target is the WRITABLE WORKTREE bind mount (Workdir), not a rootfs
+	// path like /tmp. This is deliberate and reflects the secure default: with the
+	// container rootfs mounted --read-only, `docker cp` INTO the container refuses
+	// any destination on the rootfs (even a tmpfs mount) with "container rootfs is
+	// marked read-only" — a documented Docker limitation, not ours. `docker cp`
+	// into a bind-mounted volume (the worktree) works fine, and the worktree is
+	// exactly where a task runner stages inputs. (The real task path stages via
+	// the worktree + write_file Exec and never CopyIns to rootfs; runtime Exec
+	// writes to /tmp still work — only `docker cp` to /tmp is refused.)
 	local := filepath.Join(t.TempDir(), "in.txt")
 	if err := os.WriteFile(local, []byte("payload"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := sb.CopyIn(ctx, local, "/tmp/in.txt"); err != nil {
+	if err := sb.CopyIn(ctx, local, DefaultWorkdir+"/in.txt"); err != nil {
 		t.Fatalf("CopyIn: %v", err)
 	}
-	res, err = sb.Exec(ctx, []string{"cat", "/tmp/in.txt"}, ExecOptions{})
+	res, err = sb.Exec(ctx, []string{"cat", DefaultWorkdir + "/in.txt"}, ExecOptions{})
 	if err != nil || res.ExitCode != 0 {
 		t.Fatalf("cat copied file: err=%v exit=%d", err, res.ExitCode)
 	}
@@ -133,11 +156,18 @@ func TestDocker_RoundTrip(t *testing.T) {
 	}
 
 	// 5) Write a file inside the sandbox, CopyOut to the host.
-	if _, err := sb.Exec(ctx, []string{"sh", "-c", "echo out > /tmp/out.txt"}, ExecOptions{}); err != nil {
+	//
+	// Same read-only interaction as step 4, in reverse: under --read-only,
+	// `docker cp` OUT also only traverses BIND-MOUNT paths — a cp from a tmpfs
+	// path (/tmp) reports "Could not find the file" even though the file exists
+	// at runtime. So the CopyOut source is a worktree path, the realistic place a
+	// run leaves an artifact. (Runtime Exec to /tmp still works; only `docker cp`
+	// is constrained by read-only. Set Spec.Writable to lift the constraint.)
+	if _, err := sb.Exec(ctx, []string{"sh", "-c", "echo out > " + DefaultWorkdir + "/out.txt"}, ExecOptions{}); err != nil {
 		t.Fatalf("write out.txt: %v", err)
 	}
 	dst := filepath.Join(t.TempDir(), "out.txt")
-	if err := sb.CopyOut(ctx, "/tmp/out.txt", dst); err != nil {
+	if err := sb.CopyOut(ctx, DefaultWorkdir+"/out.txt", dst); err != nil {
 		t.Fatalf("CopyOut: %v", err)
 	}
 	got, err := os.ReadFile(dst)
@@ -157,6 +187,56 @@ func TestDocker_RoundTrip(t *testing.T) {
 		t.Fatalf("shared file not on host mount: %v", err)
 	} else if strings.TrimSpace(string(b)) != "shared" {
 		t.Fatalf("shared content = %q", b)
+	}
+}
+
+// TestDocker_HardeningEnforcedAtRuntime proves the secure defaults are not just
+// present in the argv but ACTUALLY ENFORCED by the runtime: the rootfs is
+// read-only (a write to /etc fails), the worktree bind mount stays writable, and
+// there is no network (no loopback route to reach a co-located service). Skips
+// without a docker host.
+func TestDocker_HardeningEnforcedAtRuntime(t *testing.T) {
+	requireDocker(t)
+	p := NewDockerProvider()
+
+	host := t.TempDir()
+	spec := Spec{
+		Image:      testImage(),
+		Workdir:    DefaultWorkdir,
+		BindMounts: []Mount{{Source: host, Target: DefaultWorkdir}},
+	}
+	sb := createSandbox(t, p, spec)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = sb.Close(ctx)
+	})
+	ctx := context.Background()
+
+	// Rootfs is read-only: writing outside the worktree/tmp fails.
+	res, err := sb.Exec(ctx, []string{"sh", "-c", "echo x > /etc/aisotropy_probe"}, ExecOptions{})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if res.ExitCode == 0 {
+		t.Error("expected write to read-only rootfs (/etc) to FAIL, but it succeeded")
+	}
+
+	// The worktree bind mount stays writable under --read-only.
+	res, err = sb.Exec(ctx, []string{"sh", "-c", "echo ok > work.txt"}, ExecOptions{})
+	if err != nil || res.ExitCode != 0 {
+		t.Errorf("expected writable worktree, got err=%v exit=%d stderr=%q", err, res.ExitCode, res.Stderr)
+	}
+
+	// No network: there is no non-loopback interface to reach a co-located
+	// rqlite/Qdrant on. `ip addr`/`ifconfig` may be absent on alpine, so probe
+	// via /proc/net/dev: with --network=none only the `lo` interface exists.
+	res, err = sb.Exec(ctx, []string{"sh", "-c", "grep -c ':' /proc/net/dev | cat; grep -o 'eth[0-9]' /proc/net/dev | cat"}, ExecOptions{})
+	if err != nil {
+		t.Fatalf("Exec net probe: %v", err)
+	}
+	if strings.Contains(res.Stdout, "eth") {
+		t.Errorf("expected no eth interface under --network=none, got stdout=%q", res.Stdout)
 	}
 }
 
@@ -236,6 +316,124 @@ func TestDockerRunArgs_RuntimeKnob(t *testing.T) {
 	// Tail is `<image> sleep infinity` (docker keeps the command form).
 	if j := strings.Join(noRT, " "); !strings.HasSuffix(j, "alpine sleep infinity") {
 		t.Fatalf("expected `alpine sleep infinity` tail, got %v", noRT)
+	}
+}
+
+// TestDockerRunArgs_HardeningDefaults proves the secure-by-default isolation and
+// resource flags are emitted for a zero-valued Spec (the case the task runner
+// hits) — the core of this security fix. No daemon needed.
+func TestDockerRunArgs_HardeningDefaults(t *testing.T) {
+	argv := dockerRunArgs("box", DefaultWorkdir, Spec{Image: "alpine"})
+
+	// Network isolation: none by default (no egress, no reach to rqlite/Qdrant).
+	if !argvContains(argv, "--network=none") {
+		t.Errorf("expected --network=none by default, got %v", argv)
+	}
+	// Capability + privilege-escalation lockdown.
+	if !argvContains(argv, "--cap-drop=ALL") {
+		t.Errorf("expected --cap-drop=ALL by default, got %v", argv)
+	}
+	if !argvContains(argv, "--security-opt=no-new-privileges") {
+		t.Errorf("expected --security-opt=no-new-privileges by default, got %v", argv)
+	}
+	// Read-only rootfs + writable tmpfs scratch.
+	if !argvContains(argv, "--read-only") {
+		t.Errorf("expected --read-only by default, got %v", argv)
+	}
+	if !argvPair(argv, "--tmpfs", scratchTmpfs) {
+		t.Errorf("expected --tmpfs %s by default, got %v", scratchTmpfs, argv)
+	}
+	// Resource caps: fork-bomb, OOM, CPU.
+	if !argvPair(argv, "--pids-limit", strconv.Itoa(DefaultPidsLimit)) {
+		t.Errorf("expected --pids-limit %d by default, got %v", DefaultPidsLimit, argv)
+	}
+	if !argvPair(argv, "--memory", DefaultMemory) {
+		t.Errorf("expected --memory %s by default, got %v", DefaultMemory, argv)
+	}
+	if !argvPair(argv, "--cpus", DefaultCPUs) {
+		t.Errorf("expected --cpus %s by default, got %v", DefaultCPUs, argv)
+	}
+	// The idle command tail is preserved after all the hardening flags.
+	if j := strings.Join(argv, " "); !strings.HasSuffix(j, "alpine sleep infinity") {
+		t.Errorf("expected `alpine sleep infinity` tail, got %v", argv)
+	}
+}
+
+// TestDockerRunArgs_HardeningOverridable proves every hardening default is a
+// widen-when-needed knob: an explicit Spec value overrides the secure default.
+func TestDockerRunArgs_HardeningOverridable(t *testing.T) {
+	argv := dockerRunArgs("box", DefaultWorkdir, Spec{
+		Image:              "alpine",
+		Network:            "bridge",
+		PidsLimit:          4096,
+		Memory:             "2g",
+		CPUs:               "4",
+		Writable:           true,
+		CapAdd:             []string{"NET_BIND_SERVICE"},
+		AllowNewPrivileges: true,
+	})
+
+	// Widened network, resources.
+	if !argvContains(argv, "--network=bridge") {
+		t.Errorf("expected --network=bridge override, got %v", argv)
+	}
+	if argvContains(argv, "--network=none") {
+		t.Errorf("secure default --network=none should be gone when overridden, got %v", argv)
+	}
+	if !argvPair(argv, "--pids-limit", "4096") {
+		t.Errorf("expected --pids-limit 4096 override, got %v", argv)
+	}
+	if !argvPair(argv, "--memory", "2g") {
+		t.Errorf("expected --memory 2g override, got %v", argv)
+	}
+	if !argvPair(argv, "--cpus", "4") {
+		t.Errorf("expected --cpus 4 override, got %v", argv)
+	}
+	// Writable=true drops --read-only (and its tmpfs scratch).
+	if argvContains(argv, "--read-only") {
+		t.Errorf("Writable=true should drop --read-only, got %v", argv)
+	}
+	// cap-drop=ALL still present, with the requested cap added back.
+	if !argvContains(argv, "--cap-drop=ALL") {
+		t.Errorf("cap-drop=ALL must remain even with CapAdd, got %v", argv)
+	}
+	if !argvContains(argv, "--cap-add=NET_BIND_SERVICE") {
+		t.Errorf("expected --cap-add=NET_BIND_SERVICE, got %v", argv)
+	}
+	// AllowNewPrivileges=true drops the no-new-privileges lock.
+	if argvContains(argv, "--security-opt=no-new-privileges") {
+		t.Errorf("AllowNewPrivileges=true should drop no-new-privileges, got %v", argv)
+	}
+}
+
+// TestDockerRunArgs_PidsUnlimitedPassthrough proves a negative PidsLimit is a
+// deliberate "unlimited" passthrough, distinct from 0 (apply default).
+func TestDockerRunArgs_PidsUnlimitedPassthrough(t *testing.T) {
+	argv := dockerRunArgs("box", DefaultWorkdir, Spec{Image: "alpine", PidsLimit: -1})
+	if !argvPair(argv, "--pids-limit", "-1") {
+		t.Errorf("expected --pids-limit -1 passthrough, got %v", argv)
+	}
+}
+
+// TestHardeningFlags_ReadOnlyKeepsWorktreeWritable documents the read-only vs.
+// writable-workspace interaction: --read-only locks the rootfs but a rw bind
+// mount (the worktree) is emitted WITHOUT :ro, so the task keeps a writable
+// workspace. This is the compromise that lets secure-by-default coexist with a
+// task that must write its worktree.
+func TestHardeningFlags_ReadOnlyKeepsWorktreeWritable(t *testing.T) {
+	argv := dockerRunArgs("box", DefaultWorkdir, Spec{
+		Image:      "alpine",
+		BindMounts: []Mount{{Source: "/h/wt", Target: DefaultWorkdir}},
+	})
+	if !argvContains(argv, "--read-only") {
+		t.Fatalf("expected --read-only, got %v", argv)
+	}
+	// The worktree mount is present and NOT read-only (no :ro suffix).
+	if !argvContains(argv, "/h/wt:"+DefaultWorkdir) {
+		t.Fatalf("expected rw worktree bind mount, got %v", argv)
+	}
+	if argvContains(argv, "/h/wt:"+DefaultWorkdir+":ro") {
+		t.Fatalf("worktree mount must stay writable under --read-only, got %v", argv)
 	}
 }
 

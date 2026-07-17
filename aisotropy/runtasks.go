@@ -114,6 +114,7 @@ func (a *App) RunTasks(ctx context.Context, reqs []TaskRequest, opts RunTasksOpt
 			Prompt:         r.Prompt,
 			Image:          r.Image,
 			MaxSteps:       r.MaxSteps,
+			MaxDuration:    r.MaxDuration,
 			Scopes:         r.Scopes,
 			OnLine:         r.OnLine,
 			Provider:       r.Provider,

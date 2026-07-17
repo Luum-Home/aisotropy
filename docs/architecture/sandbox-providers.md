@@ -30,7 +30,7 @@ on `Close`.
 // aisotropy/sandbox.go — exported aliases over internal/sandbox.
 type SandboxProvider = sandbox.Provider   // Create(ctx, Spec) (Sandbox, error); Name() string
 type Sandbox         = sandbox.Sandbox    // Exec / CopyIn / CopyOut / Workdir / Close
-type SandboxSpec     = sandbox.Spec       // Image, Workdir, BindMounts, Env, User, Runtime, Name
+type SandboxSpec     = sandbox.Spec       // Image, Workdir, BindMounts, Env, User, Runtime, hardening knobs (Network/PidsLimit/Memory/CPUs/Writable/CapAdd/AllowNewPrivileges), Name
 type SandboxExecResult  = sandbox.ExecResult
 type SandboxExecOptions = sandbox.ExecOptions
 ```
@@ -94,6 +94,44 @@ panic.
 > `TaskRequest` does not yet expose a `Runtime` field directly — a custom `SandboxProvider` that wraps a
 > built-in, or a future `TaskRequest` field, is the path to setting it per task. This is stated plainly
 > rather than implying a knob that is not yet on the public request.
+
+## Secure-by-default container hardening
+
+The sandbox is the **hands** boundary for untrusted, prompt-injectable work, so the built-in Docker and
+Podman providers apply a conservative set of isolation and resource limits to **every** container by
+default. A zero-valued `SandboxSpec` — the shape the task runner builds — already gets the full set; each
+limit is a **widen-when-needed knob** on `SandboxSpec`, never something you must remember to switch on.
+
+| Emitted flag (default) | `SandboxSpec` knob | Threat it closes |
+|---|---|---|
+| `--network=none` | `Network` (`""` → `none`) | A compromised task reaching co-located rqlite/Qdrant ports over the container network and bypassing the app-layer tenant filter; any egress/exfiltration. |
+| `--cap-drop=ALL` | `CapAdd` (add back specific caps) | Ambient Linux capabilities (raw sockets, mount, etc.). |
+| `--security-opt=no-new-privileges` | `AllowNewPrivileges` (`false` → set) | setuid/setgid/file-capability privilege escalation. |
+| `--read-only` + `--tmpfs /tmp` | `Writable` (`false` → read-only) | Tampering with container system files; unbounded writes to the container layer. The worktree bind mount stays writable, and `/tmp` is a capped tmpfs scratch. |
+| `--pids-limit 256` | `PidsLimit` (`0` → 256; `<0` → unlimited) | Fork bombs. |
+| `--memory 512m` | `Memory` (`""` → `512m`; `"0"` → unlimited) | Host memory exhaustion (bounds the tmpfs scratch too). |
+| `--cpus 1.0` | `CPUs` (`""` → `1.0`; `"0"` → unlimited) | CPU starvation of the host. |
+
+A default wall-clock deadline complements the resource caps: `App.RunTask` bounds a run at
+`DefaultTaskTimeout` (10m) when the caller's context has no deadline of its own, configurable per task
+via `TaskRequest.MaxDuration`. Context cancellation already tears down `docker exec` (and the in-container
+process); the default deadline guarantees it actually fires without an operator watching.
+
+**Recommended runtime for untrusted prompts.** Defense in depth: run the model's hands under **rootless
+Podman** (`aisotropy.PodmanSandbox()` — the user-namespace mapping means a container-internal root is an
+unprivileged host user) and/or a **hardened OCI runtime** via `SandboxSpec.Runtime` — **gVisor**
+(`"runsc"`, a user-space kernel) or **Kata** (`"kata-runtime"`, a microVM per container). The seccomp/
+capability/namespace controls above sit *inside* that stronger boundary.
+
+> **Honest limitation — `--read-only` and `docker cp`.** With a read-only rootfs, Docker's `docker cp`
+> (which backs `Sandbox.CopyIn`/`CopyOut`) only traverses **bind-mount** paths (the worktree), not rootfs
+> or tmpfs paths: a `docker cp` to/from `/tmp` is refused ("container rootfs is marked read-only" /
+> "could not find the file") even though a runtime `Exec` write to `/tmp` succeeds. This is a documented
+> Docker behavior, not an aisotropy bug. It does **not** affect real runs — the task path stages files
+> through the writable worktree + `write_file` Exec and never `CopyIn`s to the rootfs — but a caller that
+> needs `CopyIn`/`CopyOut` against a non-worktree path must either target the worktree or set
+> `SandboxSpec.Writable = true` to lift the read-only rootfs. The **key-broker invariant is untouched**:
+> none of this places a provider key inside the container.
 
 ## Bring your own provider
 

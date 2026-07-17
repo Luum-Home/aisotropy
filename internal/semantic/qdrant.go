@@ -343,6 +343,38 @@ func (s *QdrantStore) PruneTurns(ctx context.Context, sc Scope, maxAge time.Dura
 	return len(ids), nil
 }
 
+// EraseScope deletes every point for sc's (tenant,user) across ALL kinds — the
+// semantic half of subject-level erasure (GDPR Art.17). It repeatedly scrolls a
+// batch of matching ids (filtered to tenant_id+user_id during the scan) and
+// deletes them through the same scoped Delete path used elsewhere in this file,
+// until a pass returns nothing — so erasure is complete even for a subject with
+// more than scrollLimit points. Tenant-shared KindDocument points carry an
+// empty user_id and never match a user-scoped filter, so they are left intact.
+// Returns the total number of points removed. See semantic.ScopeEraser.
+func (s *QdrantStore) EraseScope(ctx context.Context, sc Scope) (int, error) {
+	must := []*qdrant.Condition{
+		qdrant.NewMatch(payloadTenant, sc.Tenant()),
+		qdrant.NewMatch(payloadUser, sc.User()),
+	}
+	var total int
+	for {
+		ids, err := s.scrollIDs(ctx, must, nil)
+		if err != nil {
+			return total, fmt.Errorf("semantic: qdrant erase scope scroll: %w", err)
+		}
+		if len(ids) == 0 {
+			return total, nil
+		}
+		if err := s.Delete(ctx, sc, ids); err != nil {
+			return total, fmt.Errorf("semantic: qdrant erase scope delete: %w", err)
+		}
+		total += len(ids)
+		if len(ids) < scrollLimit {
+			return total, nil
+		}
+	}
+}
+
 // scrollIDs returns up to scrollLimit point ids matching must, optionally
 // ordered by order. Used by PruneTurns (candidate KindTurn ids for each of
 // its two eviction criteria) and by DeleteBySource (candidate ids for one

@@ -243,6 +243,23 @@ func (rs *RoutingStore) PruneTurns(ctx context.Context, sc Scope, maxAge time.Du
 	return st.PruneTurns(ctx, sc, maxAge, maxCount)
 }
 
+// EraseScope dispatches subject erasure to the physical Store for sc's tenant.
+// It returns an error if that store does not implement ScopeEraser — every
+// built-in semantic store does, so this only fires for a misconfigured custom
+// backend, and it fails loudly rather than silently leaving a subject's points.
+// See semantic.ScopeEraser.
+func (rs *RoutingStore) EraseScope(ctx context.Context, sc Scope) (int, error) {
+	st, err := rs.storeFor(sc.Tenant())
+	if err != nil {
+		return 0, err
+	}
+	eraser, ok := st.(ScopeEraser)
+	if !ok {
+		return 0, fmt.Errorf("semantic: routed store %T does not support subject erasure", st)
+	}
+	return eraser.EraseScope(ctx, sc)
+}
+
 // Close closes every provisioned physical Store (the shared pool plus every
 // Dedicated tenant's own store) and marks the store closed, so later dispatches
 // fail with ErrRoutingStoreClosed instead of reaching a shut-down backend. It

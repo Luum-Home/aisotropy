@@ -171,6 +171,26 @@ func (s *InMemoryStore) PruneTurns(_ context.Context, sc Scope, maxAge time.Dura
 	return len(toDelete), nil
 }
 
+// EraseScope deletes every point for sc's (tenant,user) across all kinds — the
+// semantic half of subject-level erasure (GDPR Art.17). The (tenant,user) check
+// is applied during the scan exactly like Delete, so another tenant/user's
+// points are never removed; tenant-shared KindDocument points (empty UserID)
+// never match a user-scoped sc and are left intact. Returns the number removed.
+// See ScopeEraser.
+func (s *InMemoryStore) EraseScope(_ context.Context, sc Scope) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	for id, p := range s.points {
+		if p.TenantID != sc.Tenant() || p.UserID != sc.User() {
+			continue // isolation filter during the scan, not after
+		}
+		delete(s.points, id)
+		n++
+	}
+	return n, nil
+}
+
 // Close is a no-op for the in-memory index.
 func (s *InMemoryStore) Close() error { return nil }
 

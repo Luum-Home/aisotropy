@@ -224,6 +224,24 @@ type Store interface {
 	Close() error
 }
 
+// ScopeEraser is the OPTIONAL subject-erasure capability (GDPR Art.17) a
+// semantic.Store may implement: delete EVERY point for a (tenant,user) Scope
+// across ALL kinds — KindFact, KindTurn, and the subject's own KindDocument
+// points — returning how many were removed. Because the delete is scoped to
+// (tenant,user), tenant-SHARED KindDocument points — which carry an empty
+// UserID (NewTenantScope) and therefore live under a different scope — are
+// left untouched: a single user's erasure never removes knowledge shared
+// across the whole tenant. It is a separate interface rather than a Store
+// method so the many test doubles implementing Store are unaffected; every
+// PRODUCTION store (in-memory, Qdrant, the routing store, and the sealed
+// community-backend store) implements it, and aisotropy.App.EraseSubject
+// requires it — erroring loudly if a configured store does not, never silently
+// skipping the tier. It is idempotent — erasing a subject with no points
+// returns (0, nil).
+type ScopeEraser interface {
+	EraseScope(ctx context.Context, sc Scope) (int, error)
+}
+
 // kindAllowed reports whether k passes the kind filter kinds. An empty kinds
 // (the common case: no filter requested) allows every kind.
 func kindAllowed(kinds []Kind, k Kind) bool {

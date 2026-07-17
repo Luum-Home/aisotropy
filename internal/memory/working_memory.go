@@ -154,6 +154,32 @@ func Open(path string, maxActiveMessages int, summarizer Summarizer) (*WorkingMe
 	return NewWorkingMemory(db, maxActiveMessages, summarizer), nil
 }
 
+// OpenEncrypted opens (creating if necessary) a production, on-disk BadgerDB
+// instance rooted at path with AES encryption AT REST enabled, and wraps it in
+// a WorkingMemory. encryptionKey must be 16, 24, or 32 bytes (AES-128, AES-192,
+// or AES-256); BadgerDB encrypts every SSTable and value-log entry with it, so
+// the active chat buffer and its condensed summary are never written to disk in
+// plaintext. Reopening the same directory later requires the same key —
+// BadgerDB refuses to open an encrypted store with a wrong or absent key.
+//
+// The caller owns supplying the key from a secret manager / environment and
+// MUST never log it; a wrong-length key is rejected here rather than deferred
+// to BadgerDB. Encryption additionally requires a non-zero index cache, which
+// tuneForWorkingMemory already configures.
+func OpenEncrypted(path string, maxActiveMessages int, summarizer Summarizer, encryptionKey []byte) (*WorkingMemory, error) {
+	switch len(encryptionKey) {
+	case 16, 24, 32:
+	default:
+		return nil, fmt.Errorf("memory: encryption key must be 16, 24, or 32 bytes for AES-128/192/256, got %d", len(encryptionKey))
+	}
+	opts := tuneForWorkingMemory(badger.DefaultOptions(path)).WithEncryptionKey(encryptionKey)
+	db, err := badger.Open(opts)
+	if err != nil {
+		return nil, fmt.Errorf("memory: open encrypted badger at %q: %w", path, err)
+	}
+	return NewWorkingMemory(db, maxActiveMessages, summarizer), nil
+}
+
 // OpenInMemory opens a BadgerDB instance with no on-disk footprint,
 // intended for tests and benchmarks (see the component doc's
 // "in-memory mode" note). Data does not survive process restart.
@@ -338,6 +364,73 @@ func (w *WorkingMemory) condensePass(key Key) {
 
 		if err := w.condenseAndPrune(w.shutdownCtx, key, excessKeys); err != nil {
 			return
+		}
+	}
+}
+
+// eraseBatchSize bounds how many keys one erase transaction deletes, keeping a
+// subject erase comfortably under BadgerDB's per-transaction batch limits even
+// for a subject with many sessions.
+const eraseBatchSize = 1000
+
+// EraseSubject deletes EVERY working-memory key for a single (tenant,user)
+// subject — every session's active chat buffer, condensed summary, and sequence
+// counter — implementing the working-memory half of subject-level erasure
+// (GDPR Art.17). It is scoped strictly to the (tenant,user) prefix (see
+// SubjectPrefix): another subject's keys are structurally unreachable, and a
+// blank or malformed tenant/user is rejected up front rather than widened into
+// a wildcard delete. Idempotent: erasing a subject that has no data returns
+// (0, nil), and erasing twice is safe. Returns the number of keys deleted.
+//
+// It erases only the persisted keys. A condensation goroutine mid-flight for one
+// of the subject's sessions is not cancelled here; because every write is
+// prefix-scoped and Append re-derives keys, a late write landing after an erase
+// simply re-creates that session's keys, which a subsequent erase removes. A
+// caller erasing a LIVE subject should stop sending its turns first.
+func (w *WorkingMemory) EraseSubject(ctx context.Context, tenant, user string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	prefix, err := SubjectPrefix(tenant, user)
+	if err != nil {
+		return 0, err
+	}
+
+	deleted := 0
+	for {
+		// Collect one batch of keys under the subject prefix with a key-only scan
+		// (PrefetchValues=false), then delete them in a separate write txn — never
+		// deleting while iterating the same transaction.
+		var batch [][]byte
+		if err := w.db.View(func(txn *badger.Txn) error {
+			opts := badger.DefaultIteratorOptions
+			opts.Prefix = prefix
+			opts.PrefetchValues = false
+			it := txn.NewIterator(opts)
+			defer it.Close()
+			for it.Seek(prefix); it.ValidForPrefix(prefix) && len(batch) < eraseBatchSize; it.Next() {
+				batch = append(batch, append([]byte(nil), it.Item().Key()...))
+			}
+			return nil
+		}); err != nil {
+			return deleted, fmt.Errorf("memory: scan subject keys for erase: %w", err)
+		}
+		if len(batch) == 0 {
+			return deleted, nil
+		}
+		if err := w.db.Update(func(txn *badger.Txn) error {
+			for _, k := range batch {
+				if err := txn.Delete(k); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return deleted, fmt.Errorf("memory: erase subject keys: %w", err)
+		}
+		deleted += len(batch)
+		if len(batch) < eraseBatchSize {
+			return deleted, nil
 		}
 	}
 }

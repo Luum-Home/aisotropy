@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/Luum-Home/aisotropy/internal/api"
+	"github.com/Luum-Home/aisotropy/internal/audit"
 	"github.com/Luum-Home/aisotropy/internal/bitrate"
 	"github.com/Luum-Home/aisotropy/internal/consolidation"
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
@@ -140,6 +141,13 @@ type App struct {
 	// (Option C) that 401s every /v1 request. Use WithAuthenticator(NoAuth())
 	// to explicitly run without a credential check.
 	authenticator Authenticator
+
+	// auditSink backs WithAuditSink (aisotropy/audit.go): the access-audit sink
+	// the /v1 audit middleware writes one Event to per served request (Gap 8).
+	// nil means "unset" — Run builds the env-driven default via audit.FromEnv
+	// (durable JSONL file when AISOTROPY_AUDIT_LOG is set, else a dedicated slog
+	// "access_audit" logger), so there is always an access trail.
+	auditSink audit.Sink
 
 	// devUIPath backs WithDevUI / WithDevUIAt (aisotropy/devui.go): the
 	// non-/v1 route the built-in development chat page mounts on. Empty (the
@@ -819,9 +827,19 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	// One process-wide aggregator threaded into every chat handler. The block
 	// toggles gate only whether a suspicious verdict rejects the request/replaces
 	// the response — redaction and detection run regardless.
+	//
+	// SAFER-BY-DEFAULT POSTURE (Gap 7): injection BLOCKING now defaults ON
+	// (opt-OUT). A prompt whose injection verdict is Suspicious is rejected unless
+	// an operator explicitly sets AISOTROPY_GUARDRAILS_BLOCK_INJECTION=false (e.g.
+	// for local dev / eval harnesses that intentionally send jailbreak strings).
+	// This governs BOTH the live-prompt gate and the knowledge-ingest gate. Output
+	// blocking stays OPT-IN OFF because hard-blocking the streaming route requires
+	// buffering the whole response (a latency tradeoff, see RegisterStream), and
+	// the LLM-as-judge output check stays OPT-IN OFF for cost. Every default is
+	// overridable via its env toggle; see docs/security/ai-layer-guardrails.md.
 	guard := &api.Guard{
 		G:              guardrailsG,
-		BlockInjection: guardrailsBlockFromEnv("AISOTROPY_GUARDRAILS_BLOCK_INJECTION"),
+		BlockInjection: guardrailsBlockFromEnvDefault("AISOTROPY_GUARDRAILS_BLOCK_INJECTION", true),
 		BlockOutput:    blockOutput,
 	}
 	slog.Info("guardrails wired (redact+detect always on)", "block_injection", guard.BlockInjection, "block_output", guard.BlockOutput)
@@ -940,8 +958,35 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Access-audit sink (Gap 8): the durable, structured who-accessed-what-tenant-
+	// when trail the /v1 audit middleware writes to. WithAuditSink wins; otherwise
+	// audit.FromEnv selects a durable JSONL file (AISOTROPY_AUDIT_LOG) or the
+	// dedicated slog "access_audit" logger (the always-on default). A set-but-
+	// unopenable AISOTROPY_AUDIT_LOG FAILS the boot (fail closed): an operator who
+	// asked for a retained audit file must not silently run without it. The sink is
+	// closed (fsync + close) on graceful shutdown, after the server has drained.
+	auditSink := a.auditSink
+	if auditSink == nil {
+		auditSink, err = audit.FromEnv()
+		if err != nil {
+			rt.close(context.Background()) //nolint:contextcheck // startRuntime succeeded; tear its runtime down on a fresh ctx before returning the audit-sink boot error
+			return err
+		}
+	}
+	defer func() {
+		if cerr := auditSink.Close(); cerr != nil {
+			slog.Error("access-audit sink close failed", "err", cerr)
+		}
+	}()
+
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
+	// Access audit runs just inside RequestID (so the correlation id is set) and
+	// OUTSIDE Recoverer, so a request whose handler panics is still audited — the
+	// panic is recovered below into a 500 that this middleware records on the way
+	// out. It wraps the ResponseWriter without buffering, so SSE streaming is
+	// unaffected (see internal/api/audit_middleware.go).
+	router.Use(api.AuditMiddleware(auditSink))
 	router.Use(middleware.Recoverer)
 	// Emit nginx's `X-Accel-Buffering: no` on the token-by-token SSE routes so the
 	// stream is not batched by a default-configured (proxy_buffering on) reverse
@@ -1070,14 +1115,15 @@ func (a *App) Run(ctx context.Context) error {
 	// Knowledge ingestion (ADR-0018): the HTTP arm of the dual-surface
 	// capability, sharing the exact same semantic store/embedder pair the
 	// chat routes' RAG hydration reads from above.
-	api.RegisterKnowledge(humaAPI, rt.semanticStore, rt.embedder, a.chunkOptions())
+	api.RegisterKnowledge(humaAPI, rt.semanticStore, rt.embedder, a.chunkOptions(), rt.guard)
 	// Knowledge deletion (ADR-0018 open q#3): removes a document's chunks by
 	// id, regardless of chunk count.
 	api.RegisterKnowledgeDelete(humaAPI, rt.semanticStore)
 	// Tenant-shared knowledge ingestion + deletion (ADR-0019): a corpus
 	// ingested once at tenant scope, retrievable by every user of that
-	// tenant via hydrateSystemPrompt's merged search.
-	api.RegisterTenantKnowledge(humaAPI, rt.semanticStore, rt.embedder, a.chunkOptions())
+	// tenant via hydrateSystemPrompt's merged search. The ingest gate is wired
+	// with the same guard so a poisoned tenant-shared doc is scanned/blocked.
+	api.RegisterTenantKnowledge(humaAPI, rt.semanticStore, rt.embedder, a.chunkOptions(), rt.guard)
 	api.RegisterTenantKnowledgeDelete(humaAPI, rt.semanticStore)
 
 	// Stateless cached /ask route (makes internal/responsecache LIVE). It sits
@@ -1203,6 +1249,13 @@ func openFactsStore(router routing.Router, dedicated []string) (facts.Store, err
 		return facts.OpenFromEnv()
 	}
 	dataDir := os.Getenv("AISOTROPY_DATA_DIR")
+	if dataDir != "" {
+		// Honest at-rest posture (Gap 5): the pure-Go modernc.org/sqlite driver has
+		// no SQLCipher/PRAGMA key, so the on-disk facts DB is NOT app-encrypted. We
+		// do not fake a PRAGMA — the accepted compensating control is operator
+		// disk/volume encryption (LUKS/dm-crypt/cloud-EBS). See ADR-0045.
+		slog.Warn("facts SQLite tier is on-disk and NOT app-encrypted at rest (the pure-Go driver has no SQLCipher): rely on operator disk/volume encryption (LUKS/dm-crypt/cloud-EBS) as the compensating control — see ADR-0045", "data_dir", dataDir)
+	}
 	factory := func(resource string) (facts.Store, error) {
 		if dataDir == "" {
 			return facts.OpenSQLite(":memory:")
@@ -1482,14 +1535,24 @@ func buildResponseCache(embedder semantic.Embedder) *responsecache.ResponseCache
 // unparsable => false (off): the operator-fixed default posture is annotate +
 // log, never block.
 func guardrailsBlockFromEnv(name string) bool {
+	return guardrailsBlockFromEnvDefault(name, false)
+}
+
+// guardrailsBlockFromEnvDefault is guardrailsBlockFromEnv with a caller-supplied
+// default for the unset/empty/unparsable case, so a toggle can default ON
+// (opt-out) instead of OFF (opt-in). An explicit truthy/falsey value always wins;
+// an unparsable value falls back to def with a warning. Used to make
+// AISOTROPY_GUARDRAILS_BLOCK_INJECTION default ON while keeping every default
+// operator-overridable.
+func guardrailsBlockFromEnvDefault(name string, def bool) bool {
 	v := os.Getenv(name)
 	if v == "" {
-		return false
+		return def
 	}
 	on, err := strconv.ParseBool(v)
 	if err != nil {
-		slog.Warn("invalid guardrail block toggle; treating as off", "var", name, "value", v)
-		return false
+		slog.Warn("invalid guardrail block toggle; using default", "var", name, "value", v, "default", def)
+		return def
 	}
 	return on
 }
@@ -1530,7 +1593,26 @@ func newWorkingMemory(client llm.Client, summarizer memory.Summarizer) (*memory.
 	}
 	dataDir := os.Getenv("AISOTROPY_DATA_DIR")
 	if dataDir == "" {
+		// In-memory default: no disk footprint, so at-rest encryption is moot. If
+		// a key was supplied anyway, warn — the operator most likely also intended
+		// on-disk persistence (AISOTROPY_DATA_DIR).
+		if dataEncryptionKeySet() {
+			slog.Warn(dataEncryptionKeyEnv + " is set but AISOTROPY_DATA_DIR is not: working memory is in-memory (no disk), so at-rest encryption does not apply — set AISOTROPY_DATA_DIR to persist an encrypted store")
+		}
 		return memory.OpenInMemory(0, summarizer)
 	}
+	// On-disk working memory (Gap 5): when AISOTROPY_DATA_ENCRYPTION_KEY is set,
+	// open BadgerDB with AES-at-rest encryption; otherwise behave exactly as
+	// before (documented opt-in). A malformed key fails the boot with a clear
+	// error rather than silently falling back to plaintext.
+	key, encrypted, err := parseDataEncryptionKey()
+	if err != nil {
+		return nil, err
+	}
+	if encrypted {
+		slog.Info("working memory at-rest encryption enabled (BadgerDB AES)", "key_bits", len(key)*8)
+		return memory.OpenEncrypted(dataDir, 0, summarizer, key)
+	}
+	slog.Warn("working memory is on-disk but NOT app-encrypted at rest: set " + dataEncryptionKeyEnv + " to enable BadgerDB AES, or rely on operator disk/volume encryption (LUKS/dm-crypt/cloud-EBS) as the compensating control (see ADR-0044). The facts SQLite tier is disk-encryption-only regardless (ADR-0045).")
 	return memory.Open(dataDir, 0, summarizer)
 }

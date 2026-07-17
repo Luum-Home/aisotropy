@@ -152,6 +152,23 @@ type Store interface {
 	Close() error
 }
 
+// ScopeEraser is the OPTIONAL subject-erasure capability (GDPR Art.17) a
+// facts.Store may implement: delete EVERY fact — current AND superseded — for a
+// (tenant,user) Scope, returning how many rows were removed. It is a separate
+// interface rather than a Store method so the many test doubles that implement
+// Store are unaffected; every PRODUCTION store (SQLite, rqlite, the routing
+// store, and the sealed community-backend store) implements it, and
+// aisotropy.App.EraseSubject requires it — erroring loudly if a configured
+// store does not, never silently skipping the tier and leaving PII behind.
+//
+// Erasing is scoped exactly like every other operation: the (tenant,user)
+// predicate is part of the delete, so a subject erase can never touch another
+// tenant's or user's rows. It is idempotent — erasing a subject with no rows
+// returns (0, nil).
+type ScopeEraser interface {
+	EraseScope(ctx context.Context, sc Scope) (int, error)
+}
+
 // Turn is a completed conversational exchange handed to an Extractor after the
 // stream finishes.
 type Turn struct {

@@ -66,6 +66,30 @@
 // context.Context; the guest never sees it unless a host function the deployer
 // wired chooses to surface it.
 //
+// # Resource bounds (DoS defense)
+//
+// Isolation stops a guest from reaching the host; it does NOT by itself stop a
+// hostile guest from exhausting the host's OWN resources (allocate toward the
+// 4 GiB wasm ceiling, or spin the CPU forever). Two bounds close that gap, both
+// configurable with secure defaults:
+//
+//   - MEMORY is HARD-bounded. The runtime is built WithMemoryLimitPages, capping
+//     the guest's linear memory (1 page = 64 KiB). A guest that grows past the
+//     cap gets a failed memory.grow — its allocation traps, surfacing to the host
+//     as a dispatch error, never an unbounded host allocation. Default:
+//     DefaultMemoryLimitPages (256 MiB).
+//   - CPU is bounded by a DEADLINE, not by metering. wazero has no fuel/gas and
+//     no epoch interruption, so a tight loop cannot be preempted mid-instruction.
+//     Instead each dispatch runs under a context.WithTimeout, and because the
+//     runtime is WithCloseOnContextDone, hitting the deadline TEARS THE CALL DOWN
+//     (wazero checks the context at loop back-edges and call boundaries). So a
+//     spinning guest is stopped AT THE DEADLINE — the deadline IS the CPU bound,
+//     with wall-clock (not cycle) granularity. Default: DefaultCallTimeout (5s).
+//
+// Be honest about the asymmetry: memory is a precise ceiling; CPU is a wall-clock
+// cutoff. A guest can burn a full CallTimeout of CPU before it is killed — the
+// bound is "no more than CallTimeout per call," not "no more than N instructions."
+//
 // # Dependency direction
 //
 // This package imports internal/tools (the tool shape), internal/api (the
@@ -80,6 +104,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	wazeroapi "github.com/tetratelabs/wazero/api"
@@ -104,6 +129,20 @@ const (
 	hostModule = "aisotropy"
 	// hostLogFunc is the one optional host function: log(ptr i32, len i32).
 	hostLogFunc = "log"
+)
+
+// Resource-bound defaults (see the "Resource bounds" section above). Both are
+// applied by New when the corresponding Config field is left at its zero value,
+// so a caller gets a DoS-bounded sandbox without opting in.
+const (
+	// DefaultMemoryLimitPages caps a guest's linear memory at 256 MiB
+	// (4096 pages * 64 KiB), down from wazero's 4 GiB (65536-page) ceiling. It is
+	// the hard memory bound: a guest that grows past it traps.
+	DefaultMemoryLimitPages uint32 = 4096
+	// DefaultCallTimeout bounds a single dispatch's wall-clock CPU time. Because
+	// wazero has no CPU metering, this deadline (enforced via WithCloseOnContextDone)
+	// is what stops a spinning guest.
+	DefaultCallTimeout = 5 * time.Second
 )
 
 // Capabilities is the authority a wasm tool is granted. The zero value is the
@@ -155,6 +194,18 @@ type Config struct {
 	EntryRun   string
 	// Capabilities is the authority granted to the guest.
 	Capabilities Capabilities
+
+	// MemoryLimitPages caps the guest's linear memory (1 page = 64 KiB). Zero
+	// applies DefaultMemoryLimitPages (256 MiB). This is the HARD memory bound: a
+	// guest that grows past it gets a failed memory.grow. Values above wazero's
+	// 65536-page (4 GiB) ceiling are invalid and will panic in the runtime.
+	MemoryLimitPages uint32
+	// CallTimeout bounds a single dispatch's wall-clock time. Zero applies
+	// DefaultCallTimeout (5s); a negative value disables the per-call deadline
+	// (NOT recommended — the request context is then the only backstop). Because
+	// wazero has no CPU metering, this deadline is the CPU bound for a spinning
+	// guest: the call is torn down AT the deadline, not preempted mid-instruction.
+	CallTimeout time.Duration
 }
 
 // Tool is a compiled, ready-to-dispatch wasm tool. It owns a wazero.Runtime (the
@@ -162,12 +213,13 @@ type Config struct {
 // single Tool is safe for concurrent dispatch: each call gets its own guest
 // instance.
 type Tool struct {
-	spec       tools.Tool
-	runtime    wazero.Runtime
-	compiled   wazero.CompiledModule
-	validator  *llm.SchemaValidator
-	entryAlloc string
-	entryRun   string
+	spec        tools.Tool
+	runtime     wazero.Runtime
+	compiled    wazero.CompiledModule
+	validator   *llm.SchemaValidator
+	entryAlloc  string
+	entryRun    string
+	callTimeout time.Duration
 }
 
 // New compiles the module, verifies it satisfies the ABI (exports a memory and
@@ -196,9 +248,25 @@ func New(ctx context.Context, cfg Config) (*Tool, error) {
 		return nil, fmt.Errorf("wasmtool %q: compile parameters schema: %w", cfg.Name, err)
 	}
 
-	// WithCloseOnContextDone: a cancelled request context aborts an in-flight
-	// guest call instead of letting untrusted code run past the client hang-up.
-	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCloseOnContextDone(true))
+	// Resource bounds (DoS defense; see the package "Resource bounds" section):
+	//   - WithMemoryLimitPages HARD-caps the guest's linear memory so a hostile
+	//     guest cannot allocate toward wazero's 4 GiB ceiling.
+	//   - WithCloseOnContextDone lets a done context (cancellation OR the per-call
+	//     deadline applied in dispatch) tear an in-flight guest call down. wazero
+	//     has no fuel/epoch CPU metering, so this deadline is the ONLY CPU bound: a
+	//     spinning guest is stopped at the deadline, not preempted mid-instruction.
+	memPages := cfg.MemoryLimitPages
+	if memPages == 0 {
+		memPages = DefaultMemoryLimitPages
+	}
+	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().
+		WithCloseOnContextDone(true).
+		WithMemoryLimitPages(memPages))
+
+	callTimeout := cfg.CallTimeout
+	if callTimeout == 0 {
+		callTimeout = DefaultCallTimeout
+	}
 
 	// Any error past this point must close the runtime we just created.
 	fail := func(err error) (*Tool, error) {
@@ -240,11 +308,12 @@ func New(ctx context.Context, cfg Config) (*Tool, error) {
 			RequiredScope: cfg.RequiredScope,
 			Parameters:    cfg.Parameters,
 		},
-		runtime:    rt,
-		compiled:   compiled,
-		validator:  validator,
-		entryAlloc: entryAlloc,
-		entryRun:   entryRun,
+		runtime:     rt,
+		compiled:    compiled,
+		validator:   validator,
+		entryAlloc:  entryAlloc,
+		entryRun:    entryRun,
+		callTimeout: callTimeout,
 	}, nil
 }
 
@@ -272,6 +341,18 @@ func (t *Tool) dispatch(ctx context.Context, rawArgs json.RawMessage) (string, e
 	}
 	if err := t.validator.Validate(payload); err != nil {
 		return "", &api.ToolArgsError{Tool: t.spec.Name, Err: err}
+	}
+
+	// Per-call deadline: bound the guest's wall-clock time. Combined with the
+	// runtime's WithCloseOnContextDone, an expired deadline tears the guest call
+	// down — the CPU bound for a spinning guest (wazero has no instruction
+	// metering, so a tight loop is stopped AT the deadline, not preempted). It
+	// also composes with an already-cancelled request ctx: whichever fires first
+	// wins. A non-positive callTimeout leaves ctx as-is (deadline disabled).
+	if t.callTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, t.callTimeout)
+		defer cancel()
 	}
 
 	// Anonymous module (WithName("")) so concurrent dispatches don't collide in

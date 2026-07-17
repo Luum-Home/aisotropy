@@ -1,12 +1,40 @@
 package aisotropy
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Luum-Home/aisotropy/internal/auth"
 )
+
+// ErrNoAuthenticator is returned by AuthenticatorFromEnv when NO JWT authenticator
+// is configured (no HS256 secret, no RS256 static key, no JWKS URL) AND NoAuth was
+// not EXPLICITLY opted into via AISOTROPY_ALLOW_NOAUTH. It exists to close the
+// zero-config-insecure hole: historically the mere ABSENCE of a JWT secret silently
+// produced NoAuth() (path tenant_id/user_id trusted with no credential), so a
+// deployment that simply forgot to configure auth would come up wide open. Now the
+// insecure posture is never reachable by omission — the caller (the aisotropyd boot
+// path) turns this sentinel into a fatal, non-zero exit. It is a server-side
+// configuration outcome, never a per-request authentication result.
+var ErrNoAuthenticator = errors.New("aisotropy: no authenticator configured — set a JWT " +
+	"secret/key (AISOTROPY_JWT_SECRET, AISOTROPY_JWT_PUBLIC_KEY[_FILE], or AISOTROPY_JWT_JWKS_URL), " +
+	"or explicitly set AISOTROPY_ALLOW_NOAUTH=1 to run WITHOUT authentication (local dev only)")
+
+// ErrNoAuthNonLocal is returned by NoAuthNonLocalGuard when NoAuth is active (an
+// explicit AISOTROPY_ALLOW_NOAUTH=1 opt-in) but the runtime is bound to a
+// NON-loopback address, and the operator has not ALSO set the second, deliberately
+// separate AISOTROPY_ALLOW_NOAUTH_NONLOCAL=1 override. Exposing an unauthenticated
+// runtime on a routable interface is a cross-tenant disclosure by construction (any
+// caller sets tenant_id in the URL and reads that tenant's data), so it must be much
+// harder to reach than a local-dev keyless boot.
+var ErrNoAuthNonLocal = errors.New("aisotropy: NoAuth (no credential verification) requested " +
+	"on a non-loopback bind address — bind AISOTROPY_ADDR to loopback (127.0.0.1/localhost/::1), " +
+	"configure a JWT authenticator, or set AISOTROPY_ALLOW_NOAUTH_NONLOCAL=1 to override (STRONGLY discouraged)")
 
 // AuthenticatorFromEnv builds the Authenticator the aisotropyd binary should
 // install, based on the environment — the same FromEnv idiom used by
@@ -30,8 +58,13 @@ import (
 //   - AISOTROPY_JWT_JWKS_URL -> RS256 verification against a JWKS endpoint
 //     (fetched, TTL-cached, kid-matched; fetch failure fails closed). Mode label
 //     "jwt-rs256-jwks".
-//   - none set -> NoAuth(), the explicit insecure opt-out that trusts the URL
-//     path tenant/user verbatim. Mode label "noauth".
+//   - none set -> NoAuth is NOT the silent default. If (and only if)
+//     AISOTROPY_ALLOW_NOAUTH is explicitly truthy (1/true) this returns NoAuth()
+//     — the insecure opt-out that trusts the URL path tenant/user verbatim, mode
+//     label "noauth". Otherwise it returns ErrNoAuthenticator so the boot path
+//     REFUSES TO START rather than come up wide open by omission. The additional
+//     non-loopback guard (NoAuthNonLocalGuard) makes NoAuth on a routable
+//     interface harder still.
 //
 // Optional hardening applied to ANY JWT mode (each unset = not checked, so
 // existing tokens keep verifying):
@@ -69,7 +102,13 @@ func AuthenticatorFromEnv() (Authenticator, string, error) {
 			"or AISOTROPY_JWT_JWKS_URL (RS256 JWKS)")
 	}
 	if modes == 0 {
-		return NoAuth(), "noauth", nil
+		// No JWT authenticator configured. NoAuth is reachable ONLY as an explicit,
+		// affirmative opt-in — never by mere omission. Without AISOTROPY_ALLOW_NOAUTH
+		// the boot path receives ErrNoAuthenticator and refuses to start.
+		if envTruthy("AISOTROPY_ALLOW_NOAUTH") {
+			return NoAuth(), "noauth", nil
+		}
+		return nil, "noauth", ErrNoAuthenticator
 	}
 
 	// Shared hardening options apply to whichever JWT mode is selected.
@@ -134,4 +173,60 @@ func jwtHardeningOptsFromEnv() ([]JWTOption, error) {
 		opts = append(opts, WithJWTMaxTTL(d))
 	}
 	return opts, nil
+}
+
+// envTruthy reports whether the named env var is set to an affirmative boolean
+// (1/t/T/TRUE/true/True, per strconv.ParseBool). An unset, empty, or unparseable
+// value is false — so an insecure opt-in is never triggered by accident (e.g. a
+// typo like "yes" does NOT enable NoAuth).
+func envTruthy(key string) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return false
+	}
+	b, err := strconv.ParseBool(v)
+	return err == nil && b
+}
+
+// NoAuthNonLocalGuard is the second, deliberately-separate gate on running WITHOUT
+// authentication. It is called by the boot path ONLY when NoAuth is already the
+// selected mode (an explicit AISOTROPY_ALLOW_NOAUTH=1 opt-in). It returns nil when
+// the runtime binds a loopback address (safe for local dev) OR when the operator
+// has explicitly set AISOTROPY_ALLOW_NOAUTH_NONLOCAL=1; otherwise it returns
+// ErrNoAuthNonLocal so the binary refuses to expose an unauthenticated runtime on a
+// routable interface. addr is the resolved AISOTROPY_ADDR listen address (e.g.
+// ":8080", "127.0.0.1:8080", "0.0.0.0:8080", "[::1]:8080").
+func NoAuthNonLocalGuard(addr string) error {
+	if isLoopbackListenAddr(addr) {
+		return nil
+	}
+	if envTruthy("AISOTROPY_ALLOW_NOAUTH_NONLOCAL") {
+		return nil
+	}
+	return ErrNoAuthNonLocal
+}
+
+// isLoopbackListenAddr reports whether a host:port (or bare host) listen address
+// binds a loopback interface. A wildcard bind — an empty host (":8080") or
+// 0.0.0.0/:: — is NOT loopback: it exposes the port on every interface, so NoAuth
+// there must clear the non-local guard. "localhost" is treated as loopback.
+func isLoopbackListenAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		// No port component; treat the whole value as the host.
+		host = strings.TrimSpace(addr)
+	}
+	switch strings.ToLower(host) {
+	case "":
+		return false // wildcard bind (":8080") — all interfaces
+	case "localhost":
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// A non-loopback hostname (or anything unresolvable) is treated as
+		// non-local: fail safe toward requiring the explicit override.
+		return false
+	}
+	return ip.IsLoopback()
 }

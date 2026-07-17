@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -89,6 +90,58 @@ func TestPodmanRunArgs_EntrypointSleep(t *testing.T) {
 	joined := strings.Join(argv, " ")
 	if !strings.Contains(joined, "--entrypoint sleep alpine:3.20 infinity") {
 		t.Fatalf("expected `--entrypoint sleep alpine:3.20 infinity` tail, got %v", argv)
+	}
+}
+
+// TestPodmanRunArgs_HardeningDefaults proves the shared secure-by-default flags
+// are emitted by the podman builder too, composing WITH the rootless keep-id
+// mapping (defense in depth: user-namespace isolation plus cap-drop/read-only/
+// resource caps). No podman install needed.
+func TestPodmanRunArgs_HardeningDefaults(t *testing.T) {
+	argv := NewPodmanProvider().podmanRunArgs("box", DefaultWorkdir, Spec{Image: "alpine"})
+
+	// Rootless mapping is preserved.
+	if !argvContains(argv, "--userns=keep-id") {
+		t.Errorf("rootless keep-id must remain, got %v", argv)
+	}
+	// Hardening defaults are all present.
+	for _, want := range []string{"--network=none", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--read-only"} {
+		if !argvContains(argv, want) {
+			t.Errorf("expected %s by default, got %v", want, argv)
+		}
+	}
+	if !argvPair(argv, "--tmpfs", scratchTmpfs) {
+		t.Errorf("expected --tmpfs %s, got %v", scratchTmpfs, argv)
+	}
+	if !argvPair(argv, "--pids-limit", strconv.Itoa(DefaultPidsLimit)) {
+		t.Errorf("expected --pids-limit %d, got %v", DefaultPidsLimit, argv)
+	}
+	if !argvPair(argv, "--memory", DefaultMemory) || !argvPair(argv, "--cpus", DefaultCPUs) {
+		t.Errorf("expected --memory %s and --cpus %s, got %v", DefaultMemory, DefaultCPUs, argv)
+	}
+	// The entrypoint-sleep tail is preserved after all hardening flags.
+	if !strings.Contains(strings.Join(argv, " "), "--entrypoint sleep alpine infinity") {
+		t.Errorf("expected `--entrypoint sleep alpine infinity` tail, got %v", argv)
+	}
+}
+
+// TestPodmanRunArgs_HardeningOverridable proves the podman builder honors the
+// same widen-when-needed overrides as docker.
+func TestPodmanRunArgs_HardeningOverridable(t *testing.T) {
+	argv := NewPodmanProvider().podmanRunArgs("box", DefaultWorkdir, Spec{
+		Image:    "alpine",
+		Network:  "bridge",
+		Writable: true,
+		Memory:   "1g",
+	})
+	if !argvContains(argv, "--network=bridge") || argvContains(argv, "--network=none") {
+		t.Errorf("network override failed, got %v", argv)
+	}
+	if argvContains(argv, "--read-only") {
+		t.Errorf("Writable=true should drop --read-only, got %v", argv)
+	}
+	if !argvPair(argv, "--memory", "1g") {
+		t.Errorf("expected --memory 1g override, got %v", argv)
 	}
 }
 

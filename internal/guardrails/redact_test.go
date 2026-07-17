@@ -99,6 +99,38 @@ func TestRedactorPII(t *testing.T) {
 			wantMasked: "[REDACTED_IP]",
 			wantGone:   "192.168.1.100",
 		},
+		{
+			name:       "phone separated us style",
+			in:         "call 555 123 4567 today",
+			wantType:   RedactPhone,
+			wantCount:  1,
+			wantMasked: "[REDACTED_PHONE]",
+			wantGone:   "555 123 4567",
+		},
+		{
+			name:       "phone international with plus",
+			in:         "reach me on +1 415 555 0132 anytime",
+			wantType:   RedactPhone,
+			wantCount:  1,
+			wantMasked: "[REDACTED_PHONE]",
+			wantGone:   "555 0132",
+		},
+		{
+			name:       "postal code keyword anchored",
+			in:         "ship to zip code 90210 please",
+			wantType:   RedactPostalCode,
+			wantCount:  1,
+			wantMasked: "[REDACTED_POSTAL_CODE]",
+			wantGone:   "90210",
+		},
+		{
+			name:       "street address",
+			in:         "deliver to 123 Main Street on Tuesday",
+			wantType:   RedactStreetAddress,
+			wantCount:  1,
+			wantMasked: "[REDACTED_ADDRESS]",
+			wantGone:   "123 Main Street",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -146,10 +178,14 @@ func TestRedactorFalsePositives(t *testing.T) {
 		in   string
 	}{
 		{"luhn invalid 16 digits", "order number 1234567890123456 shipped"},
-		{"phone number", "call 555 123 4567 today"},
 		{"invalid ip octet", "version 999.999.1.1 build"},
 		{"plain prose", "The quick brown fox jumps over the lazy dog."},
 		{"short digit run", "pin is 1234"},
+		// A lowercase phrase that ends in a street-type word must NOT be read as an
+		// address (the name words are matched case-sensitively).
+		{"lowercase street-word prose", "it is only a 5 minutes drive from here"},
+		// A bare grouped number without phone separators/plus or a zip keyword.
+		{"bare number no context", "the total came to 12345 units"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

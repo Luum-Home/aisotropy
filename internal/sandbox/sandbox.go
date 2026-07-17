@@ -214,6 +214,59 @@ type Spec struct {
 	// is a separate, out-of-scope extension point, not modelled here.
 	Runtime string
 
+	// --- Isolation & resource limits (secure-by-default; see hardening.go) ---
+	//
+	// Every field below is applied by the run-arg builders with a CONSERVATIVE
+	// SECURE DEFAULT when left at its zero value, so a Spec built with none of
+	// them set (as the task runner does) still gets the full hardening. Each is
+	// a widen-when-needed knob: set it to loosen an isolation control for a task
+	// that legitimately requires it. Widening should be a deliberate, per-task
+	// decision — never the default.
+
+	// Network is the container network mode (`--network`). Empty is the SECURE
+	// DEFAULT of "none": the v1 tool-hands need no egress, and none also closes
+	// off reaching co-located rqlite/Qdrant ports over the container network
+	// (which would bypass the app-layer tenant filter). Set it EXPLICITLY (e.g.
+	// "bridge", "host", a named network) only for a task type that genuinely
+	// needs network — an opt-in, never the default.
+	Network string
+
+	// PidsLimit caps the number of processes/threads in the container
+	// (`--pids-limit`) — the fork-bomb guard. Zero applies the secure default
+	// DefaultPidsLimit. A NEGATIVE value (e.g. -1, docker's "unlimited"
+	// sentinel) is passed through for a task that must be uncapped.
+	PidsLimit int
+
+	// Memory caps container memory (`--memory`, e.g. "512m", "2g"). Empty applies
+	// the secure default DefaultMemory. Any explicit value is passed through —
+	// including "0", the backend's "unlimited" sentinel — so an operator can widen.
+	Memory string
+
+	// CPUs caps the CPU quota (`--cpus`, e.g. "1.0", "2"). Empty applies the
+	// secure default DefaultCPUs. Any explicit value is passed through (including
+	// "0" for unlimited).
+	CPUs string
+
+	// Writable, when false (the SECURE DEFAULT), runs the container root
+	// filesystem READ-ONLY (`--read-only`) with a small writable tmpfs scratch at
+	// scratchTmpfs (/tmp). The task's bind-mounted worktree stays writable — bind
+	// mounts are unaffected by --read-only — so the task can still read and write
+	// its workspace. Set true to drop --read-only for a task that must write
+	// outside its worktree and /tmp.
+	Writable bool
+
+	// CapAdd lists Linux capabilities to add back on top of the default
+	// `--cap-drop=ALL`. Empty (the secure default) means the container keeps NO
+	// capabilities. Add only the specific caps a task needs (e.g. "NET_BIND_SERVICE");
+	// the drop-all-then-add pattern keeps the grant minimal and explicit.
+	CapAdd []string
+
+	// AllowNewPrivileges, when false (the SECURE DEFAULT), sets
+	// `--security-opt=no-new-privileges`, blocking setuid/setgid/file-capability
+	// privilege escalation inside the container. Set true only for a task that
+	// legitimately needs to gain privileges (rare).
+	AllowNewPrivileges bool
+
 	// Name, when set, is used to derive the backing container name; empty lets
 	// the provider generate a unique one. Mainly a test/observability hook.
 	Name string

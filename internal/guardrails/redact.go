@@ -18,7 +18,21 @@ const (
 	RedactBearerToken RedactionType = "bearer_token"
 	RedactPrivateKey  RedactionType = "private_key"
 	RedactIP          RedactionType = "ip"
-	RedactCustom      RedactionType = "custom"
+	// RedactPhone, RedactPostalCode, and RedactStreetAddress are the "basic
+	// identifiers" tier added on top of the secrets tier (Gap 7). They are
+	// deliberately conservative regexes: a phone number must carry a country-code
+	// "+" or separator grouping, a postal code must be keyword-anchored ("zip"/
+	// "postal"), and a street address must have a house number followed by a
+	// Capitalised name word and a street-type suffix — so ordinary prose and bare
+	// digit runs are not over-redacted. HONEST SCOPE: personal NAMES, national-ID
+	// numbers (SSN/passport/DNI), and health identifiers are NOT covered — they
+	// cannot be matched by regex without unacceptable false-positive rates and
+	// need an NER/classifier pass (a documented, opt-in follow-on). See
+	// docs/security/ai-layer-guardrails.md.
+	RedactPhone         RedactionType = "phone"
+	RedactPostalCode    RedactionType = "postal_code"
+	RedactStreetAddress RedactionType = "street_address"
+	RedactCustom        RedactionType = "custom"
 )
 
 // RedactionReport describes WHAT was redacted from a piece of text — the types
@@ -108,6 +122,28 @@ var (
 	// Credit-card candidate: 13-19 digits, optionally grouped by single spaces
 	// or dashes. Luhn-validated in code before redacting.
 	reCardCandidate = regexp.MustCompile(`\b\d(?:[ \-]?\d){12,18}\b`)
+
+	// Phone numbers. Two conservative shapes, applied AFTER credit-card and IP
+	// scans so those more-specific numeric forms win first:
+	//   - International: a leading "+" country code followed by 2-4 further digit
+	//     groups (e.g. "+1 415 555 0132", "+44 20 7183 8750").
+	//   - Separated national: a 3-3-4 group split by spaces/dots/dashes, with an
+	//     optional area-code parenthesis (e.g. "555 123 4567", "(415) 555-0132").
+	// A bare contiguous digit run (an order/id number) is deliberately NOT matched
+	// — it needs the "+" or the separator grouping to read as a phone number.
+	rePhoneIntl = regexp.MustCompile(`\+\d{1,3}[\s.\-]?\(?\d{1,4}\)?(?:[\s.\-]?\d{2,4}){2,4}`)
+	rePhoneSep  = regexp.MustCompile(`\b\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b`)
+
+	// Postal code, keyword-anchored to keep a bare 5-digit number from being
+	// redacted everywhere: requires a "zip"/"postal" keyword before the digits
+	// (e.g. "zip code 90210", "postal: 12345-6789").
+	rePostalCode = regexp.MustCompile(`(?i)\b(?:zip|postal)\s*(?:code)?\s*[:#]?\s*\d{4,6}(?:-\d{4})?\b`)
+
+	// Street address: a house number, one-to-four Capitalised name words, and a
+	// street-type suffix (e.g. "123 Main Street", "742 Evergreen Terrace"). The
+	// name words are matched case-SENSITIVELY (leading [A-Z]) — only the suffix is
+	// case-insensitive — so lowercase prose like "5 minutes drive" cannot match.
+	reStreetAddress = regexp.MustCompile(`\b\d{1,5}\s+(?:[A-Z][A-Za-z0-9.'\-]*\.?\s+){1,4}(?i:street|st|avenue|ave|boulevard|blvd|lane|ln|road|rd|drive|dr|court|ct|way|place|pl|terrace|ter|highway|hwy|circle|cir|parkway|pkwy)\b\.?`)
 )
 
 // prefixKeyDetector pairs a provider-token regex with its report type.
@@ -137,12 +173,15 @@ func NewRedactor(custom ...CustomPattern) *Redactor {
 	return &Redactor{
 		custom: append([]CustomPattern(nil), custom...),
 		placeholders: map[RedactionType]string{
-			RedactEmail:       "[REDACTED_EMAIL]",
-			RedactCreditCard:  "[REDACTED_CREDIT_CARD]",
-			RedactAPIKey:      "[REDACTED_API_KEY]",
-			RedactBearerToken: "[REDACTED_BEARER_TOKEN]",
-			RedactPrivateKey:  "[REDACTED_PRIVATE_KEY]",
-			RedactIP:          "[REDACTED_IP]",
+			RedactEmail:         "[REDACTED_EMAIL]",
+			RedactCreditCard:    "[REDACTED_CREDIT_CARD]",
+			RedactAPIKey:        "[REDACTED_API_KEY]",
+			RedactBearerToken:   "[REDACTED_BEARER_TOKEN]",
+			RedactPrivateKey:    "[REDACTED_PRIVATE_KEY]",
+			RedactIP:            "[REDACTED_IP]",
+			RedactPhone:         "[REDACTED_PHONE]",
+			RedactPostalCode:    "[REDACTED_POSTAL_CODE]",
+			RedactStreetAddress: "[REDACTED_ADDRESS]",
 		},
 	}
 }
@@ -200,7 +239,16 @@ func (r *Redactor) Redact(text string) (string, RedactionReport) {
 		return m
 	})
 
-	// 8. Integrator-supplied custom patterns, last so they run on what remains.
+	// 8. Phone numbers (after the card/IP numeric scans so those win first).
+	//    International "+"-prefixed form before the separated national form.
+	text = r.replaceAll(text, rePhoneIntl, RedactPhone, &report)
+	text = r.replaceAll(text, rePhoneSep, RedactPhone, &report)
+
+	// 9. Postal codes (keyword-anchored) and street addresses.
+	text = r.replaceAll(text, rePostalCode, RedactPostalCode, &report)
+	text = r.replaceAll(text, reStreetAddress, RedactStreetAddress, &report)
+
+	// 10. Integrator-supplied custom patterns, last so they run on what remains.
 	//    Count matches before substituting so the report stays accurate.
 	for _, c := range r.custom {
 		n := len(c.re.FindAllStringIndex(text, -1))

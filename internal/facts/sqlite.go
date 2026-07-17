@@ -245,6 +245,23 @@ func (s *SQLiteStore) Delete(ctx context.Context, sc Scope, ids []string) error 
 	return nil
 }
 
+// EraseScope deletes every fact — current and superseded — for sc's
+// (tenant,user), returning the number of rows removed. See ScopeEraser. The
+// scope predicate is in the WHERE, so the isolation gate holds for the erase
+// too, and the FTS5 delete trigger keeps the index in sync. Idempotent: a
+// subject with no rows returns (0, nil).
+func (s *SQLiteStore) EraseScope(ctx context.Context, sc Scope) (int, error) {
+	res, err := s.db.ExecContext(ctx, eraseScopeSQL, sc.Tenant(), sc.User())
+	if err != nil {
+		return 0, fmt.Errorf("facts: erase scope: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("facts: erase scope rows: %w", err)
+	}
+	return int(n), nil
+}
+
 // Close closes the underlying database.
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 

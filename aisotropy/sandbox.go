@@ -35,6 +35,14 @@ type Sandbox = sandbox.Sandbox
 // selects an OCI runtime for the OCI-backed built-ins — e.g. "kata-runtime"
 // (Kata Containers, a microVM per container) or "runsc" (gVisor, a sandboxed
 // kernel) — so microVM-grade isolation is a config knob, not a new provider.
+//
+// It also carries the secure-by-default hardening knobs the built-in providers
+// apply to every container (Network=none, cap-drop=ALL, no-new-privileges,
+// read-only rootfs + tmpfs scratch, and pids/memory/cpu caps): Network,
+// PidsLimit, Memory, CPUs, Writable, CapAdd, AllowNewPrivileges. Each is a
+// widen-when-needed override — the zero value keeps the conservative default.
+// See docs/architecture/sandbox-providers.md → "Secure-by-default container
+// hardening".
 type SandboxSpec = sandbox.Spec
 
 // SandboxExecResult and SandboxExecOptions are the Exec I/O types a custom
