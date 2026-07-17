@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package bench.stream.v1;
+
+option go_package = "aisotropy.local/bench/streaming/proto/streampb;streampb";
+
+// TokenStreamer mirrors the token-streaming surface: one request opens a
+// server-streaming response of deterministic tokens (the stub decode rate is
+// set server-side, so this measures gRPC transport framing, not model latency).
+service TokenStreamer {
+  rpc Stream(StreamRequest) returns (stream TokenChunk);
+}
+
+message StreamRequest {
+  // tenant_id / user_id carried as first-class fields (isolation parity with
+  // the SSE surface); not authorization-bearing in the stub.
+  string tenant_id = 1;
+  string user_id = 2;
+  // Optional overrides; 0 => server default stub.
+  int32 count = 3;
+  int32 interval_ms = 4;
+}
+
+message TokenChunk {
+  int32 index = 1;
+  string text = 2;
+  // Server-side monotonic send timestamp (unix nanos) so the client can compute
+  // inter-token latency without clock-skew from request framing.
+  int64 sent_unix_nano = 3;
+}

@@ -1,0 +1,204 @@
+# Phase-2 streaming transport bake-off — measured results
+# host: Darwin 25.5.0 arm64  go: go1.25.3  date: 2026-07-17T18:27:54Z
+# stub: 200 tokens @ 5ms cadence (~200 tok/s), model held constant across transports
+
+=== sse-h1 | n=10 count=200 ===
+streams ok         : 10/10
+wall time          : 998ms
+tokens delivered   : 2000
+sustained tokens/s : 2003
+TTFT      p50/p95/p99 : 2.51ms / 2.55ms / 2.55ms
+inter-tok p50/p95/p99 : 4.99ms / 5.43ms / 5.67ms (target 5ms)
+server max concurrent : 10
+server peak heap (MB) : 0
+server peak goroutines: 33
+server cancelled/compl: 0 / 0
+
+=== sse-h2 | n=10 count=200 ===
+streams ok         : 10/10
+wall time          : 1s
+tokens delivered   : 2000
+sustained tokens/s : 2001
+TTFT      p50/p95/p99 : 3.63ms / 3.84ms / 3.84ms
+inter-tok p50/p95/p99 : 5ms / 5.4ms / 5.7ms (target 5ms)
+server max concurrent : 10
+server peak heap (MB) : 1
+server peak goroutines: 25
+server cancelled/compl: 0 / 10
+
+=== ws | n=10 count=200 ===
+streams ok         : 10/10
+wall time          : 997ms
+tokens delivered   : 2000
+sustained tokens/s : 2006
+TTFT      p50/p95/p99 : 1.03ms / 1.3ms / 1.3ms
+inter-tok p50/p95/p99 : 5ms / 5.7ms / 6.55ms (target 5ms)
+server max concurrent : 10
+server peak heap (MB) : 1
+server peak goroutines: 33
+server cancelled/compl: 0 / 20
+
+=== grpc | n=10 count=200 ===
+streams ok         : 10/10
+wall time          : 998ms
+tokens delivered   : 2000
+sustained tokens/s : 2003
+TTFT      p50/p95/p99 : 2.36ms / 2.39ms / 2.39ms
+inter-tok p50/p95/p99 : 5ms / 5.56ms / 6.03ms (target 5ms)
+server max concurrent : 10
+server peak heap (MB) : 2
+server peak goroutines: 26
+server cancelled/compl: 0 / 30
+
+=== sse-h1 | n=100 count=200 ===
+streams ok         : 100/100
+wall time          : 1s
+tokens delivered   : 20000
+sustained tokens/s : 19996
+TTFT      p50/p95/p99 : 3.54ms / 4.41ms / 4.45ms
+inter-tok p50/p95/p99 : 5ms / 5.05ms / 5.1ms (target 5ms)
+server max concurrent : 100
+server peak heap (MB) : 2
+server peak goroutines: 213
+server cancelled/compl: 0 / 140
+
+=== sse-h2 | n=100 count=200 ===
+streams ok         : 100/100
+wall time          : 1.016s
+tokens delivered   : 20000
+sustained tokens/s : 19691
+TTFT      p50/p95/p99 : 13.67ms / 15.52ms / 15.61ms
+inter-tok p50/p95/p99 : 5ms / 5.19ms / 5.54ms (target 5ms)
+server max concurrent : 100
+server peak heap (MB) : 2
+server peak goroutines: 118
+server cancelled/compl: 0 / 140
+
+=== ws | n=100 count=200 ===
+streams ok         : 100/100
+wall time          : 1.029s
+tokens delivered   : 20000
+sustained tokens/s : 19432
+TTFT      p50/p95/p99 : 25.93ms / 32.66ms / 32.86ms
+inter-tok p50/p95/p99 : 5ms / 5.08ms / 5.63ms (target 5ms)
+server max concurrent : 100
+server peak heap (MB) : 3
+server peak goroutines: 213
+server cancelled/compl: 0 / 332
+
+=== grpc | n=100 count=200 ===
+streams ok         : 100/100
+wall time          : 998ms
+tokens delivered   : 20000
+sustained tokens/s : 20034
+TTFT      p50/p95/p99 : 2.07ms / 2.15ms / 2.19ms
+inter-tok p50/p95/p99 : 5.04ms / 6.58ms / 8.01ms (target 5ms)
+server max concurrent : 100
+server peak heap (MB) : 2
+server peak goroutines: 116
+server cancelled/compl: 0 / 340
+
+=== sse-h1 | n=1000 count=200 ===
+streams ok         : 1000/1000
+wall time          : 1.601s
+tokens delivered   : 200000
+sustained tokens/s : 124914
+TTFT      p50/p95/p99 : 213.61ms / 365.82ms / 602.58ms
+inter-tok p50/p95/p99 : 5ms / 5.16ms / 8.48ms (target 5ms)
+server max concurrent : 1000
+server peak heap (MB) : 17
+server peak goroutines: 2013
+server cancelled/compl: 0 / 1426
+
+=== sse-h2 | n=1000 count=200 ===
+streams ok         : 1000/1000
+wall time          : 1.025s
+tokens delivered   : 200000
+sustained tokens/s : 195159
+TTFT      p50/p95/p99 : 17.21ms / 25.36ms / 26.88ms
+inter-tok p50/p95/p99 : 5ms / 5.28ms / 5.62ms (target 5ms)
+server max concurrent : 1000
+server peak heap (MB) : 28
+server peak goroutines: 1024
+server cancelled/compl: 0 / 1440
+
+=== ws | n=1000 count=200 ===
+streams ok         : 1000/1000
+wall time          : 1.107s
+tokens delivered   : 200000
+sustained tokens/s : 180685
+TTFT      p50/p95/p99 : 39.2ms / 80.43ms / 82.85ms
+inter-tok p50/p95/p99 : 5ms / 5.37ms / 6.95ms (target 5ms)
+server max concurrent : 1000
+server peak heap (MB) : 32
+server peak goroutines: 2013
+server cancelled/compl: 0 / 3434
+
+=== grpc | n=1000 count=200 ===
+streams ok         : 1000/1000
+wall time          : 1.017s
+tokens delivered   : 200000
+sustained tokens/s : 196670
+TTFT      p50/p95/p99 : 11.03ms / 15.03ms / 15.97ms
+inter-tok p50/p95/p99 : 5ms / 5.42ms / 6.9ms (target 5ms)
+server max concurrent : 1000
+server peak heap (MB) : 18
+server peak goroutines: 1016
+server cancelled/compl: 0 / 3440
+
+== WebTransport (experimental; needs client deadline guard) ==
+=== wt | n=10 count=200 ===
+streams ok         : 10/10
+wall time          : 1.011s
+tokens delivered   : 2000
+sustained tokens/s : 1979
+TTFT      p50/p95/p99 : 5.73ms / 5.82ms / 5.82ms
+inter-tok p50/p95/p99 : 5.01ms / 6.99ms / 8.51ms (target 5ms)
+server max concurrent : 1000
+server peak heap (MB) : 2
+server peak goroutines: 103
+server cancelled/compl: 0 / 4440
+
+=== wt | n=100 count=200 ===
+streams ok         : 100/100
+wall time          : 1.021s
+tokens delivered   : 20000
+sustained tokens/s : 19581
+TTFT      p50/p95/p99 : 19.41ms / 26.11ms / 26.17ms
+inter-tok p50/p95/p99 : 5ms / 5.06ms / 5.12ms (target 5ms)
+server max concurrent : 1000
+server peak heap (MB) : 10
+server peak goroutines: 913
+server cancelled/compl: 0 / 4450
+
+=== wt | n=1000 count=200 ===
+streams ok         : 768/1000
+first error        : error waiting for HTTP/3 settings: context deadline exceeded
+wall time          : 20.044s
+tokens delivered   : 153600
+sustained tokens/s : 7663
+TTFT      p50/p95/p99 : 95.08ms / 163.51ms / 212.22ms
+inter-tok p50/p95/p99 : 0s / 34.18ms / 75.72ms (target 5ms)
+server max concurrent : 1000
+server peak heap (MB) : 82
+server peak goroutines: 6925
+server cancelled/compl: 0 / 5318
+
+== HTTP/1.1 6-conn-per-origin cap proof ==
+=== sse-h1 cap=6 | n=12 count=100000 ===
+streams ok         : 6/12
+first error        : Get "http://127.0.0.1:18085/sse?count=100000&interval_ms=50": context deadline exceeded
+wall time          : 2.001s
+tokens delivered   : 246
+sustained tokens/s : 123
+TTFT      p50/p95/p99 : 840µs / 870µs / 870µs
+inter-tok p50/p95/p99 : 50.01ms / 50.68ms / 50.91ms (target 5ms)
+
+=== sse-h2 no-cap | n=12 count=100000 ===
+streams ok         : 12/12
+wall time          : 2.001s
+tokens delivered   : 480
+sustained tokens/s : 240
+TTFT      p50/p95/p99 : 4ms / 4.05ms / 4.05ms
+inter-tok p50/p95/p99 : 50.01ms / 50.37ms / 50.91ms (target 5ms)
+
