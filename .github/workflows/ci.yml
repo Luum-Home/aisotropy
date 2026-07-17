@@ -1,0 +1,80 @@
+name: CI
+
+# Runs the full root-module quality gate on every push and pull request.
+# ubuntu-latest ships with Docker available, so the Docker-gated integration
+# tests (rqlite / Qdrant containers) run here too — no extra services block.
+#
+# NOTE ON MODULES: the arenas/* and examples/* directories are SEPARATE Go
+# modules (each has its own go.mod). The root `go test ./...` deliberately does
+# NOT descend into them — they are runnable demos, not part of the shipped
+# runtime, and are not covered by this gate. Only the root module
+# (internal/..., aisotropy, cmd/...) is built, vetted, tested, and coverage-gated.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: build · vet · test · coverage floor
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Single source of truth: the version pinned in go.mod.
+          go-version-file: go.mod
+          check-latest: false
+
+      - name: gofmt (promoted packages)
+        # The format gate is scoped to the same set the coverage floor covers:
+        # internal/..., aisotropy/, cmd/aisotropy/. Thin demo/bench mains
+        # (cmd/embed-bench, cmd/x, ...) carry pre-existing gofmt debt (ADR-131)
+        # and are excluded from both gates until formatted. Ratchet goal: extend
+        # this to `gofmt -l .` once the excluded mains are clean.
+        run: |
+          unformatted="$(gofmt -l internal aisotropy cmd/aisotropy)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-clean:"
+            echo "$unformatted"
+            echo "Run: gofmt -w internal aisotropy cmd/aisotropy"
+            exit 1
+          fi
+          echo "gofmt: promoted packages are clean"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test (race + coverage)
+        # -race forces covermode=atomic automatically. Docker is present on the
+        # runner, so Docker-gated tests execute rather than skip.
+        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: Coverage floor
+        # Weighted statement coverage over internal/... + aisotropy + cmd/aisotropy.
+        # Floor starts at 70% (just under today's ~73.5%) and RATCHETS UP toward
+        # 85% and ultimately the 98%-on-business-logic goal as coverage lands.
+        # Raise the second argument when the tree clears the next rung.
+        run: .github/scripts/coverage-floor.sh coverage.out 85
+
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-profile
+          path: coverage.out
+          if-no-files-found: ignore
