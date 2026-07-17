@@ -177,7 +177,7 @@ func (c *SemanticCache) Set(ctx context.Context, scope Scope, prompt, response s
 // embed runs the embedder for a single prompt and returns its vector, or an
 // error if the embedder failed or returned no vector.
 func (c *SemanticCache) embed(ctx context.Context, prompt string) ([]float32, error) {
-	vecs, err := c.embedder.Embed(ctx, []string{prompt})
+	vecs, err := semantic.EmbedQuery(ctx, c.embedder, []string{prompt})
 	if err != nil {
 		return nil, err
 	}

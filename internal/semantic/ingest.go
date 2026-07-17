@@ -141,7 +141,10 @@ func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts Chunk
 		if len(chunks) == 0 {
 			continue
 		}
-		vecs, err := emb.Embed(ctx, chunks)
+		// Passage role: stored KindDocument chunks carry the e5 "passage: "
+		// prefix on an e5 embedder (ADR-0054), matching the "query: "-prefixed
+		// search side. A non-e5/external embedder is unaffected (plain Embed).
+		vecs, err := EmbedPassage(ctx, emb, chunks)
 		if err != nil {
 			return 0, fmt.Errorf("semantic: embed document %q: %w", doc.ID, err)
 		}

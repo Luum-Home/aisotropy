@@ -83,7 +83,8 @@ func ChatCore(ctx context.Context, d ChatDeps, in *ChatInput) (*ChatOutput, erro
 	// Undetermined (short/ambiguous input); FromContext reports that as not-set
 	// and consumers keep their English/default behavior.
 	detected := lang.Detect(forwarded)
-	ctx = lang.WithLanguage(ctx, detected)
+	effective := resolveSubjectLanguage(ctx, d.WM, in.TenantID, in.UserID, detected)
+	ctx = lang.WithLanguage(ctx, effective)
 
 	// Model selection through the gateway seam; nil gw resolves to the passed
 	// client. The non-streaming route has no quota-pressure degrade override
@@ -96,7 +97,8 @@ func ChatCore(ctx context.Context, d ChatDeps, in *ChatInput) (*ChatOutput, erro
 		"session_id", in.Body.SessionID,
 		"product_id", in.Body.ProductID,
 		"prompt_len", len(in.Body.Prompt),
-		"lang", detected.String(),
+		"lang", effective.String(),
+		"lang_detected", detected.String(),
 		"llm", active.Name(),
 	)
 
@@ -122,4 +124,49 @@ func ChatCore(ctx context.Context, d ChatDeps, in *ChatInput) (*ChatOutput, erro
 	chatRecordTurn(ctx, d.WM, key, in.TenantID, finalReply, usage, d.Meter)
 
 	return chatBuildOutput(finalReply, in.TenantID, active), nil
+}
+
+// resolveSubjectLanguage layers per-(tenant,user) persistence on top of the
+// request-scoped detection (research R1 follow-on, ADR-0053). It reads the
+// language previously remembered for this subject, reconciles it with the fresh
+// detection via the single lang.Resolve precedence rule, and writes the detection
+// back only when it is confident AND changed. The effect: a confident detection
+// updates the subject's remembered language; an Undetermined detection
+// (short/code-mixed follow-up) inherits it instead of resetting downstream
+// consumers to their default. Both chat paths (ChatCore and StreamCore) call this
+// so they remember identically.
+//
+// It is advisory and cheap by construction: the returned Language conditions only
+// downstream prose (persona/guardrails), never authorization, and it costs at
+// most one subject-scoped BadgerDB read plus — only on a genuine change — one
+// write. Isolation holds by construction: the store is keyed strictly by
+// (tenant,user) (see memory.subjectLangKey), so a blank identity is rejected at
+// the key layer rather than reading or writing a wildcard. Any read/write error
+// is non-fatal — the turn proceeds on the request-scoped detection — because a
+// memory hiccup must never fail a chat over an advisory hint.
+func resolveSubjectLanguage(ctx context.Context, wm *memory.WorkingMemory, tenant, user string, detected lang.Language) lang.Language {
+	if wm == nil {
+		return detected
+	}
+
+	storedCode, found, err := wm.GetSubjectLanguage(ctx, tenant, user)
+	if err != nil {
+		slog.WarnContext(ctx, "subject language read failed; using request-scoped detection",
+			"tenant_id", tenant, "user_id", user, "error", err)
+		return detected
+	}
+
+	var stored lang.Language
+	if found {
+		stored = lang.Language(storedCode)
+	}
+
+	effective, persist := lang.Resolve(detected, stored)
+	if persist {
+		if err := wm.PutSubjectLanguage(ctx, tenant, user, effective.String()); err != nil {
+			slog.WarnContext(ctx, "subject language persist failed; hint not remembered",
+				"tenant_id", tenant, "user_id", user, "error", err)
+		}
+	}
+	return effective
 }

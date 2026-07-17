@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // EmbedderFromEnv selects the semantic-tier Embedder from the environment,
@@ -91,24 +92,65 @@ func localEmbedderFromEnv(bin string) Embedder {
 	}
 	dim := embedDimFromEnv()
 	mode := os.Getenv("AISOTROPY_EMBED_MODE")
+	e5 := e5PrefixesEnabled(modelDir)
 
 	if mode == "subprocess" {
-		emb, err := NewLocalEmbedder(LocalEmbedderConfig{BinPath: bin, ModelDir: modelDir, Dimension: dim})
+		emb, err := NewLocalEmbedder(LocalEmbedderConfig{BinPath: bin, ModelDir: modelDir, Dimension: dim, E5Prefixes: e5})
 		if err != nil {
 			slog.Warn("semantic: failed to build local (subprocess) embedder from env, falling through", "error", err)
 			return nil
 		}
-		slog.Info("semantic embedder selected", "type", "semantic.LocalEmbedder", "mode", "subprocess", "dimension", dim)
+		slog.Info("semantic embedder selected", "type", "semantic.LocalEmbedder", "mode", "subprocess", "dimension", dim, "e5_prefixes", e5)
 		return emb
 	}
 
-	emb, err := NewDaemonEmbedder(DaemonEmbedderConfig{BinPath: bin, ModelDir: modelDir, Dimension: dim})
+	emb, err := NewDaemonEmbedder(DaemonEmbedderConfig{BinPath: bin, ModelDir: modelDir, Dimension: dim, E5Prefixes: e5})
 	if err != nil {
 		slog.Warn("semantic: failed to build local (daemon) embedder from env, falling through", "error", err)
 		return nil
 	}
-	slog.Info("semantic embedder selected", "type", "semantic.DaemonEmbedder", "mode", "daemon", "dimension", dim)
+	slog.Info("semantic embedder selected", "type", "semantic.DaemonEmbedder", "mode", "daemon", "dimension", dim, "e5_prefixes", e5)
 	return emb
+}
+
+// e5PrefixesEnabled decides whether the local embedder should apply e5
+// query:/passage: instruction prefixes (ADR-0054). It is model-aware, not
+// unconditional: an explicit AISOTROPY_EMBED_E5_PREFIXES ("1"/"true"/"0"/
+// "false", any strconv.ParseBool form) always wins; when unset it autodetects
+// the e5 family from the model dir path (the ADR-0049 default is
+// intfloat/multilingual-e5-small, so an "e5" marker in the pinned model path is
+// the signal). A non-e5 model — or an explicit "false" — disables prefixing, so
+// those vectors are left unaffected by the query/passage convention.
+func e5PrefixesEnabled(modelDir string) bool {
+	if raw := os.Getenv("AISOTROPY_EMBED_E5_PREFIXES"); raw != "" {
+		if b, err := strconv.ParseBool(raw); err == nil {
+			return b
+		}
+		slog.Warn("AISOTROPY_EMBED_E5_PREFIXES invalid, autodetecting e5 prefixes from model dir",
+			"value", raw, "model_dir", modelDir)
+	}
+	return isE5Model(modelDir)
+}
+
+// isE5Model reports whether path names an e5-family model, matched
+// case-insensitively on a delimited "e5" TOKEN in the pinned model dir (e.g.
+// ".../multilingual-e5-small", ".../e5-base-v2"). Detection tokenizes on
+// non-alphanumeric boundaries and looks for the exact token "e5", so an
+// unrelated name that merely ends in "e5" (e.g. "base5-experimental") does NOT
+// false-match. It is deliberately conservative — only the e5 family uses the
+// query:/passage: convention — and AISOTROPY_EMBED_E5_PREFIXES is the
+// authoritative override when the path carries no recognizable token.
+func isE5Model(path string) bool {
+	tokens := strings.FieldsFunc(strings.ToLower(path), func(r rune) bool {
+		isAlphaNum := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		return !isAlphaNum // split on every non-alphanumeric boundary
+	})
+	for _, tok := range tokens {
+		if tok == "e5" {
+			return true
+		}
+	}
+	return false
 }
 
 // embedDimFromEnv parses AISOTROPY_EMBED_DIM as a positive integer, falling

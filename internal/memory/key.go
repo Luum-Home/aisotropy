@@ -61,6 +61,24 @@ func SubjectPrefix(tenant, user string) ([]byte, error) {
 	return []byte(fmt.Sprintf("tenant:%s:user:%s:", tenant, user)), nil
 }
 
+// subjectLangKey returns the BadgerDB key holding the remembered language code
+// for a single (tenant,user) subject: "tenant:{tenant}:user:{user}:lang". It is
+// deliberately built off SubjectPrefix so the language value shares the exact
+// subject scope — and the exact reserved-character validation — as every other
+// working-memory read/write: a blank or malformed identity is rejected here
+// rather than widened into a wildcard key, and the value lives UNDER the subject
+// prefix so EraseSubject (GDPR Art.17) removes it along with the rest of the
+// subject's data. The "lang" leaf cannot collide with a session's namespace
+// ("...:session:{session}:...") because the reserved ":" can never appear inside
+// a component, so no session id can spell "lang".
+func subjectLangKey(tenant, user string) ([]byte, error) {
+	prefix, err := SubjectPrefix(tenant, user)
+	if err != nil {
+		return nil, err
+	}
+	return append(prefix, "lang"...), nil
+}
+
 // Key identifies a single chat session's working-memory buffer, scoped by
 // tenant and user. All three components are mandatory and explicit by
 // design: a Key must never be built by ad hoc string concatenation

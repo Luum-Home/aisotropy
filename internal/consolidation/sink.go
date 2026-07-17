@@ -91,7 +91,7 @@ func (s Sink) consolidateSemantic(ctx context.Context, e memory.OutboxEvent) err
 	if s.Semantic == nil || s.Embedder == nil {
 		return nil
 	}
-	vecs, err := s.Embedder.Embed(ctx, []string{e.Content})
+	vecs, err := semantic.EmbedPassage(ctx, s.Embedder, []string{e.Content})
 	if err != nil {
 		return fmt.Errorf("consolidation: embed: %w", err)
 	}

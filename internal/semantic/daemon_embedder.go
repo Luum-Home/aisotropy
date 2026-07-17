@@ -46,6 +46,9 @@ type DaemonEmbedder struct {
 	binPath  string
 	modelDir string
 	dim      int
+	// e5Prefixes gates the e5 query:/passage: instruction prefix (ADR-0054),
+	// mirroring LocalEmbedder. False ⇒ non-e5 model ⇒ no prefix.
+	e5Prefixes bool
 
 	mu   sync.Mutex  // serializes Embed and guards proc
 	proc *daemonProc // nil until first Embed and after any teardown
@@ -70,6 +73,11 @@ type DaemonEmbedderConfig struct {
 	// Dimension is the model's hidden size and MUST match the semantic Store's
 	// configured dimension. Required (positive).
 	Dimension int
+	// E5Prefixes enables the e5 query:/passage: instruction prefix (ADR-0054)
+	// for this embedder's model — mirrors LocalEmbedderConfig.E5Prefixes. Set
+	// only for an e5-family model; a non-e5 model MUST leave it false. Optional;
+	// default false ⇒ unprefixed (pre-ADR-0054 behavior).
+	E5Prefixes bool
 }
 
 // NewDaemonEmbedder validates cfg and returns a ready DaemonEmbedder. It does
@@ -87,14 +95,25 @@ func NewDaemonEmbedder(cfg DaemonEmbedderConfig) (*DaemonEmbedder, error) {
 		return nil, errors.New("semantic: daemon embedder requires a positive vector dimension")
 	}
 	return &DaemonEmbedder{
-		binPath:  cfg.BinPath,
-		modelDir: cfg.ModelDir,
-		dim:      cfg.Dimension,
+		binPath:    cfg.BinPath,
+		modelDir:   cfg.ModelDir,
+		dim:        cfg.Dimension,
+		e5Prefixes: cfg.E5Prefixes,
 	}, nil
 }
 
 // Dimension reports the configured vector width.
 func (e *DaemonEmbedder) Dimension() int { return e.dim }
+
+// prefixFor returns the e5 instruction prefix to send for role, or "" when this
+// embedder is not configured for an e5 model (E5Prefixes false) — the same
+// model-aware guard (ADR-0054) as LocalEmbedder.
+func (e *DaemonEmbedder) prefixFor(role EmbedRole) string {
+	if !e.e5Prefixes {
+		return ""
+	}
+	return role.prefix()
+}
 
 // Embed sends texts to the warm daemon and returns one vector per input in
 // input order. It serializes calls (one shared pipe) and honors ctx: a
@@ -102,12 +121,22 @@ func (e *DaemonEmbedder) Dimension() int { return e.dim }
 // returns ctx.Err(); the daemon is torn down so the next call respawns a clean
 // one. It never returns fewer/misaligned vectors than requested.
 func (e *DaemonEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	return e.EmbedForRole(ctx, texts, RoleUnspecified)
+}
+
+// EmbedForRole is Embed with an e5 query:/passage: instruction prefix (ADR-0054)
+// applied when this daemon is configured for an e5-family model
+// (Config.E5Prefixes). When E5Prefixes is false the role is ignored and the
+// request is byte-identical to the pre-ADR-0054 form, so a non-e5 model is
+// unaffected. It satisfies RoleEmbedder.
+func (e *DaemonEmbedder) EmbedForRole(ctx context.Context, texts []string, role EmbedRole) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("semantic: daemon embed cancelled before start: %w", err)
 	}
+	prefix := e.prefixFor(role)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -129,7 +158,7 @@ func (e *DaemonEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 		}
 	}()
 
-	result, err := e.exchangeLocked(p, texts)
+	result, err := e.exchangeLocked(p, texts, prefix)
 	if err != nil {
 		// Any fault poisons the shared pipe — tear down so the next call
 		// respawns from a known-clean state (see the type doc's failure model).
@@ -145,9 +174,9 @@ func (e *DaemonEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 // exchangeLocked writes one request line per text (keyed by input index) then
 // reads exactly len(texts) response rows, realigning them into input order by
 // id and validating every vector's dimension. Caller holds e.mu.
-func (e *DaemonEmbedder) exchangeLocked(p *daemonProc, texts []string) ([][]float32, error) {
+func (e *DaemonEmbedder) exchangeLocked(p *daemonProc, texts []string, prefix string) ([][]float32, error) {
 	for i, t := range texts {
-		line, err := json.Marshal(localEmbedRequest{ID: indexID(i), Text: t})
+		line, err := json.Marshal(localEmbedRequest{ID: indexID(i), Text: t, Prefix: prefix})
 		if err != nil {
 			return nil, fmt.Errorf("semantic: encode daemon request: %w", err)
 		}

@@ -403,7 +403,7 @@ func searchSemanticContext(ctx context.Context, semStore semantic.Store, embedde
 	if semStore == nil || embedder == nil {
 		return nil
 	}
-	vecs, eerr := embedder.Embed(ctx, []string{prompt})
+	vecs, eerr := semantic.EmbedQuery(ctx, embedder, []string{prompt})
 	if eerr != nil || len(vecs) == 0 {
 		return nil
 	}

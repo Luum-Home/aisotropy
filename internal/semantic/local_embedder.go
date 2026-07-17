@@ -32,6 +32,10 @@ type LocalEmbedder struct {
 	binPath  string
 	modelDir string
 	dim      int
+	// e5Prefixes gates the e5 query:/passage: instruction prefix (ADR-0054).
+	// When false the model is treated as non-e5 and EmbedForRole sends no
+	// prefix — byte-identical to the pre-ADR-0054 request.
+	e5Prefixes bool
 }
 
 // LocalEmbedderConfig configures a LocalEmbedder.
@@ -49,6 +53,14 @@ type LocalEmbedderConfig struct {
 	// config.json's hidden_size; it is configured here rather than inferred so
 	// the Store and Embedder cannot silently drift. Required (positive).
 	Dimension int
+	// E5Prefixes enables the e5 query:/passage: instruction prefix (ADR-0054)
+	// for this embedder's model. Set it only when ModelDir points at an
+	// e5-family model (the ADR-0049 default, multilingual-e5-small); a non-e5
+	// model MUST leave it false, since a blanket prefix hurts retrieval on a
+	// model not trained for it. EmbedderFromEnv sets this via a model-aware
+	// autodetect + AISOTROPY_EMBED_E5_PREFIXES override (see embedder_env.go).
+	// Optional; default false ⇒ unprefixed (pre-ADR-0054 behavior).
+	E5Prefixes bool
 }
 
 // NewLocalEmbedder validates cfg and returns a ready LocalEmbedder. BinPath and
@@ -64,19 +76,36 @@ func NewLocalEmbedder(cfg LocalEmbedderConfig) (*LocalEmbedder, error) {
 		return nil, errors.New("semantic: local embedder requires a positive vector dimension")
 	}
 	return &LocalEmbedder{
-		binPath:  cfg.BinPath,
-		modelDir: cfg.ModelDir,
-		dim:      cfg.Dimension,
+		binPath:    cfg.BinPath,
+		modelDir:   cfg.ModelDir,
+		dim:        cfg.Dimension,
+		e5Prefixes: cfg.E5Prefixes,
 	}, nil
 }
 
 // Dimension reports the configured vector width.
 func (e *LocalEmbedder) Dimension() int { return e.dim }
 
+// prefixFor returns the e5 instruction prefix to send for role, or "" when this
+// embedder is not configured for an e5 model (E5Prefixes false) — the
+// model-aware guard (ADR-0054) that keeps a blanket prefix off non-e5 models.
+func (e *LocalEmbedder) prefixFor(role EmbedRole) string {
+	if !e.e5Prefixes {
+		return ""
+	}
+	return role.prefix()
+}
+
 // localEmbedRequest is one line of the NDJSON request file the crate reads.
 type localEmbedRequest struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
+	// Prefix is the OPTIONAL e5 instruction prefix (crate field per ADR-0049,
+	// Go wiring per ADR-0054): "query: " for search text, "passage: " for
+	// stored documents/facts. `omitempty` keeps an unprefixed request
+	// byte-identical to the pre-ADR-0054 form — the crate's `prefix` field is
+	// #[serde(default)], so an absent field means no prefix.
+	Prefix string `json:"prefix,omitempty"`
 }
 
 // localEmbedRow is one line of the NDJSON result file the crate writes.
@@ -94,11 +123,21 @@ type localEmbedRow struct {
 // exit carries the binary's stderr. It never silently returns fewer/misaligned
 // vectors than requested.
 func (e *LocalEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	return e.EmbedForRole(ctx, texts, RoleUnspecified)
+}
+
+// EmbedForRole is Embed with an e5 query:/passage: instruction prefix (ADR-0054)
+// applied when this embedder is configured for an e5-family model
+// (Config.E5Prefixes). When E5Prefixes is false the role is ignored and the
+// NDJSON request is byte-identical to the pre-ADR-0054 form (empty prefix,
+// omitted by `omitempty`), so a non-e5 model pointed at this binary is
+// unaffected. It satisfies RoleEmbedder.
+func (e *LocalEmbedder) EmbedForRole(ctx context.Context, texts []string, role EmbedRole) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
 
-	inPath, outPath, cleanup, err := e.writeRequest(texts)
+	inPath, outPath, cleanup, err := e.writeRequest(texts, e.prefixFor(role))
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +156,7 @@ func (e *LocalEmbedder) Embed(ctx context.Context, texts []string) ([][]float32,
 
 // writeRequest creates the temp input/output NDJSON files and writes one
 // request line per text, keyed by its input index so results can be realigned.
-func (e *LocalEmbedder) writeRequest(texts []string) (inPath, outPath string, cleanup func(), err error) {
+func (e *LocalEmbedder) writeRequest(texts []string, prefix string) (inPath, outPath string, cleanup func(), err error) {
 	inFile, err := os.CreateTemp("", "aisotropy-embed-in-*.ndjson")
 	if err != nil {
 		return "", "", func() {}, fmt.Errorf("semantic: create embed input: %w", err)
@@ -136,7 +175,7 @@ func (e *LocalEmbedder) writeRequest(texts []string) (inPath, outPath string, cl
 	w := bufio.NewWriter(inFile)
 	enc := json.NewEncoder(w)
 	for i, t := range texts {
-		if err := enc.Encode(localEmbedRequest{ID: indexID(i), Text: t}); err != nil {
+		if err := enc.Encode(localEmbedRequest{ID: indexID(i), Text: t, Prefix: prefix}); err != nil {
 			_ = inFile.Close()
 			cleanup()
 			return "", "", func() {}, fmt.Errorf("semantic: encode embed request: %w", err)

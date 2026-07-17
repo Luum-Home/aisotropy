@@ -104,7 +104,7 @@ func (s Store) indexFact(ctx context.Context, sc facts.Scope, f facts.Fact) erro
 	if s.Semantic == nil || s.Embedder == nil || f.Importance < s.MinImportance {
 		return nil
 	}
-	vecs, err := s.Embedder.Embed(ctx, []string{f.Content})
+	vecs, err := semantic.EmbedPassage(ctx, s.Embedder, []string{f.Content})
 	if err != nil {
 		return fmt.Errorf("engram: embed fact: %w", err)
 	}

@@ -181,8 +181,13 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 	// secret text is inspected. The same ctx flows into hydrateSystemPrompt below
 	// (persona selection reads lang.FromContext) and the whole stream loop, so a
 	// language-conditional consumer sees the detected value without re-detecting.
+	// Per-(tenant,user) persistence layered on the request-scoped detection
+	// (ADR-0053): a confident detection updates the subject's remembered language,
+	// an Undetermined one inherits it — see resolveSubjectLanguage (core.go), the
+	// same helper the non-streaming path uses so both remember identically.
 	detected := lang.Detect(forwarded)
-	ctx = lang.WithLanguage(ctx, detected)
+	effective := resolveSubjectLanguage(ctx, d.WM, in.TenantID, in.UserID, detected)
+	ctx = lang.WithLanguage(ctx, effective)
 
 	slog.InfoContext(ctx, "chat stream request",
 		"tenant_id", in.TenantID,
@@ -190,7 +195,8 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 		"session_id", in.Body.SessionID,
 		"product_id", in.Body.ProductID,
 		"prompt_len", len(in.Body.Prompt),
-		"lang", detected.String(),
+		"lang", effective.String(),
+		"lang_detected", detected.String(),
 		"llm", d.Client.Name(),
 	)
 

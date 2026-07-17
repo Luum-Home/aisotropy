@@ -1,0 +1,27 @@
+[package]
+name = "guardrail-model"
+version = "0.1.0"
+edition = "2021"
+description = "Aisotropy OPT-IN multilingual guardrail classifier (the R4 InputScanner backend). Loads a pinned MIT/Apache multilingual zero-shot-NLI model (default MoritzLaurer/mDeBERTa-v3-base-mnli-xnli, MIT, DeBERTa-V2 arch, ~100 languages) via candle and scores whether a user message (premise, ANY language) entails a prompt-injection hypothesis (English) — cross-lingual NLI, which is what closes the gap normalize.go's canonicalization cannot (folding does not translate). Emits a verdict over an NDJSON/stdio subprocess contract (ADR-0005 pattern, mirroring crates/embed and crates/bitrate-scorer). Invoked by the Go core (internal/guardrails ModelScanner via AISOTROPY_GUARDRAIL_MODEL_BIN). No network: text never leaves the process tree. Dormant unless explicitly enabled."
+license = "Apache-2.0"
+
+[[bin]]
+name = "guardrail-model"
+path = "src/main.rs"
+
+[dependencies]
+# All MIT/Apache-2.0 (verified — same set as crates/embed, which pins these):
+# candle-core + candle-nn are dual MIT/Apache-2.0; candle-transformers is dual
+# MIT/Apache-2.0 and ships a MAINTAINED DeBERTa-V2 sequence-classification head
+# (models::debertav2::DebertaV2SeqClassificationModel) — reused per ADR-0002
+# anti-magic rather than hand-rolled; tokenizers is Apache-2.0; serde/serde_json
+# MIT/Apache-2.0. NO new Go dependency is introduced (ADR-0005 subprocess).
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
+tokenizers = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 2
