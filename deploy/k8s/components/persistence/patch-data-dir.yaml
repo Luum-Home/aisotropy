@@ -1,0 +1,21 @@
+# Turns on-disk mode on: sets AISOTROPY_DATA_DIR and mounts the PVC there so
+# BadgerDB working memory + the embedded SQLite facts store survive pod restarts.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aisotropyd
+spec:
+  template:
+    spec:
+      containers:
+        - name: aisotropyd
+          env:
+            - name: AISOTROPY_DATA_DIR
+              value: /data
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: aisotropy-data

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aisotropy-data
+  labels:
+    app.kubernetes.io/name: aisotropy
+    app.kubernetes.io/component: runtime
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName intentionally unset -> uses the cluster default
+  # (kind: "standard", k3s/k3d: "local-path", OrbStack: its built-in provisioner).

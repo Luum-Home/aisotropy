@@ -1,0 +1,22 @@
+# Opt-in overlay: the same minimal base + real networked memory tiers
+# (rqlite facts, Qdrant semantic), mirroring docker-compose.yml.
+#   kubectl apply -k deploy/k8s/overlays/networked-tiers
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: aisotropy
+
+resources:
+  - ../../base
+  - rqlite.yaml
+  - qdrant.yaml
+
+patches:
+  - path: patch-aisotropyd-env.yaml
+    target:
+      kind: Deployment
+      name: aisotropyd
+
+# To also persist aisotropyd's own working memory on disk, add:
+# components:
+#   - ../../components/persistence

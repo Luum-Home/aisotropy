@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aisotropy
+  labels:
+    app.kubernetes.io/name: aisotropy
+    app.kubernetes.io/part-of: aisotropy

@@ -1,0 +1,14 @@
+# Kustomize component: adds a PVC and switches aisotropyd to on-disk mode
+# (AISOTROPY_DATA_DIR=/data). Composes with the base and with the
+# networked-tiers overlay. Enable by adding to a kustomization's `components:`.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - pvc.yaml
+
+patches:
+  - path: patch-data-dir.yaml
+    target:
+      kind: Deployment
+      name: aisotropyd

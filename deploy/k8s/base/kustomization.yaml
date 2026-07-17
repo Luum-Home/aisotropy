@@ -1,0 +1,23 @@
+# Minimal, truly-stateless base: one Distroless binary, in-process memory tiers.
+#   kubectl apply -k deploy/k8s/base
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: aisotropy
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: aisotropy
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - deployment.yaml
+  - service.yaml
+
+# On-disk mode (persist BadgerDB working memory + embedded SQLite facts) is an
+# opt-in Kustomize component — uncomment to add a PVC + AISOTROPY_DATA_DIR:
+# components:
+#   - ../components/persistence

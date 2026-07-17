@@ -1,0 +1,164 @@
+# Default values for aisotropy — MINIMAL BY DEFAULT.
+#
+# Out of the box this renders ONE Distroless binary with in-process memory tiers
+# (BadgerDB working memory + in-process SQLite/FTS5 facts + in-process cosine
+# semantic). No rqlite, no Qdrant, no persistence, no ingress. Flip the toggles
+# below to grow into the networked-tier deployment.
+
+replicaCount: 1
+
+image:
+  # Built locally from the repo Dockerfile and side-loaded (kind load / k3d image
+  # import). Override to a registry ref for a real deployment.
+  repository: aisotropy
+  tag: local
+  # IfNotPresent so a locally-loaded tag is not re-pulled from a registry.
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Container listen address -> AISOTROPY_ADDR. The Service and probes follow this
+# port automatically.
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 8080
+
+serviceAccount:
+  create: true
+  name: ""
+
+# ---------------------------------------------------------------------------
+# Authentication (ADR-0024). Empty jwtSecret -> the binary boots in NoAuth mode
+# (path tenant_id/user_id trusted, no credential check). Fine for a local
+# throwaway cluster; set a >= 32-byte HS256 secret for anything reachable.
+# The binary REFUSES TO BOOT on a shorter secret.
+# ---------------------------------------------------------------------------
+auth:
+  # Provide the secret value here (chart creates the Secret)...
+  jwtSecret: ""
+  # ...or point at a pre-existing Secret you manage out-of-band.
+  existingSecret: ""
+  jwtSecretKey: AISOTROPY_JWT_SECRET
+
+# Optional LLM provider key. Empty -> keyless stub (canned responses); the
+# runtime still boots and every memory tier is exercisable.
+anthropicApiKey: ""
+
+# Optional bearer token gating the /costs and /bitrate ops endpoints. Empty ->
+# those endpoints stay 503 (default-closed).
+opsToken: ""
+
+# Extra plain (non-secret) env vars, injected verbatim.
+extraEnv: []
+#  - name: AISOTROPY_RATE_PER_SEC
+#    value: "50"
+
+# ---------------------------------------------------------------------------
+# Networked memory tiers — OFF by default (this is the whole "minimal" point).
+# When enabled, the chart deploys rqlite (facts) + Qdrant (semantic) as
+# StatefulSets and wires aisotropyd via RQLITE_URL / QDRANT_HOST, mirroring
+# docker-compose.yml.
+# ---------------------------------------------------------------------------
+tiers:
+  networked:
+    enabled: false
+    rqlite:
+      image: rqlite/rqlite:8.36.3
+      httpPort: 4001
+      raftPort: 4002
+      storage: 1Gi
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+    qdrant:
+      image: qdrant/qdrant:v1.12.4
+      restPort: 6333
+      grpcPort: 6334
+      collection: aisotropy_knowledge
+      storage: 2Gi
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: "1"
+          memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# On-disk mode for aisotropyd's OWN working memory (AISOTROPY_DATA_DIR). OFF by
+# default -> fully in-memory, stateless pod.
+# ---------------------------------------------------------------------------
+persistence:
+  enabled: false
+  mountPath: /data
+  size: 1Gi
+  accessMode: ReadWriteOnce
+  # storageClassName: "" -> cluster default (kind standard, k3s local-path).
+  storageClassName: ""
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: aisotropy.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Pod-level hardening. The Distroless nonroot image already runs as 65532.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Liveness -> /healthz (cheap, always 200 while up).
+# Readiness -> /health (probes facts + semantic tiers; 503 when degraded).
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}

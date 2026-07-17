@@ -1,0 +1,85 @@
+# Facts memory: rqlite (SQLite + FTS5, Raft). Mirrors docker-compose.yml.
+# Single-node for a local cluster; scale the StatefulSet + add -bootstrap-expect
+# for a real Raft quorum.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rqlite
+  labels:
+    app.kubernetes.io/name: aisotropy
+    app.kubernetes.io/component: facts
+spec:
+  # Headless: stable per-pod DNS for the StatefulSet.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: aisotropy
+    app.kubernetes.io/component: facts
+  ports:
+    - name: http
+      port: 4001
+      targetPort: 4001
+    - name: raft
+      port: 4002
+      targetPort: 4002
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rqlite
+  labels:
+    app.kubernetes.io/name: aisotropy
+    app.kubernetes.io/component: facts
+spec:
+  serviceName: rqlite
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aisotropy
+      app.kubernetes.io/component: facts
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aisotropy
+        app.kubernetes.io/component: facts
+    spec:
+      containers:
+        - name: rqlite
+          image: rqlite/rqlite:8.36.3
+          args:
+            - "-http-addr"
+            - "0.0.0.0:4001"
+            - "-raft-addr"
+            - "0.0.0.0:4002"
+          ports:
+            - name: http
+              containerPort: 4001
+            - name: raft
+              containerPort: 4002
+          readinessProbe:
+            # /readyz is 200 once the node has an elected leader.
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          volumeMounts:
+            - name: rqlite-data
+              mountPath: /rqlite/file
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: rqlite-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

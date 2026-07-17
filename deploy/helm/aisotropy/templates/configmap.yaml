@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aisotropy.fullname" . }}-config
+  labels:
+    {{- include "aisotropy.labels" . | nindent 4 }}
+data:
+  AISOTROPY_ADDR: ":{{ .Values.containerPort }}"
+  {{- if .Values.persistence.enabled }}
+  AISOTROPY_DATA_DIR: {{ .Values.persistence.mountPath | quote }}
+  {{- end }}
+  {{- if .Values.tiers.networked.enabled }}
+  # Networked tiers wired (mirrors docker-compose.yml).
+  RQLITE_URL: "http://{{ include "aisotropy.fullname" . }}-rqlite:{{ .Values.tiers.networked.rqlite.httpPort }}"
+  QDRANT_HOST: "{{ include "aisotropy.fullname" . }}-qdrant"
+  QDRANT_PORT: "{{ .Values.tiers.networked.qdrant.grpcPort }}"
+  QDRANT_COLLECTION: {{ .Values.tiers.networked.qdrant.collection | quote }}
+  {{- end }}

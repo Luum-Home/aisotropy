@@ -1,0 +1,20 @@
+# Non-secret AISOTROPY_* environment for the minimal, in-process deployment.
+#
+# The bare binary boots a COMPLETE runtime from these alone: BadgerDB working
+# memory + in-process SQLite/FTS5 facts + in-process cosine semantic. No rqlite,
+# no Qdrant, no Docker-in-the-cluster. The networked tiers are the opt-in
+# overlays/networked-tiers overlay, which layers RQLITE_URL / QDRANT_HOST on top.
+#
+# Secrets (AISOTROPY_JWT_SECRET, ANTHROPIC_API_KEY) live in secret.yaml, NOT here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aisotropy-config
+  labels:
+    app.kubernetes.io/name: aisotropy
+    app.kubernetes.io/component: runtime
+data:
+  # HTTP listen address. Matches the binary default (cmd/aisotropyd -> :8080).
+  AISOTROPY_ADDR: ":8080"
+  # Ops endpoints (/costs, /bitrate) stay default-closed unless AISOTROPY_OPS_TOKEN
+  # is set (see secret.yaml). Left unset here on purpose.

@@ -1,0 +1,78 @@
+{{- if .Values.tiers.networked.enabled }}
+{{- $r := .Values.tiers.networked.rqlite }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aisotropy.fullname" . }}-rqlite
+  labels:
+    {{- include "aisotropy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: facts
+spec:
+  clusterIP: None
+  selector:
+    {{- include "aisotropy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: facts
+  ports:
+    - name: http
+      port: {{ $r.httpPort }}
+      targetPort: http
+    - name: raft
+      port: {{ $r.raftPort }}
+      targetPort: raft
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "aisotropy.fullname" . }}-rqlite
+  labels:
+    {{- include "aisotropy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: facts
+spec:
+  serviceName: {{ include "aisotropy.fullname" . }}-rqlite
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "aisotropy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: facts
+  template:
+    metadata:
+      labels:
+        {{- include "aisotropy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: facts
+    spec:
+      containers:
+        - name: rqlite
+          image: {{ $r.image | quote }}
+          args:
+            - "-http-addr"
+            - "0.0.0.0:{{ $r.httpPort }}"
+            - "-raft-addr"
+            - "0.0.0.0:{{ $r.raftPort }}"
+          ports:
+            - name: http
+              containerPort: {{ $r.httpPort }}
+            - name: raft
+              containerPort: {{ $r.raftPort }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          volumeMounts:
+            - name: rqlite-data
+              mountPath: /rqlite/file
+          resources:
+            {{- toYaml $r.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: rqlite-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ $r.storage }}
+{{- end }}

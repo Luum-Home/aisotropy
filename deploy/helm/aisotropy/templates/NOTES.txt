@@ -1,0 +1,22 @@
+Aisotropy is installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Deployment shape:
+  - Memory tiers: {{ if .Values.tiers.networked.enabled }}NETWORKED (rqlite facts + Qdrant semantic){{ else }}IN-PROCESS (minimal — no external services){{ end }}
+  - Persistence:  {{ if .Values.persistence.enabled }}ON ({{ .Values.persistence.size }} @ {{ .Values.persistence.mountPath }}){{ else }}OFF (stateless, in-memory){{ end }}
+  - Auth:         {{ if or .Values.auth.jwtSecret .Values.auth.existingSecret }}JWT (HS256){{ else }}NoAuth (INSECURE — local only; set auth.jwtSecret for anything reachable){{ end }}
+
+Reach the API (port-forward):
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "aisotropy.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+Then:
+
+  curl -s localhost:{{ .Values.service.port }}/healthz   # liveness  -> {"status":"ok"}
+  curl -s localhost:{{ .Values.service.port }}/health     # readiness -> {"status":"ok"|"degraded",...}
+
+{{- if not (or .Values.auth.jwtSecret .Values.auth.existingSecret) }}
+
+WARNING: running in NoAuth mode. The path tenant_id/user_id are trusted with no
+credential check. Set --set auth.jwtSecret="$(openssl rand -base64 48)" (>= 32
+bytes) before exposing this outside a local throwaway cluster.
+{{- end }}

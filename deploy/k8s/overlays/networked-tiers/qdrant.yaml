@@ -1,0 +1,79 @@
+# Semantic memory: Qdrant (vectors, HNSW with per-tenant payload filtering).
+# Mirrors docker-compose.yml. The Go client talks gRPC on 6334; REST/dashboard
+# on 6333. The collection is created by the runtime on first use.
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  labels:
+    app.kubernetes.io/name: aisotropy
+    app.kubernetes.io/component: semantic
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: aisotropy
+    app.kubernetes.io/component: semantic
+  ports:
+    - name: rest
+      port: 6333
+      targetPort: 6333
+    - name: grpc
+      port: 6334
+      targetPort: 6334
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+  labels:
+    app.kubernetes.io/name: aisotropy
+    app.kubernetes.io/component: semantic
+spec:
+  serviceName: qdrant
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aisotropy
+      app.kubernetes.io/component: semantic
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aisotropy
+        app.kubernetes.io/component: semantic
+    spec:
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.12.4
+          ports:
+            - name: rest
+              containerPort: 6333
+            - name: grpc
+              containerPort: 6334
+          readinessProbe:
+            # Qdrant exposes /readyz over the REST port.
+            httpGet:
+              path: /readyz
+              port: rest
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          volumeMounts:
+            - name: qdrant-data
+              mountPath: /qdrant/storage
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: qdrant-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 2Gi

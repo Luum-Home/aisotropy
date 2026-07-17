@@ -1,0 +1,73 @@
+{{- if .Values.tiers.networked.enabled }}
+{{- $q := .Values.tiers.networked.qdrant }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aisotropy.fullname" . }}-qdrant
+  labels:
+    {{- include "aisotropy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic
+spec:
+  clusterIP: None
+  selector:
+    {{- include "aisotropy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic
+  ports:
+    - name: rest
+      port: {{ $q.restPort }}
+      targetPort: rest
+    - name: grpc
+      port: {{ $q.grpcPort }}
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "aisotropy.fullname" . }}-qdrant
+  labels:
+    {{- include "aisotropy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic
+spec:
+  serviceName: {{ include "aisotropy.fullname" . }}-qdrant
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "aisotropy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: semantic
+  template:
+    metadata:
+      labels:
+        {{- include "aisotropy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: semantic
+    spec:
+      containers:
+        - name: qdrant
+          image: {{ $q.image | quote }}
+          ports:
+            - name: rest
+              containerPort: {{ $q.restPort }}
+            - name: grpc
+              containerPort: {{ $q.grpcPort }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: rest
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          volumeMounts:
+            - name: qdrant-data
+              mountPath: /qdrant/storage
+          resources:
+            {{- toYaml $q.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: qdrant-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ $q.storage }}
+{{- end }}

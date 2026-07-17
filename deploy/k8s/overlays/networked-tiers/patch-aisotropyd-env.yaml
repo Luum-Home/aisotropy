@@ -1,0 +1,22 @@
+# Wire aisotropyd to the networked tiers. These env vars flip the runtime off its
+# in-process fallbacks onto the real rqlite (facts) + Qdrant (semantic) services.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aisotropyd
+spec:
+  template:
+    spec:
+      containers:
+        - name: aisotropyd
+          env:
+            # Facts tier -> rqlite HTTP API (headless Service DNS).
+            - name: RQLITE_URL
+              value: "http://rqlite:4001"
+            # Semantic tier -> Qdrant gRPC.
+            - name: QDRANT_HOST
+              value: "qdrant"
+            - name: QDRANT_PORT
+              value: "6334"
+            - name: QDRANT_COLLECTION
+              value: "aisotropy_knowledge"
