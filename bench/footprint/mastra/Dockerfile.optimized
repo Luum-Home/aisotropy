@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1
+# OPTIMIZED-floor Mastra image (fairness variant). Same app + same pinned
+# @mastra/core version as the idiomatic ./Dockerfile, but instead of shipping
+# the full node_modules tree it esbuild-bundles the app + only the code paths it
+# actually reaches into ONE tree-shaken file, and ships that on node:22-alpine
+# with NO node_modules at all. This is the aggressive "optimized floor" reported
+# alongside the idiomatic number in arenas/BENCHMARKS.md, so the idiomatic
+# node:22-slim multiplier is not misread as the ceiling. It still ships the full
+# Node.js runtime — the structural interpreter cost a static Go binary avoids.
+
+# --- Build stage: install deps, bundle + tree-shake with esbuild -------------
+FROM node:22-alpine AS builder
+WORKDIR /app
+COPY package.json .
+RUN npm install --omit=dev --no-audit --no-fund \
+ && npm install --no-save esbuild
+COPY app.mjs .
+# Bundle to a single ESM file. The createRequire banner lets the bundled ESM
+# resolve the CommonJS require() calls some transitive deps still use.
+RUN npx esbuild app.mjs --bundle --platform=node --format=esm --outfile=bundle.mjs \
+      --banner:js="import{createRequire as __cr}from'module';const require=__cr(import.meta.url);"
+
+# --- Final stage: only the bundle rides along, no node_modules ---------------
+FROM node:22-alpine
+WORKDIR /app
+COPY --from=builder /app/bundle.mjs .
+EXPOSE 8080
+CMD ["node", "bundle.mjs"]

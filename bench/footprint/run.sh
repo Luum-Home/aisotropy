@@ -21,11 +21,20 @@ RESULTS="$BENCH_DIR/results.txt"
 
 # Subjects: label | build_context | dockerfile | host_port | lang | packaging
 # aisotropy builds from the REPO ROOT Dockerfile (untouched, production image).
+#
+# Two flavours per interpreted competitor: the IDIOMATIC minimal image (the
+# smallest STANDARD -slim way to ship it) AND an OPTIMIZED-floor image (squeezed
+# as hard as still-boots allows: alpine + prune for Python, esbuild tree-shake
+# for Node). Reporting both keeps the idiomatic multiplier from being misread as
+# a ceiling. adk-go is the same-language control — packaged byte-for-byte like
+# aisotropy, so its gap vs aisotropy is FRAMEWORK, not LANGUAGE.
 SUBJECTS=(
   "aisotropy|$REPO_ROOT|$REPO_ROOT/Dockerfile|18080|Go|distroless static"
-  "langgraph|$BENCH_DIR/langgraph|$BENCH_DIR/langgraph/Dockerfile|18081|Python|python:3.12-slim"
-  "mastra|$BENCH_DIR/mastra|$BENCH_DIR/mastra/Dockerfile|18082|TypeScript|node:22-slim"
   "adk-go|$BENCH_DIR/adk-go|$BENCH_DIR/adk-go/Dockerfile|18083|Go|distroless static"
+  "langgraph|$BENCH_DIR/langgraph|$BENCH_DIR/langgraph/Dockerfile|18081|Python|python:3.12-slim (idiomatic)"
+  "langgraph-opt|$BENCH_DIR/langgraph|$BENCH_DIR/langgraph/Dockerfile.optimized|18084|Python|alpine+prune (optimized)"
+  "mastra|$BENCH_DIR/mastra|$BENCH_DIR/mastra/Dockerfile|18082|TypeScript|node:22-slim (idiomatic)"
+  "mastra-opt|$BENCH_DIR/mastra|$BENCH_DIR/mastra/Dockerfile.optimized|18085|TypeScript|alpine+esbuild (optimized)"
 )
 
 now_ms() { python3 -c 'import time;print(int(time.time()*1000))'; }
@@ -112,7 +121,9 @@ PY
 dep_weight() {
   local label="$1" tag="$2" ctx="$3"
   case "$label" in
-    langgraph)
+    langgraph|langgraph-opt)
+      # Both idiomatic (slim) and optimized (alpine) install into the same
+      # site-packages path; the probe is identical.
       docker run --rm --entrypoint sh "$tag" -c \
         'du -sm /usr/local/lib/python3.12/site-packages 2>/dev/null | cut -f1 | xargs -I{} echo "{} MiB site-packages"; echo "$(ls /usr/local/lib/python3.12/site-packages | wc -l | tr -d " ") top-level entries"' \
         2>/dev/null | paste -sd' / ' -
@@ -120,6 +131,13 @@ dep_weight() {
     mastra)
       docker run --rm --entrypoint sh "$tag" -c \
         'du -sm /app/node_modules 2>/dev/null | cut -f1 | xargs -I{} echo "{} MiB node_modules"; echo "$(find /app/node_modules -maxdepth 2 -name package.json | wc -l | tr -d " ") packages"' \
+        2>/dev/null | paste -sd' / ' -
+      ;;
+    mastra-opt)
+      # Optimized Mastra ships NO node_modules — only the esbuild tree-shaken
+      # bundle. Report the single-file weight instead of a package tree.
+      docker run --rm --entrypoint sh "$tag" -c \
+        'du -sk /app/bundle.mjs 2>/dev/null | cut -f1 | xargs -I{} echo "$(( {} / 1024 )) MiB bundled (tree-shaken)"; echo "no node_modules ships"' \
         2>/dev/null | paste -sd' / ' -
       ;;
     aisotropy|adk-go)
@@ -171,13 +189,13 @@ mib() { [[ "$1" =~ ^[0-9]+$ ]] && python3 -c "print(f'{$1/1048576:.1f}')" || ech
   echo "# generated: $(date -u +%Y-%m-%dT%H:%M:%SZ) | host: $(uname -sm) | docker: $(docker version --format '{{.Server.Version}}' 2>/dev/null)"
   echo "# cold-start samples per subject: RUNS=$RUNS"
   echo
-  printf '%-11s | %-10s | %-18s | %11s | %11s | %-22s | %8s | %s\n' \
+  printf '%-14s | %-10s | %-28s | %11s | %11s | %-22s | %8s | %s\n' \
     "framework" "language" "packaging" "img (MiB)" "gz (MiB)" "cold-start ms med/mn/mx" "RSS MiB" "dep weight"
-  printf -- '------------|------------|--------------------|-------------|-------------|------------------------|----------|--------------------\n'
+  printf -- '---------------|------------|------------------------------|-------------|-------------|------------------------|----------|--------------------\n'
   for spec in "${SUBJECTS[@]}"; do
     IFS='|' read -r label ctx dockerfile port lang pack <<<"$spec"
     read -r cmed cmin cmax <<<"${COLD[$label]}"
-    printf '%-11s | %-10s | %-18s | %11s | %11s | %8s/%s/%-8s | %8s | %s\n' \
+    printf '%-14s | %-10s | %-28s | %11s | %11s | %8s/%s/%-8s | %8s | %s\n' \
       "$label" "${LANG[$label]}" "${PACK[$label]}" \
       "$(mib "${SIZE[$label]}")" "$(mib "${CSIZE[$label]}")" \
       "$cmed" "$cmin" "$cmax" "${RSS[$label]}" "${DEPS[$label]}"

@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1
+# OPTIMIZED-floor LangGraph image (fairness variant). Same app + same pinned
+# framework version as the idiomatic ./Dockerfile, but squeezed as hard as a
+# Python image realistically can be while still BOOTING and serving /healthz:
+#   - python:3.12-alpine base (musl, no debian userland) instead of -slim
+#   - pip --no-compile (skip .pyc bytecode) + --no-cache-dir
+#   - prune __pycache__ / test / tests dirs and any stray .pyc
+# This is the "optimized floor" reported alongside the idiomatic number in
+# arenas/BENCHMARKS.md, so nobody reads the idiomatic slim multiplier as the
+# ceiling. It still ships the CPython interpreter + the dependency tree — the
+# structural interpreter+deps cost a compiled static Go binary does not pay.
+FROM python:3.12-alpine
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --no-compile -r requirements.txt \
+ && find /usr/local/lib/python3.12/site-packages -depth \
+      \( -name '__pycache__' -o -name 'tests' -o -name 'test' \) -type d -exec rm -rf {} + \
+ && find /usr/local/lib/python3.12/site-packages -name '*.pyc' -delete
+
+COPY app.py .
+
+EXPOSE 8080
+CMD ["python", "app.py"]

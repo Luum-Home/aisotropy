@@ -1,10 +1,12 @@
 # Footprint benchmark — raw results
-# generated: 2026-07-17T14:29:31Z | host: Darwin arm64 | docker: 29.4.0
+# generated: 2026-07-17T15:44:27Z | host: Darwin arm64 | docker: 29.4.0
 # cold-start samples per subject: RUNS=5
 
-framework   | language   | packaging          |   img (MiB) |    gz (MiB) | cold-start ms med/mn/mx |  RSS MiB | dep weight
-------------|------------|--------------------|-------------|-------------|------------------------|----------|--------------------
-aisotropy   | Go         | distroless static  |        12.4 |        12.3 |      214/196/1683     |     10.6 | 108 modules (go.sum) / static-linked (no dep files ship)
-langgraph   | Python     | python:3.12-slim   |        61.3 |        60.8 |      656/531/679      |     47.0 | 75 MiB site-packages 74 top-level entries
-mastra      | TypeScript | node:22-slim       |       126.5 |       125.8 |      700/491/808      |    121.2 | 141 MiB node_modules 198 packages
-adk-go      | Go         | distroless static  |          NA |          NA |       NA/NA/NA       |       NA | NA
+framework      | language   | packaging                    |   img (MiB) |    gz (MiB) | cold-start ms med/mn/mx |  RSS MiB | dep weight
+---------------|------------|------------------------------|-------------|-------------|------------------------|----------|--------------------
+aisotropy      | Go         | distroless static            |        12.4 |        12.3 |      262/215/501      |      8.8 | 108 modules (go.sum) / static-linked (no dep files ship)
+adk-go         | Go         | distroless static            |         5.9 |         5.9 |      310/216/876      |      3.5 | 46 modules (go.sum) / static-linked (no dep files ship)
+langgraph      | Python     | python:3.12-slim (idiomatic) |        61.3 |        60.8 |      583/527/820      |     47.0 | 75 MiB site-packages 74 top-level entries
+langgraph-opt  | Python     | alpine+prune (optimized)     |        31.3 |        31.1 |     1930/1750/3882     |     54.1 | 48 MiB site-packages 76 top-level entries
+mastra         | TypeScript | node:22-slim (idiomatic)     |       126.5 |       125.8 |      514/457/774      |    121.2 | 141 MiB node_modules 198 packages
+mastra-opt     | TypeScript | alpine+esbuild (optimized)   |        56.9 |        56.6 |      562/474/741      |    105.5 | no node_modules ships
