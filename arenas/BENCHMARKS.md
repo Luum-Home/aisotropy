@@ -233,6 +233,53 @@ ordering (static binary << interpreted runtime) is the portable finding. (5) A f
 *latency/quality* wall-clock is deliberately **not** published — see the method note below for why
 that would measure the models, not the frameworks.
 
+## Efficiency across usage modes (REAL, run-verified ▶) — footprint ≠ latency
+
+The three classes above each measure a **different way aisotropy is deployed**, and the honest
+picture only appears when they are read together — not collapsed into one "how fast/small is it"
+number. aisotropy is an *LLM-OS* with more than one execution granularity, and each granularity has
+its own efficiency unit:
+
+| Usage mode | Unit of work | Efficiency metric | Measured number (this repo, M4 Pro / darwin-arm64) | Source |
+|---|---|---|---|---|
+| **Whole runtime as a service** (Docker/K8s) | one deployed process | image + idle RSS + boot | **12.4 MiB image · 8.8 MiB RSS · 262 ms cold-start** | Class 3 · `bench/footprint/` |
+| **In-process library** (embed `aisotropy.App`) | one framework hot-path op | ns/op around a (stubbed) model call | scope-gate **135 ns** · isolation key-validate **40 ns** · pre-spend quota gate **5.46 µs** · working-memory append **303 µs** | Class 1 · `arenas/scripts/run-overhead-bench.sh` |
+| **Per-call pure-compute tool isolation** (WASM) | one JSON→JSON tool dispatch | warm dispatch throughput + one-time load | **461 ops/s · p50 2.06 ms/dispatch** warm; **585 ms** one-time module compile · 3.18 MiB module | NEW · `bench/wasm-vs-docker/` |
+| *(same, container tier for shell/git/fs tools)* | one `docker exec` | warm exec throughput | **27 ops/s · p50 34.2 ms/exec** (N=200) | NEW · `bench/wasm-vs-docker/` |
+| **WASM 3.0 tier** (WasmGC / memory64) | — | — | **N/A — unbenchmarkable on wazero v1.12.0** (Core 1.0/2.0 only; memory64 is open request wazero#2452) | — |
+
+**The per-call isolation row is the new measurement, and it is honestly two-sided.** For the
+*pure-compute* subset of tools (no shell, git, or filesystem), the WASM tier's **warm dispatch is
+~17× cheaper than a `docker exec`** — **461 vs 27 ops/s**, **2.06 ms vs 34.2 ms** median — which is
+the high-fan-out density argument for adding a WASM sandbox provider (research §4.1). But two costs
+cut the other way and are reported, not buried: (1) the **one-time module compile is heavier than a
+container create** (585 ms vs 288 ms) *because the guest is a Go/wasip1 module that bundles the whole
+Go runtime* (3.18 MiB) — a hand-written WAT/Rust guest would slash both; and (2) that same Go-runtime
+bundle inflates the **in-process memory** wazero holds to compile+cache the module. So the vendor
+"µs cold-start / 10–100× density" numbers are for *minimal* modules — with a Go guest, the win is a
+**~17× per-call throughput edge that amortizes the one-time compile**, not a free lunch on every axis.
+The `sandbox.WASMProvider` that produces these numbers deliberately serves **only** `NeedPureCompute`
+tools; anything needing `fork`/`exec` still routes to the container tier (WASI has no process
+creation — a design boundary, not a gap). Harness + reproduce: `bench/wasm-vs-docker/` (`go run
+./bench/wasm-vs-docker`); raw output in `bench/wasm-vs-docker/results.txt`.
+
+**Honest caveats that keep the modes from being conflated.**
+- **Footprint ≠ inference latency.** Class 3's 12.4 MiB / 262 ms and the WASM 2 ms/dispatch are
+  *isolation-and-boot* costs with the model held constant as an offline stub. None of them say
+  anything about time-to-first-token or answer quality — those are the provider's, and dominate any
+  real end-to-end wall-clock. These tables measure the *mechanism*, on purpose.
+- **The RSS figures are not clean per-instance numbers** (both sides). The WASM in-process RSS is
+  dominated by wazero compiling the Go-runtime-bearing module (one-time, shared across all
+  dispatches); the container "sub-MiB" RSS excludes the dockerd/containerd host-side memory. Treat
+  both as directional, per the notes in `results.txt`.
+- **Working memory is the local-coupled tier that does NOT go stateless.** The per-call WASM/edge
+  efficiency story applies to *tool isolation*, never to the runtime as a whole. aisotropy's moat is
+  in-process tiered memory — BadgerDB L1 at µs latency, embedded SQLite+FTS5 facts — which is
+  **stateful and latency-coupled by design** (`docs/architecture/runtime-as-built.md`). Forcing the
+  whole runtime into a stateless per-request model would break that tiering and gain nothing for a
+  long-lived server; and it can't run under `GOOS=wasip1` anyway (no sockets → the Huma/chi server
+  deadlocks). WASM helps at the *tool* granularity, not the *whole-runtime* granularity.
+
 ## Cross-framework method (overhead/latency: documented, NOT executed — and why)
 
 A full cross-framework overhead table (aisotropy vs the 12 arenas) is **not fabricated here**.

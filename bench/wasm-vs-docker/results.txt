@@ -1,0 +1,42 @@
+# wasm-vs-docker benchmark — raw results
+# generated: 2026-07-17T18:17:41Z | host: darwin/arm64 | go: go1.26.5 | wazero: v1.12.0 | docker: 29.4.0
+# work held constant: a trivial JSON->JSON echo tool in BOTH candidates
+# wasm warm N=10000 | docker warm N=200 | cold-start samples=5
+
+# wasm guest module size: 3.18 MiB (Go/wasip1 reactor — bundles the Go runtime;
+#   a hand-written WAT/Rust guest would be far smaller. The compiled module is
+#   shared across every dispatch; only per-call linear memory is transient.)
+
+candidate | setup (1-time)  | first call | warm ops/s |      p50 |      p95 |      p99 | host RSS
+          | wasm=compile    | dispatch   | sequential |          |          |          |
+          | docker=run -d   | /exec      | dispatches |          |          |          |
+----------|-----------------|------------|------------|----------|----------|----------|---------
+wasm      |       585.10ms |     4.02ms |       461 |   2.06ms |   2.67ms |   3.81ms | 88.1 MiB (in-process, shared module)
+docker    |       288.06ms |    51.13ms |        27 |  34.20ms |  50.73ms |  71.03ms | 748KiB (container)
+
+# READING THIS: `setup` is ONE-TIME (a tool is Load()'ed once, then dispatched many
+#   times; a container is `run` once, then exec'd many times) — amortize it over the
+#   call volume. `warm ops/s` + p50/p95/p99 are the per-call steady state, the number
+#   that actually scales. WASM's setup is a heavy Go-runtime module compile; its
+#   per-call dispatch is where it beats docker exec.
+
+# WASM 3.0 (WasmGC / memory64) row: N/A — UNBENCHMARKABLE on wazero v1.12.0.
+#   wazero implements WebAssembly Core 1.0/2.0 only; WasmGC and memory64 are not
+#   shipped (memory64 is open request wazero#2452). Benchmarking them would require
+#   switching runtimes to wasmtime/WasmEdge — which costs CGO, breaking the single
+#   static-binary posture — purely to run the row. Deferred, not faked. Also: Go does
+#   not emit WasmGC (it bundles its own GC), so the 'leaner module' premise never
+#   applies to Go guests regardless of runtime.
+
+# NOTE: docker warm ops/s is over N=200 (not 10000) — each `docker exec` forks the
+#   docker CLI + attaches to containerd, so a 10k-exec run is impractically slow.
+#   The reduced N is the honest measurement of the same per-op cost, not a shortcut.
+
+# RSS CAVEAT (both numbers have one — neither is a clean per-instance figure):
+#   - WASM 'in-process' RSS is the harness process delta, DOMINATED by wazero
+#     compiling the 3+ MiB Go-runtime-bearing module (a one-time, shared cost) —
+#     NOT per-call: a dispatch's linear memory is transient and reclaimed on Close.
+#     A hand-written WAT/Rust guest would shrink both the module and this figure.
+#   - Docker 'container' RSS is one container's `docker stats` memory; it EXCLUDES
+#     the dockerd/containerd host-side memory (hundreds of MiB, shared). So the
+#     sub-MiB container figure is not the full host cost of a container either.
