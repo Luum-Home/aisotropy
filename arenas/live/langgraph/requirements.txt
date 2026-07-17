@@ -1,0 +1,16 @@
+# Direct dependencies for the LangGraph live-arena adapter (multi-mode).
+# Installed into arenas/live/langgraph/.venv — install with:
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#
+# Versions pinned to what was verified working against the agnes
+# OpenAI-compatible endpoint, the real e5 embed server, and the real Qdrant
+# `arena_rag` collection. See README.md for the full transitive dependency +
+# license table.
+langgraph==1.2.9
+langchain-openai==1.3.5
+langchain-core==1.4.9
+# rag mode: real vector search against Qdrant `arena_rag`.
+langchain-qdrant==1.1.0
+qdrant-client==1.18.0
+# memory mode: real on-disk checkpointer persistence across processes.
+langgraph-checkpoint-sqlite==3.1.0

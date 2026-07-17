@@ -1,0 +1,10 @@
+# LlamaIndex live-arena adapter — direct dependencies pinned to the versions
+# verified during the acceptance smokes (see README.md). Transitive deps
+# (openai, httpx, pydantic, aiosqlite, SQLAlchemy, llama-index-instrumentation,
+# llama-index-workflows) are resolved by pip and listed in README.md's license table.
+llama-index-core==0.14.23
+llama-index-llms-openai-like==0.7.2
+# Added for the exhaustive multi-mode upgrade:
+llama-index-vector-stores-qdrant==0.10.2   # rag mode: QdrantVectorStore
+llama-index-embeddings-openai-like==0.3.1  # rag/tools modes: e5 query embeddings via EMBED_URL
+qdrant-client==1.18.0                      # transitive of vector-stores-qdrant; also used directly in corpus_lookup tool

@@ -1,0 +1,8 @@
+# memory mode's on-disk SQLite store (created at runtime by run.sh; see
+# EINO_ARENA_MEMORY_DB in clients.go). Never checked in — it's local,
+# session-specific runtime state, not source.
+/.data/
+
+# stray local `go build` output — run.sh / run-docker.sh never produce this,
+# but `go build ./...` run by hand does.
+/eino-live-arena

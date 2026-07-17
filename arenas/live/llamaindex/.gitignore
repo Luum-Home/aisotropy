@@ -1,0 +1,7 @@
+# Runtime artifacts of the exhaustive multi-mode adapter — never committed.
+# (.venv/ and __pycache__/ are already covered by ../../.gitignore; these are
+# specific to this arena's `memory` mode and Docker build/run helpers.)
+.memory/
+*.db
+*.db-journal
+docker-smoke.log

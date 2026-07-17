@@ -1,0 +1,5 @@
+# Runtime-generated LangGraph checkpointer state (memory mode). Never
+# commit — it is a local on-disk SQLite file created by SqliteSaver at
+# CHECKPOINT_DB_PATH (default .data/checkpoints.sqlite) and regenerated on
+# every fresh run.
+.data/

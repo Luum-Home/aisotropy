@@ -1,0 +1,9 @@
+pydantic-ai>=2.12.0
+# openai is already a transitive dep of pydantic-ai (bundled provider support);
+# pinned as a direct requirement here because the `rag` mode's embedding
+# client imports it directly, not just through pydantic-ai's model layer.
+openai>=1.0.0
+# qdrant-client: real retrieval against the arena_rag Qdrant collection in
+# `rag` mode. Pinned to 1.12.x to match the locally running Qdrant server
+# (1.12.4) and avoid the client's cross-major-version compatibility warning.
+qdrant-client>=1.12,<1.13

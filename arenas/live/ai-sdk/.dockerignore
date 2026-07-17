@@ -1,0 +1,8 @@
+node_modules
+.env
+*.env
+.git
+smoke_*.stdout
+smoke_*.stderr
+.arena_memory_sid
+README.md

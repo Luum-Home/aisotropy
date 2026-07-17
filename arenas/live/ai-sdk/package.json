@@ -1,0 +1,21 @@
+{
+  "name": "arena-live-ai-sdk",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Live arena adapter: Vercel AI SDK (TypeScript/Node) driven against the real agnes-2.0-flash model via an OpenAI-compatible endpoint. Exhaustive multi-mode stdin/stdout adapter (qa, rag, tools, memory, structured, stream) for the aisotropy arena harness, exercising AI SDK native features against real infra (agnes chat, e5 embeddings, Qdrant, rqlite).",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.16",
+    "@qdrant/js-client-rest": "^1.18.0",
+    "ai": "^7.0.31",
+    "zod": "^4.4.3"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "license": "Apache-2.0"
+}
