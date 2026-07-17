@@ -76,12 +76,31 @@ var injectionSignals = []signal{
 	},
 }
 
+// InputScanner is the extension seam for input-side detection. The built-in
+// *Detector implements it, and a future language-aware backend (an opt-in
+// multilingual injection classifier — the research names the MIT-licensed
+// mDeBERTa family; NOT Llama Prompt Guard 2, whose Llama Community License is a
+// constitutional license BLOCKER) can plug in behind the SAME interface via
+// Detector.WithScanner. That backend is deliberately NOT built here: regex plus
+// Unicode normalization hardens the existing (mostly English) patterns against
+// obfuscation, but genuine arbitrary-language semantic injection detection is a
+// model problem and is the documented follow-on. Implementations MUST be safe
+// for concurrent use and MUST NOT panic.
+type InputScanner interface {
+	// Inspect scores text and returns an advisory Verdict.
+	Inspect(text string) Verdict
+}
+
 // Detector flags prompt-injection and prompt-leak attempts in user input using
-// pattern + weight heuristics — no model call, fully deterministic. Construct
-// one with NewDetector. It is safe for concurrent use.
+// pattern + weight heuristics — no model call, fully deterministic. Before
+// matching, each input is canonicalized (NFKC + case-fold + homoglyph/leet fold,
+// see normalize.go) so homoglyph/full-width/zero-width/leetspeak/spacing evasions
+// of the built-in patterns collapse toward the detectable form. Construct one
+// with NewDetector. It is safe for concurrent use.
 type Detector struct {
 	signals   []signal
 	threshold float64
+	backends  []InputScanner
 }
 
 // NewDetector returns a Detector with the built-in injection heuristics and the
@@ -91,6 +110,17 @@ func NewDetector() *Detector {
 		signals:   injectionSignals,
 		threshold: 0.5,
 	}
+}
+
+// WithScanner returns a copy of the Detector with additional InputScanner
+// backends registered (e.g. an opt-in multilingual model). Each backend's
+// Verdict is merged into the built-in result: Suspicious if either flags, Score
+// is the max, and Signals are the union. Do NOT register a Detector as its own
+// backend — that would recurse.
+func (d *Detector) WithScanner(scanners ...InputScanner) *Detector {
+	cp := *d
+	cp.backends = append(append([]InputScanner(nil), d.backends...), scanners...)
+	return &cp
 }
 
 // WithThreshold returns a copy of the Detector whose Suspicious cutoff is t
@@ -111,16 +141,46 @@ func (d *Detector) WithThreshold(t float64) *Detector {
 func (d *Detector) Threshold() float64 { return d.threshold }
 
 // Inspect scores text against the injection heuristics and returns a Verdict.
-// Signals are returned in a stable (alphabetical) order so callers and tests
-// see deterministic output. Score is capped at 1.0.
+// The patterns run against the original text AND its normalized variants (folded
+// + space-collapsed, see matchVariants), so an obfuscated attack that only the
+// canonical form reveals is still caught; each signal's weight counts once
+// regardless of how many variants it fired on. Any registered InputScanner
+// backend is then merged in. Signals are returned in a stable (alphabetical)
+// order so callers and tests see deterministic output. Score is capped at 1.0.
 func (d *Detector) Inspect(text string) Verdict {
 	if text == "" {
 		return Verdict{}
 	}
+	v := d.inspectHeuristics(text)
+	for _, b := range d.backends {
+		if b == nil {
+			continue
+		}
+		v = mergeVerdict(v, b.Inspect(text), d.threshold)
+	}
+	return v
+}
+
+// inspectHeuristics runs the built-in pattern signals over every match variant
+// of text (original + folded + space-collapsed) and unions the fired signals so
+// evasion of the raw text is caught while each weight is still counted once.
+func (d *Detector) inspectHeuristics(text string) Verdict {
+	variants := matchVariants(text)
+	matched := make(map[string]bool, len(d.signals))
+	for _, v := range variants {
+		for _, s := range d.signals {
+			if matched[s.name] {
+				continue
+			}
+			if s.re.MatchString(v) {
+				matched[s.name] = true
+			}
+		}
+	}
 	var score float64
 	var signals []string
-	for _, s := range d.signals {
-		if s.re.MatchString(text) {
+	for _, s := range d.signals { // defined order, weight counted once per signal
+		if matched[s.name] {
 			signals = append(signals, s.name)
 			score += s.weight
 		}
@@ -131,6 +191,36 @@ func (d *Detector) Inspect(text string) Verdict {
 	sort.Strings(signals)
 	return Verdict{
 		Suspicious: score >= d.threshold,
+		Signals:    signals,
+		Score:      score,
+	}
+}
+
+// mergeVerdict combines a base heuristic verdict with a backend scanner's verdict:
+// Suspicious if either flags (or the merged score clears the threshold), Score is
+// the max of the two, and Signals are the deduplicated union in stable order.
+func mergeVerdict(base, extra Verdict, threshold float64) Verdict {
+	score := base.Score
+	if extra.Score > score {
+		score = extra.Score
+	}
+	seen := make(map[string]bool, len(base.Signals)+len(extra.Signals))
+	var signals []string
+	for _, s := range base.Signals {
+		if !seen[s] {
+			seen[s] = true
+			signals = append(signals, s)
+		}
+	}
+	for _, s := range extra.Signals {
+		if !seen[s] {
+			seen[s] = true
+			signals = append(signals, s)
+		}
+	}
+	sort.Strings(signals)
+	return Verdict{
+		Suspicious: base.Suspicious || extra.Suspicious || score >= threshold,
 		Signals:    signals,
 		Score:      score,
 	}

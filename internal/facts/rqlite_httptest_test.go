@@ -187,15 +187,18 @@ func asFloat(v any) float64 {
 }
 
 func (f *fakeRqlite) applyUpsert(args []any) {
+	// Arg order mirrors upsertSQL: id, tenant, user, content, fts_content,
+	// importance, created, updated, superseded_by. The fake substring-matches
+	// the display `content`, so args[4] (fts_content) is accepted but unused.
 	row := storedRow{
 		id:           args[0].(string),
 		tenant:       args[1].(string),
 		user:         args[2].(string),
 		content:      args[3].(string),
-		importance:   asFloat(args[4]),
-		createdMS:    int64(asFloat(args[5])),
-		updatedMS:    int64(asFloat(args[6])),
-		supersededBy: args[7].(string),
+		importance:   asFloat(args[5]),
+		createdMS:    int64(asFloat(args[6])),
+		updatedMS:    int64(asFloat(args[7])),
+		supersededBy: args[8].(string),
 	}
 	// Preserve created_at on upsert, mirroring the ON CONFLICT clause.
 	if existing, ok := f.rows[row.id]; ok {

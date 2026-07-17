@@ -136,6 +136,11 @@ func (o *OutputInspector) Toxicity(output string) Verdict {
 		return Verdict{}
 	}
 	lower := strings.ToLower(output)
+	// folded is a canonical copy (NFKC + case-fold + homoglyph/leet fold, see
+	// normalize.go) so homoglyph ("ѕtupid"), full-width, zero-width, and leetspeak
+	// ("5tupid") evasion of the English keyword substrings still matches. Regular
+	// spaces are preserved, so multi-word keywords ("kill you") are unaffected.
+	folded := foldForMatch(output)
 	var score float64
 	var signals []string
 	seen := map[string]bool{}
@@ -143,7 +148,7 @@ func (o *OutputInspector) Toxicity(output string) Verdict {
 		if kw.word == "" || seen[kw.word] {
 			continue
 		}
-		if strings.Contains(lower, kw.word) {
+		if strings.Contains(lower, kw.word) || (folded != lower && strings.Contains(folded, kw.word)) {
 			seen[kw.word] = true
 			signals = append(signals, "toxic:"+kw.word)
 			score += kw.weight

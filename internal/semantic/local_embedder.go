@@ -42,8 +42,9 @@ type LocalEmbedderConfig struct {
 	// tokenizer.json), passed to the binary via AISOTROPY_EMBED_MODEL_DIR.
 	// Required.
 	ModelDir string
-	// Dimension is the model's hidden size (384 for bge-small / e5-small) and
-	// MUST match the semantic Store's configured dimension, or Upsert/Search
+	// Dimension is the model's hidden size (384 for the multilingual-e5-small
+	// default — and for bge-small, so the ADR-0049 swap is dimension-preserving)
+	// and MUST match the semantic Store's configured dimension, or Upsert/Search
 	// fail with ErrDimensionMismatch. Most sentence models expose it as
 	// config.json's hidden_size; it is configured here rather than inferred so
 	// the Store and Embedder cannot silently drift. Required (positive).

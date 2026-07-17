@@ -2,7 +2,7 @@
 name = "embed"
 version = "0.1.0"
 edition = "2021"
-description = "Aisotropy sovereign local embedder (Bet 5, first brick — ADR-0023). Loads a pinned MIT BERT-class sentence-embedding model (default BAAI/bge-small-en-v1.5, MIT) via candle, tokenizes with the model's own tokenizer, runs the encoder, mean-pools over tokens and L2-normalizes, emitting embeddings over an NDJSON/stdio subprocess contract (ADR-0005 pattern, mirroring crates/bitrate-scorer). Invoked by the Go core (internal/semantic LocalEmbedder). No network: text never leaves the process tree."
+description = "Aisotropy sovereign local embedder (Bet 5, first brick — ADR-0023; multilingual default per ADR-0049). Loads a pinned MIT BERT-class sentence-embedding model (default intfloat/multilingual-e5-small, MIT, 384-dim, 100+ languages) via candle, tokenizes with the model's own tokenizer, runs the encoder, mean-pools over tokens and L2-normalizes, emitting embeddings over an NDJSON/stdio subprocess contract (ADR-0005 pattern, mirroring crates/bitrate-scorer). Optional e5 query:/passage: prefix supported per request. Invoked by the Go core (internal/semantic LocalEmbedder). No network: text never leaves the process tree."
 license = "Apache-2.0"
 
 [[bin]]

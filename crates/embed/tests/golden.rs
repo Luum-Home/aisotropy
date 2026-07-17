@@ -2,7 +2,7 @@
 //!
 //! Runs the built `embed` binary over two semantically-similar sentences and one
 //! dissimilar sentence, then asserts:
-//!   1. the emitted vector has the model's hidden dimension (bge-small -> 384),
+//!   1. the emitted vector has the model's hidden dimension (multilingual-e5-small -> 384),
 //!   2. every vector is L2-normalized (norm ≈ 1),
 //!   3. cosine(similar_a, similar_b) > cosine(similar_a, dissimilar).
 //!
@@ -59,7 +59,7 @@ fn real_embedding_cosine_sanity() {
     let Some(dir) = model_dir() else {
         eprintln!(
             "SKIP real_embedding_cosine_sanity: set AISOTROPY_EMBED_MODEL_DIR to a \
-             bge-small/e5-small snapshot dir (config.json + model.safetensors + \
+             multilingual-e5-small snapshot dir (config.json + model.safetensors + \
              tokenizer.json) to run the real-embedding sanity check."
         );
         return;

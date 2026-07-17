@@ -38,8 +38,12 @@ func TestSaveAndSearchFTS5Match(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// Porter stemming: querying "refactor" must match stored "refactoring".
-	got, err := st.Search(context.Background(), sc, "refactor the DB", 5)
+	// English full-text search on whole words still works after ADR-0051
+	// dropped the porter stemmer. NOTE: without porter, "refactor" no longer
+	// stem-matches "refactoring" — that lost English stemming is the documented,
+	// deliberate trade-off for not mis-stemming every non-English Latin token.
+	// Query with the words as stored.
+	got, err := st.Search(context.Background(), sc, "billing database", 5)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -48,6 +52,29 @@ func TestSaveAndSearchFTS5Match(t *testing.T) {
 	}
 	if got[0].Score <= 0 {
 		t.Fatalf("Score = %v, want > 0", got[0].Score)
+	}
+}
+
+// TestSearchNoPorterStemming pins the deliberate ADR-0051 behavior change: the
+// English porter stemmer is gone, so an inflected query form no longer matches
+// a differently-inflected stored form. This documents the trade-off as an
+// explicit, falsifiable assertion rather than an accidental side effect.
+func TestSearchNoPorterStemming(t *testing.T) {
+	st := newTestStore(t)
+	sc := Scope{tenant: "acme", user: "alice"}
+	// The only shared word between query and content must be the stem, so a
+	// match could only come from stemming.
+	if err := st.Save(context.Background(), sc, Fact{ID: "f1", TenantID: "acme", UserID: "alice",
+		Content: "refactoring", Importance: 0.5}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := st.Search(context.Background(), sc, "refactor", 5)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Search(refactor) = %+v, want empty (no porter stemming)", got)
 	}
 }
 

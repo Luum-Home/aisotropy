@@ -98,9 +98,13 @@ func TestSQLiteMigrateOnClosedDB(t *testing.T) {
 // AFTER INSERT trigger indexes the content into FTS so Search can find it.
 func insertCorruptRow(t *testing.T, s *SQLiteStore) {
 	t.Helper()
+	// fts_content must be populated for the AFTER INSERT trigger to index this
+	// row (ADR-0051 feeds the index from fts_content, not content); for Latin
+	// text it equals content. Without it the row is unindexed and Search never
+	// reaches the scan branch this test exercises.
 	_, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO facts (id, tenant_id, user_id, content, importance, created_at, updated_at, superseded_by)
-		 VALUES ('bad', 'acme', 'alice', 'corrupt keyword row', 'not-a-number', 0, 0, '')`)
+		`INSERT INTO facts (id, tenant_id, user_id, content, fts_content, importance, created_at, updated_at, superseded_by)
+		 VALUES ('bad', 'acme', 'alice', 'corrupt keyword row', 'corrupt keyword row', 'not-a-number', 0, 0, '')`)
 	if err != nil {
 		t.Fatalf("seed corrupt row: %v", err)
 	}

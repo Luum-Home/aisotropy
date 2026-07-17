@@ -1,12 +1,17 @@
-//! Aisotropy sovereign local embedder (Bet 5, first brick — ADR-0023): a
-//! dependency-light Rust `embed()` that keeps tenant text inside the process
-//! tree. It loads a config.json-driven BERT-class sentence-embedding model
-//! (default `BAAI/bge-small-en-v1.5`, MIT) from safetensors via candle,
-//! tokenizes with the model's own tokenizer, runs the encoder, then
+//! Aisotropy sovereign local embedder (Bet 5, first brick — ADR-0023; default
+//! model swapped to multilingual per ADR-0049): a dependency-light Rust
+//! `embed()` that keeps tenant text inside the process tree. It loads a
+//! config.json-driven BERT-class sentence-embedding model
+//! (default `intfloat/multilingual-e5-small`, MIT, 384-dim, 100+ languages)
+//! from safetensors via candle, tokenizes with the model's own tokenizer, runs
+//! the encoder, then
 //!
 //!   embedding(text) = l2_normalize( mean_pool_over_tokens( encoder(text) ) )
 //!
-//! — the standard sentence-embedding recipe used by bge / e5 / MiniLM. It is a
+//! — the standard sentence-embedding recipe used by bge / e5 / MiniLM. Mean
+//! (average) pooling is the *canonical* pooling for the e5 family (bge
+//! canonically uses CLS pooling), so the multilingual-e5-small default aligns
+//! the recipe with the weights. It is a
 //! pure, tenant-agnostic vectorizer invoked as a subprocess by the Go core
 //! (`internal/semantic` LocalEmbedder, ADR-0005 pattern — the same shape as
 //! crates/bitrate-scorer and crates/sleep-cycle). A failure (including a panic)
@@ -19,16 +24,27 @@
 //!
 //! Contract (mirrors the bitrate scorer, so the Go seam is a near-copy):
 //!   argv:   --input <requests.ndjson> --output <results.ndjson>
-//!   input:  {"id":"...","text":"..."}
+//!   input:  {"id":"...","text":"...","prefix":"query: "}  (prefix optional)
 //!   output: {"id":"...","embedding":[F,...],"dim":N,"model_id":"<model>@<rev>",
 //!            "normalized":true}
 //!   stdout: {"embedded":N,"model_id":"...","dim":N,"backend":"BERT_REAL"} (final line)
 //!   exit:   0 = ok; non-zero = failure (reason on stderr).
 //!
+//! E5 prefixes (ADR-0049): the e5 family expects an instruction prefix —
+//! `query: ` on search queries, `passage: ` on indexed documents — for best
+//! retrieval. The crate honors an OPTIONAL per-request `prefix` field
+//! (default empty ⇒ byte-identical to the pre-swap behavior; the model still
+//! embeds unprefixed text, just with slightly lower retrieval quality). The
+//! prefix is prepended verbatim to `text` before tokenization. Deciding which
+//! prefix a given call needs (query vs passage) is the Go caller's job and
+//! remains the documented follow-up (ADR-0023 debt #4 / ADR-0049) — the pure
+//! crate stays intent-agnostic and only applies what it is handed.
+//!
 //! Model location: the model directory (config.json + model.safetensors +
 //! tokenizer.json) is resolved from `AISOTROPY_EMBED_MODEL_DIR`. The echoed
-//! label follows `AISOTROPY_EMBED_MODEL_ID` (default `BAAI/bge-small-en-v1.5`)
-//! and `AISOTROPY_EMBED_MODEL_REV` (default `pinned`).
+//! label follows `AISOTROPY_EMBED_MODEL_ID`
+//! (default `intfloat/multilingual-e5-small`) and `AISOTROPY_EMBED_MODEL_REV`
+//! (default `pinned`).
 
 use std::collections::HashMap;
 use std::env;
@@ -163,6 +179,13 @@ struct Request {
     id: String,
     #[serde(default)]
     text: String,
+    /// Optional e5 instruction prefix (ADR-0049), e.g. `"query: "` or
+    /// `"passage: "`. Prepended verbatim to `text` before tokenization.
+    /// Absent/empty ⇒ unprefixed embedding (byte-identical to pre-swap
+    /// behavior). The crate never infers query-vs-passage intent; the caller
+    /// supplies the prefix it wants.
+    #[serde(default)]
+    prefix: String,
 }
 
 #[derive(serde::Serialize)]
@@ -178,6 +201,18 @@ struct EmbeddingRow {
 // CLI.
 // ---------------------------------------------------------------------------
 
+/// Prepend an optional e5 instruction prefix (ADR-0049) to the input text. An
+/// empty prefix returns the text unchanged (borrow-free fast path), so a caller
+/// that sends no prefix gets byte-identical behavior to the pre-swap crate.
+/// Kept pure (no model, no I/O) so it is covered by the model-free unit tests.
+fn apply_prefix(prefix: &str, text: &str) -> String {
+    if prefix.is_empty() {
+        text.to_string()
+    } else {
+        format!("{prefix}{text}")
+    }
+}
+
 fn flag(name: &str) -> Option<String> {
     let args: Vec<String> = env::args().collect();
     args.iter()
@@ -190,7 +225,7 @@ fn resolve_model_dir() -> Result<PathBuf, String> {
     let dir = env::var("AISOTROPY_EMBED_MODEL_DIR").map_err(|_| {
         "AISOTROPY_EMBED_MODEL_DIR is not set; it must point at a directory \
          containing config.json, model.safetensors, and tokenizer.json (a \
-         BERT-class sentence-embedding model, e.g. BAAI/bge-small-en-v1.5)"
+         BERT-class sentence-embedding model, e.g. intfloat/multilingual-e5-small)"
             .to_string()
     })?;
     let p = PathBuf::from(dir);
@@ -206,7 +241,7 @@ fn resolve_model_dir() -> Result<PathBuf, String> {
 /// `<name>@<rev>`, both env-overridable, defaulting to the pinned MIT model.
 fn model_id() -> String {
     let name = env::var("AISOTROPY_EMBED_MODEL_ID")
-        .unwrap_or_else(|_| "BAAI/bge-small-en-v1.5".to_string());
+        .unwrap_or_else(|_| "intfloat/multilingual-e5-small".to_string());
     let rev = env::var("AISOTROPY_EMBED_MODEL_REV").unwrap_or_else(|_| "pinned".to_string());
     format!("{name}@{rev}")
 }
@@ -215,7 +250,10 @@ fn model_id() -> String {
 /// the batch and serve paths so both produce byte-identical rows.
 fn embed_row_json(embedder: &Embedder, raw: &str) -> Result<String, String> {
     let req: Request = serde_json::from_str(raw).map_err(|e| format!("parse request: {e}"))?;
-    let vec = embedder.embed(&req.text)?;
+    // Apply the optional e5 instruction prefix (ADR-0049). Empty prefix ⇒ the
+    // input text is embedded unchanged, so pre-swap callers are unaffected.
+    let input = apply_prefix(&req.prefix, &req.text);
+    let vec = embedder.embed(&input)?;
     let row = EmbeddingRow {
         id: req.id,
         dim: vec.len(),
@@ -321,6 +359,22 @@ mod tests {
         let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
         dot / (na * nb)
+    }
+
+    #[test]
+    fn apply_prefix_empty_is_identity() {
+        // No prefix ⇒ text unchanged (pre-swap byte-compatibility guarantee).
+        assert_eq!(apply_prefix("", "hola mundo"), "hola mundo");
+    }
+
+    #[test]
+    fn apply_prefix_prepends_e5_instruction() {
+        // e5 query/passage prefixes (ADR-0049) are prepended verbatim.
+        assert_eq!(apply_prefix("query: ", "hola mundo"), "query: hola mundo");
+        assert_eq!(
+            apply_prefix("passage: ", "文档内容"),
+            "passage: 文档内容"
+        );
     }
 
     #[test]

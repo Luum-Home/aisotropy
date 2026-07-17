@@ -7,7 +7,6 @@ import (
 	"math"
 	"strings"
 	"time"
-	"unicode"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (BSD-3), FTS5 enabled
 )
@@ -75,10 +74,23 @@ func OpenSQLite(dsn string) (*SQLiteStore, error) {
 func (s *SQLiteStore) migrate(ctx context.Context) error {
 	for _, stmt := range schemaStatements {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			if isDuplicateColumnErr(err) {
+				// The idempotent `ALTER TABLE facts ADD COLUMN fts_content ...`
+				// re-runs on an already-migrated DB; a duplicate column is the
+				// expected no-op, not a failure.
+				continue
+			}
 			return fmt.Errorf("facts: migrate schema: %w", err)
 		}
 	}
 	return nil
+}
+
+// isDuplicateColumnErr reports whether err is SQLite's "duplicate column name"
+// (raised by a repeated ALTER TABLE ADD COLUMN). Both the pure-Go driver and
+// rqlite surface SQLite's verbatim message, so a substring match is portable.
+func isDuplicateColumnErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "duplicate column name")
 }
 
 // Save upserts f. See Store.Save.
@@ -104,7 +116,7 @@ func (s *SQLiteStore) save(ctx context.Context, ex execer, sc Scope, f Fact) err
 	// keep both backends byte-identical. ms precision is ample for a 30-day
 	// recency half-life.
 	_, err := ex.ExecContext(ctx, upsertSQL,
-		f.ID, f.TenantID, f.UserID, f.Content, f.Importance,
+		f.ID, f.TenantID, f.UserID, f.Content, ftsIndexText(f.Content), f.Importance,
 		f.CreatedAt.UnixMilli(), f.UpdatedAt.UnixMilli(), f.SupersededBy,
 	)
 	if err != nil {
@@ -308,20 +320,4 @@ func less(a, b ScoredFact) bool {
 	return a.UpdatedAt.Before(b.UpdatedAt)
 }
 
-// ftsQuery turns arbitrary user text into a safe FTS5 MATCH expression: it
-// extracts word tokens and OR-joins them as quoted terms, so punctuation or
-// FTS5 operator characters in the input can never produce a syntax error or
-// injection. Returns "" when the input has no usable tokens.
-func ftsQuery(raw string) string {
-	fields := strings.FieldsFunc(raw, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
-	})
-	terms := make([]string, 0, len(fields))
-	for _, f := range fields {
-		if len(f) < 2 { // drop single-character noise
-			continue
-		}
-		terms = append(terms, `"`+strings.ToLower(f)+`"`)
-	}
-	return strings.Join(terms, " OR ")
-}
+// ftsQuery and the language-aware tokenization helpers live in tokenize.go.

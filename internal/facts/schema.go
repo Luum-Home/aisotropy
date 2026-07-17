@@ -3,11 +3,25 @@ package facts
 // schemaStatements is the canonical facts schema, shared by every Store
 // implementation so the embedded (SQLite) and networked (rqlite) backends can
 // never drift apart. Each statement is independent and idempotent
-// (IF NOT EXISTS), so migrate is safe to run on every start.
+// (IF NOT EXISTS, or a duplicate-column-tolerant ALTER), so migrate is safe to
+// run on every start.
 //
 // The FTS5 index is external-content (content='facts'): it stores no copy of
 // the text itself, only the inverted index, and three triggers keep it in sync
 // with the base table. bm25(facts_fts) supplies the relevance factor.
+//
+// Language-aware tokenization (ADR-0051): the index is fed from the separate
+// `fts_content` column, NOT the display `content` column. `fts_content` is the
+// language-preprocessed form of `content`, computed in Go by ftsIndexText
+// before every write (so both the pure-Go SQLite and networked rqlite backends
+// stay byte-identical without needing a custom SQL tokenizer). The tokenizer is
+// `unicode61 remove_diacritics 2` — we dropped `porter` because that English
+// stemmer mis-stems every non-English Latin token; `remove_diacritics 2`
+// accent-folds Latin/Cyrillic/Greek so inflected accented forms still match.
+// unicode61 cannot word-segment space-less scripts (CJK/Japanese/Thai), and
+// modernc.org/sqlite is pure-Go and does NOT link the ICU tokenizer, so
+// ftsIndexText re-expresses those runs as character bigrams before indexing;
+// ftsQuery applies the identical bigram transform at query time.
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS facts (
 	id            TEXT PRIMARY KEY,
@@ -20,21 +34,26 @@ var schemaStatements = []string{
 	superseded_by TEXT NOT NULL DEFAULT ''
 );`,
 	`CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(tenant_id, user_id, superseded_by);`,
+	// fts_content holds the language-preprocessed text the FTS index tokenizes
+	// (see ftsIndexText). Added via a duplicate-column-tolerant ALTER so a
+	// facts.db created before ADR-0051 gains the column on next start; migrate
+	// swallows the "duplicate column name" error when it already exists.
+	`ALTER TABLE facts ADD COLUMN fts_content TEXT NOT NULL DEFAULT '';`,
 	`CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
-	content,
+	fts_content,
 	content='facts',
 	content_rowid='rowid',
-	tokenize='porter unicode61'
+	tokenize='unicode61 remove_diacritics 2'
 );`,
 	`CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
-	INSERT INTO facts_fts(rowid, content) VALUES (new.rowid, new.content);
+	INSERT INTO facts_fts(rowid, fts_content) VALUES (new.rowid, new.fts_content);
 END;`,
 	`CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-	INSERT INTO facts_fts(facts_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+	INSERT INTO facts_fts(facts_fts, rowid, fts_content) VALUES ('delete', old.rowid, old.fts_content);
 END;`,
 	`CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-	INSERT INTO facts_fts(facts_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
-	INSERT INTO facts_fts(rowid, content) VALUES (new.rowid, new.content);
+	INSERT INTO facts_fts(facts_fts, rowid, fts_content) VALUES ('delete', old.rowid, old.fts_content);
+	INSERT INTO facts_fts(rowid, fts_content) VALUES (new.rowid, new.fts_content);
 END;`,
 }
 
@@ -44,10 +63,14 @@ END;`,
 const (
 	// upsertSQL idempotently inserts or replaces a fact by id. created_at is
 	// deliberately absent from the UPDATE set so it survives an upsert.
-	upsertSQL = `INSERT INTO facts (id, tenant_id, user_id, content, importance, created_at, updated_at, superseded_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	// fts_content (the language-preprocessed index source, ftsIndexText) travels
+	// as its own bound parameter and is kept in the UPDATE set so the AFTER
+	// UPDATE trigger re-indexes from the fresh value, never a stale one.
+	upsertSQL = `INSERT INTO facts (id, tenant_id, user_id, content, fts_content, importance, created_at, updated_at, superseded_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	content       = excluded.content,
+	fts_content   = excluded.fts_content,
 	importance    = excluded.importance,
 	updated_at    = excluded.updated_at,
 	superseded_by = excluded.superseded_by;`

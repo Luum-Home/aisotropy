@@ -23,6 +23,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
+	github.com/pemistahl/lingua-go v1.4.0
 	github.com/qdrant/go-client v1.18.3
 	github.com/rqlite/gorqlite v0.0.0-20260504155303-50d445fd0ab9
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
@@ -33,6 +34,8 @@ require (
 	golang.org/x/tools v0.44.0
 	modernc.org/sqlite v1.46.1
 )
+
+require github.com/shopspring/decimal v1.3.1 // indirect
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
@@ -85,7 +88,7 @@ require (
 	golang.org/x/net v0.55.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.37.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.81.1 // indirect

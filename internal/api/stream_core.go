@@ -12,6 +12,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/gateway"
+	"github.com/Luum-Home/aisotropy/internal/lang"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
@@ -174,12 +175,22 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 		return errors.New("request blocked by input guardrail (possible prompt injection)")
 	}
 
+	// Language-detection seam (research R1), identical to the non-streaming path
+	// (ChatCore): detect the language ONCE at the request boundary and carry it
+	// on ctx via the canonical lang.WithLanguage, off the REDACTED prompt so no
+	// secret text is inspected. The same ctx flows into hydrateSystemPrompt below
+	// (persona selection reads lang.FromContext) and the whole stream loop, so a
+	// language-conditional consumer sees the detected value without re-detecting.
+	detected := lang.Detect(forwarded)
+	ctx = lang.WithLanguage(ctx, detected)
+
 	slog.InfoContext(ctx, "chat stream request",
 		"tenant_id", in.TenantID,
 		"user_id", in.UserID,
 		"session_id", in.Body.SessionID,
 		"product_id", in.Body.ProductID,
 		"prompt_len", len(in.Body.Prompt),
+		"lang", detected.String(),
 		"llm", d.Client.Name(),
 	)
 

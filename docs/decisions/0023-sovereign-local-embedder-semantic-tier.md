@@ -10,7 +10,14 @@ timestamp: 2026-07-13T00:00:00Z
 
 ## Status
 
-✅ **Accepted — implemented and wired (status updated 2026-07-14).** Proposed 2026-07-13; the first
+✅ **Accepted — implemented and wired (status updated 2026-07-14).**
+🔁 **Default model superseded 2026-07-17 by [ADR-0049](0049-multilingual-embedder.md):** the pinned
+default is now **`intfloat/multilingual-e5-small`** (MIT, 384-dim, 100+ languages), a
+*dimension-preserving* drop-in for `BAAI/bge-small-en-v1.5` — existing Qdrant collections stay
+compatible (no re-index of vector width). This closes the cross-lingual RAG gap this ADR itself
+flagged as deferred debt #4 (e5 `query:`/`passage:` prefixes are now supported per-request by the
+crate). The subprocess/daemon boundary, the Go seam, and the `Embedder` interface are unchanged.
+Proposed 2026-07-13; the first
 brick (`crates/embed` + `semantic.LocalEmbedder`) and the `EmbedderFromEnv` wiring both landed
 2026-07-13 alongside the warm-daemon path (`DaemonEmbedder`, selected by default under
 `AISOTROPY_EMBED_BIN` + `AISOTROPY_EMBED_MODEL_DIR`; verified live via
@@ -144,11 +151,14 @@ boundary, and a new env-gated `semantic.LocalEmbedder` behind the unchanged `Emb
 
 ### Model + license
 
-Default **`BAAI/bge-small-en-v1.5`** — a BERT-class (384-dim) sentence model under the **MIT** license.
-The crate is architecture-agnostic (config.json-driven, like `bitrate-scorer`), so any BERT-class encoder
-is a directory swap: **`intfloat/multilingual-e5-small`** (**MIT**, multilingual — matches the Spanish
-posture of `DeepESP/gpt2-spanish` in ADR-0015) is the recommended multilingual pin. The model id/rev are
-env-overridable (`AISOTROPY_EMBED_MODEL_ID`/`_REV`); nothing is hardcoded.
+Default (as of [ADR-0049](0049-multilingual-embedder.md), 2026-07-17) **`intfloat/multilingual-e5-small`**
+— a BERT-class (384-dim) sentence model under the **MIT** license, covering 100+ languages. It replaced
+the original **`BAAI/bge-small-en-v1.5`** (also MIT, 384-dim, English-only) default; because both are
+384-dim the change is a dimension-preserving directory swap. The crate is architecture-agnostic
+(config.json-driven, like `bitrate-scorer`), so either encoder — or any other BERT-class model — is a
+directory swap. Mean/average pooling (what the crate already does) is the *canonical* pooling for the e5
+family, so the swap also aligns the pooling recipe with the weights. The model id/rev are env-overridable
+(`AISOTROPY_EMBED_MODEL_ID`/`_REV`); nothing is hardcoded.
 
 License table (all permissive — satisfies the ADR-0001 / license-policy 100% MIT/Apache gate):
 

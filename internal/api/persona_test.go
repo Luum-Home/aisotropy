@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"testing"
+
+	"github.com/Luum-Home/aisotropy/internal/lang"
 )
 
 // TestDefaultPersonaProviderMatchesLegacyStrings pins the default persona to the
@@ -68,5 +70,100 @@ func TestMapPersonaProviderCopiesInput(t *testing.T) {
 	}
 	if got != "original" {
 		t.Errorf("BasePrompt = %q, want %q (input map must be copied)", got, "original")
+	}
+}
+
+// TestMultilingualPersonaProviderSelectsByLanguage covers the three required
+// cases: (a) a persona registered for "es" is returned when ctx language is "es";
+// (b) an unregistered language falls back to the product's default (English)
+// persona; (c) with no language set on ctx, the default-language persona is
+// served — i.e. behavior is unchanged from a single-language registration.
+func TestMultilingualPersonaProviderSelectsByLanguage(t *testing.T) {
+	const (
+		enPrompt = "You are WeatherBot."
+		esPrompt = "Eres WeatherBot."
+	)
+	provider := NewMultilingualPersonaProvider(map[PersonaKey]string{
+		{ProductID: "weatherbot", Language: "en"}: enPrompt,
+		{ProductID: "weatherbot", Language: "es"}: esPrompt,
+	})
+
+	// (a) ctx language "es" -> the Spanish literal.
+	got, err := provider.BasePrompt(lang.WithLanguage(context.Background(), "es"), "weatherbot")
+	if err != nil {
+		t.Fatalf("es BasePrompt error: %v", err)
+	}
+	if got != esPrompt {
+		t.Errorf("es BasePrompt = %q, want %q", got, esPrompt)
+	}
+
+	// (b) unregistered language ("ja") -> the product's default-language persona.
+	got, err = provider.BasePrompt(lang.WithLanguage(context.Background(), "ja"), "weatherbot")
+	if err != nil {
+		t.Fatalf("ja BasePrompt error: %v", err)
+	}
+	if got != enPrompt {
+		t.Errorf("unregistered-language BasePrompt = %q, want default-language %q", got, enPrompt)
+	}
+
+	// (c) no language on ctx -> the default-language persona (unchanged behavior).
+	got, err = provider.BasePrompt(context.Background(), "weatherbot")
+	if err != nil {
+		t.Fatalf("no-language BasePrompt error: %v", err)
+	}
+	if got != enPrompt {
+		t.Errorf("no-language BasePrompt = %q, want default-language %q", got, enPrompt)
+	}
+}
+
+// TestMultilingualPersonaProviderFallsBackToBuiltinDefault: a product with no
+// registered persona at all degrades to the built-in default persona, byte-for-
+// byte identical to what defaultPersonaProvider serves — the default binary's
+// persona is never changed by introducing the multilingual seam.
+func TestMultilingualPersonaProviderFallsBackToBuiltinDefault(t *testing.T) {
+	provider := NewMultilingualPersonaProvider(map[PersonaKey]string{
+		{ProductID: "weatherbot", Language: "en"}: "You are WeatherBot.",
+	})
+
+	ctx := lang.WithLanguage(context.Background(), "es")
+	want, _ := defaultPersonaProvider{}.BasePrompt(ctx, "unknown-product")
+	got, err := provider.BasePrompt(ctx, "unknown-product")
+	if err != nil {
+		t.Fatalf("fallback BasePrompt error: %v", err)
+	}
+	if got != want {
+		t.Errorf("fallback BasePrompt = %q, want built-in default %q", got, want)
+	}
+}
+
+// TestMultilingualPersonaProviderPrimarySubtagAndEmptyKey verifies two ergonomic
+// behaviors: a regional tag ("es-AR") finds the base-language ("es") persona, and
+// an empty Language key registers the default-language persona.
+func TestMultilingualPersonaProviderPrimarySubtagAndEmptyKey(t *testing.T) {
+	const (
+		defPrompt = "You are the default persona."
+		esPrompt  = "Eres la persona en espanol."
+	)
+	provider := NewMultilingualPersonaProvider(map[PersonaKey]string{
+		{ProductID: "bot"}:                 defPrompt, // empty Language -> default language
+		{ProductID: "bot", Language: "es"}: esPrompt,
+	})
+
+	// Regional tag resolves to the primary-subtag persona.
+	got, err := provider.BasePrompt(lang.WithLanguage(context.Background(), "es-AR"), "bot")
+	if err != nil {
+		t.Fatalf("es-AR BasePrompt error: %v", err)
+	}
+	if got != esPrompt {
+		t.Errorf("es-AR BasePrompt = %q, want %q (primary subtag)", got, esPrompt)
+	}
+
+	// Empty-language registration is served as the default-language persona.
+	got, err = provider.BasePrompt(context.Background(), "bot")
+	if err != nil {
+		t.Fatalf("default BasePrompt error: %v", err)
+	}
+	if got != defPrompt {
+		t.Errorf("default BasePrompt = %q, want %q (empty Language key)", got, defPrompt)
 	}
 }

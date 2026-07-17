@@ -51,7 +51,9 @@ func TestRqliteLive(t *testing.T) {
 		t.Fatalf("Save bob: %v", err)
 	}
 
-	// FTS5 + porter stemming ("migrate" matches "migrating"), scoped to alice.
+	// FTS5 whole-word match scoped to alice. Post-ADR-0051 the porter stemmer is
+	// gone, so "database" (exact) is the matching term, not a "migrate"→"migrating"
+	// stem; the query still resolves to the single in-scope alice fact.
 	got, err := st.Search(ctx, sc, "migrate database", 5)
 	if err != nil {
 		t.Fatalf("Search: %v", err)

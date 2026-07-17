@@ -50,6 +50,11 @@ func (s *RqliteStore) migrate(ctx context.Context) error {
 	}
 	for _, r := range results {
 		if r.Err != nil {
+			if isDuplicateColumnErr(r.Err) {
+				// Idempotent ALTER ADD COLUMN fts_content re-run on an
+				// already-migrated store; a duplicate column is expected.
+				continue
+			}
 			return fmt.Errorf("facts: rqlite migrate statement: %w", r.Err)
 		}
 	}
@@ -71,7 +76,7 @@ func (s *RqliteStore) Save(ctx context.Context, sc Scope, f Fact) error {
 		Query: upsertSQL,
 		// Milliseconds, not nanoseconds: rqlite round-trips integers through
 		// JSON (float64), which can't hold a nanosecond epoch exactly.
-		Arguments: []any{f.ID, f.TenantID, f.UserID, f.Content, f.Importance,
+		Arguments: []any{f.ID, f.TenantID, f.UserID, f.Content, ftsIndexText(f.Content), f.Importance,
 			f.CreatedAt.UnixMilli(), f.UpdatedAt.UnixMilli(), f.SupersededBy},
 	})
 	if err != nil {
@@ -148,7 +153,7 @@ func (s *RqliteStore) Supersede(ctx context.Context, sc Scope, oldID string, new
 		},
 		{
 			Query: upsertSQL,
-			Arguments: []any{newFact.ID, newFact.TenantID, newFact.UserID, newFact.Content, newFact.Importance,
+			Arguments: []any{newFact.ID, newFact.TenantID, newFact.UserID, newFact.Content, ftsIndexText(newFact.Content), newFact.Importance,
 				newFact.CreatedAt.UnixMilli(), newFact.UpdatedAt.UnixMilli(), newFact.SupersededBy},
 		},
 	})

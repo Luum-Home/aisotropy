@@ -9,6 +9,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/gateway"
+	"github.com/Luum-Home/aisotropy/internal/lang"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/tools"
@@ -71,6 +72,19 @@ func ChatCore(ctx context.Context, d ChatDeps, in *ChatInput) (*ChatOutput, erro
 		return nil, huma.Error400BadRequest("request blocked by input guardrail (possible prompt injection)")
 	}
 
+	// Language-detection seam (research R1): detect the prompt's language ONCE
+	// here — the same request boundary that injected tenant/user identity — and
+	// carry it on ctx via the canonical lang.WithLanguage. Detection runs on the
+	// REDACTED prompt (forwarded), never the raw one, so no secret text is
+	// inspected beyond what already flows downstream. Every consumer (persona
+	// selection today; language-conditional guardrails/tokenizer/embedder later)
+	// reads it back via lang.FromContext rather than re-deriving it, so the
+	// language is determined exactly once and all layers agree. detected may be
+	// Undetermined (short/ambiguous input); FromContext reports that as not-set
+	// and consumers keep their English/default behavior.
+	detected := lang.Detect(forwarded)
+	ctx = lang.WithLanguage(ctx, detected)
+
 	// Model selection through the gateway seam; nil gw resolves to the passed
 	// client. The non-streaming route has no quota-pressure degrade override
 	// (that is the streaming path's behavior) — the gateway pick is final here.
@@ -82,6 +96,7 @@ func ChatCore(ctx context.Context, d ChatDeps, in *ChatInput) (*ChatOutput, erro
 		"session_id", in.Body.SessionID,
 		"product_id", in.Body.ProductID,
 		"prompt_len", len(in.Body.Prompt),
+		"lang", detected.String(),
 		"llm", active.Name(),
 	)
 

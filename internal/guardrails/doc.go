@@ -22,10 +22,24 @@
 // # Design constraints
 //
 // This package is deliberately self-contained: it depends only on the Go
-// standard library, performs no network or LLM calls, and is fully
-// deterministic so it can be exercised by table-driven tests. That keeps the
-// guardrail layer cheap enough to run on every request and impossible to turn
-// into a data-exfiltration or latency hazard of its own.
+// standard library plus golang.org/x/text/unicode/norm (the official Unicode
+// normalization package, used by the R4 evasion-resistance layer in
+// normalize.go — no network, no model), performs no network or LLM calls, and is
+// fully deterministic so it can be exercised by table-driven tests. That keeps
+// the guardrail layer cheap enough to run on every request and impossible to
+// turn into a data-exfiltration or latency hazard of its own.
+//
+// # Evasion resistance (R4)
+//
+// The built-in injection and toxicity heuristics match English literals. Before
+// matching, every input is canonicalized to a COPY (NFKC + case-fold + a curated
+// Cyrillic/Greek homoglyph fold + leetspeak fold + zero-width/format stripping,
+// see normalize.go) so obfuscated variants — homoglyph, full-width, zero-width,
+// leetspeak, character-spacing — collapse toward the detectable form in ANY
+// script. The stored/forwarded text is never mutated. This hardens the existing
+// patterns; it does NOT add semantic coverage of genuinely non-English attacks —
+// that is the opt-in model backend behind the InputScanner / OutputCheck seams
+// (see docs/security/guardrails-i18n-normalization.md).
 //
 // Two policies are baked in:
 //
