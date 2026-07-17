@@ -83,6 +83,29 @@ compatibility contract; support and strictness vary by backend.
    (raw `net/http` + JSON, Chat Completions only — the same anti-magic discipline that dodged both
    gaps here).
 
+## For third-party devs building ON aisotropy (read this)
+
+aisotropy's own core dodges this — but **we do not control the client SDK or the endpoint an
+adopter will point at.** A dev who wires their own OpenAI-compatible gateway (agnes, vLLM behind a
+proxy, LiteLLM, a corporate gateway) with a modern client SDK can hit the exact same 500, because
+the *default* moved under them. So, as an adopter:
+
+1. **Force Chat Completions in your client.** AI SDK: `openai.chat(model)`. OpenAI Python/JS SDK:
+   use `client.chat.completions.create(...)`, not `client.responses.create(...)`. LangChain/LlamaIndex/
+   Pydantic-AI: their OpenAI-compatible model classes default to Chat Completions — keep it that way,
+   don't opt into a Responses-API mode against a gateway.
+2. **Don't assume `response_format: json_schema` / strict function-calling structured output works** —
+   test it against your specific endpoint; fall back to text + a parser if it doesn't.
+3. **Probe your gateway once**: a single tool-loop round-trip (call a tool, send the result back). If
+   the *follow-up* 500s, you are almost certainly on the Responses API against a Chat-Completions-only
+   endpoint — switch to `.chat`.
+4. aisotropy's `internal/llm/openai_compat.go` is the reference for the safe lane if you are wiring a
+   custom `LLMClient` via the `WithLLM` façade option: hand-rolled Chat Completions, no Responses API,
+   no strict-structured-output assumption.
+
+This is not agnes-specific — it is the failure mode of **any** OpenAI-compatible endpoint the moment a
+client SDK defaults to the newer API. Bake rule 1 into your integration and it never bites.
+
 ## Sources
 
 - [AI SDK — OpenAI provider (default = Responses API; use `.chat` for compatible endpoints)](https://ai-sdk.dev/providers/ai-sdk-providers/openai)
