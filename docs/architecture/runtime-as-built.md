@@ -475,10 +475,17 @@ threaded through the handlers:
   facts/semantic pipeline. `chat/agent` is the only route that neither hydrates nor consolidates
   memory. (Historical note: non-streaming `chat` previously used plain `wm.Append` and never
   consolidated — that gap is now closed.)
-- **The routing seam is not adopted.** [`internal/routing`](../../internal/routing/router.go)
-  (ADR-0007 Shared/Dedicated tenant tiering) exists but **nothing outside the package imports it** —
-  the facts and semantic stores still use fixed resource names. It is a designed seam awaiting
-  adoption.
+- **The tenant-tier routing seam IS adopted (correcting a former stale claim here).**
+  [`internal/routing`](../../internal/routing/router.go) (ADR-0007 Shared/Dedicated tenant tiering)
+  is wired in the composition root: `app.go` builds `routing.NewStaticPolicy(dedicatedTenants…)` →
+  `routing.NewRouter(tierPolicy)` and passes the router into `openFactsStore`/`openSemanticStore`, so
+  the facts and semantic stores route dedicated tenants to physically isolated stores via
+  `RoutingStore` (`internal/facts/routing_store.go`, `internal/semantic/routing_store.go`). It is
+  publicly re-exported as `TenantRoutingPolicy` ([`extend.go`](../../aisotropy/extend.go)) and is
+  **100% test-covered**. (This bullet previously read "nothing outside the package imports it" — that
+  was false: it is imported by `app.go`/`knowledge.go`/`extend.go` and the two routing stores, and a
+  2026-07-17 audit + `scripts/prune-guard.sh` confirmed it is live, wired, public, and isolation-critical.
+  See [`prune-evidence-gate.md`](prune-evidence-gate.md).)
 - **Primitive self-improvement writes but is never read back (open loop).**
   [`internal/primitives`](../../internal/primitives/primitives.go) (friction-driven per-user
   rewriting) is now **wired on the write side**: `App.Run` builds a `primitives.Store` +

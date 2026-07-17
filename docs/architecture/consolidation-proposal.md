@@ -9,6 +9,29 @@ status: proposal — recommendations only, no code changed
 
 # Consolidation / pruning proposal — toward a smaller defensible core
 
+> ## ⚠️ POST-AUDIT CORRECTIONS (2026-07-17) — read before acting on any recommendation
+> This proposal was independently re-verified against code + tests + `deadcode` (5 surgical audits
+> + [`scripts/prune-guard.sh`](../../scripts/prune-guard.sh)). Its LOC/inventory numbers are all
+> accurate, but four claims are **corrected** — do NOT act on them as written:
+> 1. **M3 `internal/routing` "DELETE-CANDIDATE / nothing imports it" is WRONG.** It is imported by
+>    6 files, 100% test-covered, wired in the composition root, publicly re-exported as
+>    `TenantRoutingPolicy`, and reachable from `main`. Deleting it breaks the build and removes an
+>    isolation-critical seam. **Reclassify CORE-DEFENSIBLE; reject M3.** (Root cause: the claim was
+>    quoted verbatim from a then-stale `runtime-as-built.md §6`, now fixed. See
+>    [`prune-evidence-gate.md`](prune-evidence-gate.md).)
+> 2. **"Bets 1 & 4 refuted" is HALF WRONG.** Bet 4 is refuted; **Bet 1 is NOT** — its novelty
+>    hypothesis is validated via embedding-density (AUC 0.89); only the surprisal hard-gate was
+>    dropped. Any bets demotion must not label Bet 1 "refuted", and must not conflate Bet 1
+>    (memory/novelty) with Bet 4 (difficulty/routing).
+> 3. The **README "sells all 5 bets" premise is already resolved** by the positioning surgery
+>    (commit `8e78a71`); the compression thesis is now a caveated "go deeper" link.
+> 4. **`cmd/skill-import` "tested: partial" → actually 0 tests**; the ADR count is **42 (0000–0041)**,
+>    not 39. `internal/primitives` "DORMANT" is more precisely "REAL write-half / open-loop /
+>    effect-inert" (the code runs continuously; only the read-back is absent).
+>
+> Net verdict of the audit: mostly-sound (numbers exact, dormant/peripheral calls correct) with one
+> serious inherited error (routing). All safe actions are **docs-only demotes; nothing is deleted.**
+
 > **Operator diagnosis this proposal answers:** *"The core is robust and consolidated, but the
 > periphery is over-extended — breadth outran depth; too much surface that claims more than it
 > verifies."*

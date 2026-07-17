@@ -9,18 +9,22 @@ timestamp: 2026-07-14T00:00:00Z
 # Primitives — per-user behavioral memory
 
 The Phase 6 behavior axis ([memory tiers](../architecture/memory-tiers.md), "Primitive
-self-improvement"): when a user repeatedly hits friction with a tool, the *guidance metadata*
-the LLM reads for that tool — its description and few-shot examples — is rewritten for that
-user specifically. Executable code is never cloned or mutated; only the per-(tenant, user)
-description/example overlay is (the package has no dependency on `internal/tools`).
+self-improvement"): when a user repeatedly hits friction with a tool, the per-(tenant, user)
+*guidance metadata* for that tool — its description and few-shot examples — is rewritten in the
+primitive store. Executable code is never cloned or mutated; only the description/example overlay
+is (the package has no dependency on `internal/tools`).
 
-Status (2026-07-14): **REAL** — the full loop is wired unconditionally in
+Status (2026-07-17): **REAL write-half / OPEN-LOOP (effect-inert)** — corrected from an earlier
+"REAL, full loop" overstatement. The write + consolidation halves ARE wired unconditionally in
 [`aisotropy/app.go`](../../aisotropy/app.go): a `primitives.Store` + `FrictionDetector` are
-constructed at boot, every agent-route tool failure records friction, and a background
-goroutine (`runPrimitiveConsolidation`) calls `primitives.Consolidate` with the
-`HeuristicRewriter` on an hourly ticker (`sleepCycleInterval = 1h`, threshold
-`primitiveFrictionThreshold = 3.0`). This corrects an earlier reality-ledger claim that the
-package was un-wired.
+constructed at boot, every agent-route tool failure records friction, and a background goroutine
+(`runPrimitiveConsolidation`) calls `primitives.Consolidate` with the `HeuristicRewriter` on an
+hourly ticker (threshold `primitiveFrictionThreshold = 3.0`). **The gap (see
+[runtime-as-built.md §6](../architecture/runtime-as-built.md)): nothing reads the rewritten
+primitives back** — no hydration/prompt path calls `Store.Get`/`ListForUser`, so the LLM never
+actually sees the improved metadata and the rewrite changes no model output. It is a wired,
+96.6%-covered *scaffold* for the eventual read-back, not a shipped self-improvement capability —
+experimental until the hydration overlay lands.
 
 ## The data model
 
