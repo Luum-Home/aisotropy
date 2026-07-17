@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -42,9 +43,17 @@ func main() {
 	label := flag.String("label", "", "label for the result row (defaults to transport)")
 	cancelAfter := flag.Int("cancel-after", 0, "if >0, cancel each client after this many ms (cancellation-correctness gate)")
 	h1MaxConns := flag.Int("h1-max-conns", 0, "if >0, cap sse-h1 client connections per host (emulate the browser 6-per-origin cap)")
+	wtShareSocket := flag.Bool("wt-share-socket", true, "wt: multiplex every session over ONE shared client UDP socket (fair analog of gRPC/h2's shared connection); false = one UDP socket per dial (the old collapsing model)")
+	wtDialConc := flag.Int("wt-dial-concurrency", 256, "wt: max simultaneous in-flight QUIC handshakes (0 = unbounded). Bounds the handshake burst against quic-go's 32-deep server accept queue")
+	wtDialTimeout := flag.Int("wt-dial-timeout", 3000, "wt: per-attempt handshake timeout in ms; a wedged handshake fails this fast instead of hanging to the client deadline")
+	wtDialRetries := flag.Int("wt-dial-retries", 4, "wt: extra handshake attempts (fresh QUIC conn) if a dial wedges before SETTINGS. Recovers quic-go's flaky handshake-tail stragglers")
 	flag.Parse()
 
 	h1CapOverride = *h1MaxConns
+	wtShareSocketOpt = *wtShareSocket
+	wtDialConcOpt = *wtDialConc
+	wtDialTimeoutOpt = time.Duration(*wtDialTimeout) * time.Millisecond
+	wtDialRetriesOpt = *wtDialRetries
 
 	if *label == "" {
 		*label = *transport
@@ -314,24 +323,160 @@ func grpcRunner(target string) runFunc {
 
 func pickCreds() credentials.TransportCredentials { return insecure.NewCredentials() }
 
-// wtRunner opens one WebTransport (HTTP/3 over QUIC) session per stream — the
-// same one-connection-per-tenant model as WebSocket — and reads the server's
-// unidirectional token stream. Each stream gets its own Dialer so QUIC sessions
-// are independent (fair comparison to WS/SSE-h1).
+// wtShareSocketOpt / wtDialConcOpt configure the WebTransport client model.
+//
+//   - wtShareSocketOpt=true (default): every WebTransport session is dialed over
+//     ONE shared quic.Transport bound to ONE client UDP socket. QUIC demuxes all
+//     sessions off that socket via connection IDs — the direct analog of gRPC's
+//     one shared HTTP/2 connection and SSE-h2's one multiplexed conn. The old
+//     model (false) built a fresh webtransport.Dialer per stream, and each Dial
+//     went through quic.DialAddrEarly -> net.ListenUDP, i.e. ONE UDP SOCKET PER
+//     STREAM (verified: 1000 client sockets at N=1000, ~7 goroutines each). That
+//     socket explosion — not the QUIC protocol — is what collapsed the bench.
+//   - wtDialConcOpt: caps simultaneous in-flight handshakes. quic-go's server
+//     accept queue is a hardcoded 32 slots (protocol.MaxAcceptQueueSize); a
+//     1000-wide handshake thundering-herd overruns it and starves the losers
+//     until their client deadline. A modest bound paces the burst.
+var (
+	wtShareSocketOpt = true
+	wtDialConcOpt    = 256
+	wtDialTimeoutOpt = 3 * time.Second
+	wtDialRetriesOpt = 4
+)
+
+// newWTDialer builds the shared client transport + dialer once, reused by every
+// stream. Returns a cleanup to close the socket at the end of the run.
+func newWTDialer() (*webtransport.Dialer, func(), error) {
+	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		return nil, nil, err
+	}
+	_ = udpConn.SetReadBuffer(7 << 20)
+	_ = udpConn.SetWriteBuffer(7 << 20)
+	tr := &quic.Transport{Conn: udpConn}
+	d := &webtransport.Dialer{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}},
+		QUICConfig: &quic.Config{
+			EnableDatagrams:                  true,
+			EnableStreamResetPartialDelivery: true,
+			MaxIncomingStreams:               2048,
+			MaxIncomingUniStreams:            2048,
+			// Short handshake timeout so a wedged handshake (quic-go's flaky
+			// straggler tail — see README) fails fast and gets retried, instead of
+			// hanging to the client deadline. Successful handshakes finish in ms.
+			HandshakeIdleTimeout: 4 * time.Second,
+			MaxIdleTimeout:       30 * time.Second,
+			KeepAlivePeriod:      10 * time.Second,
+		},
+		// Reuse the one shared transport/socket for every session's QUIC conn.
+		DialAddr: func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
+			ua, rerr := net.ResolveUDPAddr("udp", addr)
+			if rerr != nil {
+				return nil, rerr
+			}
+			return tr.DialEarly(ctx, ua, tlsCfg, cfg)
+		},
+	}
+	cleanup := func() { _ = tr.Close(); _ = udpConn.Close() }
+	return d, cleanup, nil
+}
+
+// wtRunner reads the server's unidirectional token stream over WebTransport.
+// By default all streams share one client UDP socket (see wtShareSocketOpt) and
+// handshakes are bounded (see wtDialConcOpt).
 func wtRunner(url string) runFunc {
+	// Optional handshake-concurrency gate (nil = unbounded).
+	var dialSem chan struct{}
+	if wtDialConcOpt > 0 {
+		dialSem = make(chan struct{}, wtDialConcOpt)
+	}
+
+	// Shared dialer for the share-socket model. Built once, closed via the runFn's
+	// finalizer through a package-level teardown registered by the caller. Because
+	// clientFor cannot return a cleanup, we lean on process exit to reclaim the
+	// socket — acceptable for a short-lived bench run, and the goroutine/socket
+	// counts we report are sampled live during the run, not after.
+	var shared *webtransport.Dialer
+	if wtShareSocketOpt {
+		d, _, err := newWTDialer()
+		if err != nil {
+			log.Fatalf("wt shared dialer: %v", err)
+		}
+		shared = d
+	}
+
+	// dialOnce performs a single handshake attempt under the concurrency gate,
+	// bounded by a short per-attempt timeout so a wedged handshake fails fast.
+	dialOnce := func(ctx context.Context, d *webtransport.Dialer) (*webtransport.Session, error) {
+		if dialSem != nil {
+			select {
+			case dialSem <- struct{}{}:
+				defer func() { <-dialSem }()
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		attemptCtx := ctx
+		if wtDialTimeoutOpt > 0 {
+			var cancel context.CancelFunc
+			attemptCtx, cancel = context.WithTimeout(ctx, wtDialTimeoutOpt)
+			defer cancel()
+		}
+		_, conn, err := d.Dial(attemptCtx, url, nil)
+		return conn, err
+	}
+
+	// dialWith retries the handshake up to wtDialRetriesOpt times on a fresh QUIC
+	// conn. quic-go's WebTransport handshake wedges a small fraction of connections
+	// under concurrency (they never deliver SETTINGS); a fresh attempt clears it.
+	// The overall stream ctx (cancel-after) remains the hard ceiling.
+	dialWith := func(ctx context.Context, d *webtransport.Dialer) (*webtransport.Session, error) {
+		var lastErr error
+		for attempt := 0; attempt <= wtDialRetriesOpt; attempt++ {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			conn, err := dialOnce(ctx, d)
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		return nil, lastErr
+	}
+
 	return func(ctx context.Context, count, intervalMS int) streamResult {
 		var res streamResult
-		d := &webtransport.Dialer{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}},
-			QUICConfig:      &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true},
+		d := shared
+		if d == nil {
+			// Legacy one-socket-per-dial model (kept for A/B: -wt-share-socket=false).
+			// No DialAddr => webtransport.Dialer falls back to quic.DialAddrEarly,
+			// which does net.ListenUDP per Dial: a brand-new UDP socket per stream.
+			d = &webtransport.Dialer{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}},
+				QUICConfig:      &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true},
+			}
 		}
 		start := time.Now()
-		_, conn, err := d.Dial(ctx, url, nil)
+		conn, err := dialWith(ctx, d)
 		if err != nil {
 			res.err = err
 			return res
 		}
 		defer conn.CloseWithError(0, "done")
+		// §7.3 cancellation gate: the QUIC stream read below does not observe ctx on
+		// its own, so a watchdog closes the connection when the client ctx cancels.
+		// That tears down the session, unblocks the read loop, and (via the server's
+		// conn.Context()) stops the server stub -> server stream_cancelled increments.
+		streamDone := make(chan struct{})
+		defer close(streamDone)
+		go func() {
+			select {
+			case <-ctx.Done():
+				conn.CloseWithError(0, "client cancelled")
+			case <-streamDone:
+			}
+		}()
 		s, err := conn.AcceptUniStream(ctx)
 		if err != nil {
 			res.err = err
