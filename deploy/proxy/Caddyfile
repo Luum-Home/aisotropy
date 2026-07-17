@@ -1,0 +1,27 @@
+# Reference Caddy config to front aisotropyd (plain HTTP :8080).
+#
+# WHY A PROXY AT ALL: aisotropyd serves plain HTTP and expects an external ingress
+# to terminate TLS (see .claude/rules/services-config.md, AISOTROPY_REQUIRE_TLS).
+# Caddy is the recommended baseline because — unlike nginx — it does NOT buffer
+# proxied responses by default, so token-by-token SSE (/chat/stream, /chat/aisdk,
+# /chat/agui) works out of the box.
+#
+# Swap the site address `:80` for your public hostname (e.g.
+# `chat.example.com { ... }`) and Caddy auto-provisions and renews TLS — the whole
+# point of the split: the proxy owns TLS, aisotropyd stays HTTP.
+#
+# k8s / ingress note: the SSE-relevant knob is `flush_interval -1`. The
+# ingress-nginx equivalent is the annotation
+# `nginx.ingress.kubernetes.io/proxy-buffering: "off"` — see the reference
+# nginx.conf and docs/deployment/reverse-proxy.md.
+
+:80 {
+	reverse_proxy aisotropyd:8080 {
+		# flush_interval -1 flushes every write to the client immediately with no
+		# time-based batching. Caddy already streams text/event-stream responses,
+		# but -1 makes the intent explicit and covers the streaming routes
+		# unconditionally, so an SSE token reaches the client the instant
+		# aisotropyd flushes it.
+		flush_interval -1
+	}
+}

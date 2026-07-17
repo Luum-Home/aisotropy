@@ -943,6 +943,13 @@ func (a *App) Run(ctx context.Context) error {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
 	router.Use(middleware.Recoverer)
+	// Emit nginx's `X-Accel-Buffering: no` on the token-by-token SSE routes so the
+	// stream is not batched by a default-configured (proxy_buffering on) reverse
+	// proxy in front of aisotropyd. Defense in depth: the reference
+	// deploy/proxy/nginx.conf also disables buffering, but this header makes the
+	// stream work even if the operator forgets. See sse_buffering.go and
+	// docs/deployment/reverse-proxy.md.
+	router.Use(sseAntiBuffering)
 
 	// Optional TLS enforcement (AISOTROPY_REQUIRE_TLS truthy): reject any request
 	// that did not arrive over TLS (r.TLS == nil) so a bearer token — the /v1 JWT
