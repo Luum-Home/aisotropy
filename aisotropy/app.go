@@ -226,9 +226,30 @@ func New(opts ...Option) *App {
 	return a
 }
 
-// WithAddr sets the HTTP listen address. Default: AISOTROPY_ADDR, or ":8080".
+// WithAddr sets the HTTP listen address. When unset, the address is resolved by
+// [ResolveListenAddr]: AISOTROPY_ADDR, then $PORT (as ":"+PORT), then ":8080".
 func WithAddr(addr string) Option {
 	return func(a *App) { a.addr = addr }
+}
+
+// ResolveListenAddr resolves the HTTP listen address with precedence
+// optAddr (WithAddr) > AISOTROPY_ADDR > $PORT (as ":"+PORT) > ":8080".
+//
+// $PORT support lets aisotropyd bind the port injected by container-serverless
+// platforms (Cloud Run, Knative, Azure Container Apps, Fly, Heroku-style) with no
+// extra config. The $PORT form is ":"+PORT — all interfaces, i.e. non-loopback — so
+// the NoAuth non-loopback guard still applies and secure-by-default is preserved.
+func ResolveListenAddr(optAddr string) string {
+	if optAddr != "" {
+		return optAddr
+	}
+	if a := os.Getenv("AISOTROPY_ADDR"); a != "" {
+		return a
+	}
+	if p := os.Getenv("PORT"); p != "" {
+		return ":" + p
+	}
+	return ":8080"
 }
 
 // WithConfigFile points the runtime at a config FILE (YAML or TOML) whose values
@@ -939,13 +960,7 @@ func (a *App) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	addr := a.addr
-	if addr == "" {
-		addr = os.Getenv("AISOTROPY_ADDR")
-	}
-	if addr == "" {
-		addr = ":8080"
-	}
+	addr := ResolveListenAddr(a.addr)
 
 	// Build the shared runtime core (stores, model pipeline, tools, guardrails,
 	// gateway, cost meter, rate limiter, background workers) exactly as before —

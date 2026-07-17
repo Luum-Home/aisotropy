@@ -31,10 +31,9 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/api"
 )
 
-// defaultAddr mirrors aisotropy.App.Run's fallback when AISOTROPY_ADDR is unset,
-// so the boot-time NoAuth non-loopback guard evaluates the SAME address the server
-// will actually bind. (App.Run: default AISOTROPY_ADDR, or ":8080".)
-const defaultAddr = ":8080"
+// The boot-time NoAuth non-loopback guard must evaluate the SAME address the server
+// will actually bind, so main() resolves it via aisotropy.ResolveListenAddr — the
+// single source of the WithAddr > AISOTROPY_ADDR > $PORT > ":8080" precedence.
 
 // authBootDecision is the boot-time outcome of resolving authentication from the
 // environment: either PROCEED (a non-nil Authenticator + a mode label for logging)
@@ -88,10 +87,7 @@ func main() {
 	// refusal and the binary exits non-zero rather than coming up wide open by omission.
 	// A weak signing secret, a malformed AISOTROPY_JWT_MAX_TTL, or NoAuth on a
 	// non-loopback interface are likewise fatal. No refusal message contains the secret.
-	addr := os.Getenv("AISOTROPY_ADDR")
-	if addr == "" {
-		addr = defaultAddr
-	}
+	addr := aisotropy.ResolveListenAddr("")
 	dec := resolveAuthBoot(addr)
 	if dec.refuse != "" {
 		slog.Error("aisotropyd refusing to start: " + dec.refuse)
