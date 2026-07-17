@@ -64,12 +64,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runNew(args[1:], stdout, stderr)
 	case "plugins":
 		return runPlugins(args[1:], stdout, stderr)
-	case "task":
-		return runTask(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		usage(stdout)
 		return 0
 	default:
+		// Optional, build-tagged subcommands register here. The `task` subcommand
+		// (sandboxed key-brokered coding, ADR-0036) needs a container runtime at
+		// call time, so it is compiled only under -tags keybroker; the default
+		// build owns no optional commands. runOptionalCommand returns handled=false
+		// for anything it does not own, falling through to the unknown-command error.
+		if code, handled := runOptionalCommand(args[0], args[1:], stdout, stderr); handled {
+			return code
+		}
 		fmt.Fprintf(stderr, "aisotropy: unknown command %q\n\n", args[0])
 		usage(stderr)
 		return 2
@@ -85,8 +91,12 @@ Usage:
   aisotropy plugins add <path-or-dir>   Install a plugin manifest (parse+validate, then copy in)
   aisotropy plugins list                List installed plugin manifests
   aisotropy plugins remove <name>       Uninstall a plugin by name
-  aisotropy task run <repo-dir>         Run one sandboxed agentic coding task (--prompt required)
-
+`)
+	// Build-tagged subcommands (e.g. `task` under -tags keybroker) append their
+	// own usage line here so the default binary does not advertise a command it
+	// cannot run.
+	optionalUsage(w)
+	fmt.Fprint(w, `
 Plugin directory:
   -dir overrides it per command. Otherwise $AISOTROPY_PLUGIN_DIR is used, or
   ~/.aisotropy/plugins when that is unset. This is the same directory aisotropyd

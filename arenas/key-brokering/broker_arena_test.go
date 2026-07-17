@@ -1,3 +1,5 @@
+//go:build keybroker
+
 // Package keybrokering proves aisotropy's OWN key-broker invariant with running
 // code, and honestly situates it against the wider agent-sandbox field.
 //

@@ -20,19 +20,18 @@ Two next steps once you finish this page:
 ## What Aisotropy is, in 30 seconds
 
 Aisotropy is a **multi-tenant AI-agent runtime in a single Go binary**. It is *not* a chatbot and
-*not* a thin LLM wrapper. Two properties define it, and both are **structural, not bolted on**:
+*not* a thin LLM wrapper. One property defines it, and it is **structural, not bolted on**:
 
-- **Key-brokering.** Every other agent framework hands your API key to the agent. Aisotropy
-  *brokers* it: the model call runs **host-side** (the key is spent in *your* process), and only the
-  agent's actions — shell, file writes, git — run inside a throwaway sandbox that **never receives
-  `ANTHROPIC_API_KEY`**. You can run other people's agents without ever giving them your wallet.
 - **Isolation by construction.** A tenant's identity travels only through `context.Context`, injected
   once at the boundary, and every memory tier is scoped from that ctx. There is **no consumer-facing
   way to construct a cross-tenant read** — a different `TenantID` *cannot* reach this one's data, and
-  the API surface makes the unscoped read unrepresentable.
+  the API surface makes the unscoped read unrepresentable. On top of that spine sits a **memory
+  hierarchy by access temperature** (working → facts → semantic → offline consolidation).
 
-If you're building the backend or platform that *runs other people's agents* — per-tenant, per-task,
-sometimes untrusted — that is the job Aisotropy is for.
+If you're building the backend or platform that *runs other people's agents* — per-tenant,
+embedded in your Go service, at scale — that is the job Aisotropy is for. The **default boot needs no
+Docker, Rust, or Python**: `go get`, `go run .`, done. (One opt-in flagship module — key-brokering —
+adds untrusted sandboxed execution and needs a container runtime; it is covered at the end of this page.)
 
 ## The 2-minute hello agent (keyless)
 
@@ -89,11 +88,12 @@ runs keyless. Export `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY` / `OPENROUTER_API_
 `Turn` call drives a real model — no code change. The runnable version of this is
 [`examples/weatherbot`](../examples/weatherbot).
 
-## The differentiator: an agent that never holds your key
+## Optional flagship capability: key-brokering (`RunTask`)
 
-The hello agent above is a chat turn. The property that makes Aisotropy different shows up when the
-agent *acts* on a repository. `app.RunTask` runs a sandboxed, agentic coding task — and the model
-call stays host-side, so the container gets the agent's **hands, never its wallet**:
+The hello agent above is a chat turn on the isolation substrate. The sharpest *demonstration* of that
+substrate shows up when an **untrusted** agent *acts* on a repository. `app.RunTask` runs a sandboxed,
+agentic coding task — the model call stays host-side, so the container gets the agent's **hands,
+never its wallet**:
 
 ```go
 // Your API key lives ONLY in this host process. Aisotropy runs the model here;
@@ -109,13 +109,21 @@ res, err := app.RunTask(context.Background(), aisotropy.TaskRequest{
 
 There is **no field on `TaskRequest` for a provider key** — by design. The broker invariant is proven
 against real Docker (a `docker exec printenv` never shows the key while the task still completes and
-commits). See [ADR-0036](decisions/0036-sandboxed-task-agent-key-brokering.md) and the runnable
+commits).
+
+**This is an opt-in module, not part of the default boot.** It is the one capability that needs a
+**container runtime (Docker or Podman) at call time**, so it is compiled behind a build tag —
+`go build -tags keybroker ./...` — to keep the default binary Docker-unaware. Without the tag,
+`App.RunTask`/`App.RunTasks` and the `aisotropy task` CLI are not compiled in; enabling it is an API
+change that adds the `RunTask` surface. See [ADR-0036](decisions/0036-sandboxed-task-agent-key-brokering.md),
+the build-tag note in [deployment](deployment/index.md), and the runnable
 [`examples/task-agent`](../examples/task-agent).
 
 ## Next: the tutorial
 
-You've seen the two entry points (`Turn`, `RunTask`) and the two invariants (key-brokering,
-isolation). To go from here to a real bot, take the ladder one rung at a time:
+You've seen the substrate (`Turn` + isolation by construction) and its flagship demonstration
+(`RunTask`, opt-in behind `-tags keybroker`). To go from here to a real bot, take the ladder one rung
+at a time:
 
 - Start with the [Concepts](concepts.md) page for the mental model.
 - Then work through [the Tutorial](tutorial/index.md) — 10 short lessons, each with a runnable example.

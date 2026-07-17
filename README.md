@@ -1,87 +1,38 @@
 # Aisotropy
 
-**Run untrusted AI agents that never touch your API keys.**
-Multi-tenant isolation, sandboxing, and key brokering — built into a single Go binary.
+**Multi-tenant isolation by construction + tiered memory — in a single Go binary.**
 
-A multi-tenant, local-first, sovereign AI-agent runtime in Go + Rust. Aisotropy is not "a chat with
-an LLM." It's a precision-engineering runtime where a **single Go struct is the source of truth**
-that governs — all at once — HTTP validation, the OpenAPI 3.1 schema, and the contract enforced on
-the LLM. Zero opaque abstractions ("anti-magic"), a 100% MIT/Apache-2.0 stack, and a memory system
-organized by access temperature.
+A local-first, sovereign AI-agent runtime in Go. A different `TenantID` *cannot* reach another
+tenant's data — the unscoped read is **unrepresentable**, enforced per statement/key and propagated
+by `context.Context`, not by a filter you have to remember to add. On top of that isolation spine
+sits a memory hierarchy organized by access temperature (working → facts → semantic → offline
+consolidation). Zero opaque abstractions ("anti-magic"), a 100% MIT/Apache-2.0 stack, and **no
+Docker, Rust, or Python in the default boot** — `go get`, `go run .`, done.
 
-## The differentiator: an agent that never holds your key
+> **New here?** Start at [Getting Started](docs/getting-started.md) → the [Tutorial](docs/tutorial/index.md).
+> The rest of this README is the one-page pitch and the runnable proof.
 
-Every other agent framework hands your API key to the agent. Aisotropy **brokers** it: the model
-call runs host-side (the key is spent in *your* process), and only the agent's actions — shell,
-file writes, git — run inside a throwaway Docker sandbox that never receives `ANTHROPIC_API_KEY`.
-Proven against real Docker (`TestRunTask_BrokerInvariant_KeyNeverEntersContainer`: `docker exec
-printenv` never shows the key while the task still completes and commits). See
-[ADR-0036](docs/decisions/0036-sandboxed-task-agent-key-brokering.md) and the runnable
-[`examples/task-agent`](examples/task-agent).
+## The differentiator: isolation you don't have to audit
 
-```go
-package main
+Every memory read is scoped to the tenant that owns it, *by the type system*, before it runs. The
+identity arrives once — a `TenantID`/`UserID` that enters `context.Context` at the boundary and
+scopes every tier below it — and there is **no consumer-facing way to construct a cross-tenant
+read**. That is the moat: the [arena programme](arenas/README.md) exists to show no competing Go
+agent framework builds it (one rival [leaked across tenants](arenas/genkit-go) when we reproduced it).
 
-import (
-	"context"
-	"fmt"
-	"log"
+**This is proven, not asserted.** [`aisotropy/isolation_e2e_test.go`](aisotropy/isolation_e2e_test.go)
+is a black-box test that boots the real HTTP surface with two tenants — deliberately reusing the
+*same* `session_id` — writes a secret marker as tenant A, then asserts every other identity reading
+that session (tenant B, and other users) can never see it, across working memory, facts, and
+semantic hydration, under both sequential and concurrent load. Run the proof:
 
-	"github.com/Luum-Home/aisotropy/aisotropy"
-)
-
-func main() {
-	// Your API key lives ONLY in this host process. Aisotropy runs the model here;
-	// the agent's actions run inside a throwaway Docker sandbox that never gets the key.
-	app := aisotropy.New() // real provider from the env, or the keyless stub
-
-	res, err := app.RunTask(context.Background(), aisotropy.TaskRequest{
-		RepoDir: "./my-repo",
-		Prompt:  "Add a CHANGELOG.md summarizing recent commits, then commit it.",
-		Scopes:  aisotropy.SandboxToolScopes(), // run_shell / write_file / read_file / git_commit
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("the agent made %d commit(s) on %q — and never saw your API key\n",
-		len(res.Commits), res.Branch)
-}
+```bash
+git clone https://github.com/Luum-Home/aisotropy && cd aisotropy
+go test -run 'TestIsolation.*NoCrossTenantLeak' ./aisotropy -v
+# PASS — a different TenantID never surfaces another tenant's data (keyless stub LLM, no credentials)
 ```
 
-> Bring the sophistication of Pydantic AI (strict types + a reflection loop) to the physical
-> performance of Go + Rust, with tiered memory and granular control, without a single line of
-> opaque abstraction.
-
-## Why aisotropy — and why Go
-
-The Python and TypeScript worlds have great agent frameworks — Pydantic AI, Mastra, LangGraph. If you
-want a quick chatbot, use one of those. Aisotropy is for a different job, in a different language.
-
-**Go has agent libraries, but no agent _runtime_.** None of them is an _isolation-first,
-self-hostable runtime_ where multi-tenant isolation, sandboxing, and key-brokering are **structural,
-not bolted on**:
-
-| In Go | But |
-|---|---|
-| **Eino** (ByteDance) | serious orchestration, tied to the CloudWeGo/Volcengine ecosystem; no isolation-by-construction, no key-brokering |
-| **Genkit-Go** (Google) | Firebase-tethered; multi-tenancy is convention — we [reproduced a cross-tenant leak](arenas/genkit-go) in the arena |
-| **ADK-Go** (Google), **LangChainGo** | orchestration / a thin community port; no security spine |
-
-**The audience and the differentiator line up.** In Python you'd be selling isolation to people who
-want magic. In Go, the people building agents are backend, infra, and platform engineers — the ones
-who already think in single binaries, permissive licensing, tenant boundaries, and production ops.
-Aisotropy's edges are their defaults.
-
-**So aisotropy is for one job:** you're building the backend or platform that _runs other people's
-agents_ — per-tenant, per-task, sometimes untrusted — embedded in your Go service, at scale. That is
-the pain no Go framework covers. Aisotropy does: `app.Turn` for in-process turns, `app.RunTask` for
-sandboxed key-brokered tasks, and tenant isolation by construction under all of it.
-
-> The full argument — the competitor table, why the audience aligns in Go, and the honest
-> not-yet-market-validated caveat — is [`docs/vision/why-go.md`](docs/vision/why-go.md).
-
-## Quickstart: build your own agent
+## Quickstart: build your own agent (no Docker, no key, no server)
 
 Aisotropy is a **library first**: the runtime is a value you build once and **call like a
 function** — `app.Turn(ctx, in)` runs one full chat turn in-process, no HTTP server in sight (the
@@ -183,44 +134,84 @@ Set `ANTHROPIC_API_KEY` (or `OPENROUTER_API_KEY`) to talk to a real model — no
 in-process or over HTTP. Full 5-minute walkthrough (in-process turns → typed tools → persona →
 memory → serve over HTTP): [Build your own agent](docs/guides/build-your-own-agent.md).
 
-## Why
+## Why Go — the audience *is* the differentiator
 
-Building an *enterprise* AI agent — not a demo — demands four things that "magic" frameworks
-sabotage: **token efficiency**, **hallucination governance**, **standard observability**, and
-**real multi-tenant isolation**. Aisotropy's stance: *you build the payload, you see every token.*
-Full rationale in [docs/vision/thesis.md](docs/vision/thesis.md).
+The Python and TypeScript worlds have great agent frameworks — Pydantic AI, Mastra, LangGraph. If you
+want a quick chatbot, use one of those. Aisotropy is for a different job, in a different language:
+**you're building the backend or platform that *runs other people's agents*** — per-tenant, embedded
+in your Go service, at scale.
 
-## The stack (closed, 100% MIT/Apache-2.0)
+**Go has agent libraries, but no agent _runtime_** where multi-tenant isolation is **structural, not
+bolted on**. Eino (ByteDance) is serious orchestration tied to CloudWeGo; Genkit-Go (Google) is
+Firebase-tethered with convention-based multi-tenancy we [broke in the arena](arenas/genkit-go);
+ADK-Go / LangChainGo are orchestration with no security spine. In Go, the people building agents are
+backend, infra, and platform engineers who already think in single binaries, permissive licensing,
+and tenant boundaries — Aisotropy's edges are their defaults. The full argument (competitor table,
+the honest not-yet-market-validated caveat) is [`docs/vision/why-go.md`](docs/vision/why-go.md).
 
-| Layer | Technology | Language / License | Role |
-|---|---|---|---|
-| API & contracts | [Huma](https://github.com/danielgtaylor/huma) | Go / MIT | HTTP validation, OpenAPI 3.1, SSE with `ctx` cancellation |
-| AI orchestration | [Gollem](https://github.com/fugue-labs/gollem) | Go / MIT | In-process cognitive engine, structured output, reflection loop |
-| Working memory | [BadgerDB](https://github.com/dgraph-io/badger) | Go / Apache-2.0 | Live chat + summary buffer (µs); local transactional outbox |
-| Semantic memory | [Qdrant](https://github.com/qdrant/qdrant) | Rust / Apache-2.0 | Vectors with per-tenant payload filtering during the HNSW scan |
-| Facts memory | [rqlite](https://github.com/rqlite/rqlite) | Go / MIT | Engram-style task/rule journal, SQLite + FTS5, networked |
-| Batch analytics | [Apache DataFusion](https://github.com/apache/datafusion) | Rust / Apache-2.0 | Offline "sleep-cycle" consolidation |
+---
 
-**Golden rule:** in-process (Go) where latency matters; dedicated services (Rust) where scale
-matters. The only heavy service meant to scale independently is Qdrant.
+## Optional flagship capability: key-brokering (`RunTask`) — run untrusted agents that never touch your key
 
-## The "LLM OS" model
+This is the sharpest **demonstration of the moat**: untrusted agentic execution where the provider
+key never enters the sandbox. Every other agent framework hands your API key to the agent. Aisotropy
+**brokers** it — the model call runs host-side (the key is spent in *your* process), and only the
+agent's actions (shell, file writes, git) run inside a throwaway Docker sandbox that never receives
+`ANTHROPIC_API_KEY`. Proven against real Docker (`TestRunTask_BrokerInvariant_KeyNeverEntersContainer`:
+`docker exec printenv` never shows the key while the task still completes and commits).
 
-Aisotropy is modeled as an operating system whose CPU is the LLM (Karpathy's mental model):
-Huma is the **syscall layer**, Gollem is the **kernel**, `context.Context` is the **process
-descriptor** that isolates each tenant, and memory is a **hierarchy by temperature** — BadgerDB
-(RAM) → rqlite (disk) → Qdrant (long-term associative) → DataFusion (sleep-cycle consolidation).
-See [docs/architecture/overview.md](docs/architecture/overview.md) and
-[docs/architecture/memory-tiers.md](docs/architecture/memory-tiers.md).
+```go
+// Your API key lives ONLY in this host process. Aisotropy runs the model here;
+// the agent's actions run inside a throwaway Docker sandbox that never gets the key.
+app := aisotropy.New()
 
-## The differentiator: compression as a cognitive layer
+res, err := app.RunTask(context.Background(), aisotropy.TaskRequest{
+	RepoDir: "./my-repo",
+	Prompt:  "Add a CHANGELOG.md summarizing recent commits, then commit it.",
+	Scopes:  aisotropy.SandboxToolScopes(), // run_shell / write_file / read_file / git_commit
+})
+```
 
-Aisotropy's research core treats **memory, retrieval, routing, and evaluation as one thing:
-compression**. Following the Shannon → Hutter → Sutskever line (and Fabrice Bellard's `nncp`/
-`ts_zip`), *compression = prediction = intelligence*: how many bits the system needs to predict
-a user is the objective measure of how well it knows them. See the manifesto in
-[docs/vision/compression-thesis.md](docs/vision/compression-thesis.md) and the six actionable
-bets (with success criteria measured in bits) in [docs/research/](docs/research/index.md).
+**This is an opt-in module, not part of the default boot.** It is the one capability that needs a
+**container runtime (Docker or Podman) at call time**, so it is compiled behind a build tag to keep
+the default binary Docker-unaware:
+
+```bash
+go build -tags keybroker ./...     # RunTask / RunTasks + the `aisotropy task` CLI
+```
+
+Without `-tags keybroker`, `App.RunTask` / `App.RunTasks` and the `aisotropy task` subcommand are
+not compiled in — the default runtime is exactly the isolation + memory substrate above, with no
+Docker intent anywhere in the binary. Enabling the tag is an **API change** (it adds the `RunTask`
+surface). See [ADR-0036](docs/decisions/0036-sandboxed-task-agent-key-brokering.md), the build-tag
+note in [`docs/deployment/index.md`](docs/deployment/index.md), the runnable
+[`examples/task-agent`](examples/task-agent), and the [key-brokering arena](arenas/key-brokering)
+that situates it against E2B / Daytona / the coding-CLI-in-a-box pattern.
+
+---
+
+## Go deeper
+
+- **[Reality ledger](docs/architecture/reality-ledger.md)** — the single source of truth for what
+  runs by default vs. what is dormant behind an env var. Read this before treating any capability as live.
+- **[Getting Started](docs/getting-started.md)** and **[the Tutorial](docs/tutorial/index.md)** —
+  the 30-second pitch, a keyless 2-minute agent, and a 10-rung ladder.
+- **[The stack](docs/architecture/overview.md)** (closed, 100% MIT/Apache-2.0): Huma (Go/MIT) for
+  struct-as-contract HTTP + OpenAPI 3.1 + SSE; Gollem (Go/MIT) for the in-process reflection loop;
+  BadgerDB (Go/Apache-2.0) working memory; Qdrant (Rust/Apache-2.0) and rqlite (Go/MIT) as the
+  optional networked scale tiers; Apache DataFusion (Rust) for the offline "sleep-cycle." Golden
+  rule: in-process (Go) where latency matters, dedicated services (Rust) where scale matters.
+- **[The "LLM OS" model](docs/architecture/overview.md)** — Aisotropy modeled as an OS whose CPU is
+  the LLM (Karpathy's mental model): Huma is the syscall layer, Gollem the kernel, `context.Context`
+  the per-tenant process descriptor, and memory a hierarchy by temperature.
+- **[The compression thesis](docs/vision/compression-thesis.md)** — the research north star
+  (Shannon → Hutter → Sutskever; Bellard's `nncp`/`ts_zip`): *compression = prediction =
+  intelligence*, with six bets scored in bits ([`docs/research/`](docs/research/index.md)). This is
+  vision, not shipped runtime — see the reality ledger.
+- **[The arenas](arenas/README.md)** — a 43-row competitive matrix across 12 frameworks in 5
+  languages, the evidence base for the isolation claim.
+- **[Why an *enterprise* agent needs this](docs/vision/thesis.md)** — token efficiency,
+  hallucination governance, standard observability, real multi-tenant isolation.
 
 ## Status
 
@@ -241,8 +232,9 @@ Phase 9 is partially delivered:**
   tools (`WithMCPServer`), the embeddable in-process [`App.Turn`](docs/decisions/0031-embeddable-in-process-turn.md)
   (call the full pipeline like a function, no HTTP hop), a reference
   [`docker-compose.yml`](docs/deployment/docker-compose.md) deployment that boots aisotropyd with
-  rqlite + Qdrant active, and wiring-only YAML/JSON config (`LoadConfigFile`/`OptionsFromConfig`)
-  are delivered. The broader L2 composition SDK is pending.
+  rqlite + Qdrant active, wiring-only YAML/JSON config (`LoadConfigFile`/`OptionsFromConfig`), and
+  the opt-in key-brokering module (`-tags keybroker`, above) are delivered. The broader L2
+  composition SDK is pending.
 
 The detailed ledgers are [docs/roadmap/milestones.md](docs/roadmap/milestones.md) (per-phase
 definition of done) and [docs/architecture/reality-ledger.md](docs/architecture/reality-ledger.md)
@@ -255,7 +247,7 @@ The repo also ships `cmd/aisotropyd` — a thin ~97-line consumer of the same `a
 `.go-version`).
 
 ```bash
-# Build
+# Build (default: no Docker intent). Add -tags keybroker for the RunTask surface.
 go build ./...
 
 # Run (keyless stub — no credentials needed, streams a canned response)
@@ -309,3 +301,5 @@ cross-linked, both human- and agent-readable):
 ## License
 
 [Apache-2.0](LICENSE) © 2026 Luum.
+</content>
+</invoke>

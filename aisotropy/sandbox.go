@@ -1,3 +1,5 @@
+//go:build keybroker
+
 package aisotropy
 
 import "github.com/Luum-Home/aisotropy/internal/sandbox"

@@ -81,3 +81,45 @@ jobs:
           name: coverage-profile
           path: coverage.out
           if-no-files-found: ignore
+
+  keybroker:
+    name: keybroker build · vet · test (-tags keybroker)
+    runs-on: ubuntu-latest
+    # The key-brokering façade (App.RunTask/RunTasks), the `aisotropy task` CLI,
+    # and the key-brokering arena are fenced behind the `keybroker` build tag so
+    # the DEFAULT build/onramp is Docker-unaware (see docs/architecture/
+    # positioning-key-brokering.md). The build-test job above proves the default
+    # build is green WITHOUT that surface; this job proves the tagged surface still
+    # compiles, vets, and tests — including the broker invariant against real
+    # Docker on the runner — so the opt-in path cannot silently rot.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: false
+
+      - name: gofmt (keybroker-tagged files)
+        run: |
+          unformatted="$(gofmt -l internal aisotropy cmd/aisotropy arenas/key-brokering)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: keybroker-tagged set is clean"
+
+      - name: go vet (-tags keybroker)
+        run: go vet -tags keybroker ./...
+
+      - name: go build (-tags keybroker)
+        run: go build -tags keybroker ./...
+
+      - name: go test (-tags keybroker, race)
+        # Docker is present on the runner, so the broker invariant
+        # (TestRunTask_BrokerInvariant_KeyNeverEntersContainer) and the
+        # key-brokering arena execute rather than skip.
+        run: go test -tags keybroker ./... -race

@@ -7,7 +7,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -336,15 +335,5 @@ func TestReorderFlagsFirst(t *testing.T) {
 	}
 }
 
-func TestExecTaskRunRejectsBadProvider(t *testing.T) {
-	// execTaskRun defends against an unvalidated provider even though the parser
-	// normally catches it — no sandbox is booted on this path.
-	var out, errb bytes.Buffer
-	code := execTaskRun(context.Background(), taskRunConfig{RepoDir: "x", Prompt: "p", Provider: "bogus"}, &out, &errb)
-	if code != 2 {
-		t.Fatalf("execTaskRun bad provider: code=%d want 2 (stderr=%q)", code, errb.String())
-	}
-	if !strings.Contains(errb.String(), "unknown --provider") {
-		t.Fatalf("expected provider error, got %q", errb.String())
-	}
-}
+// TestExecTaskRunRejectsBadProvider lives in task_extra_test.go (build tag
+// keybroker) since execTaskRun is compiled only in the keybroker build.

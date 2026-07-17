@@ -1,3 +1,5 @@
+//go:build keybroker
+
 package main
 
 import (

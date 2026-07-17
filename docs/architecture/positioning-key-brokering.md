@@ -4,10 +4,27 @@ title: Positioning — is key-brokering a co-equal pillar or a flagship optional
 description: A read-only, evidence-grounded analysis of the single strategic decision the consolidation proposal flags but does not resolve — whether key-brokering (RunTask/RunTasks + the sandbox seam) is a co-equal second pillar of the core, or a flagship OPTIONAL module demoted below one isolation+memory headline. Grounds every coupling/LOC/audience claim in the import graph and file inspection, then lands a recommendation with a stated confidence and falsifier.
 tags: [architecture, positioning, key-brokering, runtask, sandbox, scope, decision, analysis]
 timestamp: 2026-07-17T00:00:00Z
-status: analysis — recommendation only, no code changed
+status: "decided: (b) flagship optional module — executed (2026-07-17): README + getting-started restructured to one isolation+memory headline with key-brokering demoted below the fold; key-brokering façade + CLI fenced behind the `keybroker` build tag so the default build excludes it. Part 1 and Part 2 both landed."
 ---
 
 # Positioning — key-brokering: co-equal pillar, or flagship optional module?
+
+> **DECISION EXECUTED (2026-07-17) — option (b), flagship optional module.** Both parts landed:
+> **Part 1 (positioning):** the root `README.md` and `docs/getting-started.md` now lead with a
+> single headline — *multi-tenant isolation by construction + tiered memory, in a single Go binary* —
+> with a runnable above-the-fold proof (`go test -run 'TestIsolation.*NoCrossTenantLeak' ./aisotropy`,
+> the black-box two-tenant leak test), and key-brokering demoted to a clearly-marked "Optional
+> flagship capability" section below the fold, reframed as the best *demonstration of* the moat.
+> **Part 2 (packaging):** the public key-brokering façade (`aisotropy/runtask.go`, `runtasks.go`,
+> `sandbox.go`) and the `aisotropy task` CLI subcommand are fenced behind a `//go:build keybroker`
+> tag, so the **default build excludes `App.RunTask`/`RunTasks`** (proven: `go doc ./aisotropy App`
+> shows no `RunTask`; `go build`/`vet`/`test ./... -race` green Docker-free) while `-tags keybroker`
+> restores the full surface (proven: `go build`/`vet`/`test -tags keybroker ./... -race` green, the
+> broker invariant executing against real Docker). The `internal/taskagent` + `internal/sandbox`
+> engine packages stay untagged (pure Go; Docker is a call-time, not build-time, dependency), so the
+> default suite still unit-tests them and the promoted-set coverage floor holds (92.86% ≥ 92%). This
+> is documented as an **API change** in [`docs/deployment/index.md`](../deployment/index.md#build-time-capability-key-brokering--tags-keybroker).
+> The analysis below is preserved as the grounding for the decision.
 
 > **The decision this answers.** The [consolidation proposal](consolidation-proposal.md) §2
 > flags "the one genuine strategic decision" and explicitly declines to resolve it: key-brokering
