@@ -1,0 +1,10 @@
+{
+  "name": "mastra-footprint",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Minimal hello-agent on Mastra for the footprint benchmark.",
+  "dependencies": {
+    "@mastra/core": "1.51.0"
+  }
+}

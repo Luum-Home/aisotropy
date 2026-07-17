@@ -152,7 +152,42 @@ a directional check (richer memory ⇒ larger lift). A representative run:
 
 ---
 
-## Cross-framework method (documented, NOT yet executed)
+## Class 3 — Framework footprint (REAL, run-verified ▶)
+
+The one cross-framework number that **is** honestly executable offline: deployment **footprint**.
+Image size, idle RSS, and dependency weight are language-agnostic in a way wall-clock is not — a
+400 MB image is 400 MB whether it is fast or slow, and it is a real property every operator pays for
+(registry storage, pull time, cold-start, per-pod RAM, attack surface). Measured on a
+cross-language **flagship set** (per `docs/architecture/consolidation-proposal.md` "12 → 3
+flagship" — not all 12), each a minimal "stand up the framework + one agent" app with the **model
+held constant as an offline stub**. Harness + reproduce steps: [`bench/footprint/`](../bench/footprint/)
+(`bash bench/footprint/run.sh`); raw output in `bench/footprint/results.txt`.
+
+| Framework | Language / packaging | Image (MiB) | Idle RSS (MiB) | Cold-start ms (med) | Dependency weight |
+|---|---|---|---|---|---|
+| **aisotropy** | Go / distroless static | **12.4** | **10.6** | **214** | 108 go.sum modules; static-linked (no dep files ship) |
+| LangGraph | Python / `python:3.12-slim` | 61.3 | 47.0 | 656 | 75 MiB site-packages, 74 top-level |
+| Mastra | TypeScript / `node:22-slim` | 126.5 | 121.2 | 700 | 141 MiB `node_modules`, 198 packages |
+| ADK-Go | Go / distroless static | NA | NA | NA | build failed in this run (honest NA — not measured) |
+
+**Takeaway (run-verified):** aisotropy's single static Go binary in Distroless ships at **12.4 MiB** —
+**~5× smaller** than the Python (LangGraph) image and **~10× smaller** than the Node/TS (Mastra) one —
+with **4–11× less idle RAM** (10.6 MiB vs 47 / 121) and ~3× faster cold-start (214 ms vs 656 / 700).
+This is the concrete, fair number behind the "single Go binary" claim: the deps are *statically
+linked into the binary*, so nothing ships a `node_modules`/`site-packages` tree at all.
+
+**Honest caveats.** (1) All subjects are *minimal* apps with the model stubbed — footprint of the
+framework+runtime, not of a production workload. (2) The aisotropy image is the repo's own
+production `Dockerfile` (multi-stage → Distroless); the framework images use the idiomatic slim base
+for their ecosystem — a fair minimal, not a stripped strawman. (3) **ADK-Go failed to build in this
+run** and is reported as `NA`, not estimated — a same-language Go competitor's footprint is left
+unmeasured here rather than guessed. (4) Cold-start is the one timing number, included because it is
+a real deployment property (runtime boot: interpreter import vs. static exec), not model behaviour;
+the `1683 ms` max on aisotropy is a first-run outlier (image layer cache warm-up), hence median is
+reported. (5) A full per-token *latency/quality* wall-clock is deliberately **not** published — see
+the method note below for why that would measure the models, not the frameworks.
+
+## Cross-framework method (overhead/latency: documented, NOT executed — and why)
 
 A full cross-framework overhead table (aisotropy vs the 12 arenas) is **not fabricated here**.
 Doing it honestly requires each framework's runtime installed and its stub-backed path driven under
