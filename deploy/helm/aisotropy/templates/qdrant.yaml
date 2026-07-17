@@ -40,9 +40,19 @@ spec:
         {{- include "aisotropy.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: semantic
     spec:
+      securityContext:
+        {{- toYaml .Values.tiers.networked.podSecurityContext | nindent 8 }}
       containers:
         - name: qdrant
           image: {{ $q.image | quote }}
+          env:
+            # Require an API key on every REST/gRPC request. Same value the
+            # aisotropyd client presents via QDRANT_API_KEY.
+            - name: QDRANT__SERVICE__API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aisotropy.tierSecretName" . }}
+                  key: QDRANT_API_KEY
           ports:
             - name: rest
               containerPort: {{ $q.restPort }}
@@ -61,6 +71,8 @@ spec:
               mountPath: /qdrant/storage
           resources:
             {{- toYaml $q.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.tiers.networked.containerSecurityContext | nindent 12 }}
   volumeClaimTemplates:
     - metadata:
         name: qdrant-data

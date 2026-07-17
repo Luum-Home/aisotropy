@@ -177,6 +177,89 @@ probe on aisotropyd will hold traffic until then.
 Ports (mirrors `docker-compose.yml`): rqlite HTTP `4001` / Raft `4002`; Qdrant
 REST `6333` / gRPC `6334` (the Go client uses gRPC).
 
+### Tier hardening (on by default in this overlay)
+
+The networked tiers do **not** run open. A shared-cluster pod cannot reach them
+and bypass the app-layer tenant-isolation gate, because:
+
+- **rqlite auth** — `rqlited` runs with `-auth` (an authz users file). The
+  `aisotropy` app user has full perms; the anonymous `*` user has only
+  `ready`/`status` so the unauthenticated `/readyz` probe still works while
+  `/db/query` and `/db/execute` require credentials. aisotropyd presents them via
+  `RQLITE_URL` (basic-auth embedded in the URL).
+- **Qdrant API key** — the Qdrant service requires `QDRANT__SERVICE__API_KEY`;
+  aisotropyd presents the same value via `QDRANT_API_KEY`.
+- **Secrets, not ConfigMaps** — both credentials live in the `aisotropy-tier-secrets`
+  Secret. The values shipped in the overlay are **LOCAL-ONLY placeholders**
+  (`*-CHANGE-ME`); override them out-of-band for anything reachable.
+- **NetworkPolicy** — `networkpolicy.yaml` default-denies ingress to the rqlite
+  and Qdrant pods and allows **only** the `aisotropyd` pod (pod-selector based).
+  This is enforced only by a policy-capable CNI (Calico/Cilium/Antrea); kind's
+  kindnet and k3s's flannel render it but do not enforce — install a capable CNI
+  for real isolation.
+- **Non-root tier pods** — rqlite and Qdrant run `runAsNonRoot` (UID 1000,
+  `fsGroup` for the PVC), `allowPrivilegeEscalation: false`, all capabilities
+  dropped, `seccompProfile: RuntimeDefault` — mirroring the aisotropyd pod.
+
+### Helm equivalent
+
+```bash
+helm upgrade --install aisotropy deploy/helm/aisotropy -n aisotropy --create-namespace \
+  --set tiers.networked.enabled=true \
+  --set tiers.networked.auth.qdrantApiKey="$(openssl rand -base64 32)" \
+  --set tiers.networked.auth.rqlitePassword="$(openssl rand -base64 24)"
+```
+
+The chart renders the tier Secret, the NetworkPolicy (`networkPolicy.enabled`,
+default true), and the hardened tier pods. Point at your own Secret instead with
+`--set tiers.networked.auth.existingSecret=<name>` (keys: `QDRANT_API_KEY`,
+`RQLITE_URL`, `rqlite-users.json`).
+
+---
+
+## 3a. The production overlay (reachable deployments)
+
+`overlays/networked-tiers` is still a **local/dev** posture: aisotropyd runs
+NoAuth and does not require TLS. For anything reachable, use `overlays/prod`,
+which layers two more gates on top of everything above:
+
+```bash
+# 1. Provide real secrets FIRST (the overlay ships none):
+kubectl -n aisotropy create secret generic aisotropy-secrets \
+  --from-literal=AISOTROPY_JWT_SECRET="$(openssl rand -base64 48)" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n aisotropy create secret generic aisotropy-tier-secrets \
+  --from-literal=QDRANT_API_KEY="$(openssl rand -base64 32)" \
+  --from-literal=RQLITE_URL="http://aisotropy:$(openssl rand -base64 24 | tr -d /=+)@rqlite:4001" \
+  --from-file=rqlite-users.json=/path/to/your/rqlite-users.json \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# 2. Apply the hardened overlay:
+kubectl apply -k deploy/k8s/overlays/prod
+```
+
+What `overlays/prod` changes vs. `networked-tiers`:
+
+- **`AISOTROPY_REQUIRE_TLS=1`** — aisotropyd refuses plaintext. Front it with a
+  TLS-terminating ingress/proxy (see [reverse-proxy.md](reverse-proxy.md) and
+  `deploy/proxy/nginx.conf`'s `listen 443 ssl` block).
+- **`AISOTROPY_ALLOW_NOAUTH` is removed** — the NoAuth opt-out is gone, so a
+  `>= 32`-byte `AISOTROPY_JWT_SECRET` is **required** (the binary trusts no
+  unauthenticated identity).
+
+Helm equivalent — `values-prod.yaml` (`requireTLS: true`, `allowNoAuth: false`):
+
+```bash
+helm upgrade --install aisotropy deploy/helm/aisotropy -n aisotropy --create-namespace \
+  -f deploy/helm/aisotropy/values-prod.yaml \
+  --set auth.jwtSecret="$(openssl rand -base64 48)" \
+  --set tiers.networked.auth.qdrantApiKey="$(openssl rand -base64 32)" \
+  --set tiers.networked.auth.rqlitePassword="$(openssl rand -base64 24)"
+```
+
+The chart **fails to render** if `allowNoAuth: false` and no JWT verifier is set —
+a fail-closed guard against exposing a NoAuth deployment.
+
 ---
 
 ## 4. Local cluster notes
@@ -207,12 +290,17 @@ deploy/
     Chart.yaml
     values.yaml              image, replicas, resources, auth.jwtSecret,
                              tiers.networked.enabled, persistence, ingress
+    values-prod.yaml         hardened prod overlay (requireTLS, allowNoAuth:false)
     templates/               deployment, service, configmap, secret, pvc,
-                             ingress, serviceaccount, rqlite, qdrant, NOTES
+                             ingress, serviceaccount, rqlite, qdrant,
+                             tier-secret, networkpolicy, NOTES
   k8s/
     base/                    minimal Kustomize base (in-process tiers)
     components/persistence/  opt-in PVC + AISOTROPY_DATA_DIR
-    overlays/networked-tiers/  base + rqlite + Qdrant + env patch
+    overlays/networked-tiers/  base + rqlite + Qdrant + env patch + tier auth
+                             (Secret) + NetworkPolicy + non-root tier pods
+    overlays/prod/           networked-tiers + AISOTROPY_REQUIRE_TLS, NoAuth off
+  rqlite/                    users.json — LOCAL-ONLY rqlite -auth file (compose)
   local/
     up.sh / down.sh          one-command Kind/k3d bring-up + teardown
     Makefile                 make up / down / lint / template / health
@@ -225,6 +313,13 @@ The aisotropyd pod runs `runAsNonRoot` (UID 65532, matching the Distroless
 image), `readOnlyRootFilesystem: true` (with an `emptyDir` at `/tmp`), all
 capabilities dropped, `allowPrivilegeEscalation: false`, and `seccompProfile:
 RuntimeDefault`. `fsGroup: 65532` lets the optional data PVC be group-writable.
+
+The **rqlite and Qdrant** tier pods (networked overlay) mirror this: `runAsNonRoot`
+(UID 1000 with `fsGroup: 1000` for the data PVC), `allowPrivilegeEscalation: false`,
+all capabilities dropped, `seccompProfile: RuntimeDefault`. They keep a writable
+root filesystem (unlike aisotropyd) because both write working files outside the
+mounted data volume. Combined with tier auth and the NetworkPolicy, the memory
+tiers are reachable only by aisotropyd and only with credentials.
 
 ### Related docs
 

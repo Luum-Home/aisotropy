@@ -40,6 +40,8 @@ spec:
         {{- include "aisotropy.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: facts
     spec:
+      securityContext:
+        {{- toYaml .Values.tiers.networked.podSecurityContext | nindent 8 }}
       containers:
         - name: rqlite
           image: {{ $r.image | quote }}
@@ -48,12 +50,17 @@ spec:
             - "0.0.0.0:{{ $r.httpPort }}"
             - "-raft-addr"
             - "0.0.0.0:{{ $r.raftPort }}"
+            # HTTP auth/authz — without it, anyone reaching {{ $r.httpPort }} can
+            # run arbitrary SQL. See the tier Secret's rqlite-users.json.
+            - "-auth"
+            - "/rqlite/auth/rqlite-users.json"
           ports:
             - name: http
               containerPort: {{ $r.httpPort }}
             - name: raft
               containerPort: {{ $r.raftPort }}
           readinessProbe:
+            # /readyz is reachable unauthenticated (anonymous "*" user has "ready").
             httpGet:
               path: /readyz
               port: http
@@ -64,8 +71,20 @@ spec:
           volumeMounts:
             - name: rqlite-data
               mountPath: /rqlite/file
+            - name: rqlite-auth
+              mountPath: /rqlite/auth
+              readOnly: true
           resources:
             {{- toYaml $r.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.tiers.networked.containerSecurityContext | nindent 12 }}
+      volumes:
+        - name: rqlite-auth
+          secret:
+            secretName: {{ include "aisotropy.tierSecretName" . }}
+            items:
+              - key: rqlite-users.json
+                path: rqlite-users.json
   volumeClaimTemplates:
     - metadata:
         name: rqlite-data

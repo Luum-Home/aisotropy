@@ -15,6 +15,7 @@ Two ways Aisotropy runs, matching the two states in the [reality ledger](../arch
 | [Distroless deployment](distroless.md) | The single self-contained Go binary — two-stage `CGO_ENABLED=0` build on `distroless/static`, with the **measured** binary size / startup / idle-RAM against the Phase 7 DoD target. This is the zero-config in-process runtime. |
 | [Reference deployment — docker-compose](docker-compose.md) | The compose stack that boots `aisotropyd` with its **networked memory tiers active** (rqlite facts + Qdrant semantic) instead of the in-process fallbacks, plus the sleep-cycle opt-in overlay (ADR-0016 lever #3). This is how the dormant tiers in the reality ledger get lit up. |
 | [Reverse proxy — SSE streaming](reverse-proxy.md) | Fronting the plain-HTTP `aisotropyd` with Caddy or nginx **without buffering the token-by-token SSE routes** into a single dump. The reference `deploy/proxy/` configs, the `X-Accel-Buffering: no` middleware that makes streaming survive a default nginx, and the executable end-to-end proof under `test/proxy/`. |
+| [Supply-chain hardening](supply-chain.md) | The supply-chain security posture — `govulncheck` + dependency scanning as a **local pre-push git hook** (no extra paid GitHub Actions), base images pinned by immutable `@sha256:` digest, and secrets fenced out of the Docker build context. |
 
 Which one you run is exactly the "REAL by default vs CODE-ONLY behind env vars" split the
 [reality ledger](../architecture/reality-ledger.md) records: the distroless binary alone is the

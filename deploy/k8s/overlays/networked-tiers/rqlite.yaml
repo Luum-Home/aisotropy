@@ -1,6 +1,10 @@
 # Facts memory: rqlite (SQLite + FTS5, Raft). Mirrors docker-compose.yml.
 # Single-node for a local cluster; scale the StatefulSet + add -bootstrap-expect
 # for a real Raft quorum.
+#
+# HARDENED: HTTP auth is enabled (-auth) so the arbitrary-SQL-over-HTTP surface is
+# not open to any pod that can reach 4001; ingress is further locked down by
+# networkpolicy.yaml, and the pod runs non-root with dropped capabilities.
 apiVersion: v1
 kind: Service
 metadata:
@@ -42,6 +46,16 @@ spec:
         app.kubernetes.io/name: aisotropy
         app.kubernetes.io/component: facts
     spec:
+      # rqlite/rqlite runs as root by default but only writes to the mounted data
+      # dir (/rqlite/file). Run it non-root; fsGroup makes the PVC group-writable
+      # so UID 1000 can write, and seccomp/cap-drop mirror the aisotropyd pod.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: rqlite
           image: rqlite/rqlite:8.36.3
@@ -50,13 +64,19 @@ spec:
             - "0.0.0.0:4001"
             - "-raft-addr"
             - "0.0.0.0:4002"
+            # HTTP auth/authz. Without this, anyone who reaches 4001 can run
+            # arbitrary SQL. The file grants the "aisotropy" app user full perms
+            # and the anonymous "*" user only ready/status (for the probe below).
+            - "-auth"
+            - "/rqlite/auth/rqlite-users.json"
           ports:
             - name: http
               containerPort: 4001
             - name: raft
               containerPort: 4002
           readinessProbe:
-            # /readyz is 200 once the node has an elected leader.
+            # /readyz is 200 once the node has an elected leader. Reachable
+            # unauthenticated because the "*" user is granted the "ready" perm.
             httpGet:
               path: /readyz
               port: http
@@ -67,6 +87,9 @@ spec:
           volumeMounts:
             - name: rqlite-data
               mountPath: /rqlite/file
+            - name: rqlite-auth
+              mountPath: /rqlite/auth
+              readOnly: true
           resources:
             requests:
               cpu: 50m
@@ -74,6 +97,19 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        # Project only the auth/authz file out of the tier Secret (read-only).
+        - name: rqlite-auth
+          secret:
+            secretName: aisotropy-tier-secrets
+            items:
+              - key: rqlite-users.json
+                path: rqlite-users.json
   volumeClaimTemplates:
     - metadata:
         name: rqlite-data

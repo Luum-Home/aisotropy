@@ -1,0 +1,43 @@
+# Production values overlay for aisotropy.
+#
+#   helm upgrade --install aisotropy deploy/helm/aisotropy -n aisotropy \
+#     -f deploy/helm/aisotropy/values-prod.yaml \
+#     --set auth.jwtSecret="$(openssl rand -base64 48)" \
+#     --set tiers.networked.auth.qdrantApiKey="$(openssl rand -base64 32)" \
+#     --set tiers.networked.auth.rqlitePassword="$(openssl rand -base64 24)"
+#
+# This file sets the HARDENED posture; you STILL MUST supply real secrets (above)
+# — it deliberately does NOT carry credential values so none are committed.
+#
+# What this changes vs. the minimal defaults:
+#   - requireTLS: true  -> AISOTROPY_REQUIRE_TLS=1 (front with a TLS-terminating
+#     ingress/proxy; aisotropyd refuses plaintext).
+#   - allowNoAuth: false -> the NoAuth opt-out is gone, so a JWT secret is
+#     REQUIRED (set auth.jwtSecret or auth.existingSecret; >= 32 bytes HS256).
+#   - networked tiers ON, behind auth + a default-deny NetworkPolicy + non-root
+#     pods (inherited from values.yaml; supply strong tier credentials above).
+
+requireTLS: true
+allowNoAuth: false
+
+# A JWT secret is mandatory in this posture. Provide it via --set auth.jwtSecret
+# (>= 32 bytes) or point at one you manage:
+# auth:
+#   existingSecret: my-aisotropy-secret
+#   jwtSecretKey: AISOTROPY_JWT_SECRET
+
+networkPolicy:
+  enabled: true
+
+tiers:
+  networked:
+    enabled: true
+    auth:
+      # DO NOT hardcode real credentials here. Pass them at install time
+      # (--set ...) or reference a Secret you manage out-of-band:
+      # existingSecret: my-aisotropy-tier-secrets
+      qdrantApiKey: ""
+      rqlitePassword: ""
+    qdrant:
+      # Set true only when Qdrant is configured to serve TLS.
+      useTLS: false

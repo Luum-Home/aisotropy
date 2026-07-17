@@ -44,8 +44,42 @@ Ready to use, under [`deploy/proxy/`](../../deploy/proxy/):
 
 - [`Caddyfile`](../../deploy/proxy/Caddyfile) — swap `:80` for your hostname and Caddy auto-provisions
   TLS. The whole point of the split: the proxy owns TLS, aisotropyd stays HTTP.
-- [`nginx.conf`](../../deploy/proxy/nginx.conf) — `proxy_buffering off` on the SSE location,
-  `proxy_read_timeout 1h` for long-lived streams, default buffering elsewhere.
+- [`nginx.conf`](../../deploy/proxy/nginx.conf) — two server blocks: a plain **`:80`** block (for
+  edge-terminated TLS, where an LB ahead of nginx owns TLS and nginx sees HTTP) and an active
+  **`listen 443 ssl; http2 on;`** block that terminates TLS at nginx and is the recommended front
+  door for browser SSE (see the HTTP/2 section below). Both set `proxy_buffering off` on the SSE
+  location and `proxy_read_timeout 1h` for long-lived streams, default buffering elsewhere; both
+  keep the proxy↔upstream hop on HTTP/1.1 (`proxy_http_version 1.1`). The `:443` block carries
+  cert/key **placeholder paths** (`/etc/nginx/tls/tls.{crt,key}`) — the proxy owns TLS, aisotropyd
+  stays plain HTTP. The k8s `overlays/prod` sets **`AISOTROPY_REQUIRE_TLS=1`**, so aisotropyd
+  refuses plaintext and must sit behind a TLS-terminating proxy/ingress like this. Supply the
+  cert/key out-of-band (mounted files / a secret); never commit them.
+
+## HTTP/2 for SSE — beating the 6-connections-per-domain cap
+
+An SSE response holds **one HTTP connection open for its whole lifetime**. Over **HTTP/1.1** a
+browser opens only **~6 connections per domain** (the long-standing limit every major browser
+implements). So ~6 concurrent SSE streams to this origin **saturate the pool**, and every further
+request to the same host — more streams, plus ordinary JSON chat and asset fetches — **stalls**
+until one frees up. A single page that opens a couple of streams and still needs to talk to the API
+can deadlock itself.
+
+**HTTP/2 removes the cap**: it multiplexes many independent streams over **one** TCP connection, so
+the per-domain connection limit no longer bounds concurrent SSE. Browsers only negotiate HTTP/2 over
+**TLS**, which is why the fix lives on the `:443 ssl` server block (`http2 on;`) rather than the
+plain `:80` one. Nothing about aisotropyd changes: HTTP/2 is a **client↔proxy** concern, and the
+proxy↔aisotropyd hop stays HTTP/1.1 with the same anti-buffering knobs. ingress-nginx already serves
+HTTP/2 on its TLS listener by default, so a TLS-terminating ingress gets the same benefit with no
+extra annotation.
+
+HTTP/2 is the **concrete, adopted fix** here. **WebTransport / HTTP/3** (QUIC) would multiplex
+without any of HTTP/1.1's per-domain history and avoid head-of-line blocking at the transport layer,
+but it is a **future option, not adopted** — noted for completeness per the protocols research, not
+wired into these reference configs.
+
+> Verified: `nginx -t` against `deploy/proxy/nginx.conf` (with a throwaway self-signed cert at the
+> placeholder paths and the upstream name resolvable) reports *"syntax is ok / test is successful"* —
+> the active `:443 http2` block parses and loads.
 
 ### Kubernetes / ingress-nginx
 

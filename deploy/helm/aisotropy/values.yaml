@@ -52,6 +52,28 @@ anthropicApiKey: ""
 # those endpoints stay 503 (default-closed).
 opsToken: ""
 
+# ---------------------------------------------------------------------------
+# Transport + NoAuth posture (coordinate with auth above).
+#   requireTLS -> AISOTROPY_REQUIRE_TLS: aisotropyd refuses plaintext when true.
+#     Keep false locally; set true in production (front with a TLS-terminating
+#     ingress/proxy — see deploy/proxy, docs/deployment/reverse-proxy.md).
+#   allowNoAuth -> AISOTROPY_ALLOW_NOAUTH: explicit opt-in to the keyless NoAuth
+#     path (trusts path tenant_id/user_id with no credential check). true keeps
+#     the local zero-config path booting; MUST be false in production so a JWT
+#     secret is required. See values-prod.yaml for the hardened combination.
+# ---------------------------------------------------------------------------
+requireTLS: false
+allowNoAuth: true
+
+# ---------------------------------------------------------------------------
+# NetworkPolicy fronting the networked tiers: default-deny ingress to rqlite +
+# Qdrant, allow ONLY the aisotropyd pod. Only rendered when tiers.networked is
+# enabled (no tier pods otherwise). Requires a policy-capable CNI to ENFORCE
+# (Calico/Cilium/Antrea); kindnet/flannel render it but do not enforce.
+# ---------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+
 # Extra plain (non-secret) env vars, injected verbatim.
 extraEnv: []
 #  - name: AISOTROPY_RATE_PER_SEC
@@ -66,6 +88,36 @@ extraEnv: []
 tiers:
   networked:
     enabled: false
+    # -----------------------------------------------------------------------
+    # Tier credentials (rqlite HTTP auth + Qdrant API key). Provisioned as a
+    # Secret, NOT a ConfigMap. The defaults below are LOCAL-ONLY placeholders —
+    # override them (or point at an existingSecret) for anything reachable. The
+    # same QDRANT_API_KEY value is presented by both the Qdrant service and the
+    # aisotropyd client; the rqlite user:password is embedded in RQLITE_URL and
+    # matched in the -auth users file.
+    # -----------------------------------------------------------------------
+    auth:
+      qdrantApiKey: "local-dev-qdrant-key-CHANGE-ME"
+      rqliteUser: "aisotropy"
+      rqlitePassword: "local-dev-rqlite-pw-CHANGE-ME"
+      # Provide your own Secret instead (keys: QDRANT_API_KEY, RQLITE_URL,
+      # rqlite-users.json). When set, the chart does not render its own.
+      existingSecret: ""
+    # Pod- and container-level hardening applied to BOTH tier StatefulSets.
+    # rqlite/qdrant run fine non-root (they only write to their mounted data
+    # dirs); fsGroup makes the PVC group-writable for the non-root UID.
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
     rqlite:
       image: rqlite/rqlite:8.36.3
       httpPort: 4001
@@ -83,6 +135,10 @@ tiers:
       restPort: 6333
       grpcPort: 6334
       collection: aisotropy_knowledge
+      # Present QDRANT_USE_TLS=true to the aisotropyd client. Only set true when
+      # Qdrant actually serves TLS; in-cluster plaintext gRPC is fine behind the
+      # NetworkPolicy for most deployments.
+      useTLS: false
       storage: 2Gi
       resources:
         requests:

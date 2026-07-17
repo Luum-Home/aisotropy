@@ -1,3 +1,8 @@
+{{- if not .Values.allowNoAuth }}
+{{- if not (or .Values.auth.jwtSecret .Values.auth.existingSecret) }}
+{{- fail "allowNoAuth is false but no JWT verifier is configured: set auth.jwtSecret (>= 32 bytes) or auth.existingSecret, otherwise aisotropyd cannot authenticate and must not be exposed." }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,12 +11,22 @@ metadata:
     {{- include "aisotropy.labels" . | nindent 4 }}
 data:
   AISOTROPY_ADDR: ":{{ .Values.containerPort }}"
+  {{- if .Values.requireTLS }}
+  # aisotropyd refuses plaintext — front with a TLS-terminating ingress/proxy.
+  AISOTROPY_REQUIRE_TLS: "1"
+  {{- end }}
+  {{- if .Values.allowNoAuth }}
+  # LOCAL-ONLY: explicit NoAuth opt-out. MUST be false in production (a JWT
+  # secret is then required). See values-prod.yaml.
+  AISOTROPY_ALLOW_NOAUTH: "1"
+  {{- end }}
   {{- if .Values.persistence.enabled }}
   AISOTROPY_DATA_DIR: {{ .Values.persistence.mountPath | quote }}
   {{- end }}
   {{- if .Values.tiers.networked.enabled }}
-  # Networked tiers wired (mirrors docker-compose.yml).
-  RQLITE_URL: "http://{{ include "aisotropy.fullname" . }}-rqlite:{{ .Values.tiers.networked.rqlite.httpPort }}"
+  # Networked tiers wired (mirrors docker-compose.yml). Non-secret coordinates
+  # only — RQLITE_URL (with credentials) and QDRANT_API_KEY come from the tier
+  # Secret via the Deployment env, not from this ConfigMap.
   QDRANT_HOST: "{{ include "aisotropy.fullname" . }}-qdrant"
   QDRANT_PORT: "{{ .Values.tiers.networked.qdrant.grpcPort }}"
   QDRANT_COLLECTION: {{ .Values.tiers.networked.qdrant.collection | quote }}

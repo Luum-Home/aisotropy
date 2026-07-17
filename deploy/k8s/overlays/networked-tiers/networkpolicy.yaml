@@ -1,0 +1,79 @@
+# Default-deny ingress to the memory-tier pods (rqlite facts, Qdrant semantic),
+# allowing ONLY the aisotropyd runtime pod to reach them. In a shared cluster this
+# stops any other pod from talking to the tiers directly and bypassing the
+# app-layer tenant-isolation gate: the tiers become reachable EXCLUSIVELY through
+# aisotropyd, which injects tenant_id (from the validated JWT / path) into every
+# query. Selecting a pod with any Ingress NetworkPolicy default-denies all other
+# ingress to it, so these two allow-lists ARE the default-deny for the tiers.
+#
+# NOTE ON ENFORCEMENT: a NetworkPolicy is only enforced by a policy-capable CNI
+# (Calico, Cilium, Antrea, ...). kind's default kindnet and k3s's default flannel
+# do NOT enforce it — install a policy-capable CNI for real isolation, or treat
+# these manifests as declared intent locally (they always render, and enforce the
+# moment a capable CNI is present, with no manifest change).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rqlite-allow-aisotropyd
+  labels:
+    app.kubernetes.io/name: aisotropy
+    app.kubernetes.io/component: facts
+spec:
+  # Applies to the rqlite (facts) pods only.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: aisotropy
+      app.kubernetes.io/component: facts
+  policyTypes:
+    - Ingress
+  ingress:
+    # aisotropyd -> rqlite HTTP API (4001). aisotropyd is the ONLY client of the
+    # facts tier; everything else is denied by default.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: aisotropy
+              app.kubernetes.io/component: runtime
+      ports:
+        - protocol: TCP
+          port: 4001
+    # Raft peer traffic (4002) between rqlite pods — needed only when the
+    # StatefulSet is scaled to a multi-node quorum. A no-op (but harmless) at the
+    # default replicas: 1.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: aisotropy
+              app.kubernetes.io/component: facts
+      ports:
+        - protocol: TCP
+          port: 4002
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: qdrant-allow-aisotropyd
+  labels:
+    app.kubernetes.io/name: aisotropy
+    app.kubernetes.io/component: semantic
+spec:
+  # Applies to the Qdrant (semantic) pods only.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: aisotropy
+      app.kubernetes.io/component: semantic
+  policyTypes:
+    - Ingress
+  ingress:
+    # aisotropyd -> Qdrant gRPC (6334, the port the Go client uses) and REST
+    # (6333). No other pod may reach the vector store.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: aisotropy
+              app.kubernetes.io/component: runtime
+      ports:
+        - protocol: TCP
+          port: 6334
+        - protocol: TCP
+          port: 6333

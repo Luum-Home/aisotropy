@@ -32,6 +32,32 @@ at Qdrant. With those set, `internal/facts` and `internal/semantic` use the netw
 backends instead of their in-process defaults — no code change (see
 [services-config](../../.claude/rules/services-config.md)).
 
+## Tier authentication (local-only defaults)
+
+The tiers are **not** open ports, even locally:
+
+- **Qdrant** requires an API key — `QDRANT__SERVICE__API_KEY` on the service, and
+  the same value on the aisotropyd client via `QDRANT_API_KEY`.
+- **rqlite** requires HTTP auth — `rqlited` runs with `-auth` against
+  [`deploy/rqlite/users.json`](../../deploy/rqlite/users.json) (the `aisotropy`
+  user has full perms; the anonymous `*` user has only `ready`/`status` so the
+  `/readyz` healthcheck works). aisotropyd embeds the credentials in `RQLITE_URL`
+  (`http://aisotropy:<pw>@rqlite:4001`).
+
+The shipped values are **LOCAL-ONLY placeholders** (`*-CHANGE-ME`). Override them
+with a `.env` file (or shell env) for anything reachable — never reuse production
+credentials here:
+
+```bash
+# .env (git-ignored) — local overrides
+QDRANT_API_KEY=your-strong-key            # drives both the Qdrant service + client
+RQLITE_PASSWORD=your-strong-password      # ALSO update deploy/rqlite/users.json to match
+```
+
+The Qdrant key flows to both sides from one `.env` var. The rqlite password is
+paired with the users file, so change **both** together (the k8s/Helm surfaces
+generate the file from the password, so they do not have this pairing).
+
 ## Quick start
 
 ```bash
@@ -99,11 +125,15 @@ the reference/dev stack. Expect the first build to take several minutes.
 ## Not included (honest scope)
 
 - No reverse proxy / TLS termination — front with your own ingress for anything
-  beyond local use.
+  beyond local use ([reverse-proxy.md](reverse-proxy.md); the k8s prod overlay
+  sets `AISOTROPY_REQUIRE_TLS`).
 - No Qdrant/rqlite clustering — both run single-node; scale Qdrant independently
   when needed (the only tier meant to, per the stack's golden rule).
-- The stack is unauthenticated on localhost; do not expose the ports publicly
-  without an auth layer.
+- The **tiers** are authenticated (Qdrant API key + rqlite `-auth`) with
+  **local-only default credentials** — but **aisotropyd itself runs NoAuth** in
+  this compose stack (no `AISOTROPY_JWT_SECRET`). Do not expose the `8080` port
+  publicly without setting a JWT secret and a TLS-terminating proxy; the k8s
+  `overlays/prod` is the hardened equivalent.
 
 ## References
 

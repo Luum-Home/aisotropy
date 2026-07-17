@@ -1,0 +1,43 @@
+# Production overlay: the hardened networked-tiers stack, further locked down for
+# a REACHABLE deployment.
+#   kubectl apply -k deploy/k8s/overlays/prod
+#
+# On top of overlays/networked-tiers (tier auth + NetworkPolicy + non-root tier
+# pods) this overlay:
+#   1. sets AISOTROPY_REQUIRE_TLS=1 — aisotropyd refuses plaintext; front it with
+#      a TLS-terminating ingress/proxy (see deploy/proxy, docs/deployment).
+#   2. REMOVES AISOTROPY_ALLOW_NOAUTH — so the NoAuth opt-out is gone and a real
+#      JWT secret is required (aisotropyd will not trust unauthenticated identity).
+#
+# YOU MUST STILL PROVIDE, out-of-band, before this is safe:
+#   - aisotropy-secrets: a >= 32-byte AISOTROPY_JWT_SECRET (HS256). Without it the
+#     binary has no way to authenticate and (with ALLOW_NOAUTH removed) must not
+#     be exposed. e.g.:
+#       kubectl -n aisotropy create secret generic aisotropy-secrets \
+#         --from-literal=AISOTROPY_JWT_SECRET="$(openssl rand -base64 48)" \
+#         --dry-run=client -o yaml | kubectl apply -f -
+#   - aisotropy-tier-secrets: STRONG, UNIQUE QDRANT_API_KEY / rqlite credentials
+#     (override the LOCAL-ONLY placeholders shipped in networked-tiers). e.g.:
+#       kubectl -n aisotropy create secret generic aisotropy-tier-secrets ...
+#   - a TLS-terminating proxy/ingress in front of aisotropyd.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: aisotropy
+
+resources:
+  - ../networked-tiers
+
+patches:
+  # aisotropyd config: require TLS, drop the local NoAuth opt-out. JSON6902 so the
+  # "remove" is deterministic (it fails loudly if the base ever stops shipping the
+  # key, rather than silently leaving NoAuth on in prod).
+  - target:
+      kind: ConfigMap
+      name: aisotropy-config
+    patch: |-
+      - op: add
+        path: /data/AISOTROPY_REQUIRE_TLS
+        value: "1"
+      - op: remove
+        path: /data/AISOTROPY_ALLOW_NOAUTH

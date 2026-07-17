@@ -1,0 +1,4 @@
+[
+  { "username": "aisotropy", "password": "local-dev-rqlite-pw-CHANGE-ME", "perms": ["all"] },
+  { "username": "*", "perms": ["ready", "status"] }
+]

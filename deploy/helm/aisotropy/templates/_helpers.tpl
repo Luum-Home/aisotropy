@@ -64,3 +64,13 @@ app.kubernetes.io/component: runtime
 true
 {{- end -}}
 {{- end -}}
+
+{{/* Name of the Secret holding networked-tier credentials (chart-created or
+     existing). */}}
+{{- define "aisotropy.tierSecretName" -}}
+{{- if .Values.tiers.networked.auth.existingSecret -}}
+{{- .Values.tiers.networked.auth.existingSecret -}}
+{{- else -}}
+{{- printf "%s-tier-secrets" (include "aisotropy.fullname" .) -}}
+{{- end -}}
+{{- end -}}

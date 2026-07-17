@@ -18,3 +18,10 @@ data:
   AISOTROPY_ADDR: ":8080"
   # Ops endpoints (/costs, /bitrate) stay default-closed unless AISOTROPY_OPS_TOKEN
   # is set (see secret.yaml). Left unset here on purpose.
+  #
+  # LOCAL-ONLY: explicitly opt in to NoAuth so the keyless local path keeps
+  # booting (path tenant_id/user_id trusted, no credential check). This is fine
+  # for a local throwaway cluster ONLY. The production overlay (overlays/prod)
+  # REMOVES this key and sets AISOTROPY_REQUIRE_TLS=1, so a real JWT secret is
+  # required there. NEVER ship this key to a reachable deployment.
+  AISOTROPY_ALLOW_NOAUTH: "1"

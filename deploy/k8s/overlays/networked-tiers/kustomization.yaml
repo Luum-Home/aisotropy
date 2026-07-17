@@ -1,6 +1,13 @@
 # Opt-in overlay: the same minimal base + real networked memory tiers
-# (rqlite facts, Qdrant semantic), mirroring docker-compose.yml.
+# (rqlite facts, Qdrant semantic), mirroring docker-compose.yml — HARDENED:
+# tier auth (rqlite -auth, Qdrant API key), a default-deny NetworkPolicy fronting
+# the tiers, and non-root tier pods.
 #   kubectl apply -k deploy/k8s/overlays/networked-tiers
+#
+# This overlay is still a LOCAL/DEV posture (NoAuth on aisotropyd, no TLS
+# required, local-only tier credentials). For a reachable deployment, use
+# overlays/prod, which layers AISOTROPY_REQUIRE_TLS + drops the NoAuth opt-out on
+# top of everything here.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -10,6 +17,8 @@ resources:
   - ../../base
   - rqlite.yaml
   - qdrant.yaml
+  - tier-secrets.yaml
+  - networkpolicy.yaml
 
 patches:
   - path: patch-aisotropyd-env.yaml

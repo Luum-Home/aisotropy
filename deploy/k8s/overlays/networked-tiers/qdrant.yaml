@@ -1,6 +1,10 @@
 # Semantic memory: Qdrant (vectors, HNSW with per-tenant payload filtering).
 # Mirrors docker-compose.yml. The Go client talks gRPC on 6334; REST/dashboard
 # on 6333. The collection is created by the runtime on first use.
+#
+# HARDENED: an API key is required (QDRANT__SERVICE__API_KEY) so the vector store
+# is not open to any pod that can reach 6333/6334; ingress is further locked down
+# by networkpolicy.yaml, and the pod runs non-root with dropped capabilities.
 apiVersion: v1
 kind: Service
 metadata:
@@ -41,16 +45,35 @@ spec:
         app.kubernetes.io/name: aisotropy
         app.kubernetes.io/component: semantic
     spec:
+      # Qdrant's entrypoint just execs ./qdrant (no chown/root step) and writes
+      # only to /qdrant/storage, so it runs fine non-root; fsGroup makes the PVC
+      # group-writable for UID 1000. Mirrors the aisotropyd pod hardening.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: qdrant
           image: qdrant/qdrant:v1.12.4
+          env:
+            # Require an API key on every REST/gRPC request. Same value the app
+            # presents via QDRANT_API_KEY (aisotropy-tier-secrets).
+            - name: QDRANT__SERVICE__API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aisotropy-tier-secrets
+                  key: QDRANT_API_KEY
           ports:
             - name: rest
               containerPort: 6333
             - name: grpc
               containerPort: 6334
           readinessProbe:
-            # Qdrant exposes /readyz over the REST port.
+            # Qdrant exposes /readyz over the REST port. Unauthenticated readiness
+            # endpoints are allowed even with an API key set.
             httpGet:
               path: /readyz
               port: rest
@@ -68,6 +91,11 @@ spec:
             limits:
               cpu: "1"
               memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
   volumeClaimTemplates:
     - metadata:
         name: qdrant-data
