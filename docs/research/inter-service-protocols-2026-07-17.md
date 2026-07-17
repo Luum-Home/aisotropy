@@ -512,6 +512,12 @@ generator so transport — not model latency — is measured.
   redelivery** and that the idempotent sink produces **no duplicate facts/vectors** (reuse the
   existing `sink_test.go` idempotency assertion as the oracle).
 - **DLQ:** force a poison message; assert bounded redelivery then DLQ, no infinite retry.
+- **Local harness (floci.io, MIT):** run §7.6/§7.7 against **cloud-managed** queues (AWS
+  SQS/SNS, Azure Service Bus/Event Hubs, GCP Pub/Sub) locally and cost-free via
+  [floci.io](https://floci.io/)'s emulators — a dev/test complement to the self-hostable
+  NATS/Kafka/RabbitMQ/Valkey row above; the self-hostable brokers stay the production
+  recommendation (sovereignty). floci also gives the Tier-1 Lambda-container serverless
+  proof cost-free (see `docs/deployment/serverless-edge.md`).
 
 ### 7.7 Async: tenant isolation across the broker
 

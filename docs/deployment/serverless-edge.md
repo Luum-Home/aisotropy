@@ -198,6 +198,18 @@ frozen between invocations; working memory persists only across **warm** reuse o
 one execution environment, not across cold starts. 15-minute max timeout bounds any
 long SSE stream. Externalize facts+semantic exactly as above.
 
+### Local testing without a cloud account — floci.io
+
+For a **cost-free local proof** of this Lambda-container path, [floci.io](https://floci.io/)
+runs **real** AWS/Azure/GCP service emulators locally (MIT-licensed, no credentials,
+~24 ms cold start) — actual Lambda containers, not mocks. Build the LWA image above and
+run it under floci's Lambda emulator to exercise the invocation ⇄ HTTP path end-to-end on
+your machine, with `RQLITE_URL`/`QDRANT_HOST` pointed at local tiers. floci also emulates
+SQS/SNS, Azure Service Bus/Event Hubs, and GCP Pub/Sub, so the outbox → cloud-queue async
+fan-out can be exercised locally too. It is a **dev/test tool**: production async should
+still use the self-hostable NATS JetStream / Kafka path (sovereignty), with floci proving
+the managed-queue deployment variant cheaply.
+
 ### Azure Container Apps
 
 Runs any container image; you declare `targetPort` (set it to **8080**), and the
