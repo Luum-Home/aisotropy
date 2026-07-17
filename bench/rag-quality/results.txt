@@ -1,0 +1,101 @@
+================================================================================
+ aisotropy — RAG retrieval-quality eval (bench/rag-quality)
+================================================================================
+run at         : 2026-07-17T17:04:50-03:00
+duration       : 38ms
+embedder       : HashEmbedder (deterministic feature-hashing — NOT semantic)
+vector dim     : 128
+e5 role prefix : no (query:/passage: asymmetry NOT engaged — non-e5/Hash embedder)
+
+-- dataset -------------------------------------------------------------------
+name           : xquad-multilingual-retrieval-slice
+source         : google/xquad — XQuAD v1.1 (Artetxe, Ruder, Yogatama 2020), validation split
+url            : https://huggingface.co/datasets/google/xquad
+license        : CC-BY-SA-4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
+corpus sizes   : map[en:154 es:154] paragraphs; 800 aligned EN/ES pairs
+
+-- interpretation (HARNESS VALIDATION — NOT SEMANTIC QUALITY) ----------------
+!! This run used the DETERMINISTIC HashEmbedder (feature hashing), NOT a real
+!! model. The numbers below prove the HARNESS runs end-to-end and the metrics
+!! compute correctly. They are LEXICAL-OVERLAP artifacts, NOT the quality of
+!! the multilingual e5 embedder. Expect the cross-lingual slices to score near
+!! zero (a hash embedder shares no lexicon across languages). To measure real
+!! e5 quality, set AISOTROPY_EMBED_BIN + AISOTROPY_EMBED_MODEL_DIR (see -help).
+
+-- results (per slice) -------------------------------------------------------
+slice                N     R@1     R@5    R@10  MRR@10 nDCG@10
+------------------------------------------------------------------------------
+en_monolingual     150   0.300   0.493   0.587   0.371   0.421
+es_monolingual     150   0.260   0.447   0.540   0.342   0.389
+cross_en_to_es     150   0.033   0.133   0.187   0.072   0.099
+cross_es_to_en     150   0.033   0.127   0.200   0.077   0.106
+------------------------------------------------------------------------------
+MACRO-AVG                0.157   0.300   0.378   0.215   0.254
+
+-- slices --------------------------------------------------------------------
+  en_monolingual   en query -> en corpus : English question retrieves its English source paragraph.
+  es_monolingual   es query -> es corpus : Spanish question retrieves its Spanish source paragraph.
+  cross_en_to_es   en query -> es corpus : Cross-lingual: English question retrieves the parallel Spanish paragraph.
+  cross_es_to_en   es query -> en corpus : Cross-lingual: Spanish question retrieves the parallel English paragraph.
+
+The two cross_* slices are the multilingual proof: an EN query must find the
+parallel ES paragraph (and vice-versa) with no lexical overlap to lean on. Only
+an embedder that maps both languages into one shared space scores above chance.
+
+-- optional LLM-judge pass ---------------------------------------------------
+  SKIPPED: ANTHROPIC_API_KEY not set (LLM-judge is optional; objective IR metrics above are unaffected)
+
+-- honest gap (generic public benchmark != aisotropy's real RAG) -------------
+XQuAD is a Wikipedia QA benchmark: clean, single-relevant, professionally
+translated paragraphs. aisotropy's real workload is multi-tenant conversational
+MEMORY — noisy turns, distilled facts, per-user isolation, several relevant
+chunks per query. These numbers measure the EMBEDDER + STORE on a generic task;
+they do NOT yet measure retrieval over aisotropy's own conversational corpus. A
+domain gold set (labeled tenant memories) is the next step. This moves retrieval
+from UNMEASURED to MEASURED on a real, licensed, multilingual benchmark.
+
+-- reproduce -----------------------------------------------------------------
+  # real multilingual-e5-small (sovereign local subprocess):
+  AISOTROPY_EMBED_BIN=crates/embed/target/release/embed \
+  AISOTROPY_EMBED_MODEL_DIR=<dir with config.json+model.safetensors+tokenizer.json> \
+  AISOTROPY_EMBED_DIM=384 AISOTROPY_EMBED_MODE=subprocess AISOTROPY_EMBED_E5_PREFIXES=1 \
+  go run ./bench/rag-quality
+  # deterministic harness validation (no model, no network):
+  go run ./bench/rag-quality
+================================================================================
+
+################################################################################
+# REAL e5 measurement — intfloat/multilingual-e5-small (384-dim), batched
+################################################################################
+# The block ABOVE is the product-path Go harness on the DETERMINISTIC
+# HashEmbedder (harness-validation: proves the pipeline + metrics end-to-end;
+# the cross-lingual near-zero is the expected hash floor).
+#
+# The block BELOW is the SEMANTIC retrieval quality of the real multilingual e5
+# embedder, measured with the SAME crates/embed binary, the SAME pinned e5
+# weights, the SAME query:/passage: prefixes (ADR-0054), and the SAME
+# recall/MRR/nDCG math as internal/eval. Produced by scripts/e5_batch_probe.py,
+# which BATCHES all 603 embeddings into one call so it completes in ~45s on a
+# CPU-only box (the Go harness embeds one query per call — faithful to the
+# product path but ~600 sequential CPU inferences, too slow to finish here).
+# Passages truncated to 900 chars (e5's 512-token cap; the subprocess embed path
+# does not auto-truncate). Dataset: XQuAD EN/ES validation, 150 queries/slice,
+# 154-doc corpora.
+#
+# reproduce:
+#   AISOTROPY_EMBED_MODEL_DIR=<multilingual-e5-small dir> \
+#   python3 bench/rag-quality/scripts/e5_batch_probe.py
+#
+model dim: 384
+slice               N     R@1     R@5    R@10  MRR@10 nDCG@10
+-------------------------------------------------------------
+en_monolingual    150   0.947   1.000   1.000   0.972   0.979
+es_monolingual    150   0.960   0.993   1.000   0.978   0.983
+cross_en_to_es    150   0.887   1.000   1.000   0.941   0.956
+cross_es_to_en    150   0.887   1.000   1.000   0.941   0.956
+-------------------------------------------------------------
+MACRO-AVG               0.920   0.998   1.000   0.958   0.969
+
+# Reading: real e5 does cross-lingual retrieval (R@1 ~0.89) nearly as well as
+# monolingual (R@1 ~0.95); the hash floor above is R@1 ~0.03 cross-lingual.
+# That gap IS the multilingual embedder working.

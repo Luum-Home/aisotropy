@@ -140,13 +140,19 @@ func (j *LLMJudge) systemPrompt() string {
 	return b.String()
 }
 
-// userPrompt lays out the sample under evaluation. Context is included only
-// when present (a standalone criterion may not need it).
+// userPrompt lays out the sample under evaluation. Context and Reference are
+// each included only when present: Context is the grounding a faithfulness
+// judge checks against; Reference is the gold/ideal answer a correctness judge
+// compares against. A criterion whose Description does not mention the
+// reference simply ignores that block, so surfacing it is safe for every judge.
 func (j *LLMJudge) userPrompt(sample EvalSample) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Query:\n%s\n\n", sample.Query)
 	if strings.TrimSpace(sample.Context) != "" {
 		fmt.Fprintf(&b, "Context provided to the model:\n%s\n\n", sample.Context)
+	}
+	if strings.TrimSpace(sample.Reference) != "" {
+		fmt.Fprintf(&b, "Reference (ideal) answer:\n%s\n\n", sample.Reference)
 	}
 	fmt.Fprintf(&b, "Response to evaluate:\n%s", sample.Response)
 	return b.String()

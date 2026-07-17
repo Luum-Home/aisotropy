@@ -1,0 +1,48 @@
+======================================================================
+  aisotropy — END-TO-END ANSWER-QUALITY EVAL
+======================================================================
+question set : answer-quality-generic-smoke-v1 (16 questions)
+serving      : openai  [REAL provider]
+judge        : openai  [REAL provider] (provider-agnostic, eval.JudgeClientFromEnv)
+
+AGGREGATE (means; graded axes on 1..5, higher is better)
+  correctness      : 5.00 / 5   (over 16 scored)
+  helpfulness      : 4.88 / 5
+  faithfulness     : 4.80 / 5   (over 10 grounded questions)
+  refusal rate     : 0/16 (0%)
+  hallucination    : 0/10 (0%)   (grounded questions scoring faithfulness < 0.50)
+  mean latency     : 7811 ms
+
+MEASURED TOKEN SPEND (provider-reported usage)
+  turn (serving)   : in 5708 / out 348
+  judge            : in 25390 / out 1860
+  grand total      : in 31098 / out 2208  (33306 tokens)
+  est. cost        : n/a  (set AISOTROPY_EVAL_IN_PRICE_PER_1M / _OUT_PRICE_PER_1M to estimate $)
+
+PER-QUESTION
+  id                corr  help  faith  ref  hall  lat(ms)  tok(t+j)
+  capital-france    5.00  5.00   5.00   no    no     7167      2250
+  water-boil        5.00  5.00   5.00   no    no    12931      2334
+  photosynthesis    5.00  5.00   5.00   no    no     6735      2327
+  planets-count     5.00  5.00   5.00   no    no     6681      2344
+  speed-light       5.00  5.00   5.00   no    no     6805      2456
+  largest-ocean     5.00  5.00   5.00   no    no     2569      2303
+  human-bones       5.00  5.00   5.00   no    no     6783      2344
+  prime-check       5.00  3.00   5.00   no    no     6646      2330
+  freezing-point    5.00  5.00   5.00   no    no     6677      2285
+  continents        5.00  5.00   3.00   no    no     8349      2378
+  explain-gravity   5.00  5.00    n/a   no     -     6792      1683
+  summarize-recyc…  5.00  5.00    n/a   no     -     8911      1644
+  define-algorithm  5.00  5.00    n/a   no     -    17336      1630
+  advice-sleep      5.00  5.00    n/a   no     -     6794      1621
+  explain-rainbow   5.00  5.00    n/a   no     -     6813      1681
+  compare-cpu-gpu   5.00  5.00    n/a   no     -     6989      1696
+
+----------------------------------------------------------------------
+GENERIC vs DOMAIN — read this before trusting a number:
+  The bundled generic set is a WIRING SMOKE. Generic ≠ your domain.
+  The ONLY numbers that reflect production quality come from running
+  this harness on YOUR OWN domain Q&A: copy testdata/domain.example.json,
+  fill it with your real questions (and ideal answers / context docs),
+  and run with  -data your-domain.json .
+----------------------------------------------------------------------

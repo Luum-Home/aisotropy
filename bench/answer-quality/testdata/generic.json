@@ -1,0 +1,110 @@
+{
+  "name": "answer-quality-generic-smoke-v1",
+  "description": "A small GENERIC general-knowledge question set authored for this harness. Its ONLY purpose is to prove the end-to-end pipeline + LLM-as-a-judge wiring runs (turn -> answer -> graded). It is NOT a measure of any adopter's real answer quality. Some questions carry context_docs (short, self-authored, public-domain facts) so the faithfulness/hallucination axes are exercised; some carry ideal_answer so the correctness axis compares against a target. Generic != your domain: copy testdata/domain.example.json and run this harness on your OWN Q&A for numbers that mean anything.",
+  "questions": [
+    {
+      "id": "capital-france",
+      "question": "What is the capital of France?",
+      "ideal_answer": "Paris.",
+      "context_docs": [
+        { "id": "france", "text": "France is a country in Western Europe. Its capital and largest city is Paris.", "source": "generic-facts" }
+      ]
+    },
+    {
+      "id": "water-boil",
+      "question": "At what temperature does water boil at sea level, in Celsius?",
+      "ideal_answer": "100 degrees Celsius.",
+      "context_docs": [
+        { "id": "boiling", "text": "At standard atmospheric pressure (sea level), pure water boils at 100 degrees Celsius (212 degrees Fahrenheit).", "source": "generic-facts" }
+      ]
+    },
+    {
+      "id": "photosynthesis",
+      "question": "What gas do plants primarily absorb from the air during photosynthesis?",
+      "ideal_answer": "Carbon dioxide.",
+      "context_docs": [
+        { "id": "photo", "text": "During photosynthesis, plants absorb carbon dioxide from the air and release oxygen. They use sunlight to convert carbon dioxide and water into glucose.", "source": "generic-facts" }
+      ]
+    },
+    {
+      "id": "planets-count",
+      "question": "How many planets are in our solar system?",
+      "ideal_answer": "Eight.",
+      "context_docs": [
+        { "id": "solar", "text": "The solar system has eight recognized planets: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, and Neptune. Pluto was reclassified as a dwarf planet in 2006.", "source": "generic-facts" }
+      ]
+    },
+    {
+      "id": "speed-light",
+      "question": "Roughly how fast does light travel in a vacuum?",
+      "ideal_answer": "About 300,000 kilometers per second (299,792 km/s).",
+      "context_docs": [
+        { "id": "light", "text": "The speed of light in a vacuum is approximately 299,792 kilometers per second, often rounded to 300,000 km/s.", "source": "generic-facts" }
+      ]
+    },
+    {
+      "id": "largest-ocean",
+      "question": "What is the largest ocean on Earth?",
+      "ideal_answer": "The Pacific Ocean.",
+      "context_docs": [
+        { "id": "oceans", "text": "The Pacific Ocean is the largest and deepest of Earth's five oceans, covering more area than all the land on the planet combined.", "source": "generic-facts" }
+      ]
+    },
+    {
+      "id": "human-bones",
+      "question": "How many bones does an adult human body typically have?",
+      "ideal_answer": "206 bones.",
+      "context_docs": [
+        { "id": "bones", "text": "An adult human skeleton typically has 206 bones. Babies are born with around 270, some of which fuse together as they grow.", "source": "generic-facts" }
+      ]
+    },
+    {
+      "id": "prime-check",
+      "question": "Is 7 a prime number?",
+      "ideal_answer": "Yes, 7 is prime.",
+      "context_docs": [
+        { "id": "primes", "text": "A prime number is a whole number greater than 1 whose only divisors are 1 and itself. 7 is prime; its only divisors are 1 and 7.", "source": "generic-facts" }
+      ]
+    },
+    {
+      "id": "freezing-point",
+      "question": "What is the freezing point of water in Fahrenheit?",
+      "ideal_answer": "32 degrees Fahrenheit.",
+      "context_docs": [
+        { "id": "freezing", "text": "Water freezes at 0 degrees Celsius, which equals 32 degrees Fahrenheit, at standard pressure.", "source": "generic-facts" }
+      ]
+    },
+    {
+      "id": "continents",
+      "question": "How many continents are there?",
+      "ideal_answer": "Seven.",
+      "context_docs": [
+        { "id": "continents-doc", "text": "There are seven continents: Africa, Antarctica, Asia, Europe, North America, Oceania (Australia), and South America.", "source": "generic-facts" }
+      ]
+    },
+    {
+      "id": "explain-gravity",
+      "question": "In one or two sentences, explain what gravity is to a curious beginner."
+    },
+    {
+      "id": "summarize-recycling",
+      "question": "Briefly, why is recycling considered helpful for the environment?"
+    },
+    {
+      "id": "define-algorithm",
+      "question": "What is an algorithm, in plain language?"
+    },
+    {
+      "id": "advice-sleep",
+      "question": "What are two simple, commonly recommended habits for better sleep?"
+    },
+    {
+      "id": "explain-rainbow",
+      "question": "Why do rainbows appear after rain? Keep it short."
+    },
+    {
+      "id": "compare-cpu-gpu",
+      "question": "In one sentence each, what is the difference between a CPU and a GPU?"
+    }
+  ]
+}

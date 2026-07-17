@@ -78,6 +78,42 @@ func TestF1(t *testing.T) {
 	}
 }
 
+func TestNDCGAtK(t *testing.T) {
+	// log2(2)=1, log2(3)~1.585, log2(4)=2. With one relevant item, IDCG=1, so
+	// nDCG == the discount at the hit's rank; with multiple, it normalizes
+	// against the ideal packing.
+	log2 := func(x float64) float64 { return math.Log2(x) }
+	tests := []struct {
+		name      string
+		retrieved []string
+		relevant  []string
+		k         int
+		want      float64
+	}{
+		{"single relevant at rank 1", []string{"a", "x"}, []string{"a"}, 3, 1.0},
+		{"single relevant at rank 2", []string{"x", "a"}, []string{"a"}, 3, 1 / log2(3)},
+		{"single relevant at rank 3", []string{"x", "y", "a"}, []string{"a"}, 3, 1 / log2(4)},
+		{"miss below cutoff", []string{"x", "y", "z", "a"}, []string{"a"}, 3, 0.0},
+		{"all relevant ideal order", []string{"a", "b"}, []string{"a", "b"}, 2, 1.0},
+		{
+			// DCG = 1/log2(2) + 1/log2(4) = 1 + 0.5; IDCG = 1/log2(2) + 1/log2(3).
+			"two relevant, one interleaved",
+			[]string{"a", "x", "b"}, []string{"a", "b"}, 3,
+			(1 + 1/log2(4)) / (1 + 1/log2(3)),
+		},
+		{"dedup does not double-count", []string{"a", "a"}, []string{"a"}, 2, 1.0},
+		{"empty relevant set", []string{"a"}, nil, 3, 0.0},
+		{"k=0 is zero", []string{"a"}, []string{"a"}, 0, 0.0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NDCGAtK(tt.retrieved, tt.relevant, tt.k); !almostEqual(got, tt.want) {
+				t.Fatalf("NDCGAtK = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMRR(t *testing.T) {
 	tests := []struct {
 		name      string

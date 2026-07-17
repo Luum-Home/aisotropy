@@ -1,5 +1,7 @@
 package eval
 
+import "math"
+
 // Retrieval metrics — pure, deterministic, model-free (step 1 of the pipeline:
 // evaluate the RETRIEVER component on its own terms). Each function takes the
 // ordered list of retrieved IDs (rank 1 first) and the labeled set of relevant
@@ -87,6 +89,54 @@ func F1(precision, recall float64) float64 {
 		return 0
 	}
 	return 2 * precision * recall / (precision + recall)
+}
+
+// NDCGAtK is the Normalized Discounted Cumulative Gain over the top k, with
+// BINARY relevance (an id is relevant with gain 1, or irrelevant with gain 0 —
+// the labeling this harness's gold sets carry). It rewards a retriever for
+// placing relevant items EARLY, not merely for including them: the gain at rank
+// r (1-based) is discounted by 1/log2(r+1), so rank 1 is worth 1.0, rank 2 ~0.63,
+// rank 3 ~0.5, etc.
+//
+//	DCG@k  = Σ over the top-k ranks r whose id is relevant of 1/log2(r+1)
+//	IDCG@k = the DCG of the ideal ordering (all relevant items packed at the top),
+//	         i.e. Σ_{r=1..min(k, #relevant)} 1/log2(r+1)
+//	nDCG@k = DCG@k / IDCG@k, in [0,1]
+//
+// It complements RecallAtK (which is order-blind within the cutoff) and MRR
+// (which only sees the FIRST hit): nDCG credits every relevant item AND its
+// position, so it is the right primary number when a query can have several
+// relevant passages. `retrieved` is deduped first-seen exactly like the other
+// @k metrics. An empty relevant set — nothing ideal to normalize against —
+// returns 0, never a divide-by-zero. k <= 0 returns 0.
+func NDCGAtK(retrieved, relevant []string, k int) float64 {
+	if k <= 0 {
+		return 0
+	}
+	rel := idSet(relevant)
+	if len(rel) == 0 {
+		return 0
+	}
+
+	var dcg float64
+	for i, id := range dedupTopK(retrieved, k) {
+		if _, ok := rel[id]; ok {
+			dcg += 1 / math.Log2(float64(i+2)) // rank r = i+1 ⇒ log2(r+1) = log2(i+2)
+		}
+	}
+
+	ideal := len(rel)
+	if ideal > k {
+		ideal = k
+	}
+	var idcg float64
+	for r := 1; r <= ideal; r++ {
+		idcg += 1 / math.Log2(float64(r+1))
+	}
+	if idcg == 0 {
+		return 0
+	}
+	return dcg / idcg
 }
 
 // MRR returns the reciprocal rank of the FIRST relevant item in the ranked

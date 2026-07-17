@@ -65,10 +65,21 @@ func (r Rubric) render() string {
 // retrieved/assembled for the model (the grounding a faithfulness judge checks
 // against), and the model's Response. Context may be empty for criteria that
 // do not need it (e.g. a standalone safety check).
+//
+// Reference is an OPTIONAL gold/ideal answer: the target a correctness judge
+// compares the Response against. It is deliberately distinct from Context — the
+// grounding a faithfulness judge checks — so the two axes never contaminate
+// each other (mixing a reference answer into Context would let a faithfulness
+// judge treat the answer key as retrieved evidence). Empty Reference means
+// "no gold answer for this case"; a correctness judge then scores on general
+// correctness rather than against a target. It is shown to an LLMJudge only
+// when present, and — like Expected — is never fed to a judge that would leak
+// it into an unrelated axis.
 type EvalSample struct {
-	Query    string
-	Context  string
-	Response string
+	Query     string
+	Context   string
+	Response  string
+	Reference string
 }
 
 // EvalCase is one sample plus optional labels — the expected score per

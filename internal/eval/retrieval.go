@@ -32,6 +32,10 @@ type RetrievalResult struct {
 	Recall       float64
 	F1           float64
 	MRR          float64
+	// NDCG is the case's Normalized Discounted Cumulative Gain at cutoff k
+	// (binary relevance) — position-aware, so it captures ranking quality the
+	// order-blind Recall and single-hit MRR miss. See NDCGAtK.
+	NDCG float64
 }
 
 // RetrievalReport is the aggregate over every case, at cutoff k. The Mean*
@@ -45,6 +49,9 @@ type RetrievalReport struct {
 	MeanRecall    float64
 	MeanF1        float64
 	MeanMRR       float64
+	// MeanNDCG is the arithmetic mean of each case's nDCG@k — the aggregate
+	// ranking-quality number for the suite.
+	MeanNDCG float64
 }
 
 // EvalRetrieval runs each case through store.Search within scope sc, embeds
@@ -68,14 +75,21 @@ func EvalRetrieval(ctx context.Context, store semantic.Store, sc semantic.Scope,
 	}
 
 	report := RetrievalReport{K: k, Cases: make([]RetrievalResult, 0, len(cases))}
-	var sumP, sumR, sumF1, sumMRR float64
+	var sumP, sumR, sumF1, sumMRR, sumNDCG float64
 
 	for _, c := range cases {
 		if err := ctx.Err(); err != nil {
 			return RetrievalReport{}, err
 		}
 
-		vecs, err := emb.Embed(ctx, []string{c.Query})
+		// Embed the query with the e5 "query: " role (ADR-0054) via the shared
+		// choke point: on an e5 RoleEmbedder it applies the query prefix so the
+		// search matches a "passage: "-prefixed corpus (the very asymmetry e5 is
+		// trained on); on a non-e5/Hash embedder EmbedQuery degrades to a plain
+		// Embed, so this is byte-identical for the deterministic test embedder and
+		// strictly correct for the real one — measuring the retriever the way
+		// production (chat_stream's hydrateSystemPrompt) actually queries it.
+		vecs, err := semantic.EmbedQuery(ctx, emb, []string{c.Query})
 		if err != nil {
 			return RetrievalReport{}, fmt.Errorf("eval: embed query for case %q: %w", c.Name, err)
 		}
@@ -97,6 +111,7 @@ func EvalRetrieval(ctx context.Context, store semantic.Store, sc semantic.Scope,
 		r := RecallAtK(retrieved, c.RelevantIDs, k)
 		f1 := F1(p, r)
 		mrr := MRR(retrieved, c.RelevantIDs)
+		ndcg := NDCGAtK(retrieved, c.RelevantIDs, k)
 
 		report.Cases = append(report.Cases, RetrievalResult{
 			Case:         c,
@@ -105,11 +120,13 @@ func EvalRetrieval(ctx context.Context, store semantic.Store, sc semantic.Scope,
 			Recall:       r,
 			F1:           f1,
 			MRR:          mrr,
+			NDCG:         ndcg,
 		})
 		sumP += p
 		sumR += r
 		sumF1 += f1
 		sumMRR += mrr
+		sumNDCG += ndcg
 	}
 
 	if n := float64(len(report.Cases)); n > 0 {
@@ -117,6 +134,7 @@ func EvalRetrieval(ctx context.Context, store semantic.Store, sc semantic.Scope,
 		report.MeanRecall = sumR / n
 		report.MeanF1 = sumF1 / n
 		report.MeanMRR = sumMRR / n
+		report.MeanNDCG = sumNDCG / n
 	}
 
 	return report, nil

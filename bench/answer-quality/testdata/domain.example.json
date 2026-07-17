@@ -1,0 +1,32 @@
+{
+  "name": "REPLACE-ME-with-your-domain-name",
+  "description": "TEMPLATE — copy this file, rename it (e.g. my-domain.json), and fill `questions` with YOUR real domain Q&A. This is the ONLY input that produces answer-quality numbers reflecting YOUR production system; the bundled generic set is a wiring smoke, not a measure of your domain. Run it with:  go run ./bench/answer-quality -data ./my-domain.json -n 50 . Each question needs `question`; `ideal_answer` and `context_docs` are optional but strongly recommended — `ideal_answer` lets the correctness judge compare against a gold target, and `context_docs` are seeded into the memory tier so the turn's real retrieval can ground the answer AND the faithfulness/hallucination axes can be scored.",
+  "questions": [
+    {
+      "id": "example-1-fully-specified",
+      "question": "Ask a real question your users actually ask.",
+      "ideal_answer": "The gold/ideal answer you would accept as correct (substance, not exact wording). Omit if you have no reference answer.",
+      "context_docs": [
+        {
+          "id": "doc-1",
+          "text": "Paste the actual knowledge-base text/passage the answer should be grounded in. The harness seeds this into the memory tier so retrieval can surface it, and the faithfulness judge checks the answer against it.",
+          "source": "handbook-section-3.2"
+        },
+        {
+          "id": "doc-2",
+          "text": "You can attach multiple documents. Only documents relevant to a given question need to be attached to that question.",
+          "source": "faq"
+        }
+      ]
+    },
+    {
+      "id": "example-2-question-and-ideal-only",
+      "question": "A question where you have a gold answer but no single source document.",
+      "ideal_answer": "The answer you expect. Correctness and helpfulness are scored; faithfulness is skipped (no context to check against)."
+    },
+    {
+      "id": "example-3-question-only",
+      "question": "A question with no reference answer and no context. Correctness is judged against the query alone; helpfulness is still scored; faithfulness is skipped."
+    }
+  ]
+}
