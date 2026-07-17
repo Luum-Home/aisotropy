@@ -839,10 +839,14 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 		}
 	}
 
-	guardrailsG := guardrails.Default()
+	// The Detector optionally layers the opt-in multilingual model scanner
+	// (ADR-0052/0057) behind the regex detector via AISOTROPY_GUARDRAIL_MODEL_BIN;
+	// unset ⇒ DetectorFromEnv() == NewDetector(), byte-for-byte the prior default.
+	guardDetector := guardrails.DetectorFromEnv()
+	guardrailsG := guardrails.New(guardrails.Config{Detector: guardDetector})
 	if len(outputChecks) > 0 {
 		inspector := guardrails.NewOutputInspector(nil).WithChecks(outputChecks...)
-		guardrailsG = guardrails.New(guardrails.Config{Output: inspector})
+		guardrailsG = guardrails.New(guardrails.Config{Detector: guardDetector, Output: inspector})
 	}
 
 	// One process-wide aggregator threaded into every chat handler. The block
@@ -995,6 +999,15 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 
 	router := chi.NewRouter()
+	// Opt-in CORS (AISOTROPY_CORS_ALLOWED_ORIGINS): installed as the OUTERMOST
+	// middleware so a browser preflight (OPTIONS) is answered and short-circuited
+	// here — before the /v1 auth gate and before any route — and so the
+	// Access-Control-Allow-Origin header lands on EVERY response, including the
+	// SSE (text/event-stream) streams. Secure default: with the env var unset the
+	// allowlist is empty and this is a pass-through emitting no CORS headers
+	// (same-origin only); it never reflects "*". See cors.go and
+	// docs/deployment/reverse-proxy.md.
+	router.Use(newCORSMiddleware(corsAllowlistFromEnv()))
 	router.Use(middleware.RequestID)
 	// Access audit runs just inside RequestID (so the correlation id is set) and
 	// OUTSIDE Recoverer, so a request whose handler panics is still audited — the
@@ -1160,7 +1173,11 @@ func (a *App) Run(ctx context.Context) error {
 	// WithTypedTool[T]. Preferred over the map executor for any tool it owns; nil
 	// handlers => an executor that owns nothing, so behavior is unchanged.
 	typedExecutor := api.NewTypedToolExecutor(rt.typedHandlers)
-	api.RegisterAgent(humaAPI, rt.client, rt.toolRegistry, rt.executor, typedExecutor, rt.frictionDetector, rt.tracerProvider, agentMaxSteps, rt.guard)
+	// Close the primitives self-improvement read loop (ADR-0053 follow-on): the
+	// agent handler overlays each (tenant,user)'s friction-rewritten tool guidance
+	// onto the base tool metadata. nil-safe — with no store the behavior is
+	// byte-for-byte unchanged.
+	api.RegisterAgent(humaAPI, rt.client, rt.toolRegistry, rt.executor, typedExecutor, rt.frictionDetector, rt.tracerProvider, agentMaxSteps, rt.guard, rt.frictionDetector.Store())
 
 	server := &http.Server{
 		Addr:    addr,
