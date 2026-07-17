@@ -16,9 +16,9 @@ then thicken each layer.
 
 - [OKRs](okrs.md) — Measurable Objectives and Key Results by phase.
 - [Milestones](milestones.md) — Breakdown by phase with "done" criteria.
-- [Adoption learnings](adoption-learnings.md) — what the first external adopter (the first external adopter /
-  adopter-app) validated and the evidence-driven generic gaps it revealed (frontend adapters, `WithDevUI`,
-  a scaffold, a grounded-output check). Roadmap items that map to what a real dev hand-rolled.
+- [Adoption learnings](adoption-learnings.md) — what the first external adopter validated and the
+  evidence-driven generic gaps it revealed (frontend adapters, `WithDevUI`, a scaffold, a
+  grounded-output check). Roadmap items that map to what a real dev hand-rolled.
 
 > **Global status (2026-07-14):** Phases 0–7 implemented and Phase 8 (public adoption surface)
 > shipped; Phase 9 (composition surface) partially delivered. The per-phase "done" criteria and
