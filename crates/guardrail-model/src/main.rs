@@ -37,13 +37,29 @@
 //! point `AISOTROPY_GUARDRAIL_MODEL_DIR` at a copyleft/source-available model.
 //!
 //! ## Contract (mirrors crates/embed, so the Go seam is a near-copy)
-//!   argv:   --input <requests.ndjson> --output <results.ndjson>
-//!   input:  {"id":"...","text":"...","hypothesis":"..."}  (hypothesis optional)
-//!   output: {"id":"...","score":F,"label":"injection|benign","suspicious":B,
-//!            "model_id":"<model>@<rev>"}
-//!   stdout: {"scored":N,"model_id":"...","threshold":T,"backend":"NLI_REAL"} (final line)
+//!   BATCH mode:
+//!     argv:   --input <requests.ndjson> --output <results.ndjson>
+//!     input:  {"id":"...","text":"...","hypothesis":"..."}  (hypothesis optional)
+//!     output: {"id":"...","score":F,"label":"injection|benign","suspicious":B,
+//!              "model_id":"<model>@<rev>"}
+//!     stdout: {"scored":N,"model_id":"...","threshold":T,"backend":"NLI_REAL"} (final line)
+//!   SERVE mode (warm daemon, T1 — mirrors crates/embed's `--serve`):
+//!     argv:   --serve
+//!     stdin:  one NDJSON request line per classification (same schema as batch input)
+//!     stdout: one NDJSON result row per line, flushed after each so a Go caller
+//!             (DaemonScanner) can round-trip synchronously over the pipe.
 //!   exit:   0 = ok; non-zero = failure (reason on stderr — a panic surfaces to
-//!           Go as a non-zero exit, where ModelScanner FAILS OPEN).
+//!           Go as a non-zero exit, where the scanner FAILS OPEN).
+//!
+//! ## Why `--serve` exists (T1: productionize the ADR-0052 PoC)
+//!
+//! ADR-0052 shipped the cold `--input/--output` PoC: every classification spawned
+//! a fresh process and RE-LOADED the mDeBERTa weights (~hundreds of MB) before
+//! scoring a single line. That is fine for a batch job but is a per-request tax
+//! for an inline guardrail on the chat path. `--serve` loads the model ONCE and
+//! then services requests over a pipe, exactly as crates/embed's DaemonEmbedder
+//! does for the semantic tier — the same fix, the same shape. The batch path is
+//! unchanged, so existing callers are unaffected.
 //!
 //! Model dir (config.json + model.safetensors + tokenizer.json) is resolved from
 //! `AISOTROPY_GUARDRAIL_MODEL_DIR`. Weights DOWNLOAD on first provisioning (a
@@ -124,6 +140,19 @@ fn verdict(score: f32, threshold: f32) -> (&'static str, bool) {
 // Model.
 // ---------------------------------------------------------------------------
 
+/// Remap one safetensors tensor key from the HF sequence-classification export
+/// layout to the layout candle's `DebertaV2SeqClassificationModel::load` expects
+/// (T1 loader fix). The HF checkpoint prefixes every BASE-model tensor with
+/// `deberta.` (e.g. `deberta.embeddings.word_embeddings.weight`) while leaving the
+/// task head (`pooler.*`, `classifier.*`) at the root; candle wants the base model
+/// at the root too. Stripping a single leading `deberta.` where present does
+/// exactly that and leaves the already-root head tensors untouched. Pure and
+/// unit-tested so the mapping cannot silently regress (the original bug was
+/// invisible precisely because the model was never loaded in CI).
+fn remap_base_key(key: &str) -> &str {
+    key.strip_prefix("deberta.").unwrap_or(key)
+}
+
 fn load_config(dir: &Path) -> Result<Config, String> {
     let raw = std::fs::read_to_string(dir.join("config.json"))
         .map_err(|e| format!("read config.json: {e}"))?;
@@ -148,12 +177,33 @@ impl Classifier {
 
         let device = Device::Cpu;
         let st = dir.join("model.safetensors");
-        // from_mmaped_safetensors is unsafe (mmaps the file); the file is a
-        // pinned local artifact, never a remote/untrusted stream.
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(std::slice::from_ref(&st), DType::F32, &device)
-                .map_err(|e| format!("load safetensors {}: {e}", st.display()))?
-        };
+
+        // Tensor-name remap (the fix that makes the REAL checkpoint load — T1).
+        // candle's DebertaV2SeqClassificationModel::load expects the base-model
+        // tensors at the ROOT (`embeddings.*`, `encoder.*`), with `pooler.*` and
+        // `classifier.*` also at root. But the HF sequence-classification export
+        // `MoritzLaurer/mDeBERTa-v3-base-mnli-xnli` prefixes every base-model
+        // tensor with `deberta.` (e.g. `deberta.embeddings.word_embeddings.weight`)
+        // while leaving pooler/classifier at root. Loading it verbatim fails with
+        // "cannot find tensor embeddings.word_embeddings.weight". We therefore load
+        // the tensors, strip a single leading `deberta.` where present (leaving the
+        // already-root pooler/classifier untouched), normalize to F32, and build a
+        // VarBuilder from the remapped map. This is a safe API (no mmap/unsafe) and
+        // costs one in-memory load, paid once at daemon start — exactly the warm
+        // path's design point.
+        let raw = candle_core::safetensors::load(&st, &device)
+            .map_err(|e| format!("load safetensors {}: {e}", st.display()))?;
+        let mut tensors: std::collections::HashMap<String, Tensor> =
+            std::collections::HashMap::with_capacity(raw.len());
+        for (k, v) in raw {
+            let key = remap_base_key(&k).to_string();
+            let v = v
+                .to_dtype(DType::F32)
+                .map_err(|e| format!("cast tensor {key} to f32: {e}"))?;
+            tensors.insert(key, v);
+        }
+        let vb = VarBuilder::from_tensors(tensors, DType::F32, &device);
+
         let model = DebertaV2SeqClassificationModel::load(vb, &cfg, Some(id2label))
             .map_err(|e| format!("build debertav2 seq-classification model: {e}"))?;
         let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json"))
@@ -290,11 +340,43 @@ fn score_row_json(clf: &Classifier, raw: &str, thresh: f32) -> Result<String, St
     serde_json::to_string(&row).map_err(|e| format!("encode result: {e}"))
 }
 
+/// Long-lived daemon mode (`--serve`, T1 warm path — mirrors crates/embed's
+/// `serve`): the model is already loaded ONCE by `run`, so here we only read
+/// NDJSON requests from stdin line-by-line and write one result row per line to
+/// stdout, flushing after each so a Go caller (DaemonScanner) can round-trip
+/// synchronously over the pipe. An empty line is skipped. A malformed request
+/// line is a hard error (non-zero exit) — the Go side tears the daemon down and
+/// respawns, so the pipe is never left half-drained. The batch `--input/--output`
+/// path is unchanged; the two modes are mutually exclusive.
+fn serve(clf: &Classifier, thresh: f32) -> Result<(), String> {
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    for line in stdin.lock().lines() {
+        let line = line.map_err(|e| format!("read stdin: {e}"))?;
+        let raw = line.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let js = score_row_json(clf, raw, thresh)?;
+        writeln!(out, "{js}").map_err(|e| format!("write stdout: {e}"))?;
+        out.flush().map_err(|e| format!("flush stdout: {e}"))?;
+    }
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
+    // The model load is common to both modes; do it once up front so `--serve`
+    // pays it exactly once (the whole point of the warm daemon path).
     let dir = resolve_model_dir()?;
     let mid = model_id();
     let thresh = threshold();
     let clf = Classifier::new(&dir, mid.clone())?;
+
+    // Serve mode is mutually exclusive with batch --input/--output.
+    if env::args().any(|a| a == "--serve") {
+        return serve(&clf, thresh);
+    }
 
     let input = flag("--input").ok_or_else(|| "missing --input".to_string())?;
     let output = flag("--output").ok_or_else(|| "missing --output".to_string())?;
@@ -340,6 +422,24 @@ fn main() {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn remap_base_key_strips_only_leading_deberta_prefix() {
+        // Base-model tensors get `deberta.` stripped so candle finds them at root.
+        assert_eq!(
+            remap_base_key("deberta.embeddings.word_embeddings.weight"),
+            "embeddings.word_embeddings.weight"
+        );
+        assert_eq!(
+            remap_base_key("deberta.encoder.rel_embeddings.weight"),
+            "encoder.rel_embeddings.weight"
+        );
+        // Task-head tensors are already at root and MUST be left untouched.
+        assert_eq!(remap_base_key("classifier.weight"), "classifier.weight");
+        assert_eq!(remap_base_key("pooler.dense.bias"), "pooler.dense.bias");
+        // Only a LEADING prefix is stripped (never an interior occurrence).
+        assert_eq!(remap_base_key("encoder.deberta.foo"), "encoder.deberta.foo");
+    }
 
     #[test]
     fn softmax_sums_to_one_and_orders() {

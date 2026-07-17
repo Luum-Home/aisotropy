@@ -259,15 +259,33 @@ func TestModelScannerFromEnvBinWithoutModelDirDisabled(t *testing.T) {
 	}
 }
 
-func TestModelScannerFromEnvEnabled(t *testing.T) {
+// TestModelScannerFromEnvEnabledDefaultsToDaemon: with the feature enabled and
+// no mode override, the T1 warm DaemonScanner is selected (model loaded once),
+// not the ADR-0052 cold per-call subprocess.
+func TestModelScannerFromEnvEnabledDefaultsToDaemon(t *testing.T) {
 	t.Setenv(envModelBin, "/some/guardrail-model")
 	t.Setenv(envModelDir, "/some/model")
 	sc, ok := ModelScannerFromEnv()
 	if !ok || sc == nil {
 		t.Fatalf("with both bin and dir set the scanner must be enabled, got (%v,%v)", sc, ok)
 	}
+	if _, isDaemon := sc.(*DaemonScanner); !isDaemon {
+		t.Errorf("default mode should yield the warm *DaemonScanner, got %T", sc)
+	}
+}
+
+// TestModelScannerFromEnvSubprocessMode: the explicit "subprocess" mode opts back
+// into the cold per-call ModelScanner (the ADR-0052 form).
+func TestModelScannerFromEnvSubprocessMode(t *testing.T) {
+	t.Setenv(envModelBin, "/some/guardrail-model")
+	t.Setenv(envModelDir, "/some/model")
+	t.Setenv(envModelMode, "subprocess")
+	sc, ok := ModelScannerFromEnv()
+	if !ok || sc == nil {
+		t.Fatalf("subprocess mode must still enable the scanner, got (%v,%v)", sc, ok)
+	}
 	if _, isModel := sc.(*ModelScanner); !isModel {
-		t.Errorf("expected *ModelScanner, got %T", sc)
+		t.Errorf("expected the cold *ModelScanner in subprocess mode, got %T", sc)
 	}
 }
 

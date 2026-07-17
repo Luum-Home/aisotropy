@@ -23,9 +23,14 @@ const (
 	// envModelHypothesis overrides the zero-shot NLI hypothesis the premise is
 	// scored against.
 	envModelHypothesis = "AISOTROPY_GUARDRAIL_HYPOTHESIS"
+	// envModelMode selects the worker form when the scanner is enabled: "" or
+	// "daemon" -> DaemonScanner (one warm process, model loaded once — the T1
+	// production path); "subprocess" -> ModelScanner (a fresh process per call,
+	// the ADR-0052 cold PoC, panic-isolated). Mirrors AISOTROPY_EMBED_MODE.
+	envModelMode = "AISOTROPY_GUARDRAIL_MODEL_MODE"
 )
 
-// ModelScannerFromEnv builds the opt-in multilingual ModelScanner from the
+// ModelScannerFromEnv builds the opt-in multilingual model scanner from the
 // environment, or reports that it is disabled.
 //
 // It returns (scanner, true) only when AISOTROPY_GUARDRAIL_MODEL_BIN is set AND
@@ -34,6 +39,10 @@ const (
 // warning (only when the operator clearly intended to enable it, i.e. the bin
 // was set), so callers deterministically fall back to the regex-only Detector.
 // It never fails closed on a misconfigured scanner.
+//
+// AISOTROPY_GUARDRAIL_MODEL_MODE selects the worker form (T1): "" or "daemon"
+// yields a warm DaemonScanner (model loaded once — the production default);
+// "subprocess" yields the ADR-0052 cold ModelScanner (a fresh process per call).
 func ModelScannerFromEnv() (InputScanner, bool) {
 	bin := os.Getenv(envModelBin)
 	if bin == "" {
@@ -44,18 +53,35 @@ func ModelScannerFromEnv() (InputScanner, bool) {
 		slog.Warn("guardrails: "+envModelBin+" set without "+envModelDir+"; multilingual scanner disabled", "bin", bin)
 		return nil, false
 	}
-	cfg := ModelScannerConfig{
+	hypothesis := os.Getenv(envModelHypothesis)
+	threshold := thresholdFromEnv()
+
+	if os.Getenv(envModelMode) == "subprocess" {
+		sc, err := NewModelScanner(ModelScannerConfig{
+			BinPath:    bin,
+			ModelDir:   modelDir,
+			Hypothesis: hypothesis,
+			Threshold:  threshold,
+		})
+		if err != nil {
+			slog.Warn("guardrails: failed to build (subprocess) model scanner from env; disabled", "error", err)
+			return nil, false
+		}
+		slog.Info("guardrails: multilingual model scanner enabled", "bin", bin, "model_dir", modelDir, "mode", "subprocess")
+		return sc, true
+	}
+
+	sc, err := NewDaemonScanner(DaemonScannerConfig{
 		BinPath:    bin,
 		ModelDir:   modelDir,
-		Hypothesis: os.Getenv(envModelHypothesis),
-		Threshold:  thresholdFromEnv(),
-	}
-	sc, err := NewModelScanner(cfg)
+		Hypothesis: hypothesis,
+		Threshold:  threshold,
+	})
 	if err != nil {
-		slog.Warn("guardrails: failed to build multilingual model scanner from env; disabled", "error", err)
+		slog.Warn("guardrails: failed to build (daemon) model scanner from env; disabled", "error", err)
 		return nil, false
 	}
-	slog.Info("guardrails: multilingual model scanner enabled", "bin", bin, "model_dir", modelDir)
+	slog.Info("guardrails: multilingual model scanner enabled", "bin", bin, "model_dir", modelDir, "mode", "daemon")
 	return sc, true
 }
 
