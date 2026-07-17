@@ -2,6 +2,12 @@ module github.com/Luum-Home/aisotropy
 
 go 1.25.1
 
+// Build with a patched toolchain: go1.26.5 fixes the reachable stdlib CVEs
+// GO-2026-5037 (crypto/x509), GO-2026-5039 (net/textproto), GO-2026-5856 (crypto/tls),
+// surfaced by the govulncheck pre-push gate (scripts/supply-chain-guard.sh). The `go`
+// language floor stays 1.25.1; GOTOOLCHAIN=auto fetches go1.26.5 to build.
+toolchain go1.26.5
+
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/anthropics/anthropic-sdk-go v1.56.0

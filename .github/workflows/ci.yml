@@ -40,7 +40,7 @@ jobs:
       - name: gofmt (promoted packages)
         # The format gate is scoped to the same set the coverage floor covers:
         # internal/..., aisotropy/, cmd/aisotropy/. Thin demo/bench mains
-        # (cmd/embed-bench, cmd/x, ...) carry pre-existing gofmt debt (ADR-131)
+        # (cmd/embed-bench, cmd/x, ...) carry pre-existing gofmt debt
         # and are excluded from both gates until formatted. Ratchet goal: extend
         # this to `gofmt -l .` once the excluded mains are clean.
         run: |

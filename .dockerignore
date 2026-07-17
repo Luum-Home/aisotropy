@@ -25,3 +25,13 @@ bench/
 # Container/build artifacts that should never be baked into the context
 Dockerfile
 .dockerignore
+
+# Secrets must never enter the build context — a COPY . . in any builder stage
+# would otherwise bake them into an image layer (recoverable even after a later
+# stage "removes" them). Belt-and-suspenders with the secret-scanning gate in
+# scripts/supply-chain-guard.sh. See docs/deployment/supply-chain.md.
+.env
+.env.*
+*.pem
+*.key
+*secret*
