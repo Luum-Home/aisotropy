@@ -1,0 +1,117 @@
+---
+type: Concept
+title: Reverse proxy — keeping SSE token streaming alive end-to-end
+description: aisotropyd serves plain HTTP and expects an external ingress to terminate TLS. This documents how to front it with Caddy (streams by default) or nginx (needs proxy_buffering off, but the X-Accel-Buffering:no header aisotropyd now emits makes it stream even at nginx defaults), the reference configs under deploy/proxy/, and the executable end-to-end proof under test/proxy/ — including the measured before/after finding that the native /chat/stream route was not proxy-safe until the sseAntiBuffering middleware landed.
+tags: [deployment, reverse-proxy, sse, streaming, nginx, caddy, x-accel-buffering, buffering]
+timestamp: 2026-07-17T00:00:00Z
+---
+
+# Reverse proxy — keeping SSE token streaming alive
+
+`aisotropyd` serves **plain HTTP** on `:8080` and expects an external ingress to terminate TLS
+(see [services-config](../../.claude/rules/services-config.md), `AISOTROPY_REQUIRE_TLS`). That split —
+the proxy owns TLS, aisotropyd stays HTTP — is deliberate. But it introduces a hazard specific to the
+three **token-by-token SSE routes**:
+
+| Route | What it is |
+|---|---|
+| `POST /v1/tenant/{t}/user/{u}/chat/stream` | native aisotropy SSE (Huma `sse.Register`) |
+| `POST /v1/tenant/{t}/user/{u}/chat/aisdk`  | Vercel AI SDK protocol adapter over the same `StreamCore` |
+| `POST /v1/tenant/{t}/user/{u}/chat/agui`   | AG-UI protocol adapter over the same `StreamCore` |
+
+Each emits tokens as they are produced and flushes every event. A reverse proxy that **buffers** the
+response collects the whole event stream and delivers it to the client in one write at the very end —
+turning a live token stream into a single delayed dump. The contract ("tokens arrive incrementally")
+is silently broken with a 200 OK and no error anywhere.
+
+## TL;DR
+
+- **Caddy**: works out of the box. Caddy does not buffer proxied responses; the reference
+  `flush_interval -1` just makes the intent explicit. No SSE-specific config needed.
+- **nginx**: buffers proxied responses **by default** (`proxy_buffering on`). Two independent defenses
+  make streaming work anyway:
+  1. aisotropyd emits **`X-Accel-Buffering: no`** on every SSE route (the `sseAntiBuffering`
+     middleware, [`aisotropy/sse_buffering.go`](../../aisotropy/sse_buffering.go)), which nginx honors
+     **per response even under the default `proxy_buffering on`** — so the stream works through a
+     **default nginx too**, no config change required.
+  2. the reference `nginx.conf` **also** sets `proxy_buffering off` on the SSE location, so the intent
+     is explicit and independent of the upstream header.
+  You only lose streaming if you do BOTH: ignore the header **and** buffer (see the control below).
+
+## Reference configs
+
+Ready to use, under [`deploy/proxy/`](../../deploy/proxy/):
+
+- [`Caddyfile`](../../deploy/proxy/Caddyfile) — swap `:80` for your hostname and Caddy auto-provisions
+  TLS. The whole point of the split: the proxy owns TLS, aisotropyd stays HTTP.
+- [`nginx.conf`](../../deploy/proxy/nginx.conf) — `proxy_buffering off` on the SSE location,
+  `proxy_read_timeout 1h` for long-lived streams, default buffering elsewhere.
+
+### Kubernetes / ingress-nginx
+
+The SSE-relevant knobs as ingress annotations on the streaming paths:
+
+```yaml
+nginx.ingress.kubernetes.io/proxy-buffering: "off"
+nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+```
+
+The Caddy equivalent is `flush_interval -1` on the `reverse_proxy` block. And because aisotropyd emits
+`X-Accel-Buffering: no` itself, ingress-nginx honors it per response even without the annotation — the
+annotation is belt to the header's suspenders.
+
+## The before/after finding (why the middleware exists)
+
+The header is not cosmetic. **Before** the `sseAntiBuffering` middleware, the native `/chat/stream`
+route was **not proxy-safe**: it is served by Huma's `sse.Register`, whose response body function
+aisotropy does not control — it emitted only `Content-Type: text/event-stream` and **no**
+anti-buffering header. The Vercel AI SDK adapter (`/chat/aisdk`) likewise omitted it. So a default
+nginx in front of those two routes would buffer the stream into a single dump. (The raw AG-UI adapter
+already set the header by hand, so only it was safe.)
+
+The fix ([`aisotropy/sse_buffering.go`](../../aisotropy/sse_buffering.go)) is a chi middleware wired via
+`router.Use` in `app.go`. It runs before any bytes are written, so `X-Accel-Buffering: no` lands in the
+header block flushed on the first event, covering **all three** SSE routes uniformly — including the
+one whose handler is out of reach. Non-streaming JSON routes are left untouched.
+
+## Executable proof — `test/proxy/`
+
+The claim above is not asserted from a document; it is proven by a self-contained end-to-end test under
+[`test/proxy/`](../../test/proxy/). Run it with:
+
+```bash
+test/proxy/run.sh
+# or:  go test -tags proxy ./test/proxy/ -v -count=1 -timeout 300s
+```
+
+It stands up (via `docker compose`) one `aisotropyd` (keyless stub LLM + NoAuth — the zero-config boot)
+fronted by three proxies on one network, then drives `POST …/chat/stream` through each and captures
+**per-chunk arrival timestamps**:
+
+| Proxy | Config | Assertion | Measured (representative run) |
+|---|---|---|---|
+| Caddy | `deploy/proxy/Caddyfile` | streams: ≥3 reads, first→last span > 100ms | **50 reads over ~790ms** ✓ |
+| nginx | `deploy/proxy/nginx.conf` (shipped reference) | streams: ≥3 reads, span > 100ms | **50 reads over ~780ms** ✓ |
+| nginx | `test/proxy/nginx-buffered.conf` (CONTROL — buffers on purpose) | buffers: single dump, span ≤ 50ms | **1 read, 0ms span** ✓ |
+
+The stub LLM emits ~30 words at 15ms spacing, so a live stream arrives as ~50 reads spread over
+hundreds of ms; a buffered response arrives as one dump with a near-zero span. That timing signature is
+the proof buffering is OFF end-to-end.
+
+### The control has teeth — and an honest caveat
+
+The control (`nginx-buffered.conf`) exists to prove the streaming assertion would catch a regression.
+It reproduces a real operator footgun and single-dumps the stream. **The honest finding while building
+it:** `proxy_buffering on` **alone is not enough** to break this stream. aisotropyd flushes every token,
+and the 15ms-per-token pacing makes the upstream socket would-block after each token; modern nginx
+forwards its partial buffer to the client on would-block, so a per-event-flushing upstream *survives*
+plain proxy buffering (and survives even `postpone_output`, which the flush flag bypasses). To force a
+genuine single dump the control adds **`gzip on` for `text/event-stream`**: the gzip body filter must
+accumulate the whole response to compress it and does not honor the upstream flush. This is not
+contrived — enabling gzip site-wide is one line, and every browser sends `Accept-Encoding: gzip`, so
+this misconfiguration really does break SSE for real users. The control also `proxy_ignore_headers
+X-Accel-Buffering`, demonstrating that once buffering truly engages, the upstream header is the thing
+that would otherwise have saved the stream.
+
+The test **skips cleanly** (never a fake pass) when docker or the compose plugin are unavailable, and
+tears down all containers, volumes, and the built image on exit.

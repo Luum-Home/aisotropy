@@ -1,0 +1,49 @@
+# End-to-end SSE-behind-a-proxy test rig. Self-contained: one aisotropyd
+# (keyless stub LLM + NoAuth, the zero-config boot) fronted by three proxies on
+# one docker network, so the reference configs resolve their `aisotropyd:8080`
+# upstream by service name exactly as an operator's would.
+#
+#   caddy          (:18081) -> deploy/proxy/Caddyfile        (streams by default)
+#   nginx          (:18082) -> deploy/proxy/nginx.conf       (shipped reference; streams)
+#   nginx-buffered (:18083) -> ./nginx-buffered.conf         (CONTROL; buffers on purpose)
+#
+# Driven by proxy_test.go (go test -tags proxy) or run.sh. Both bring the rig up
+# with --build and tear it down with `down -v` on exit.
+services:
+  aisotropyd:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    # No ANTHROPIC_API_KEY  -> the canned word-by-word stub LLM.
+    # No AISOTROPY_JWT_SECRET -> NoAuth (path identity trusted); boots zero-config.
+    environment:
+      AISOTROPY_ADDR: ":8080"
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - aisotropyd
+    volumes:
+      - ../../deploy/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "18081:80"
+
+  nginx:
+    image: nginx:alpine
+    depends_on:
+      - aisotropyd
+    volumes:
+      - ../../deploy/proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "18082:80"
+
+  nginx-buffered:
+    image: nginx:alpine
+    depends_on:
+      - aisotropyd
+    volumes:
+      - ./nginx-buffered.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "18083:80"
