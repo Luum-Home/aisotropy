@@ -81,6 +81,142 @@ func (c *rqliteClient) loadTurns(ctx context.Context, sessionID string) ([]turn,
 	return turns, nil
 }
 
+// ---- Scoped (multi-tenant) memory table — memory_scoped / isolation_leak ----
+//
+// Genkit-Go has NO native multi-tenant memory-isolation primitive: the
+// framework's own state hooks (this file, memory.go) are keyed however the
+// caller chooses. The "memory" mode above keys by session_id ALONE — it
+// proves cross-process persistence but not tenant isolation. This table
+// hand-rolls a COMPOUND scope key (tenant_id, user_id, product_id,
+// session_id) as real, parameterized SQL WHERE-clause columns — filtered
+// server-side by rqlite during the query, not fetched-then-filtered in Go
+// (the same "filter during the scan, not after" discipline this repo applies
+// to Qdrant payload filtering, see .claude/rules/constitutional-gates.md).
+// Getting this WHERE clause wrong (e.g. dropping tenant_id) is a real,
+// silent cross-tenant leak — there is no framework guardrail catching it.
+// See README.md "memory_scoped / isolation_leak" for the full honest note.
+const scopedMemoryTable = "arena_genkit_go_scoped_memory"
+
+// ensureScopedTable creates the compound-scope fact table if absent.
+// Idempotent.
+func (c *rqliteClient) ensureScopedTable(ctx context.Context) error {
+	stmt := fmt.Sprintf(
+		`CREATE TABLE IF NOT EXISTS %s (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			tenant_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			product_id TEXT NOT NULL,
+			session_id TEXT NOT NULL DEFAULT '',
+			fact TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		)`, scopedMemoryTable)
+	_, err := c.execute(ctx, []any{stmt})
+	return err
+}
+
+// writeScopedFact persists one fact under the compound scope
+// (tenantID, userID, productID, sessionID). Every scope component is bound
+// as a SQL parameter, never string-concatenated.
+func (c *rqliteClient) writeScopedFact(ctx context.Context, tenantID, userID, productID, sessionID, fact string) error {
+	stmt := []any{
+		fmt.Sprintf("INSERT INTO %s(tenant_id, user_id, product_id, session_id, fact, created_at) VALUES(?, ?, ?, ?, ?, ?)", scopedMemoryTable),
+		tenantID, userID, productID, sessionID, fact, time.Now().UnixMilli(),
+	}
+	_, err := c.execute(ctx, stmt)
+	return err
+}
+
+// recallScopedFacts returns every fact previously written under the EXACT
+// compound scope (tenantID, userID, productID, sessionID), newest first. The
+// WHERE clause filters on all four columns in the query itself — this IS the
+// isolation boundary: a scope that omits or gets tenant_id wrong will read
+// (or leak) another tenant's rows, and nothing in Genkit-Go or rqlite
+// prevents that by construction. The caller (this adapter) is fully
+// responsible for supplying every scope column on every read and write.
+func (c *rqliteClient) recallScopedFacts(ctx context.Context, tenantID, userID, productID, sessionID string) ([]string, error) {
+	stmt := []any{
+		fmt.Sprintf("SELECT fact FROM %s WHERE tenant_id = ? AND user_id = ? AND product_id = ? AND session_id = ? ORDER BY id DESC", scopedMemoryTable),
+		tenantID, userID, productID, sessionID,
+	}
+	rows, err := c.query(ctx, stmt)
+	if err != nil {
+		return nil, err
+	}
+	facts := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if len(row) < 1 {
+			continue
+		}
+		if f, ok := row[0].(string); ok {
+			facts = append(facts, f)
+		}
+	}
+	return facts, nil
+}
+
+// ---- Crash-recovery checkpoint table — crash_recovery mode ----
+//
+// A table SEPARATE from arena_genkit_go_memory above: crash_recovery mode
+// (crash_recovery.go) is driven by test-crash.sh, which SIGKILLs a live
+// invocation mid-flight. Keeping its rows out of the plain "memory" table
+// means a crash-recovery run's necessarily-partial history can never be
+// misread as a "memory" mode proof (or vice versa), even if a caller reused
+// the same session_id string across both modes.
+const crashRecoveryTable = "arena_genkit_go_crash_recovery"
+
+// ensureCrashTable creates the crash-recovery checkpoint table if absent.
+// Idempotent.
+func (c *rqliteClient) ensureCrashTable(ctx context.Context) error {
+	stmt := fmt.Sprintf(
+		`CREATE TABLE IF NOT EXISTS %s (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		)`, crashRecoveryTable)
+	_, err := c.execute(ctx, []any{stmt})
+	return err
+}
+
+// appendCrashTurn persists one CHECKPOINTED turn for sessionID. Only ever
+// called AFTER genkit.Generate has already returned successfully — see
+// crash_recovery.go for why that ordering IS the crash-safety boundary this
+// mode proves: a turn killed mid-Generate never reaches this call at all.
+func (c *rqliteClient) appendCrashTurn(ctx context.Context, sessionID, role, content string) error {
+	stmt := []any{
+		fmt.Sprintf("INSERT INTO %s(session_id, role, content, created_at) VALUES(?, ?, ?, ?)", crashRecoveryTable),
+		sessionID, role, content, time.Now().UnixMilli(),
+	}
+	_, err := c.execute(ctx, stmt)
+	return err
+}
+
+// loadCrashTurns returns every CHECKPOINTED turn previously persisted for
+// sessionID, oldest first. A turn only appears here if the process that
+// generated it survived long enough to call appendCrashTurn — a turn killed
+// mid-genkit.Generate leaves zero rows here, by construction.
+func (c *rqliteClient) loadCrashTurns(ctx context.Context, sessionID string) ([]turn, error) {
+	stmt := []any{
+		fmt.Sprintf("SELECT role, content FROM %s WHERE session_id = ? ORDER BY id ASC", crashRecoveryTable),
+		sessionID,
+	}
+	rows, err := c.query(ctx, stmt)
+	if err != nil {
+		return nil, err
+	}
+	turns := make([]turn, 0, len(rows))
+	for _, row := range rows {
+		if len(row) < 2 {
+			continue
+		}
+		role, _ := row[0].(string)
+		content, _ := row[1].(string)
+		turns = append(turns, turn{Role: role, Content: content})
+	}
+	return turns, nil
+}
+
 type rqliteExecResult struct {
 	LastInsertID int64  `json:"last_insert_id"`
 	RowsAffected int64  `json:"rows_affected"`

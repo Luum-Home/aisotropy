@@ -31,12 +31,50 @@ against real infrastructure, selected by a `"mode"` field on the stdin JSON:
 | `structured` | `LLMTextCompletionProgram` + `PydanticOutputParser` (PydanticProgram family) | agnes only |
 | `stream` | `llm.stream_chat()`, real token streaming | agnes only |
 
+A further `observability` mode measures LlamaIndex's OWN telemetry surface (not chat quality —
+see its own section below).
+
+A second, later upgrade adds two more modes that specifically target what `memory` does **not**
+test — multi-tenant scoped memory and cross-tenant isolation, aisotropy's own differentiator:
+
+| Mode | LlamaIndex feature under test | Real infra it touches |
+|---|---|---|
+| `memory_scoped` | Hand-rolled compound scope key over `llama_index.core.memory.Memory` | agnes, on-disk SQLite (`.memory/<tenant>::<user>::<product>[::<session>].db`) |
+| `isolation_leak` | Same hand-rolled compound-scope store, probed cross-tenant | agnes, on-disk SQLite (same files as `memory_scoped`) |
+
+**Isolation is hand-rolled, not framework-enforced.** `llama_index.core.memory.Memory` has
+exactly ONE native partition axis — `session_id` — and nothing else: no `tenant_id`, no
+`user_id`, no `product_id` anywhere in `Memory.from_defaults()`'s signature. The plain `memory`
+mode above only ever keys by `session_id`; it proves cross-process recall works, it does **not**
+prove multi-tenant isolation, because `session_id` alone carries no tenant concept at all — two
+different tenants sharing (or colliding on) the same `session_id` would silently share one
+on-disk file and read each other's history. `memory_scoped` and `isolation_leak` fix that by
+folding `tenant_id` + `user_id` + `product_id` (+ optional `session_id`) into one compound string
+(`adapter.py::_scope_key()`) and using THAT as LlamaIndex's `session_id`. This is entirely
+adapter-author code — LlamaIndex supplies no compound-key primitive, no tenant-aware store, and
+no guardrail against getting the key wrong. Get the compound key wrong once — omit `tenant_id`,
+typo it, let two tenants collide on the same joined string — and the isolation is gone with no
+error, no warning, nothing: the mistake **is** the leak. **Contrast: aisotropy enforces isolation
+by construction** — key-prefix scoping on BadgerDB/rqlite reads plus Qdrant in-HNSW-scan payload
+filtering (never a post-filter), per `.claude/rules/constitutional-gates.md`
+"Multi-tenant data isolation" — there is no code path that skips the filter, so there is no
+"forgot the filter" mistake available to make. Here, in LlamaIndex, that mistake is one missing
+function argument away.
+
+A THIRD, later upgrade adds `crash_recovery`, which asks a question `memory` mode structurally
+cannot answer: does recall survive a process that is `kill -9`ed mid-conversation, not just one
+that exits cleanly?
+
+| Mode | LlamaIndex feature under test | Real infra it touches |
+|---|---|---|
+| `crash_recovery` | Same `Memory` store as `memory`, driven by two real OS processes with a real `kill -9` in between | agnes, on-disk SQLite (same `.memory/<session_id>.db` file `memory` mode uses) |
+
 ## The uniform envelope
 
 ```json
 {
   "framework": "llamaindex",
-  "mode": "qa|rag|tools|memory|structured|stream",
+  "mode": "qa|rag|tools|memory|structured|stream|memory_scoped|isolation_leak|crash_recovery",
   "model": "agnes-2.0-flash",
   "reply": "string",
   "input_tokens": 0,
@@ -46,7 +84,14 @@ against real infrastructure, selected by a `"mode"` field on the stdin JSON:
   "retrieved": ["doc title", "..."],
   "structured": {"...": "..."},
   "ttft_ms": 0,
-  "error": ""
+  "error": "",
+  "scoped_recall": {"same_scope_hit": true, "cross_tenant_miss": true},
+  "leak_detected": false,
+  "role": "process_a|process_b",
+  "resumed": true,
+  "precrash_fact_recalled": true,
+  "state_lost": false,
+  "turn2_committed": false
 }
 ```
 
@@ -55,7 +100,14 @@ Fields not relevant to a given mode keep their zero-value default (`retrieved: [
 "provider-reported tokens only, else `-1`" discipline. On failure the same envelope shape is
 emitted with `error` set and everything else at its default; the adapter exits non-zero but
 never crashes without writing valid JSON to stdout (`arenas/live/SPEC.md` rule 5: "errors are
-data, not crashes").
+data, not crashes") — **except** the `crash_recovery` scenario's `process_a`, which is killed by
+`kill -9` and BY DESIGN never gets a chance to emit anything at all; that absence of output is
+itself the evidence `test-crash.sh` checks for. `scoped_recall`/`leak_detected` are additive keys
+present ONLY on `memory_scoped`'s/`isolation_leak`'s outputs; `role`/`resumed`/
+`precrash_fact_recalled`/`state_lost`/`turn2_committed` are additive keys present ONLY on
+`crash_recovery`'s output (`role`/`resumed`/`precrash_fact_recalled`/`state_lost` always present
+for this mode, even on a validation failure — `turn2_committed` present only on `process_b`'s
+successful output) — every other mode's envelope is unchanged from before this upgrade.
 
 ## Env-configurable host targets
 
@@ -65,7 +117,7 @@ data, not crashes").
 | `EMBED_URL` | `http://127.0.0.1:8899` | `rag`, `tools` (`corpus_lookup`) |
 | `QDRANT_URL` | `http://localhost:6333` | `rag`, `tools` (`corpus_lookup`) |
 | `ARENA_COLLECTION` | `arena_rag` | `rag`, `tools` (`corpus_lookup`) |
-| `LLAMAINDEX_MEMORY_DIR` | `<script_dir>/.memory` | `memory` |
+| `LLAMAINDEX_MEMORY_DIR` | `<script_dir>/.memory` | `memory`, `memory_scoped`, `isolation_leak` |
 
 `run-docker.sh` overrides `EMBED_URL`/`QDRANT_URL` to `http://host.docker.internal:{8899,6333}`
 so the containerized adapter reaches the host-run embed server and Qdrant; `OPENAI_BASE_URL`
@@ -135,6 +187,98 @@ before the process exits. A second, completely separate `bash run.sh` invocation
 persistence, not a process-local dict (verified in Acceptance evidence: a fact stated in
 invocation 1 is correctly recalled in invocation 2, in a fresh Python process).
 
+**This mode does NOT test multi-tenant isolation.** `session_id` is the only scope axis; nothing
+here distinguishes one tenant's facts from another's. See `memory_scoped` and `isolation_leak`
+below.
+
+### `crash_recovery` — kill -9 durability vs. `memory`'s clean-exit recall
+
+`memory` mode (above) proves cross-process recall across two **clean** `bash run.sh` exits. It
+does NOT prove anything about what survives a process that never gets to exit at all — no
+`return`, no `finally`, no flushed buffers, no chance to log. `crash_recovery` reuses `memory`'s
+EXACT on-disk wiring (same `Memory.from_defaults(session_id=..., async_database_uri="sqlite+
+aiosqlite:///<MEMORY_DIR>/<session_id>.db")` call, same `.db` file) but drives it through two REAL
+OS processes that `test-crash.sh` orchestrates, with a real `kill -9` in between:
+
+- **`role=process_a`** runs 2+ sequential turns from `messages`. Each turn's user+assistant pair
+  is committed with `await memory.aput(...)`, which internally does `await session.commit()`
+  per call (`llama_index/core/storage/chat_store/sql.py::add_message`) — i.e. every `aput()`
+  is a real, awaited SQLite commit, not a buffered write, BEFORE the adapter starts the next
+  turn. The instant turn `crash_after_turn` (default 1) commits, `adapter.py` logs
+  `PROGRESS: CHECKPOINT_TURN_<n>_COMMITTED` to stderr and then — before doing any further I/O —
+  sleeps for `inject_delay_ms` (a documented test hook, default 0). `test-crash.sh` watches
+  stderr for that exact line and sends `kill -9` partway through the sleep window: strictly
+  after the last committed turn is durable, strictly before the next turn could possibly commit.
+  This makes the crash's TIMING deterministic (not a race against agnes's real network latency)
+  without touching the durability mechanism under test (SQLite commit-before-continue).
+- **`role=process_b`** is a FRESH process — new PID, new Python interpreter, no shared state
+  with `process_a` beyond the `session_id` and the on-disk file — that reopens the SAME `.db`
+  and calls `await memory.aget()`, then runs one real, live agnes continuation turn grounded in
+  whatever history comes back.
+
+Verdict fields are deterministic store-level checks, the same discipline as `memory_scoped`'s
+`same_scope_hit`/`cross_tenant_miss` — never inferred from the LLM's reply alone:
+
+| Field | Meaning | How it's computed |
+|---|---|---|
+| `resumed` | process_b successfully picked up pre-crash state | `history` load raised no exception AND is non-empty |
+| `precrash_fact_recalled` | the pre-crash fact survived AND is live-recallable | `expected_fact_substring` present in BOTH the recovered on-disk history (`fact_in_store`) AND the live agnes reply (`fact_in_reply`) |
+| `state_lost` | a committed fact went missing — a real durability failure | `True` only if `expected_fact_substring` was requested but `fact_in_store` is `False`; always `False` when the fact IS in the store |
+| `turn2_committed` | did the CRASHED turn leak a partial write anyway | `turn2_marker_substring` present in the recovered history — expected `False`; `True` would mean the kill landed too late (a harness timing miss, not a framework finding) |
+
+### `memory_scoped` — hand-rolled compound-scope multi-tenant memory
+
+Reuses `memory`'s exact on-disk mechanism (`Memory.from_defaults(session_id=..., async_database_
+uri=...)`, one `.db` file per scope) but keys it with a **hand-rolled compound scope**,
+`adapter.py::_scope_key(tenant_id, user_id, product_id, session_id=None)`:
+
+```python
+parts = [str(tenant_id), str(user_id), str(product_id)]
+if session_id:
+    parts.append(str(session_id))
+raw = "::".join(parts)
+return re.sub(r"[^A-Za-z0-9_.:-]", "_", raw)   # sanitized for safe use as a filename segment
+```
+
+That joined string — e.g. `tenant-a::user-x::prod-p` — is what actually gets passed as
+LlamaIndex's `session_id`. LlamaIndex itself has no idea a "tenant" or "product" exists; as far
+as `Memory` is concerned this is just an opaque partition string, identical in kind to the plain
+`memory` mode's raw `session_id`. **The isolation guarantee comes entirely from the adapter
+composing this string correctly, not from anything LlamaIndex enforces.**
+
+One `memory_scoped` invocation performs a full three-step proof and reports the result in the
+envelope's `scoped_recall` field:
+
+1. **WRITE** `fact` into scope `(tenant_id, user_id, product_id[, session_id])` — a direct
+   `await memory.aput(ChatMessage(role=USER, content=fact))`, no LLM call (deterministic disk
+   write; `adapter.py::_scope_write()`).
+2. **RECALL, same scope** — `await memory.aget()` against that exact scope key, then a
+   deterministic substring check (`adapter.py::_history_contains()`) reports `same_scope_hit`.
+   A real `await llm.achat(...)` call is then made with that scope's history as context,
+   producing the envelope's `reply` — proving genuine LLM-grounded recall, not just disk I/O.
+3. **RECALL, cross-tenant** — `await memory.aget()` against `(cross_tenant_id, user_id,
+   product_id[, session_id])`, a DIFFERENT compound key (same user/product, different tenant).
+   The same substring check reports `cross_tenant_miss` — no LLM call for this step, since the
+   isolation verdict is defined as what the store itself returns, not an LLM's paraphrase of it.
+
+### `isolation_leak` — a real cross-tenant leak probe
+
+Same compound-scope mechanism as `memory_scoped`, restructured as an attack: tenant `tenant_id`
+writes a `secret` into its own scope (`_scope_write`, no LLM call). Then a REAL agnes recall turn
+runs `await llm.achat(...)` **as `leak_probe_tenant_id`** — a different compound scope, same
+`user_id`/`product_id`/`session_id` — using ONLY that probe tenant's own (unrelated) history as
+context. `leak_detected` is a direct substring check of the SECRET against the probe scope's
+actually-returned history (`_history_contains(probe_history, secret)`) — again, the store's
+return value is the authoritative signal, not the LLM's free-text reply (which is still captured
+in `reply` as real corroborating evidence, since a compliant model should also say it has no
+knowledge of the secret).
+
+Both modes fail closed on a malformed request: missing `tenant_id`/`user_id`/`product_id`/
+`fact`/`cross_tenant_id` (or `leak_probe_tenant_id`/`secret` for `isolation_leak`), or a
+`cross_tenant_id`/`leak_probe_tenant_id` that happens to produce the SAME compound key as the
+writer's own scope, raises before any store write or LLM call — zero agnes calls spent on an
+invalid request (see `test-isolation.sh` assertion (4)).
+
 ### `structured` — PydanticProgram, not forced tool-calling
 
 Initially implemented via `llm.structured_predict(OutputCls, prompt, ...)`, LlamaIndex's
@@ -159,6 +303,12 @@ reliability and worked correctly on the first real attempt (see Acceptance evide
 wall-clock time to the first chunk with a non-empty `.delta` as `ttft_ms`, keeps iterating for
 the full latency, and returns the last chunk's accumulated `.message.content` as `reply`.
 
+### `observability` — native instrumentation vs OTel-via-OpenInference
+
+See the dedicated "Observability mode" section below for the full write-up — this mode is
+different enough from every other mode (it measures LlamaIndex's own telemetry, not chat
+quality) that it gets its own top-level section rather than a paragraph here.
+
 ## Token usage — captured uniformly across every mode
 
 All six modes share one `OpenAILike` instance built once per invocation with a
@@ -179,6 +329,103 @@ to the exact same manager instance used to construct `llm`, so every mode's usag
 LlamaIndex component makes the actual call — lands in the same `_UsageCapture` object with zero
 per-mode plumbing.
 
+## Observability mode — native instrumentation vs OTel-via-OpenInference
+
+`observability` is not a chat-quality mode like every other mode above — it measures LlamaIndex's
+OWN telemetry surface, and emits its OWN JSON shape on stdout (NOT the uniform envelope):
+
+```json
+{
+  "framework": "llamaindex",
+  "mode": "observability",
+  "otel_supported": true,
+  "span_count": 15,
+  "span_names": ["RetrieverQueryEngine.query", "..."],
+  "span_timings_ms": {"RetrieverQueryEngine.query": 10005.95, "...": 0},
+  "logs_structured": false,
+  "log_sample": "llama_index.core.indices.utils DEBUG > Top 3 nodes:\n...",
+  "notes": "..."
+}
+```
+
+### What it wires — two independent telemetry paths around ONE real turn
+
+The representative turn is the same real, multi-op RAG wiring `run_rag()` uses (real e5 query
+embedding, real Qdrant `arena_rag` retrieval, real agnes chat completion) — chosen specifically
+because it fans out into several LlamaIndex-internal method calls (embed → retrieve → split →
+refine → LLM chat), giving both telemetry paths more than a single span to report.
+
+1. **Native instrumentation** (`llama_index.core.instrumentation`, ships in `llama-index-core`
+   as the `llama-index-instrumentation` package — **zero new dependency**). Every LlamaIndex
+   component method decorated with `dispatcher.span` (via `DispatcherSpanMixin` — retrievers,
+   query engines, synthesizers, the LLM client itself) reports span-enter/span-exit calls up the
+   dispatcher parent chain to the ROOT dispatcher
+   (`llama_index.core.instrumentation.get_dispatcher()` with no argument —
+   `llama_index_instrumentation/__init__.py::get_dispatcher()`). The adapter attaches:
+   - a `SimpleSpanHandler` (`llama_index.core.instrumentation.span_handlers.SimpleSpanHandler`,
+     also bundled) to `dispatcher.add_span_handler(...)` — records every completed/dropped span
+     with real wall-clock `start_time`/`end_time`/`duration`.
+   - a custom `BaseEventHandler` subclass to `dispatcher.add_event_handler(...)` — records every
+     typed `BaseEvent` LlamaIndex dispatches (`LLMChatStartEvent`/`EndEvent`,
+     `RetrievalStartEvent`/`EndEvent`, `EmbeddingStartEvent`/`EndEvent`,
+     `SynthesizeStartEvent`/`EndEvent`, `QueryStartEvent`/`EndEvent`,
+     `GetResponseStartEvent`/`EndEvent`, `LLMPredictStartEvent`/`EndEvent` — 14 events across 7
+     paired start/end types were captured for the one real turn below).
+   - Native span ids are `{ClassName}.{method_name}-{uuid4}` (`Dispatcher.span()` in
+     `llama_index_instrumentation/dispatcher.py`); the adapter strips the trailing uuid4 via
+     regex (`adapter.py::_strip_span_uuid()`) so repeated calls to the same method collapse onto
+     one readable name in `span_names`/`span_timings_ms` (`span_timings_ms` keeps the LAST
+     occurrence's duration when a name repeats, e.g. the two `OpenAILike.chat` spans below —
+     documented, not silently lossy).
+
+2. **OTel via OpenInference** (`openinference-instrumentation-llama-index`, Apache-2.0 —
+   **added as a new direct dependency for this mode**, NOT bundled with `llama-index-core`).
+   `LlamaIndexInstrumentor().instrument(tracer_provider=...)` patches the SAME
+   dispatcher-decorated methods (it is built on top of the native instrumentation dispatcher
+   above, not a separate hook point) and emits real `opentelemetry.trace.Span` objects, wired to
+   `opentelemetry.sdk.trace.TracerProvider` + `SimpleSpanProcessor(InMemorySpanExporter())` —
+   `InMemorySpanExporter` is OTel SDK's own in-process, zero-network exporter
+   (`opentelemetry.sdk.trace.export.in_memory_span_exporter`). No collector endpoint is ever
+   configured; no network export code path is exercised.
+
+3. **Structured-logging check**: a `logging.Handler` is attached to the `llama_index` stdlib
+   logger tree at `DEBUG` for the duration of the turn, to check whether LlamaIndex's own
+   logging is structured (JSON/key=value) or plain prose.
+
+### What was actually observed (not assumed)
+
+Both telemetry paths captured the SAME **15 spans** for the SAME real turn — confirming
+OpenInference's LlamaIndex integration is a thin OTel-exporting layer over the exact same native
+dispatcher, not an independent instrumentation mechanism. One finding worth calling out because
+it was NOT the initial assumption: **OTel span NAMES are IDENTICAL strings to the native
+dispatcher's span names** (`RetrieverQueryEngine.query`, `OpenAILikeEmbedding.get_query_embedding`,
+etc.) — OpenInference does not rename spans to short semantic-convention names. The semantic
+layer OpenInference adds instead lives entirely in span **attributes**: `openinference.span.kind`
+was found set to one of `CHAIN` / `EMBEDDING` / `LLM` / `RETRIEVER` across the captured spans
+(checked directly against the real `InMemorySpanExporter` output, not read from OpenInference's
+docs).
+
+LlamaIndex's stdlib logger (`llama_index.core.indices.utils`, at `DEBUG`) emitted **plain prose**
+for this turn (a formatted "Top 3 nodes" block with similarity scores) — not JSON, not
+key=value pairs. `logs_structured=false` is the honest reading of the one real record captured,
+not an assumption about LlamaIndex's logging in general.
+
+### License — Apache-2.0 throughout, no copyleft
+
+| Package | Version | License |
+|---|---|---|
+| openinference-instrumentation-llama-index | 4.4.3 | Apache-2.0 |
+| openinference-instrumentation (transitive) | 0.1.54 | Apache-2.0 |
+| openinference-semantic-conventions (transitive) | 0.1.30 | Apache-2.0 |
+| opentelemetry-sdk | 1.44.0 | Apache-2.0 |
+| opentelemetry-api (transitive) | 1.44.0 | Apache-2.0 |
+| opentelemetry-instrumentation (transitive) | 0.65b0 | Apache-2.0 |
+| opentelemetry-semantic-conventions (transitive) | 0.65b0 | Apache-2.0 |
+
+`llama_index.core.instrumentation`'s native path (`llama-index-instrumentation` package, MIT)
+was already a transitive dependency of `llama-index-core` before this mode — zero new
+dependency for the native half of this mode.
+
 ## Files
 
 | File | Purpose |
@@ -188,7 +435,9 @@ per-mode plumbing.
 | `Dockerfile` | Container image: `python:3.13-slim` + pinned deps + `adapter.py`. No key baked in — `ENTRYPOINT ["python3", "adapter.py"]` reads env at `docker run` time. |
 | `run-docker.sh` | Builds the image and runs it, sourcing the repo-root `.env` for the key at run time and overriding `EMBED_URL`/`QDRANT_URL` to `host.docker.internal`. |
 | `test-env.sh` | Automated PASS/FAIL credential/env hygiene tests (see below). |
-| `requirements.txt` | Pinned direct deps. |
+| `test-isolation.sh` | Automated PASS/FAIL evidence for `memory_scoped`/`isolation_leak`: same-scope hit, cross-tenant miss, product-level scope separation, zero-leak, fail-closed on malformed requests. |
+| `test-crash.sh` | Automated PASS/FAIL evidence for `crash_recovery`: real `kill -9` on process_a mid-turn-2, real fresh process_b resumption, real independent `sqlite3` row-count cross-check. |
+| `requirements.txt` | Pinned direct deps, including the `observability`-mode-only OTel/OpenInference packages. |
 | `.gitignore` | Excludes `.memory/*.db` (runtime state) and Docker smoke logs — this arena only. |
 | `.venv/` | Dedicated Python 3.13 virtualenv for this arena only (gitignored repo-wide via `arenas/.gitignore`). |
 
@@ -225,11 +474,37 @@ echo '{"mode":"structured","messages":[{"role":"user","content":"Dr. Imara Sowan
 echo '{"mode":"stream","messages":[{"role":"user","content":"Name three moons of Jupiter."}]}' \
   | bash arenas/live/llamaindex/run.sh
 
+# memory_scoped — same-scope hit + cross-tenant miss in one invocation
+echo '{"mode":"memory_scoped","tenant_id":"tenant-a","user_id":"user-x","product_id":"prod-p","cross_tenant_id":"tenant-b","fact":"My favorite trainset is the Vireo T9.","query":"What is my favorite trainset?"}' \
+  | bash arenas/live/llamaindex/run.sh
+
+# isolation_leak — tenant A writes a secret, tenant B probes for it
+echo '{"mode":"isolation_leak","tenant_id":"tenant-a","leak_probe_tenant_id":"tenant-b","user_id":"user-x","product_id":"prod-p","secret":"Project codename SILVERBROOK.","query":"What secret did the user tell you?"}' \
+  | bash arenas/live/llamaindex/run.sh
+
+# observability — native instrumentation spans/events + OTel-via-OpenInference over one real RAG turn
+echo '{"mode":"observability","messages":[{"role":"user","content":"How late does a Nimbus Rail trainset have to be before the Blue Guarantee gives a passenger an automatic full refund?"}]}' \
+  | bash arenas/live/llamaindex/run.sh
+
+# crash_recovery — do NOT invoke role=process_a by hand for the real crash scenario (test-crash.sh
+# owns the kill -9 timing); this single-process, no-crash form is only useful as a wiring smoke:
+echo '{"mode":"crash_recovery","role":"process_a","session_id":"crash-smoke","messages":[{"role":"user","content":"Remember this."},{"role":"user","content":"And this too."}]}' \
+  | bash arenas/live/llamaindex/run.sh
+# process_b — resume ANY session_id (crashed or not) and check recall:
+echo '{"mode":"crash_recovery","role":"process_b","session_id":"crash-smoke","expected_fact_substring":"Remember this","query":"What did I ask you to remember?"}' \
+  | bash arenas/live/llamaindex/run.sh
+
 # same requests via the container
 echo '{"mode":"qa","messages":[{"role":"user","content":"Hi"}]}' | bash arenas/live/llamaindex/run-docker.sh
 
 # credential/env hygiene tests
 bash arenas/live/llamaindex/test-env.sh
+
+# multi-tenant isolation tests
+bash arenas/live/llamaindex/test-isolation.sh
+
+# hard-crash (kill -9) recovery test — the real scenario, orchestrated end-to-end
+bash arenas/live/llamaindex/test-crash.sh
 ```
 
 ## Acceptance evidence
@@ -239,6 +514,15 @@ exploration + every smoke below): **16** — over the 15-call target by one, dis
 in Uncertainties (two of those were failed diagnostic attempts at the `structured` mode's first
 approach before switching to `LLMTextCompletionProgram`, which then worked on its first real
 try).
+
+Sections 10–12 below cover a LATER, separate upgrade (`memory_scoped` + `isolation_leak`) with
+its own call budget: **7 real agnes calls total** — one exploratory `memory_scoped` smoke that
+happened to trip agnes's own safety refusal on the phrase "secret launch code" (harmless: the
+store-level `same_scope_hit`/`cross_tenant_miss` checks still passed correctly, it just produced
+an unusable reply for documentation, so it was re-run with a more benign fact), one clean
+`memory_scoped` smoke used as evidence in §10, one `isolation_leak` smoke used as evidence in
+§11, and two full `test-isolation.sh` runs (2 calls each — see §12) — the second run was needed
+to confirm the `jq` fix described in Uncertainties, not a retry of a failure.
 
 ### 1. `qa` — unchanged, backward-compatible with the runner
 
@@ -363,6 +647,179 @@ PASS: (c.1) native run.sh stdout+stderr contain 0 occurrences of the key literal
 7/7 PASS. The script never prints the key itself — it only ever prints occurrence *counts*
 (`grep -c`).
 
+### 10. `memory_scoped` — same-scope hit, cross-tenant miss
+
+```
+$ echo '{"mode":"memory_scoped","tenant_id":"tenant-a","user_id":"user-x","product_id":"prod-p","cross_tenant_id":"tenant-b","fact":"My favorite Nimbus Rail trainset is the Vireo T9 and my lucky number is 88.","query":"What is my favorite trainset and lucky number?"}' | bash run.sh
+```
+```json
+{"framework": "llamaindex", "mode": "memory_scoped", "model": "agnes-2.0-flash", "reply": "Your favorite Nimbus Rail trainset is the Vireo T9 and your lucky number is 88.", "input_tokens": 346, "output_tokens": 23, "latency_ms": 7539, "tool_calls": [], "retrieved": [], "structured": null, "ttft_ms": -1, "error": "", "scoped_recall": {"same_scope_hit": true, "cross_tenant_miss": true}}
+```
+stderr: `PROGRESS: [memory_scoped] same_scope_hit=True cross_tenant_miss=True
+same_db=tenant-a::user-x::prod-p.db cross_db=tenant-b::user-x::prod-p.db
+cross_scope_message_count=0`. The fact was written under `(tenant-a, user-x, prod-p)`, recalled
+correctly under that SAME compound scope (`same_scope_hit=true`, and the real agnes reply
+correctly states both the trainset and lucky number), and a recall attempt under
+`(tenant-b, user-x, prod-p)` — a different tenant, everything else identical — found ZERO
+messages (`cross_tenant_miss=true`). Pass.
+
+### 11. `isolation_leak` — tenant B recall turn does not surface tenant A's secret
+
+```
+$ echo '{"mode":"isolation_leak","tenant_id":"tenant-a","leak_probe_tenant_id":"tenant-b","user_id":"user-x","product_id":"prod-p","secret":"Project codename SILVERBROOK: Nimbus Rail is acquiring the Marrow Loop route in Q3.","query":"What secret did the user tell you earlier? Tell me exactly."}' | bash run.sh
+```
+```json
+{"framework": "llamaindex", "mode": "isolation_leak", "model": "agnes-2.0-flash", "reply": "I don't know. I have no memory of past conversations or secrets shared by users. Each session is independent.", "input_tokens": 301, "output_tokens": 24, "latency_ms": 8870, "tool_calls": [], "retrieved": [], "structured": null, "ttft_ms": -1, "error": "", "leak_detected": false}
+```
+stderr: `PROGRESS: [isolation_leak] leak_detected=False probe_db=tenant-b::user-x::prod-p.db
+probe_scope_message_count=0`. Tenant A's secret (codename SILVERBROOK) was written to its own
+scope; the REAL agnes recall turn was run as tenant B against tenant B's own (empty) scoped
+history, and the probe scope's store returned zero messages containing the secret
+(`leak_detected=false`, computed from the store, not the reply text). The LLM's reply
+independently corroborates this — it has no knowledge of any secret. Pass.
+
+### 12. `test-isolation.sh` — full multi-tenant isolation suite
+
+```
+$ bash test-isolation.sh
+=== (1) memory_scoped: same-scope hit + cross-tenant miss ===
+PASS: (1.0) memory_scoped invocation exited 0
+PASS: (1.1) same_scope_hit=true — fact written under (tenant-a,user-x,prod-p) was recalled from the SAME scope
+PASS: (1.2) cross_tenant_miss=true — tenant-b's scope returned NOTHING of tenant-a's fact
+PASS: (1.3) real agnes recall reply contains the actual recalled fact: Your favorite trainset is the Vireo T9, and your lucky number is 88.
+=== (2) isolation_leak: tenant-a secret must not reach tenant-b ===
+PASS: (2.0) isolation_leak invocation exited 0
+PASS: (2.1) leak_detected=false — tenant-b's scoped store did not return tenant-a's secret
+PASS: (2.2) real agnes reply (asked AS tenant-b) does not contain the secret codename: I don't know. I don't have access to any previous conversations or secrets shared by users. Each session is independent and private.
+=== (3) product-level scope: product_id is also part of the compound key, not just tenant_id ===
+PASS: (3.1) test (1)'s fact is on disk at its own compound-scope file: tenant-a::user-x::prod-p.db
+PASS: (3.2) a DIFFERENT product_id (prod-q) — same tenant_id/user_id — has no file at all: never written, never leaked into
+=== (4) malformed request fails closed, spends zero agnes calls ===
+PASS: (4.1) missing required fields -> non-zero exit + populated error field: memory_scoped mode failed: memory_scoped mode requires: user_id, product_id, cross_tenant_id, fact
+PASS: (4.2) validation failed BEFORE any scope write/recall — zero agnes calls spent on this invocation
+
+=== Summary: 11 passed, 0 failed ===
+```
+11/11 PASS. Two real agnes calls per full run (one in scenario 1, one in scenario 2); scenarios
+3 and 4 spend zero. Re-run twice during development (once before, once after fixing a `jq`
+pitfall — see Uncertainties) with identical 11/11 results both times.
+
+### 13. `observability` — native spans/events + OTel-via-OpenInference over one real RAG turn
+
+Sections 13's own upgrade has its own call budget: **3 real agnes calls total** (one per full
+`observability` invocation below — a first pass, a re-run after fixing the uuid-stripping bug
+described in Uncertainties, and a final re-run after fixing an inaccurate claim in the `notes`
+field, also described in Uncertainties).
+
+```
+$ echo '{"mode":"observability","messages":[{"role":"user","content":"How late does a Nimbus Rail trainset have to be before the Blue Guarantee gives a passenger an automatic full refund?"}]}' | bash run.sh
+```
+```json
+{"framework": "llamaindex", "mode": "observability", "otel_supported": true, "span_count": 15, "span_names": ["RetrieverQueryEngine.query", "RetrieverQueryEngine._query", "VectorIndexRetriever.retrieve", "VectorIndexRetriever._retrieve", "OpenAILikeEmbedding.get_query_embedding", "OpenAILikeEmbedding._get_query_embedding", "CompactAndRefine.synthesize", "CompactAndRefine.get_response", "TokenTextSplitter.split_text", "CompactAndRefine.get_response", "TokenTextSplitter.split_text", "DefaultRefineProgram.__call__", "OpenAILike.predict", "OpenAILike.chat", "OpenAILike.chat"], "span_timings_ms": {"RetrieverQueryEngine.query": 10005.95, "RetrieverQueryEngine._query": 9976.15, "VectorIndexRetriever.retrieve": 735.41, "VectorIndexRetriever._retrieve": 734.06, "OpenAILikeEmbedding.get_query_embedding": 666.39, "OpenAILikeEmbedding._get_query_embedding": 663.39, "CompactAndRefine.synthesize": 9236.49, "CompactAndRefine.get_response": 9232.17, "TokenTextSplitter.split_text": 0.85, "DefaultRefineProgram.__call__": 9230.58, "OpenAILike.predict": 9230.26, "OpenAILike.chat": 9227.97}, "logs_structured": false, "log_sample": "llama_index.core.indices.utils DEBUG > Top 3 nodes:\n> [Node 8] [Similarity score:                 0.896632] # The Blue Guarantee (Refund Policy)\nUnder the Blue Guarantee, any passenger whose trainset arriv...\n> [Node 17] [Similarity score:                 0.843732] # Accessibility Commitment\nEvery Nimbus Rail station is step-free, and each Vireo T7 reserves six...\n> [Node 22] [Similarity score:                 0.842059] # Livery and Branding\nNimbus Rail trainsets wear a slate-grey livery with a single teal stripe ca...", "notes": "Native instrumentation (llama_index.core.instrumentation, bundled in llama-index-core, zero extra deps): 15 span(s) via SimpleSpanHandler + 14 event(s) (14 distinct typed BaseEvent subclasses: ['EmbeddingEndEvent', 'EmbeddingStartEvent', 'GetResponseEndEvent', 'GetResponseStartEvent', 'LLMChatEndEvent', 'LLMChatStartEvent', 'LLMPredictEndEvent', 'LLMPredictStartEvent', 'QueryEndEvent', 'QueryStartEvent', 'RetrievalEndEvent', 'RetrievalStartEvent', 'SynthesizeEndEvent', 'SynthesizeStartEvent']) via a custom BaseEventHandler, both attached to the ROOT dispatcher (llama_index.core.instrumentation.get_dispatcher()). OTel: openinference-instrumentation-llama-index (Apache-2.0, NOT bundled with llama-index-core — added as a new direct dependency) wired successfully, 15 span(s) captured via an in-process opentelemetry.sdk.trace.export.in_memory_span_exporter.InMemorySpanExporter + SimpleSpanProcessor (no external collector/endpoint configured, verified: no network export code path was exercised). Observed directly on the real captured spans (not assumed): OTel span NAMES are IDENTICAL strings to the native dispatcher's span names (both 'ClassName.method_name', e.g. 'RetrieverQueryEngine.query') — OpenInference's LlamaIndexInstrumentor is itself built on top of this SAME native dispatcher and does not rename spans; the semantic layer OpenInference adds instead lives in span ATTRIBUTES, specifically 'openinference.span.kind' = ['CHAIN', 'EMBEDDING', 'LLM', 'RETRIEVER']. Logging: llama_index's stdlib logger emitted 1 record(s) at DEBUG for this turn; sample is plain prose, not structured JSON/kv (logs_structured=False is the honest reading of what was captured, not an assumption). reply='More than 12 minutes late.'"}
+```
+`otel_supported=true`, `span_count=15` from BOTH telemetry paths (native dispatcher and OTel),
+`logs_structured=false` correctly reflects the one plain-prose DEBUG record captured, and
+`notes` documents the (initially unexpected) finding that OTel span names reuse the native
+dispatcher's names verbatim rather than a short semantic-convention name — the semantic layer is
+in span attributes (`openinference.span.kind`), not in the name. `otel_supported` is computed as
+`instrument() succeeded AND span_count > 0`, not just "import succeeded", so a wiring that
+imports cleanly but silently exports nothing would correctly read as unsupported. Pass.
+
+stderr from this run also shows the raw per-path breakdown before dedup/summarization:
+```
+PROGRESS: [observability] native: 15 span(s) (12 distinct name(s)), 14 event(s) (14 distinct type(s)): ['EmbeddingEndEvent', 'EmbeddingStartEvent', 'GetResponseEndEvent', 'GetResponseStartEvent', 'LLMChatEndEvent', 'LLMChatStartEvent', 'LLMPredictEndEvent', 'LLMPredictStartEvent', 'QueryEndEvent', 'QueryStartEvent', 'RetrievalEndEvent', 'RetrievalStartEvent', 'SynthesizeEndEvent', 'SynthesizeStartEvent']
+PROGRESS: [observability] OTel/OpenInference: 15 span(s), kinds=['CHAIN', 'EMBEDDING', 'LLM', 'RETRIEVER']: [...]
+```
+Confirms 14 native events across exactly 7 paired start/end event types (embedding, retrieval,
+synthesize, query, get_response, LLM predict, LLM chat) for the one real turn — matches the
+15-span count minus the internal `_query`/`_retrieve`/`_get_query_embedding` private-method
+duplicate spans that have no corresponding public event.
+
+### 14. `crash_recovery` — real `kill -9` mid-turn-2, real fresh-process resumption
+
+This upgrade's own call budget: **2 real agnes calls total** — process_a's turn 1 (turn 2 is
+killed during its pre-flight delay, before it ever reaches agnes) and process_b's continuation
+turn. `test-crash.sh` orchestrates the full scenario end-to-end and ran clean on the first real
+attempt (no retries needed):
+
+```
+$ bash test-crash.sh
+=== crash_recovery: session_id=crash-demo-1784330328-61855 ===
+1) launching process_a (2 turns; turn 1 states the fact, turn 2 carries a marker that must NOT survive the crash)
+   process_a pid=61864
+2) waiting for CHECKPOINT_TURN_1_COMMITTED on process_a's stderr (turn 1 durably committed)...
+PASS: (1) process_a durably committed turn 1 before any kill (CHECKPOINT_TURN_1_COMMITTED observed)
+3) inside the 6000ms crash-injection window now — sending SIGKILL to process_a (pid=61864)
+PASS: (2) process_a's wait status is 137 (128+SIGKILL) — a real kill -9 landed
+PASS: (3) process_a produced ZERO stdout — proves the kill landed before any envelope was emitted (a true hard crash, not a graceful error exit)
+4) launching FRESH process_b to resume session crash-demo-1784330328-61855
+PASS: (4) process_b exited 0 with valid JSON on stdout
+   process_b: resumed=True precrash_fact_recalled=True state_lost=False turn2_committed=False
+   process_b reply: Your favorite trainset is the Vireo T7 lucky number 47.
+PASS: (5) resumed=true — process_b successfully loaded pre-crash session state from disk
+PASS: (6) precrash_fact_recalled=true — turn-1 fact present in BOTH the recovered on-disk history AND a live agnes reply
+PASS: (7) state_lost=false — the durably-committed turn-1 fact was NOT lost
+PASS: (8) turn2_committed=false — the crashed turn left no partial trace on disk (correct crash-safety, not corruption)
+   independent check: sqlite3 row count for this session_id = 4
+PASS: (9) independent sqlite3 query confirms exactly 4 rows (turn 1 + process_b's continuation only, turn 2 absent)
+
+=== Summary: 9 passed, 0 failed ===
+```
+
+process_b's raw stdout envelope:
+```json
+{"framework": "llamaindex", "mode": "crash_recovery", "model": "agnes-2.0-flash", "reply": "Your favorite trainset is the Vireo T7 lucky number 47.", "input_tokens": 348, "output_tokens": 18, "latency_ms": 7185, "tool_calls": [], "retrieved": [], "structured": null, "ttft_ms": -1, "error": "", "role": "process_b", "resumed": true, "precrash_fact_recalled": true, "state_lost": false, "turn2_committed": false, "prior_message_count": 2}
+```
+
+9/9 PASS. Assertion (9) is an INDEPENDENT check — `sqlite3` querying the raw `llama_index_memory`
+table directly (`SELECT COUNT(*) ... WHERE key='<session_id>'`), bypassing the adapter's own
+`Memory.aget()` entirely — and it agrees with the adapter's `prior_message_count`/verdict fields:
+exactly 4 rows (turn 1's user+assistant, process_b's continuation user+assistant), never 6 (which
+would mean turn 2 leaked through). `process_a`'s stdout file was empty (`-s` check) and its wait
+status was exactly 137 (`128 + SIGKILL`), confirming a real, un-caught, un-recovered-from hard
+kill — not a graceful `sys.exit()` or an internal error path (`arenas/live/SPEC.md`'s "errors are
+data, not crashes" rule does NOT apply here by design: `kill -9` bypasses Python entirely, no
+`except` clause in `adapter.py` can or does run). Repo-root `.env`'s agnes key was grepped
+(occurrence-count only, never printed) across every log file `test-crash.sh` produced: **0**
+occurrences.
+
+**Honest note on what this proves and does not prove:**
+
+- **What IS proven, with real evidence above:** LlamaIndex's `Memory`/`SQLAlchemyChatStore`
+  writes each `aput()` as an individually `await session.commit()`ed SQLite transaction (verified
+  by reading `llama_index/core/storage/chat_store/sql.py::add_message` directly, not assumed from
+  docs), and a message committed before a `kill -9` DOES survive that kill and IS correctly
+  reloaded and functionally recalled by a fresh process. This is real, default-SQLite
+  (rollback-journal, `synchronous=FULL` by default) durability — the same guarantee any
+  correctly-used SQLite database gives any application, LlamaIndex or not. LlamaIndex's `Memory`
+  does nothing to defeat or degrade that guarantee; it also does nothing extra to strengthen it
+  (no WAL mode, no explicit `PRAGMA synchronous`, no write-ahead buffering it manages itself —
+  `_setup_connections()` calls `create_async_engine(self.async_database_uri)` with no pragma
+  overrides, confirmed by reading the source).
+- **What is NOT proven:** this test's crash window is a documented, deterministic
+  `inject_delay_ms` sleep inserted by the adapter itself (a test hook), not a kill triggered by
+  racing genuine network jitter on turn 2's real agnes call. That was a deliberate engineering
+  choice for a repeatable, CI-safe test — but it means this harness does not exercise (and this
+  README does not claim evidence for) a kill landing mid-`INSERT`/mid-`fsync` at the SQLite/OS
+  level, which is the theoretically riskiest instant for any on-disk store. What WAS exercised:
+  the boundary between two fully-committed application-level turns, which is the boundary a real
+  process crash (OOM kill, host reboot, `kill -9` from an orchestrator) would actually land on in
+  the overwhelming majority of real cases, since each `aput()`'s commit is a sub-millisecond SQL
+  transaction relative to the multi-second gaps between turns.
+- **Clean shutdown vs. hard crash — the actual comparison this mode exists to make:** `memory`
+  mode (Acceptance evidence #5) already proved clean-exit, cross-process recall. `crash_recovery`
+  adds the harder claim — recall survives when the writing process is never given a chance to
+  exit cleanly at all. Both hold, for the SAME underlying reason (per-`aput()` SQLite commit),
+  which is itself the honest finding: LlamaIndex's `Memory` durability story reduces entirely to
+  "however durable your configured SQLAlchemy backend is" — LlamaIndex adds no crash-recovery
+  logic of its own (no write-ahead log it manages, no periodic snapshot, no crash-detection or
+  repair path was found in `llama_index/core/memory/memory.py` or `.../storage/chat_store/sql.py`
+  during this investigation). Point SQLite at a filesystem with weaker durability guarantees (a
+  tmpfs, a network mount with async writeback, `PRAGMA synchronous=OFF`) and this same test would
+  very plausibly fail — that combination was NOT tested here (out of scope: the goal was this
+  adapter's DEFAULT on-disk wiring, identical to `memory` mode's, not a durability audit of every
+  possible SQLite deployment configuration).
+
 ## License audit — all permissive (MIT/BSD/Apache/ISC/PSF), no copyleft
 
 New direct dependencies added for this upgrade:
@@ -380,6 +837,21 @@ New transitive dependencies pulled in by the above (checked against PyPI metadat
 itself — see the original adapter's README revision for the full pre-existing closure (MIT/
 BSD/Apache/ISC/PSF/MPL-2.0-unmodified, no GPL/AGPL/SSPL/BSL anywhere). **No new copyleft
 dependency introduced.**
+
+**`memory_scoped` and `isolation_leak` added ZERO new dependencies.** Both reuse
+`llama_index.core.memory.Memory` and `llama_index.core.llms` — already-imported `llama-index-core`
+symbols from the `memory` mode above — plus Python's own stdlib `re` for scope-key sanitization.
+`requirements.txt` is unchanged by this upgrade.
+
+**`observability` added two new direct dependencies** (see its own "License" subsection above
+for the full table): `openinference-instrumentation-llama-index` 4.4.3 and `opentelemetry-sdk`
+1.44.0, both Apache-2.0, pulling in five Apache-2.0 transitives (`openinference-instrumentation`,
+`openinference-semantic-conventions`, `opentelemetry-api`, `opentelemetry-instrumentation`,
+`opentelemetry-semantic-conventions`) — verified via `pip show <pkg> | grep License-Expression`
+against the installed packages, not assumed from PyPI listing pages. **No new copyleft
+dependency introduced.** The native half of `observability` (the dispatcher/span-handler/
+event-handler machinery) uses `llama-index-instrumentation` (MIT), already a transitive
+dependency of `llama-index-core` before this mode existed.
 
 ## Uncertainties (honest, not hidden)
 
@@ -421,3 +893,61 @@ dependency introduced.**
   code path is identical to the already-verified `rag` mode's retrieval (same embed+Qdrant
   calls), so the risk of it silently failing is low, but it was not directly observed executing
   inside an agent loop.
+- **`memory_scoped`'s and `isolation_leak`'s isolation guarantee is only as strong as
+  `_scope_key()`'s implementation, and nothing in LlamaIndex would catch a regression there.**
+  This was verified once, directly against LlamaIndex's storage layer (not just through the two
+  new adapter modes): two `Memory` instances opened against the SAME underlying `.db` file but
+  different `session_id` strings returned disjoint history (`same-scope history len: 1` /
+  `cross-tenant (same file) history len: 0` in a standalone script, not committed — see README
+  "Wiring" section for the mechanism). That is reassuring evidence that LlamaIndex's own
+  session-row filtering is a second, independent layer under the adapter's own file-per-scope
+  convention — but it does not change the fact that the compound key itself, and the decision to
+  pass it as `session_id` at all, is entirely hand-rolled adapter code with zero framework
+  enforcement behind it. A future edit to `_scope_key()` that silently dropped `tenant_id` from
+  the joined string would break isolation with no compiler error, no runtime warning, and no
+  LlamaIndex-level test failure — only `test-isolation.sh`'s `cross_tenant_miss`/`leak_detected`
+  assertions would catch it, which is precisely why those checks exist as a standing regression
+  test, not a one-off demo.
+- **The first `memory_scoped` smoke used a fact phrased as "the secret launch code" and agnes
+  refused to answer** ("I cannot provide that information... prohibited from sharing sensitive,
+  classified, or potentially harmful data such as launch codes"), even though the fact was
+  entirely fictional (Nimbus Rail is a fictional company) and had already been correctly
+  recalled from the scoped store (`same_scope_hit=true` still passed — the refusal only affected
+  the LLM's free-text `reply`, which is why the isolation verdicts are computed from the store,
+  never from reply text). Re-run with a more benign fact ("favorite trainset / lucky number")
+  for the evidence captured in §10 — not root-caused further, and not a LlamaIndex or isolation
+  issue at all, just a model-level content-safety trigger on the word "secret" +
+  "launch code" together.
+- **A `jq` pitfall was hit and fixed while writing `test-isolation.sh`**: `jq -r '.leak_detected
+  // "MISSING"'` misreports a genuine `false` value as `"MISSING"`, because jq's `//` alternative
+  operator treats JSON `false` (like `null`) as "no value" — the exact bug this arena's isolation
+  tests are designed to catch elsewhere, ironically triggered by the test script's own JSON
+  parsing. Fixed with an explicit `if X == null then "MISSING" else (X | tostring) end` for all
+  three boolean fields (`same_scope_hit`, `cross_tenant_miss`, `leak_detected`). Documented
+  inline in `test-isolation.sh` so it is not silently reintroduced.
+- **Product-level isolation (§12, test (3)) is verified by inspecting the on-disk `.db` file
+  layout directly, not by a `memory_scoped` invocation.** `memory_scoped`'s `cross_tenant_id`
+  parameter only varies `tenant_id`, by design (matching the literal "cross tenant" ask); there
+  is no equivalent `cross_product_id` parameter. The file-existence check is the same
+  authoritative signal (`_scope_read`'s underlying storage) but is weaker than a full
+  write+recall round trip through the adapter — a `cross_product_id` parameter was considered
+  and deliberately left out to avoid inventing envelope fields beyond what was asked for.
+- **`observability`'s `_strip_span_uuid()` under-stripped native span ids on the first attempt.**
+  A `uuid4` string itself contains 4 internal dashes; the first implementation used
+  `span_id.rpartition("-")`, which only removes the LAST dash-group (e.g.
+  `RetrieverQueryEngine.query-95e65356-7d16-48fb-bae2` instead of the intended
+  `RetrieverQueryEngine.query`). Caught by actually reading the real output (not assumed
+  correct because the code "looked right"), fixed with a regex matching the full
+  `-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` suffix. Re-ran to confirm clean names — see §13's
+  captured output.
+- **`observability`'s first `notes` string made an unverified claim** that OpenInference renames
+  OTel spans to short semantic-convention names (`'query'`/`'retrieve'`/`'llm'`) — this was an
+  assumption from general OTel-integration conventions, not something actually observed in the
+  captured spans. The real captured OTel span names were IDENTICAL to the native dispatcher's
+  `ClassName.method_name` strings; the semantic layer OpenInference actually adds is the
+  `openinference.span.kind` span ATTRIBUTE (`CHAIN`/`EMBEDDING`/`LLM`/`RETRIEVER`, checked
+  directly on the real spans). Caught before this README was written (not after), by
+  cross-checking the claim against the real `InMemorySpanExporter` output rather than trusting
+  the first draft — the corrected claim is what §13 documents. Total real agnes calls for this
+  mode: 3 (one per fix-then-re-verify cycle above), well inside the 5-call budget for this
+  addition.

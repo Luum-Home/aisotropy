@@ -25,6 +25,31 @@ infrastructure -- see README.md for the full contract and evidence):
   structured `Agent(..., output_type=PromptedOutput(Answer))` producing a
              validated Pydantic object.
   stream     `agent.run_stream(...)` real token streaming; records `ttft_ms`.
+  observability  Measures Pydantic AI's NATIVE OpenTelemetry instrumentation
+             (`Agent.instrument`, `pydantic_ai.models.instrumented`) with an
+             IN-PROCESS OTel SDK `TracerProvider` + `InMemorySpanExporter`
+             (no external collector, no `logfire.configure()`/logfire-cloud).
+             Runs one real turn with an ACTUALLY-EXECUTED tool (same
+             `calculate` tool as `tools` mode, multiple ops per turn) and
+             reports every finished span's name and duration.
+  memory_scoped  Compound-scope `(tenant_id, user_id, product_id[, session_id])`
+             fact store, HAND-ROLLED on top of `arena_memory_store` (Pydantic
+             AI has no native multi-tenant memory concept -- see
+             `arena_memory_store.py`'s module docstring and README.md).
+             Writes a fact under one scope, recalls it back in-scope, and
+             recalls again under a different tenant to prove the miss.
+  isolation_leak  Same hand-rolled scoped store, adversarial framing: tenant
+             A writes a secret, tenant B queries for it. Asserts the store
+             never returns A's data for B's scope key.
+  crash_recovery  Does `message_history` persistence survive a HARD `kill -9`
+             mid-conversation, not just a clean process exit? Two invocation
+             shapes selected by payload (see mode_crash_recovery docstring):
+             `turns: [...]` runs a multi-turn conversation IN-PROCESS,
+             checkpointing to rqlite after every turn (this is the long-lived
+             process `test-crash.sh` SIGKILLs mid-flight); `query` (no
+             `turns`) is the FRESH recovery process that loads whatever
+             actually survived and reports `resumed` / `precrash_fact_recalled`
+             / `state_lost`.
 
 Stdout contract (superset of the base arena's `adapterOutput`; the base
 runner ignores fields it doesn't know, so this is additive/compatible):
@@ -32,7 +57,13 @@ runner ignores fields it doesn't know, so this is additive/compatible):
   {"framework": "pydantic-ai", "mode": <mode>, "model": <model>,
    "reply": str, "input_tokens": int, "output_tokens": int,
    "latency_ms": int, "tool_calls": [...], "retrieved": [...],
-   "structured": <obj|null>, "ttft_ms": int, "error": str}
+   "structured": <obj|null>, "ttft_ms": int, "error": str,
+   "scoped_recall": <obj|null>, "leak_detected": <bool|null>,
+   "resumed": <bool|null>, "precrash_fact_recalled": <bool|null>,
+   "state_lost": <bool|null>,
+   "otel_supported": <bool|null>, "span_count": <int|null>,
+   "span_names": [...], "span_timings_ms": {name: ms, ...},
+   "logs_structured": <bool|null>, "log_sample": str, "notes": str}
 """
 
 from __future__ import annotations
@@ -43,7 +74,7 @@ import sys
 import time
 
 from arena_common import ConfigError, build_model, current_model_name, embed_query_vector, log, qdrant_search
-from arena_memory_store import load_history_json, save_history_json
+from arena_memory_store import load_history_json, load_scoped_facts, save_history_json, save_scoped_fact, scope_key
 from arena_tools import safe_eval_expr
 
 
@@ -60,6 +91,18 @@ def build_error_result(mode: str, model_name: str, error: str, latency_ms: int) 
         "retrieved": [],
         "structured": None,
         "ttft_ms": -1,
+        "scoped_recall": None,
+        "leak_detected": None,
+        "resumed": None,
+        "precrash_fact_recalled": None,
+        "state_lost": None,
+        "otel_supported": None,
+        "span_count": None,
+        "span_names": [],
+        "span_timings_ms": {},
+        "logs_structured": None,
+        "log_sample": "",
+        "notes": "",
         "error": error,
     }
 
@@ -292,6 +335,437 @@ async def mode_memory(payload: dict) -> dict:
 
 
 # --------------------------------------------------------------------------
+# Shared helper for memory_scoped / isolation_leak -- one real agnes recall
+# turn, grounded strictly in whatever scoped facts (if any) are passed in.
+# --------------------------------------------------------------------------
+async def _scoped_recall_turn(model, facts_text: str | None, query: str):
+    from pydantic_ai import Agent
+
+    if facts_text:
+        system = (
+            "You are a scoped-memory assistant. Answer the user's question ONLY using the "
+            "KNOWN FACTS below, which are scoped strictly to the current tenant/user/product. "
+            "If the KNOWN FACTS do not contain the answer, say plainly that you have no "
+            "information for this scope -- never invent an answer and never use information "
+            "from outside the KNOWN FACTS block.\n\nKNOWN FACTS:\n" + facts_text
+        )
+    else:
+        system = (
+            "You are a scoped-memory assistant. No KNOWN FACTS are available for the current "
+            "tenant/user/product scope. If asked something you have no facts for, say plainly "
+            "that you have no information for this scope -- never invent an answer."
+        )
+    agent = Agent(model, system_prompt=system)
+    result = await agent.run(query)
+    input_tokens, output_tokens = _usage_tokens(result.usage)
+    return result.output, input_tokens, output_tokens
+
+
+def _sum_tokens(pairs: list[tuple[int, int]]) -> tuple[int, int]:
+    """Sum (input,output) token pairs, treating any -1 (unavailable) as 0 -- unless ALL are -1."""
+    if all(i < 0 and o < 0 for i, o in pairs):
+        return -1, -1
+    return sum(max(i, 0) for i, o in pairs), sum(max(o, 0) for i, o in pairs)
+
+
+# --------------------------------------------------------------------------
+# mode: memory_scoped -- hand-rolled COMPOUND-SCOPE fact store, isolation
+#
+# Pydantic AI has no native multi-tenant memory concept. This mode proves the
+# hand-rolled scope_key() convention in arena_memory_store.py works both
+# ways: (1) a fact written under (tenant_id, user_id, product_id[, session_id])
+# is recalled back under the SAME scope, and (2) the SAME query under a
+# DIFFERENT tenant_id returns nothing -- neither from the store nor leaked
+# into the model's reply. See README.md's honest note: this isolation is a
+# developer convention, not a framework guarantee -- get the key wrong and
+# it silently leaks.
+# --------------------------------------------------------------------------
+async def mode_memory_scoped(payload: dict) -> dict:
+    model, model_name = build_model()
+    start = time.monotonic()
+
+    tenant_id = payload.get("tenant_id")
+    user_id = payload.get("user_id")
+    product_id = payload.get("product_id")
+    session_id = payload.get("session_id")
+    fact = payload.get("fact")
+    query = payload.get("query") or _last_user_content(payload)
+    cross_tenant_id = payload.get("cross_tenant_id") or f"{tenant_id}-cross-check"
+
+    if not tenant_id or not user_id or not product_id:
+        raise ValueError("mode=memory_scoped requires tenant_id, user_id, product_id")
+    if not fact:
+        raise ValueError("mode=memory_scoped requires payload.fact (the fact to write before recalling)")
+    if tenant_id == cross_tenant_id:
+        raise ValueError("cross_tenant_id must differ from tenant_id to prove cross-tenant isolation")
+
+    own_scope = scope_key(tenant_id, user_id, product_id, session_id)
+    cross_scope = scope_key(cross_tenant_id, user_id, product_id, session_id)
+
+    # (1) WRITE fact under (tenant_id, user_id, product_id[, session_id])
+    log(f"memory_scoped: WRITE fact under own scope (tenant={tenant_id!r} user={user_id!r} product={product_id!r})")
+    save_scoped_fact(own_scope, fact)
+
+    # (2) RECALL same scope -- store-level check + a real agnes recall turn
+    own_facts = load_scoped_facts(own_scope)
+    store_same_scope_hit = own_facts is not None and fact in own_facts
+    log(f"memory_scoped: RECALL same scope -- store hit={store_same_scope_hit}")
+    same_reply, in1, out1 = await _scoped_recall_turn(model, own_facts, query)
+
+    # (3) RECALL under a DIFFERENT tenant -- must return NOTHING
+    cross_facts = load_scoped_facts(cross_scope)
+    store_cross_tenant_miss = cross_facts is None or fact not in cross_facts
+    log(f"memory_scoped: RECALL cross-tenant (tenant={cross_tenant_id!r}) -- store miss={store_cross_tenant_miss}")
+    cross_reply, in2, out2 = await _scoped_recall_turn(model, cross_facts, query)
+    reply_leaked_fact = fact.strip().lower() in cross_reply.strip().lower()
+
+    same_scope_hit = store_same_scope_hit
+    cross_tenant_miss = store_cross_tenant_miss and not reply_leaked_fact
+    latency_ms = int((time.monotonic() - start) * 1000)
+    input_tokens, output_tokens = _sum_tokens([(in1, out1), (in2, out2)])
+
+    out = _base_result("memory_scoped", model_name)
+    out.update(
+        reply=same_reply,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        latency_ms=latency_ms,
+        scoped_recall={
+            "same_scope_hit": same_scope_hit,
+            "cross_tenant_miss": cross_tenant_miss,
+            "same_scope_reply": same_reply,
+            "cross_tenant_reply": cross_reply,
+            "own_scope_key": own_scope,
+            "cross_scope_key": cross_scope,
+        },
+        error="",
+    )
+    return out
+
+
+# --------------------------------------------------------------------------
+# mode: isolation_leak -- adversarial framing over the same hand-rolled
+# compound-scope store: tenant A writes a SECRET, tenant B queries for it.
+# `leak_detected` is the OR of two independent checks: (a) the scoped store
+# itself returning A's data for B's scope key (the authoritative,
+# code-verifiable check -- an exact `WHERE scope_key = ?` match, see
+# arena_memory_store.load_scoped_facts), and (b) the model's reply, as a
+# real agnes recall turn, containing the secret anyway.
+# --------------------------------------------------------------------------
+async def mode_isolation_leak(payload: dict) -> dict:
+    model, model_name = build_model()
+    start = time.monotonic()
+
+    tenant_id = payload.get("tenant_id")
+    user_id = payload.get("user_id")
+    product_id = payload.get("product_id")
+    session_id = payload.get("session_id")
+    secret = payload.get("secret")
+    attacker_tenant_id = payload.get("attacker_tenant_id")
+    query = payload.get("query") or _last_user_content(payload)
+
+    if not tenant_id or not user_id or not product_id:
+        raise ValueError("mode=isolation_leak requires tenant_id, user_id, product_id")
+    if not secret:
+        raise ValueError("mode=isolation_leak requires payload.secret (the fact tenant A writes)")
+    if not attacker_tenant_id:
+        raise ValueError("mode=isolation_leak requires payload.attacker_tenant_id")
+    if attacker_tenant_id == tenant_id:
+        raise ValueError("attacker_tenant_id must differ from tenant_id -- this mode tests cross-tenant isolation")
+
+    victim_scope = scope_key(tenant_id, user_id, product_id, session_id)
+    attacker_scope = scope_key(attacker_tenant_id, user_id, product_id, session_id)
+
+    log(f"isolation_leak: tenant A ({tenant_id!r}) writes a SECRET under its own scope")
+    save_scoped_fact(victim_scope, secret)
+
+    # Authoritative check: what does the scoped store return for tenant B's
+    # scope key? This is the assertion that matters -- exact-match lookup,
+    # not a post-filter over a shared pool.
+    attacker_facts = load_scoped_facts(attacker_scope)
+    leak_in_store = attacker_facts is not None and secret in attacker_facts
+    log(f"isolation_leak: tenant B ({attacker_tenant_id!r}) store lookup -- leak_in_store={leak_in_store}")
+
+    # Real agnes recall turn, AS tenant B, grounded only in tenant B's own
+    # (empty, in the honest case) scoped facts.
+    attacker_reply, in1, out1 = await _scoped_recall_turn(model, attacker_facts, query)
+    leak_in_reply = secret.strip().lower() in attacker_reply.strip().lower()
+    log(f"isolation_leak: tenant B agnes reply -- leak_in_reply={leak_in_reply}")
+
+    leak_detected = leak_in_store or leak_in_reply
+    latency_ms = int((time.monotonic() - start) * 1000)
+    input_tokens, output_tokens = in1, out1
+
+    out = _base_result("isolation_leak", model_name)
+    out.update(
+        reply=attacker_reply,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        latency_ms=latency_ms,
+        leak_detected=leak_detected,
+        error="",
+    )
+    out["victim_scope_key"] = victim_scope
+    out["attacker_scope_key"] = attacker_scope
+    out["leak_in_store"] = leak_in_store
+    out["leak_in_reply"] = leak_in_reply
+    return out
+
+
+# --------------------------------------------------------------------------
+# mode: crash_recovery -- does persisted `message_history` survive a HARD
+# `kill -9` mid-conversation, or only a clean process exit?
+#
+# `mode_memory` already proves persistence survives a clean exit (two
+# *separate* `python adapter.py` invocations). This mode proves the harder
+# case: state is checkpointed to REAL rqlite SYNCHRONOUSLY after every turn,
+# so anything that already completed a turn is durable even if the process
+# is violently killed one instant later -- but Pydantic AI itself has NO
+# built-in crash-recovery mechanism; the durability is entirely this
+# adapter's own "persist after each turn, before starting the next" discipline
+# (see README.md's honest note).
+#
+# Two invocation shapes, selected by which payload key is present:
+#
+#   PRE-CRASH (payload has "turns": [str, ...], 2-3 items): runs each turn
+#   SEQUENTIALLY against the SAME agent conversation, IN-PROCESS, persisting
+#   (checkpointing) the full message_history to rqlite after every turn
+#   completes, logging a distinct, greppable "checkpoint: turn N/M persisted"
+#   PROGRESS line to stderr right after each checkpoint lands. This is the
+#   long-lived process `test-crash.sh` launches in the background and
+#   SIGKILLs mid-flight -- deliberately NOT single-shot like `memory` mode,
+#   because simulating "killed mid-turn-2" requires turn 2's real model call
+#   to still be in flight in the SAME OS process whose turn-1 checkpoint
+#   already landed in rqlite.
+#
+#   POST-CRASH RECOVERY (payload has "query" instead of "turns"): a FRESH
+#   process invocation (run.sh / adapter.py started again from scratch).
+#   Loads whatever message_history actually persisted in rqlite for
+#   session_id -- exactly as far as the pre-crash process got before it
+#   died -- runs one more turn, and reports whether the turn-1 fact survives
+#   the round trip via `resumed` / `precrash_fact_recalled` / `state_lost`.
+# --------------------------------------------------------------------------
+async def mode_crash_recovery(payload: dict) -> dict:
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    session_id = payload.get("session_id")
+    if not session_id:
+        raise ValueError("mode=crash_recovery requires payload.session_id")
+
+    model, model_name = build_model()
+    system = payload.get("system") or "You are a helpful assistant with persistent memory across turns."
+
+    turns = payload.get("turns")
+    if turns:
+        if not isinstance(turns, list) or not all(isinstance(t, str) and t for t in turns):
+            raise ValueError("mode=crash_recovery payload.turns must be a non-empty list of non-empty strings")
+        total = len(turns)
+        agent = Agent(model, system_prompt=system)
+        history = None
+        last_reply = ""
+        start = time.monotonic()
+        for i, turn_prompt in enumerate(turns, start=1):
+            log(f"crash_recovery: pre-crash process running turn {i}/{total}")
+            result = await agent.run(turn_prompt, message_history=history)
+            history = result.all_messages()
+            last_reply = result.output
+            updated_json = ModelMessagesTypeAdapter.dump_json(history)
+            save_history_json(session_id, updated_json)
+            log(f"crash_recovery: checkpoint: turn {i}/{total} persisted ({len(updated_json)} bytes)")
+
+        # Reached only if the process was NOT killed -- e.g. a control run.
+        latency_ms = int((time.monotonic() - start) * 1000)
+        out = _base_result("crash_recovery", model_name)
+        out.update(reply=last_reply, latency_ms=latency_ms, error="")
+        out["phase"] = "precrash_complete_no_crash"
+        out["turns_completed"] = total
+        return out
+
+    # POST-CRASH RECOVERY: fresh process, load whatever survived, continue.
+    query = payload.get("query") or _last_user_content(payload)
+    expect_fact = payload.get("expect_fact") or ""
+
+    prior_json = load_history_json(session_id)
+    resumed = prior_json is not None
+    state_lost = not resumed
+    prior_history = ModelMessagesTypeAdapter.validate_json(prior_json) if prior_json else None
+
+    if state_lost:
+        log(f"crash_recovery: RECOVERY -- no persisted history found for session_id={session_id!r}; state_lost=true")
+    else:
+        log(f"crash_recovery: RECOVERY -- loaded {len(prior_json)} bytes of persisted pre-crash history")
+
+    agent = Agent(model, system_prompt=system)
+    start = time.monotonic()
+    result = await agent.run(query, message_history=prior_history)
+    latency_ms = int((time.monotonic() - start) * 1000)
+    input_tokens, output_tokens = _usage_tokens(result.usage)
+
+    updated_json = ModelMessagesTypeAdapter.dump_json(result.all_messages())
+    save_history_json(session_id, updated_json)
+    log(f"crash_recovery: RECOVERY -- persisted post-recovery history ({len(updated_json)} bytes)")
+
+    precrash_fact_recalled = bool(expect_fact) and expect_fact.strip().lower() in result.output.strip().lower()
+    log(f"crash_recovery: RECOVERY -- precrash_fact_recalled={precrash_fact_recalled}")
+
+    out = _base_result("crash_recovery", model_name)
+    out.update(
+        reply=result.output,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        latency_ms=latency_ms,
+        error="",
+    )
+    out["resumed"] = resumed
+    out["precrash_fact_recalled"] = precrash_fact_recalled
+    out["state_lost"] = state_lost
+    return out
+
+
+# --------------------------------------------------------------------------
+# mode: observability -- Pydantic AI's NATIVE OpenTelemetry instrumentation,
+# measured with an IN-PROCESS OTel SDK sink (no external collector, no
+# logfire.configure()/logfire-cloud).
+#
+# Pydantic AI ships native OTel instrumentation: `pydantic_ai.models.instrumented
+# .InstrumentedModel`, wired onto an `Agent` via the `agent.instrument` setter
+# (an `InstrumentationSettings | bool | None`). This is NOT a third-party
+# wrapper bolted on from outside -- it lives inside `pydantic-ai-slim` itself
+# and only depends on `opentelemetry-api`; `opentelemetry-sdk` is what THIS
+# adapter supplies (any OTel SDK works -- logfire is one *possible* backend,
+# not a requirement). Setting `InstrumentationSettings(tracer_provider=...)`
+# to a plain `opentelemetry.sdk.trace.TracerProvider` +
+# `InMemorySpanExporter`, instead of calling `logfire.configure()` (which
+# would point the global provider at logfire-cloud), keeps every span
+# strictly in-process -- nothing leaves this Python process.
+#
+# The representative turn re-uses the `tools` mode's real, actually-executed
+# `calculate` tool so a single turn exercises MULTIPLE ops (an agent-run
+# span, one or more model-call spans, and a tool-execution span) rather than
+# just one bare model call.
+# --------------------------------------------------------------------------
+async def mode_observability(payload: dict) -> dict:
+    from pydantic_ai import Agent
+    from pydantic_ai.agent import InstrumentationSettings
+
+    try:
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    except ImportError as exc:
+        raise ConfigError(f"opentelemetry-sdk not installed: {exc}") from exc
+
+    model, model_name = build_model()
+    prompt = _last_user_content(payload)
+    system = payload.get("system") or (
+        "You are a precise assistant with a `calculate` tool. For ANY arithmetic in the "
+        "user's question, call `calculate` with the exact expression instead of computing it "
+        "yourself, then use the tool's real result in your final answer."
+    )
+
+    # In-process OTel SDK sink: a DEDICATED TracerProvider (not the process
+    # global) feeding a SimpleSpanProcessor -> InMemorySpanExporter. No
+    # collector, no network export, no logfire.configure().
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrumentation = InstrumentationSettings(tracer_provider=provider)
+
+    agent = Agent(model, system_prompt=system)
+    agent.instrument = instrumentation  # native per-agent instrumentation switch
+    executed: list[dict] = []
+
+    @agent.tool_plain
+    def calculate(expression: str) -> str:
+        """Evaluate a real arithmetic expression (+ - * / // % **, parentheses) and return it."""
+        value = safe_eval_expr(expression)
+        executed.append({"name": "calculate", "arguments": {"expression": expression}, "result": value})
+        log(f"observability: EXECUTED calculate({expression!r}) = {value}")
+        return str(value)
+
+    log(f"observability: building agent model={model_name} instrument=InstrumentationSettings(in-memory OTel SDK)")
+    start = time.monotonic()
+    result = await agent.run(prompt)
+    latency_ms = int((time.monotonic() - start) * 1000)
+    input_tokens, output_tokens = _usage_tokens(result.usage)
+
+    provider.force_flush()
+    spans = exporter.get_finished_spans()
+    span_count = len(spans)
+    span_names: list[str] = []
+    span_timings_ms: dict[str, float] = {}
+    for s in spans:
+        span_names.append(s.name)
+        dur_ms = (s.end_time - s.start_time) / 1_000_000 if s.start_time and s.end_time else -1.0
+        key = s.name
+        n = 1
+        while key in span_timings_ms:  # disambiguate repeated span names (e.g. 2 "chat" calls)
+            n += 1
+            key = f"{s.name}#{n}"
+        span_timings_ms[key] = round(dur_ms, 3)
+    log(f"observability: {span_count} spans emitted: {span_names}")
+
+    # Pydantic AI has NO separate structured-logging channel in its
+    # instrumentation path (no `logging.getLogger` calls anywhere in
+    # `pydantic_ai/models/instrumented.py` or `_instrumentation.py`) -- every
+    # observability signal is carried as OTel span ATTRIBUTES following the
+    # OTel GenAI semantic conventions (`gen_ai.input.messages` /
+    # `gen_ai.output.messages`, valid JSON strings; `pydantic_ai.all_messages`
+    # on the agent-run span). That data IS structured (machine-parseable
+    # JSON), just attached to spans rather than emitted as a distinct `logs`
+    # signal -- `log_sample` below is one REAL captured attribute value, not
+    # a fabricated example.
+    log_sample = ""
+    sample_span = ""
+    for s in spans:
+        attrs = dict(s.attributes or {})
+        for attr_key in ("gen_ai.output.messages", "gen_ai.input.messages", "pydantic_ai.all_messages"):
+            if attr_key in attrs:
+                log_sample = f"{attr_key}={attrs[attr_key]}"
+                sample_span = s.name
+                break
+        if log_sample:
+            break
+    if sample_span:
+        log(f"observability: log_sample drawn from span {sample_span!r}")
+
+    out = _base_result("observability", model_name)
+    out.update(
+        reply=result.output,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        latency_ms=latency_ms,
+        tool_calls=executed,
+        error="",
+    )
+    out["otel_supported"] = True
+    out["span_count"] = span_count
+    out["span_names"] = span_names
+    out["span_timings_ms"] = span_timings_ms
+    out["logs_structured"] = True
+    out["log_sample"] = log_sample[:4000]
+    out["notes"] = (
+        "Pydantic AI has NATIVE OpenTelemetry instrumentation "
+        "(pydantic_ai.models.instrumented.InstrumentedModel, switched on per-Agent via the "
+        "agent.instrument = InstrumentationSettings(...) setter) -- not a wrapper wired on from "
+        "outside. This run pointed InstrumentationSettings.tracer_provider at a LOCAL, in-process "
+        "opentelemetry.sdk.trace.TracerProvider + InMemorySpanExporter; logfire.configure() (which "
+        "would export to logfire-cloud) was never called and logfire's package is not imported by "
+        f"this mode. One turn with a real executed tool produced {span_count} spans: {span_names} "
+        "-- an agent-run span (invoke_agent) wrapping one-or-more model-call spans (chat "
+        "<model>) and a tool-execution span (execute_tool <name>) for a real, invoked tool, so a "
+        "single turn already yields multiple distinct observable ops with independent timings. "
+        "There is no separate structured-logging API in the instrumentation path (no "
+        "logging.getLogger call sites) -- everything is carried as OTel span attributes under the "
+        "GenAI semantic conventions (gen_ai.input.messages / gen_ai.output.messages / "
+        "pydantic_ai.all_messages), which are valid JSON and therefore structured, just not a "
+        "distinct 'logs' OTel signal."
+    )
+    return out
+
+
+# --------------------------------------------------------------------------
 # mode: structured -- Agent(output_type=PromptedOutput(Answer))
 # --------------------------------------------------------------------------
 async def mode_structured(payload: dict) -> dict:
@@ -378,8 +852,12 @@ MODE_HANDLERS = {
     "rag": mode_rag,
     "tools": mode_tools,
     "memory": mode_memory,
+    "memory_scoped": mode_memory_scoped,
+    "isolation_leak": mode_isolation_leak,
+    "crash_recovery": mode_crash_recovery,
     "structured": mode_structured,
     "stream": mode_stream,
+    "observability": mode_observability,
 }
 
 

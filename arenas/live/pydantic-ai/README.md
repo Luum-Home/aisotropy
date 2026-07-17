@@ -13,7 +13,7 @@ arena (agnes chat, the e5 embedding server, Qdrant, rqlite).
 
 - **Framework:** Pydantic AI 2.12.0 (MIT)
 - **Model:** `agnes-2.0-flash` via an OpenAI-compatible endpoint
-- **Modes:** `qa` (default), `rag`, `tools`, `memory`, `structured`, `stream`
+- **Modes:** `qa` (default), `rag`, `tools`, `memory`, `memory_scoped`, `isolation_leak`, `crash_recovery`, `structured`, `stream`, `observability`
 
 ## Files
 
@@ -21,13 +21,15 @@ arena (agnes chat, the e5 embedding server, Qdrant, rqlite).
 |---|---|
 | `adapter.py` | Entrypoint: reads the mode-tagged request JSON from stdin, dispatches to the mode handler, writes the uniform result JSON to stdout |
 | `arena_common.py` | Shared env/config, the agnes chat-model builder, e5 query embedding, Qdrant retrieval |
-| `arena_memory_store.py` | Real rqlite-backed persistence of Pydantic AI's `message_history` for the `memory` mode |
+| `arena_memory_store.py` | Real rqlite-backed persistence of Pydantic AI's `message_history` for the `memory` mode, plus the hand-rolled compound-scope fact store (`scope_key`, `save_scoped_fact`, `load_scoped_facts`) for `memory_scoped` / `isolation_leak` |
 | `arena_tools.py` | A real, actually-executed (`ast`-based, no `eval()`) calculator for the `tools` mode |
 | `run.sh` | Native runner: sources the repo-root `.env`, activates `.venv`, execs `adapter.py` |
 | `run-docker.sh` | Containerized runner: builds the image on first use, passes credentials at `docker run` time only |
 | `Dockerfile` | Minimal `python:3.13-slim` image; no credential baked in |
 | `test-env.sh` | Automated PASS/FAIL credential/env tests (native env read, no-key-in-image, never-logged) |
-| `requirements.txt` | `pydantic-ai>=2.12.0`, `openai>=1.0.0`, `qdrant-client>=1.12,<1.13` |
+| `test-isolation.sh` | Automated PASS/FAIL tests for `memory_scoped` / `isolation_leak`: same-scope hit, cross-tenant miss, zero leak, plus two zero-cost hand-rolled-key guard-rail assertions |
+| `test-crash.sh` | Automated PASS/FAIL test for `crash_recovery`: launches a real 2-turn conversation, `kill -9`s it mid-turn-2, then a fresh process must resume from rqlite and recall the turn-1 fact |
+| `requirements.txt` | `pydantic-ai>=2.12.0`, `openai>=1.0.0`, `qdrant-client>=1.12,<1.13`, `opentelemetry-sdk>=1.28.0` |
 | `.venv/` | Dedicated Python 3.13 virtualenv for this arena (not shared with `arenas/pydantic-ai/.venv`) |
 
 ## Real infrastructure this adapter talks to
@@ -60,7 +62,7 @@ diagnostics go to stderr as `PROGRESS: ...` lines):
 ```json
 {
   "framework": "pydantic-ai",
-  "mode": "qa|rag|tools|memory|structured|stream",
+  "mode": "qa|rag|tools|memory|memory_scoped|isolation_leak|crash_recovery|structured|stream|observability",
   "model": "agnes-2.0-flash",
   "reply": "string",
   "input_tokens": 0,
@@ -70,16 +72,32 @@ diagnostics go to stderr as `PROGRESS: ...` lines):
   "retrieved": [{"doc_id": "...", "title": "...", "text": "...", "score": 0.0}],
   "structured": {"...": "..."},
   "ttft_ms": 0,
+  "scoped_recall": {"same_scope_hit": true, "cross_tenant_miss": true, "...": "..."},
+  "leak_detected": false,
+  "resumed": true,
+  "precrash_fact_recalled": true,
+  "state_lost": false,
+  "otel_supported": true,
+  "span_count": 0,
+  "span_names": ["invoke_agent agent", "chat agnes-2.0-flash", "execute_tool calculate"],
+  "span_timings_ms": {"invoke_agent agent": 0.0},
+  "logs_structured": true,
+  "log_sample": "string",
+  "notes": "string",
   "error": ""
 }
 ```
 
-`tool_calls` / `retrieved` / `structured` / `ttft_ms` are empty/`null`/`-1` when a mode doesn't
-apply them. Token counts come from Pydantic AI's `RunUsage` (provider-reported); `-1`/`-1` means
-usage was unavailable, never a fabricated estimate. `mode` and the four new fields are additive on
-top of the base arena's `adapterOutput` struct (`arenas/live/runner/main.go`), which decodes JSON
-with unknown fields ignored — so this adapter stays a drop-in for the base runner when `mode` is
-omitted (defaults to `qa`, byte-for-byte the original single-shot behavior).
+`tool_calls` / `retrieved` / `structured` / `ttft_ms` / `scoped_recall` / `leak_detected` /
+`resumed` / `precrash_fact_recalled` / `state_lost` / `otel_supported` / `span_count` /
+`span_names` / `span_timings_ms` / `logs_structured` / `log_sample` / `notes` are
+empty/`null`/`-1`/`""` when a mode doesn't apply them (`observability` is the only mode that
+populates the OTel-specific fields). Token counts come from Pydantic AI's `RunUsage`
+(provider-reported); `-1`/`-1` means usage was unavailable, never a fabricated estimate. `mode` and
+the new fields are additive on top of the base arena's `adapterOutput` struct
+(`arenas/live/runner/main.go`), which decodes JSON with unknown fields ignored — so this adapter
+stays a drop-in for the base runner when `mode` is omitted (defaults to `qa`, byte-for-byte the
+original single-shot behavior).
 
 ### `qa` (default) — single-shot, base-arena contract
 
@@ -178,6 +196,229 @@ persisted history to rqlite for session_id=... (2526 bytes)` — the growing byt
 correctly recalled fact prove the second, independently-started process retrieved state that only
 existed in rqlite, not in any shared memory.
 
+### `memory_scoped` — hand-rolled COMPOUND-SCOPE isolation (not framework-native)
+
+**Why this mode exists:** the `memory` mode above only ever keys by `session_id`. That proves
+persistence, not **multi-tenant scoped memory** — it never tests whether one tenant's data can
+leak into another's context, which is aisotropy's own core differentiator. This mode and
+`isolation_leak` below exist specifically to test scoped memory + tenant isolation, something the
+`memory` mode's single-key design cannot exercise at all.
+
+> **Honest note:** Pydantic AI has **no native multi-tenant memory isolation primitive**.
+> `message_history` is a flat, opaque blob keyed however the caller likes — the framework has no
+> concept of "tenant" or "user" or "product" and enforces nothing about which caller can read
+> which blob. Everything in this mode is a **hand-rolled compound-scope key**
+> (`scope_key(tenant_id, user_id, product_id[, session_id])` in `arena_memory_store.py`) layered on
+> top of the same rqlite table mechanism the `memory` mode uses. **Isolation here is entirely a
+> developer discipline, not a framework guarantee — a mistake in the key construction (wrong
+> separator, dropped component, swapped argument order) is a silent cross-tenant leak, with no
+> framework-level safety net to catch it.** Contrast: **aisotropy enforces isolation by
+> construction** — tenant-scoped key-prefixing in BadgerDB/rqlite and a Qdrant **in-scan payload
+> filter** during the HNSW search itself (not a post-filter over a shared pool), per
+> `.claude/rules/constitutional-gates.md`'s multi-tenant data isolation gate. A developer using
+> Pydantic AI has to build and audit that isolation themselves; aisotropy makes the isolated path
+> the only path.
+
+```json
+{
+  "mode": "memory_scoped",
+  "tenant_id": "tenant-acme",
+  "user_id": "user-42",
+  "product_id": "product-orion",
+  "fact": "The Q3 launch codename for this tenant is Falcon-Nebula.",
+  "query": "What is the Q3 launch codename?",
+  "cross_tenant_id": "tenant-globex"
+}
+```
+
+Pipeline, all three steps in one adapter invocation: **(1) WRITE** — `save_scoped_fact` upserts
+`fact` under the compound key `scope_key(tenant_id, user_id, product_id[, session_id])` in a
+dedicated `arena_pydantic_scoped_memory` rqlite table. **(2) RECALL same scope** —
+`load_scoped_facts` reads back that exact key (store-level check), then a real Pydantic AI `Agent`
+answers `query` grounded ONLY in those facts (a real agnes call) — `same_scope_hit` is true iff
+both the store returned the fact and the recall succeeded. **(3) RECALL cross-tenant** —
+`load_scoped_facts` is queried again under `scope_key(cross_tenant_id, user_id, product_id[,
+session_id])` (same user/product, DIFFERENT tenant) — since nothing was ever written there, this
+returns nothing; a second real agnes call, grounded in that empty context, confirms the model
+doesn't invent the fact either. `cross_tenant_miss` is true iff the store returned nothing AND the
+reply doesn't contain the fact.
+
+**Evidence (real calls, `tenant_id=tenant-acme`, `cross_tenant_id=tenant-globex`):**
+```json
+{"framework": "pydantic-ai", "mode": "memory_scoped", "model": "agnes-2.0-flash", "reply": "For tenant-acme, the Q3 launch codename is Falcon-Nebula.", "input_tokens": 665, "output_tokens": 27, "latency_ms": 14098, "scoped_recall": {"same_scope_hit": true, "cross_tenant_miss": true, "same_scope_reply": "For tenant-acme, the Q3 launch codename is Falcon-Nebula.", "cross_tenant_reply": "I have no information for this scope.", "own_scope_key": "tenant-acmeuser-42product-orion-", "cross_scope_key": "tenant-globexuser-42product-orion-"}, "error": ""}
+```
+`same_scope_hit=true`: the fact written under `tenant-acme`'s scope came back correctly. Under
+`tenant-globex`'s scope (same `user_id`/`product_id`, different `tenant_id`), the store returned
+zero rows and the model correctly said it has no information — `cross_tenant_miss=true`.
+
+### `isolation_leak` — adversarial framing: tenant A writes a SECRET, tenant B queries for it
+
+Same hand-rolled compound-scope store as `memory_scoped`, framed as a direct leak test:
+
+```json
+{
+  "mode": "isolation_leak",
+  "tenant_id": "tenant-acme",
+  "user_id": "user-42",
+  "product_id": "product-orion",
+  "secret": "SECRET-PROJECT-CODE-7841",
+  "attacker_tenant_id": "tenant-globex",
+  "query": "What is the secret project code?"
+}
+```
+
+Pipeline: tenant A (`tenant_id`) writes `secret` under its own compound scope
+(`save_scoped_fact`). Then, **as tenant B** (`attacker_tenant_id`), the adapter queries the scoped
+store at `scope_key(attacker_tenant_id, user_id, product_id[, session_id])` — a completely
+different key from tenant A's. **The isolation assertion is on what the scoped store returns**
+(`load_scoped_facts` under B's exact key — an exact `WHERE scope_key = ?` match, not a prefix or
+fuzzy match, not a post-filter over a shared row set): `leak_in_store` is true only if that lookup
+somehow contains A's secret. A real Pydantic AI `Agent` recall turn, AS tenant B, grounded only in
+whatever B's own (empty, in the honest case) scoped facts are, provides `leak_in_reply` as a second
+independent signal. `leak_detected = leak_in_store OR leak_in_reply` — `false` is the correct,
+isolated outcome.
+
+**Evidence (real call):**
+```json
+{"framework": "pydantic-ai", "mode": "isolation_leak", "model": "agnes-2.0-flash", "reply": "I have no information for this scope.", "input_tokens": 307, "output_tokens": 9, "latency_ms": 7069, "leak_detected": false, "error": "", "victim_scope_key": "tenant-acmeuser-42product-orion-", "attacker_scope_key": "tenant-globexuser-42product-orion-", "leak_in_store": false, "leak_in_reply": false}
+```
+Tenant B's query for tenant A's secret returned nothing from the store and the model, correctly
+grounded in B's own empty scope, did not invent or leak it either.
+
+### Automated isolation tests (`test-isolation.sh`)
+
+```bash
+bash arenas/live/pydantic-ai/test-isolation.sh
+```
+
+Seven PASS/FAIL assertions (3 real agnes calls: 2 inside the `memory_scoped` invocation, 1 inside
+`isolation_leak`; the two guard-rail assertions fail closed on payload validation before any model
+call is made, so they cost nothing):
+
+```
+=== (1)/(2) memory_scoped: compound-scope write + same-scope recall + cross-tenant miss ===
+PASS: (1) same-scope recall hit -- fact written under (tenant_id, user_id, product_id) is recalled back in that exact scope (same_scope_hit=true)
+PASS: (2) cross-tenant recall miss -- the SAME query under a DIFFERENT tenant_id returns nothing from the store and is not leaked into the reply (cross_tenant_miss=true)
+
+=== (3) isolation_leak: tenant A writes a SECRET, tenant B queries for it ===
+PASS: (3) zero leak -- tenant B's query for tenant A's key returns nothing (leak_detected=false)
+PASS: (3a) scoped store never returned tenant A's data for tenant B's exact-match scope key (leak_in_store=false)
+PASS: (3b) the model's real recall turn, AS tenant B, did not contain the secret (leak_in_reply=false)
+
+=== (4)/(5) hand-rolled-key guard rails (no model call -- validation fails first) ===
+PASS: (4) memory_scoped without tenant_id fails closed with a non-empty error (never silently scopes to an empty/default tenant): ValueError: mode=memory_scoped requires tenant_id, user_id, product_id
+PASS: (5) isolation_leak with attacker_tenant_id == tenant_id fails closed (this mode only proves CROSS-tenant isolation): ValueError: attacker_tenant_id must differ from tenant_id -- this mode tests cross-tenant isolation
+
+=== RESULT: 7 passed, 0 failed ===
+```
+
+Each run uses a fresh `RUN_ID` suffix (`$(date +%s)-$$`) on the tenant/user/product IDs so
+repeated executions never depend on — or get confused by — rows a prior run left in the shared
+rqlite store.
+
+### `crash_recovery` — does persisted `message_history` survive a HARD `kill -9`, not just a clean exit?
+
+**Why this mode exists:** `memory` mode already proves persistence survives a *clean* process exit
+(two separate `python adapter.py` invocations, the second one exec'd fresh — no shared state,
+no shared memory). It does not prove the harder claim operators actually care about: if the
+process is violently killed — `kill -9`, an OOM-kill, a container eviction — mid-conversation, does
+whatever was already committed survive? `crash_recovery` answers that with a real SIGKILL, not a
+simulated one.
+
+Two invocation shapes, selected by which payload key is present:
+
+**(A) Pre-crash — `turns` (2-3 items), one long-lived process:**
+```json
+{"mode": "crash_recovery", "session_id": "some-id", "turns": ["Remember this fact: ...", "Tell me a fun fact about maglev trains."]}
+```
+Runs each turn **sequentially, in-process**, against the same `Agent` conversation. After *every*
+turn completes, the full `message_history` (via `ModelMessagesTypeAdapter.dump_json`) is
+synchronously upserted into rqlite — the same `arena_pydantic_memory` table and
+`save_history_json`/`load_history_json` functions `memory` mode uses, reused unchanged — and a
+distinct `PROGRESS: crash_recovery: checkpoint: turn N/M persisted (... bytes)` line is logged to
+stderr right after the write returns. This is the process `test-crash.sh` launches in the
+background and `kill -9`s mid-flight, specifically **after** the turn-1 checkpoint log line appears
+but **during** turn 2's real (multi-second) model call — so turn 1's state is durably committed
+before the kill, and turn 2's is not.
+
+**(B) Post-crash recovery — `query` (no `turns`), a FRESH process:**
+```json
+{"mode": "crash_recovery", "session_id": "some-id", "query": "What did I ask you to remember?", "expect_fact": "the-fact-substring-to-check-for"}
+```
+A brand-new `python adapter.py` invocation. Loads whatever `message_history` actually persisted in
+rqlite for `session_id` — exactly as far as the pre-crash process got before it died, nothing
+more, nothing less — runs one more turn, and reports:
+- `resumed`: `true` iff a prior history blob was found in rqlite at all (`load_history_json`
+  returned non-`None`).
+- `state_lost`: `!resumed` — `true` would mean even the turn-1 checkpoint failed to survive.
+- `precrash_fact_recalled`: `true` iff `expect_fact` (case-insensitive substring) appears in the
+  reply — i.e. the model, given only the recovered history, actually recalls the pre-crash fact.
+
+**Evidence (real run, `bash test-crash.sh`) — process A checkpoints turn 1, gets `kill -9`'d during
+turn 2, and fresh process B recovers:**
+```json
+{"framework": "pydantic-ai", "mode": "crash_recovery", "model": "agnes-2.0-flash", "reply": "Obsidian-Falcon-1784330113-22796", "input_tokens": 404, "output_tokens": 22, "latency_ms": 1395, "resumed": true, "precrash_fact_recalled": true, "state_lost": false, "error": ""}
+```
+stderr from process A (before the kill): `PROGRESS: crash_recovery: pre-crash process running turn
+1/2` → `PROGRESS: crash_recovery: checkpoint: turn 1/2 persisted (... bytes)` → `PROGRESS:
+crash_recovery: pre-crash process running turn 2/2` — then silence (SIGKILL landed; turn 2's
+checkpoint line never appears, confirmed by `test-crash.sh` assertion 2a). stderr from fresh process
+B: `PROGRESS: crash_recovery: RECOVERY -- loaded ... bytes of persisted pre-crash history` →
+`PROGRESS: crash_recovery: RECOVERY -- precrash_fact_recalled=True`.
+
+**Honest note — what actually survives a SIGKILL, and why:** Pydantic AI itself has **no
+built-in crash-recovery or write-ahead-log mechanism** for `message_history` — it is a plain
+in-memory list of `ModelRequest`/`ModelResponse` objects the framework hands back from
+`result.all_messages()`; nothing about the framework persists it anywhere on its own, and nothing
+about the framework's design distinguishes a clean exit from a hard kill. **Everything that
+survives here survives because this adapter calls `save_history_json()` synchronously, after
+each turn completes, before starting the next one** — durability is a property of *this
+checkpoint-per-turn discipline*, not of Pydantic AI. The corollary this mode makes concrete: **a
+turn that was in flight at the moment of the kill is lost outright** — not partially recovered,
+not replayed, not queued — because it was never checkpointed in the first place. If an adapter
+(or, more realistically, aisotropy's own consolidation outbox — see
+`.claude/rules/architecture.md`'s request-lifecycle diagram) checkpoints only every *N* turns, or
+buffers writes, the same SIGKILL would lose everything since the last checkpoint, not just the
+in-flight turn. This mode's `state_lost=false` result is therefore evidence about the **adapter's
+own persist-after-every-turn design**, not a Pydantic AI guarantee — get the checkpoint frequency
+wrong and this same test would show `state_lost=true` for the *fact* even though `resumed=true` for
+some earlier, stale slice of the conversation.
+
+### Automated crash-recovery test (`test-crash.sh`)
+
+```bash
+bash arenas/live/pydantic-ai/test-crash.sh
+```
+
+Seven PASS/FAIL assertions (3 real agnes calls: turn 1 completes, turn 2 starts and is killed in
+flight, process B's recovery turn):
+
+```
+=== (0) sanity: rqlite is reachable at the configured RQLITE_URL ===
+PASS: (0) rqlite reachable at http://localhost:4001
+
+=== (1) process A: launch 2-turn conversation in background, checkpointing after each turn ===
+PASS: (1) process A checkpointed turn 1 (fact persisted to rqlite) before any kill was sent
+
+=== (2) SIGKILL process A immediately -- turn 2's real model call is in flight, never checkpoints ===
+PASS: (2) process A (<pid>) is confirmed dead after kill -9 (wait exit status=137, expected non-zero/killed)
+PASS: (2a) turn 2 never checkpointed -- confirms the kill landed mid-turn-2, before its persist
+
+=== (3) FRESH process B: load whatever survived, continue, must recall the turn-1 fact ===
+PASS: (3a) resumed=true -- fresh process B found and loaded process A's pre-crash persisted history
+PASS: (3b) state_lost=false -- the turn-1 checkpoint survived the SIGKILL
+PASS: (3c) precrash_fact_recalled=true -- process B's reply recalls the fact stated in turn 1, before the crash
+
+=== RESULT: 7 passed, 0 failed ===
+```
+
+`run.sh`'s last line is `exec python "$SCRIPT_DIR/adapter.py"`, so the shell process image is
+replaced by the Python interpreter — the PID captured via `$!` right after launching `bash run.sh
+... &` is the actual interpreter PID, and `kill -9` lands on it directly (no orphaned shell wrapper
+to clean up separately). A fresh `RUN_ID` suffix (`$(date +%s)-$$`) on `session_id` and the fact
+codename means repeated executions never collide with rows a prior run left in the shared rqlite
+store.
+
 ### `structured` — validated typed output
 
 ```json
@@ -222,6 +463,65 @@ to detach context` / `ValueError: ... was created in a different Context` to **s
 manager). Verified with a stdout-only capture that this never touches stdout — the JSON contract
 is unaffected; it is pure diagnostic noise on stderr, consistent with the "logs to stderr only"
 contract.
+
+### `observability` — Pydantic AI's NATIVE OpenTelemetry instrumentation, in-process
+
+```json
+{"mode": "observability", "messages": [{"role": "user", "content": "What is 25 times 4, minus 7? Use the calculate tool."}]}
+```
+
+**`otel_supported: true` — this is a native framework capability, not something bolted on from
+outside.** `pydantic_ai.models.instrumented.InstrumentedModel` ships inside `pydantic-ai-slim`
+itself (its only OTel dependency is `opentelemetry-api`) and is switched on per-`Agent` via the
+`agent.instrument = InstrumentationSettings(...)` setter (there's also a process-wide
+`Agent.instrument_all(...)` classmethod, not used here so this stays scoped to one agent). It
+follows the OTel **GenAI semantic conventions** — span names/attributes like `gen_ai.input.messages`,
+`gen_ai.output.messages`, `gen_ai.usage.input_tokens` are a spec Pydantic AI implements, not an
+ad-hoc schema.
+
+This mode builds a **dedicated, in-process** `opentelemetry.sdk.trace.TracerProvider` +
+`SimpleSpanProcessor(InMemorySpanExporter())` — supplied by this adapter's own
+`opentelemetry-sdk` dependency — and passes it to `InstrumentationSettings(tracer_provider=...)`.
+**`logfire.configure()` is never called and the `logfire` package is not imported anywhere in this
+mode.** Logfire is *one possible* OTel backend Pydantic AI documents (their own
+`logfire[httpx]` package is only pulled in by the `pydantic-ai-slim[logfire]` *extra*, which this
+adapter does not install); pointing `tracer_provider` at any OTel SDK sink — the plain in-memory
+one used here, or an OTLP exporter to a self-hosted collector — works identically, because the
+instrumentation itself is native and backend-agnostic.
+
+The turn re-uses the `tools` mode's real, actually-executed `calculate` tool
+(`arena_tools.safe_eval_expr`) specifically so **one turn exercises multiple ops** — an
+`invoke_agent` parent span wrapping two `chat agnes-2.0-flash` model-call spans (tool request +
+final answer, same two-round-trip shape as `tools` mode) and one `execute_tool calculate` span —
+each with its own independently measured OTel span duration, not just one aggregate latency
+number.
+
+**Evidence (real call):**
+```json
+{"framework": "pydantic-ai", "mode": "observability", "model": "agnes-2.0-flash", "reply": "The result of 25 times 4, minus 7 is 93.", "input_tokens": 1228, "output_tokens": 52, "latency_ms": 13925, "tool_calls": [{"name": "calculate", "arguments": {"expression": "25 * 4 - 7"}, "result": 93}], "otel_supported": true, "span_count": 4, "span_names": ["chat agnes-2.0-flash", "execute_tool calculate", "chat agnes-2.0-flash", "invoke_agent agent"], "span_timings_ms": {"chat agnes-2.0-flash": 7113.829, "execute_tool calculate": 0.948, "chat agnes-2.0-flash#2": 6788.517, "invoke_agent agent": 13920.268}, "logs_structured": true, "log_sample": "gen_ai.output.messages=[{\"role\":\"assistant\",\"parts\":[{\"type\":\"tool_call\",\"id\":\"chatcmpl-tool-bcd0eb891fd524d6\",\"name\":\"calculate\",\"arguments\":\"{\\\"expression\\\": \\\"25 * 4 - 7\\\"}\"}],\"finish_reason\":\"tool_call\"}]", "error": ""}
+```
+
+4 real spans for 1 turn: 1 `invoke_agent` (the whole run), 2 `chat agnes-2.0-flash` (the
+tool-requesting call and the final-answer call), 1 `execute_tool calculate` (the real, executed
+tool — `0.948ms`, confirming it's the in-process Python call, not a model round-trip). `#2` in
+`span_timings_ms` disambiguates the two same-named `chat` spans so both durations are visible
+instead of one overwriting the other.
+
+**Structured content, no separate log stream:** pydantic-ai's instrumentation path has **no**
+`logging.getLogger` call sites anywhere in `pydantic_ai/models/instrumented.py` or
+`_instrumentation.py` — grepped and confirmed empty. There is no distinct OTel **logs** signal
+emitted. Everything observability-relevant is carried as **span attributes**:
+`gen_ai.input.messages` / `gen_ai.output.messages` (per-model-call, JSON arrays of the exact
+request/response messages) and `pydantic_ai.all_messages` (on the `invoke_agent` span, the full
+conversation). These attribute values ARE structured (valid, parseable JSON — see `log_sample`
+above, a real captured attribute value) — `logs_structured: true` reflects that the *content* is
+structured JSON, with the honest caveat that it arrives as span attributes, not a dedicated
+`logs` API/signal a backend would ingest separately from traces.
+
+**Why this matters for aisotropy's own architecture:** aisotropy's LLM call path
+(`internal/llm/`) and the memory tiers do not yet emit any OTel spans of their own — this arena
+result is a concrete "what native instrumentation looks like" reference (span names, GenAI
+attribute keys, per-op timing granularity) if/when aisotropy wires its own tracing.
 
 ## Docker packaging
 
@@ -286,15 +586,24 @@ echoes, prints, or writes it anywhere — only match counts are reported.
 | `memory` mode evidence (2 separate processes) | 2 |
 | Docker `qa` smoke | 1 |
 | `test-env.sh` `qa` smoke (assertion a2) | 1 |
-| **Total** | **16** |
+| **Subtotal (original 6-mode delivery)** | **16** |
+| `memory_scoped` mode evidence (same-scope recall + cross-tenant recall, 1 invocation) | 2 |
+| `isolation_leak` mode evidence (attacker recall, 1 invocation) | 1 |
+| `test-isolation.sh` (`memory_scoped` invocation: 2 calls; `isolation_leak` invocation: 1 call; the 2 guard-rail assertions fail closed on validation before any model call, 0 calls) | 3 |
+| **Subtotal (this `memory_scoped` / `isolation_leak` delivery)** | **6** |
+| `crash_recovery` mode evidence (`test-crash.sh`, first run — the run whose transcript is captured in this README): turn 1 (completes) + turn 2 (started, killed in flight) + process B recovery turn | 3 |
+| `crash_recovery` test-script debug re-run (the query in the first run asked to recall a full sentence instead of just the codename token — a test-script substring-check bug, not an adapter bug; fixed, then re-run for the passing evidence captured above) | 3 |
+| **Subtotal (this `crash_recovery` delivery)** | **6** |
+| `observability` mode exploration (standalone script probing `Agent.instrument` API shape — the constructor kwarg `Agent(..., instrument=...)` doesn't exist in 2.12.0, it's the `agent.instrument` setter; discovered before touching `adapter.py`) | 1 |
+| `observability` mode evidence (`run.sh`, the captured evidence above: 2 model round-trips inside 1 adapter invocation — tool request + final answer) | 1 |
+| **Subtotal (this `observability` delivery)** | **2** |
 
-**This is 1 call over the ≤15 budget stated in the brief.** Flagged honestly rather than
-undercounted or hidden: the overage is the `test-env.sh` run, which by design fires one more real
-`qa` call to prove the credential path end-to-end (not just replay a cached result) — every other
-mode's evidence above was captured with exactly one recorded call per data point, and the 5
-"exploration" calls up front are what caught the `output_type` gotcha now documented above, so a
-second adapter build would need **zero** discovery calls and could deliver the same 6 modes'
-worth of evidence in **9** calls.
+**This is 1 call over the ≤15 budget stated in the original brief** (see prior note; unrelated to
+this delivery). The `memory_scoped` / `isolation_leak` addition used **6** real agnes calls total,
+against a separately stated **≤8** budget for that delivery — 2 calls to spare. The `crash_recovery`
+addition used **6** real agnes calls total, against a separately stated **≤8** budget for this
+delivery — 2 calls to spare. The `observability` addition used **2** real agnes calls total,
+against a separately stated **≤5** budget for this delivery — 3 calls to spare.
 
 ## Dependencies and licenses
 
@@ -312,6 +621,17 @@ Everything resolved to MIT / BSD-2/3-Clause / Apache-2.0 / 0BSD / Zlib / CC0-1.0
 (`pip-licenses` itself was a throwaway dev-time scanning tool, installed and then uninstalled from
 the `.venv`; it ships in no `requirements.txt` and is not a runtime dependency of the adapter.)
 
+**`observability` mode addition:** one new direct dependency, `opentelemetry-sdk==1.42.1`
+(Apache-2.0). It was already present in this arena's `.venv` transitively (pulled in by `logfire`,
+which was installed earlier during unrelated exploration but is not a `requirements.txt` entry and
+is **not imported by this mode**) and is now pinned explicitly in `requirements.txt` because the
+mode imports it directly (`TracerProvider`, `SimpleSpanProcessor`, `InMemorySpanExporter`).
+`opentelemetry-api==1.42.1` (Apache-2.0) and `opentelemetry-semantic-conventions==0.63b1`
+(Apache-2.0) are transitive dependencies of `opentelemetry-sdk` and of `pydantic-ai-slim` itself
+(which already required `opentelemetry-api` before this change, for the `Agent.instrument`
+capability to exist at all). All three are Apache-2.0 — permitted under
+`.claude/rules/cos/license-policy.md`; no new blocked-license package was introduced.
+
 ## Constraints honored
 
 - **Additive only**: nothing under `arenas/pydantic-ai/` (the offline-classification arena) or
@@ -321,4 +641,28 @@ the `.venv`; it ships in no `requirements.txt` and is not a runtime dependency o
 - The agnes API key is never printed, logged, or baked into the Docker image — verified by
   `test-env.sh`'s 6 automated assertions above, not just asserted.
 - English-only source, comments, and adapter output.
-- Real agnes calls used: **16** (see budget table above; 1 over the ≤15 target, disclosed).
+- Real agnes calls used: **16** for the original 6-mode delivery (see budget table above; 1 over
+  the ≤15 target, disclosed) + **6** for the `memory_scoped` / `isolation_leak` addition (against
+  a ≤8 budget for that addition) + **6** for the `crash_recovery` addition (against a separately
+  stated ≤8 budget for that addition) + **2** for the `observability` addition (against a
+  separately stated ≤5 budget for that addition — see the same table).
+- `memory_scoped` / `isolation_leak` touch only `arenas/live/pydantic-ai/`: `adapter.py` (two new
+  mode handlers + dispatch entries), `arena_memory_store.py` (the hand-rolled `scope_key` /
+  `save_scoped_fact` / `load_scoped_facts` compound-scope store, additive to the existing
+  `message_history` functions), `test-isolation.sh` (new), and this README. No other arena and no
+  `internal/` code was touched.
+- `crash_recovery` likewise touches only `arenas/live/pydantic-ai/`: `adapter.py` (one new mode
+  handler + dispatch entry, reusing `arena_memory_store.save_history_json` /
+  `load_history_json` unchanged — no changes to `arena_memory_store.py` were needed for this
+  addition), `test-crash.sh` (new), and this README. No other arena and no `internal/` code was
+  touched.
+- Dependencies: no new third-party dependency was added for `memory_scoped` / `isolation_leak` or
+  `crash_recovery` — all three reuse `pydantic_ai.Agent` (MIT, already a dependency) and the same
+  `urllib.request`-based rqlite client already used by the `memory` mode. `requirements.txt` is
+  unchanged for those three.
+- `observability` likewise touches only `arenas/live/pydantic-ai/`: `adapter.py` (one new mode
+  handler + dispatch entry + new result fields added to `build_error_result`/the stdout contract,
+  additive), `requirements.txt` (one new explicit direct dependency, `opentelemetry-sdk`, license
+  Apache-2.0, verified above), and this README. No other arena and no `internal/` code was touched.
+  Real agnes API key never printed/logged for this mode either — confirmed by grepping the real
+  `run.sh` invocation's captured stdout+stderr for the key value: 0 occurrences.

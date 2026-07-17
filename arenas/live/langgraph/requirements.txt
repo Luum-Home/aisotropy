@@ -13,4 +13,10 @@ langchain-core==1.4.9
 langchain-qdrant==1.1.0
 qdrant-client==1.18.0
 # memory mode: real on-disk checkpointer persistence across processes.
+# crash_recovery mode reuses this same package against a separate on-disk
+# file to prove survival of a hard kill -9, not just a clean process exit.
 langgraph-checkpoint-sqlite==3.1.0
+# observability mode: bridges LangChain's native callback stream to real
+# in-process OpenTelemetry spans (InMemorySpanExporter, no OTLP collector).
+opentelemetry-api==1.44.0
+opentelemetry-sdk==1.44.0

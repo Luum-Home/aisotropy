@@ -27,6 +27,13 @@ ENV QDRANT_URL=http://host.docker.internal:6333
 # default (ephemeral unless a volume is mounted at /data) — cross-container
 # persistence needs `docker run -v <host-dir>:/data`.
 ENV CHECKPOINT_DB_PATH=/data/checkpoints.sqlite
+# crash_recovery mode's checkpoint db — a SEPARATE on-disk file from
+# memory mode's above, same ephemeral-unless-mounted rule.
+ENV CRASH_CHECKPOINT_DB_PATH=/data/checkpoints_crash.sqlite
+# memory_scoped/isolation_leak's hand-rolled compound-scope fact store
+# (modes/scoped_store.py) — a separate on-disk file from the checkpointer
+# above, same ephemeral-unless-mounted rule.
+ENV SCOPED_STORE_DB_PATH=/data/scoped_store.sqlite
 RUN mkdir -p /data
 
 ENTRYPOINT ["python", "adapter.py"]

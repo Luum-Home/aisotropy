@@ -7,3 +7,9 @@ openai>=1.0.0
 # `rag` mode. Pinned to 1.12.x to match the locally running Qdrant server
 # (1.12.4) and avoid the client's cross-major-version compatibility warning.
 qdrant-client>=1.12,<1.13
+# opentelemetry-sdk: pydantic-ai-slim only requires opentelemetry-api (the
+# interfaces); the `observability` mode needs the concrete SDK
+# (TracerProvider, SimpleSpanProcessor, InMemorySpanExporter) to run
+# Pydantic AI's native instrumentation entirely in-process, with no
+# collector and no logfire-cloud.
+opentelemetry-sdk>=1.28.0

@@ -34,6 +34,24 @@ type calcOutput struct {
 	Result float64 `json:"result"`
 }
 
+// newCalculateTool builds the one real, actually-executed "calculate" tool
+// shared by tools mode and observability mode (both drive a real Eino
+// ReAct agent and need the same multi-step, tool-executing scenario so the
+// span/callback trace is representative).
+func newCalculateTool() (toolcomp.BaseTool, error) {
+	return toolutils.InferTool(
+		"calculate",
+		"Evaluates a plain arithmetic expression (+ - * / parentheses) and returns the exact numeric result.",
+		func(ctx context.Context, in calcInput) (calcOutput, error) {
+			v, err := evalArithmetic(in.Expression)
+			if err != nil {
+				return calcOutput{}, fmt.Errorf("evaluating %q: %w", in.Expression, err)
+			}
+			return calcOutput{Result: v}, nil
+		},
+	)
+}
+
 // runTools drives Eino's real ReAct agent (flow/agent/react) with a real,
 // actually-executed "calculate" tool. Unlike qa mode's single-shot tool_call
 // capture, this is a genuine multi-step loop: the model emits a tool call,
@@ -52,17 +70,7 @@ func runTools(ctx context.Context, env *arenaEnv, in adapterInput, out *adapterO
 		return fmt.Errorf("converting messages: %w", err)
 	}
 
-	calcTool, err := toolutils.InferTool(
-		"calculate",
-		"Evaluates a plain arithmetic expression (+ - * / parentheses) and returns the exact numeric result.",
-		func(ctx context.Context, in calcInput) (calcOutput, error) {
-			v, err := evalArithmetic(in.Expression)
-			if err != nil {
-				return calcOutput{}, fmt.Errorf("evaluating %q: %w", in.Expression, err)
-			}
-			return calcOutput{Result: v}, nil
-		},
-	)
+	calcTool, err := newCalculateTool()
 	if err != nil {
 		return fmt.Errorf("building calculate tool: %w", err)
 	}

@@ -1,14 +1,35 @@
 # LangGraph — Live Arena Adapter (multi-mode)
 
 A LIVE arena adapter for [LangGraph](https://github.com/langchain-ai/langgraph) / [LangChain](https://github.com/langchain-ai/langchain)
-that drives **six modes**, each exercising a different LangGraph/LangChain-native capability
+that drives **ten modes**, each exercising a different LangGraph/LangChain-native capability
 against **real infrastructure**: the real OpenAI-compatible model ("agnes-2.0-flash"), a real e5
-embeddings server, a real Qdrant collection, and a real on-disk checkpointer. This directory is
-fully additive and does not touch the pre-existing `arenas/langgraph/` arena (a separate, unrelated
-benchmark harness), the base single-mode contract in `arenas/live/SPEC.md`, or anything outside
-`arenas/live/langgraph/`.
+embeddings server, a real Qdrant collection, a real on-disk checkpointer, and (for the scoped-memory
+modes) a hand-rolled on-disk compound-scope fact store. This directory is fully additive and does
+not touch the pre-existing `arenas/langgraph/` arena (a separate, unrelated benchmark harness), the
+base single-mode contract in `arenas/live/SPEC.md`, or anything outside `arenas/live/langgraph/`.
 
 The original single-shot adapter (`qa` mode) is unchanged in behavior; everything else is new.
+
+## Multi-tenant honesty (read this before using `memory_scoped` / `isolation_leak`)
+
+**LangGraph provides no native multi-tenant memory isolation.** Its own checkpointer
+(`langgraph.checkpoint.*`, used by `memory` mode below) keys state by a single caller-supplied
+`thread_id` string — there is no tenant/user/product dimension anywhere in the framework, no
+key-prefix validation, and nothing that stops one thread's state from being read under a different
+thread id if the caller passes the wrong string.
+
+`memory_scoped` and `isolation_leak` (both new) hand-roll a compound scope key
+`(tenant_id, user_id, product_id[, session_id])` over a small adapter-owned SQLite store
+(`modes/scoped_store.py`) — LangGraph does nothing for you here. **The dev is responsible for
+getting this right; a keying mistake (forgetting `tenant_id`, using a collidable delimiter, reusing
+a store across scopes without checking) is a cross-tenant memory leak, not a framework bug.**
+
+Contrast: aisotropy enforces this by construction — `tenant_id` travels exclusively via
+`context.Context` injected once at the Huma handler boundary (never trusted from body/header/query),
+and Qdrant semantic-memory reads use payload filtering **during** the HNSW scan (not a post-filter,
+which is an isolation leak, not a fix) — see `.claude/rules/constitutional-gates.md` ->
+"Multi-tenant data isolation" in this repo. LangGraph gives an app developer the primitives to build
+that; it does not give them the guarantee.
 
 ## Real infra wiring
 
@@ -24,6 +45,8 @@ Configuration comes entirely from environment variables — never hardcoded:
 | `QDRANT_URL` | Base URL of the real Qdrant instance, used by `rag` mode. | `http://localhost:6333` |
 | `QDRANT_COLLECTION` | Qdrant collection populated by `arenas/live/_shared/populate-qdrant.py` (22 Nimbus-Rail corpus docs). | `arena_rag` |
 | `CHECKPOINT_DB_PATH` | On-disk SQLite path for `memory` mode's LangGraph checkpointer. | `<this dir>/.data/checkpoints.sqlite` |
+| `CRASH_CHECKPOINT_DB_PATH` | On-disk SQLite path for `crash_recovery` mode's LangGraph checkpointer. A SEPARATE file from `CHECKPOINT_DB_PATH` so a hard-crash test never touches `memory` mode's own checkpoint history. | `<this dir>/.data/checkpoints_crash.sqlite` |
+| `SCOPED_STORE_DB_PATH` | On-disk SQLite path for the hand-rolled compound-scope fact store (`modes/scoped_store.py`), used by `memory_scoped` and `isolation_leak`. Independent of `CHECKPOINT_DB_PATH` — this store has nothing to do with LangGraph's own checkpointer. | `<this dir>/.data/scoped_store.sqlite` |
 
 `OPENAI_*` are read from the repo-root `.env` (never committed, never modified by this adapter).
 `run.sh` sources it automatically:
@@ -62,7 +85,7 @@ changed.
 
 ```json
 {
-  "mode": "qa | rag | tools | memory | structured | stream",
+  "mode": "qa | rag | tools | memory | crash_recovery | structured | stream | memory_scoped | isolation_leak | observability",
   "system": "string",
   "messages": [{"role": "user" | "assistant", "content": "string"}],
   "tools": [{"name": "string", "description": "string", "parameters": {"...": "JSON Schema"}}]
@@ -88,6 +111,8 @@ mode below.
   "retrieved": [{"doc_id": "string", "title": "string", "score": 0.0}],
   "structured": null,
   "ttft_ms": 0,
+  "scoped_recall": null,
+  "leak_detected": null,
   "error": "string"
 }
 ```
@@ -97,6 +122,9 @@ Shared rules (all modes):
 - `input_tokens`/`output_tokens`/`ttft_ms` are **provider-reported only**; `-1` means genuinely
   unavailable/not measured for that mode, never a fabricated number.
 - `retrieved` is `[]` and `structured` is `null` for modes that don't produce them.
+- `scoped_recall` (`{"same_scope_hit": bool, "cross_tenant_miss": bool | null}`) is populated only
+  by `memory_scoped`; `null` for every other mode.
+- `leak_detected` (`bool`) is populated only by `isolation_leak`; `null` for every other mode.
 - All diagnostics (`PROGRESS:` lines, tracebacks) go to **stderr**; stdout carries exactly one JSON
   object.
 - On any error, the error is caught, described in `error`, and a valid envelope is still emitted
@@ -166,6 +194,33 @@ echo '{"mode":"memory","thread_id":"t1","messages":[{"role":"user","content":"Re
 echo '{"mode":"memory","thread_id":"t1","messages":[{"role":"user","content":"What is my favorite line? One word."}]}' | bash run.sh
 ```
 
+### `crash_recovery` (does the checkpointer survive a HARD `kill -9`, not just a clean exit?)
+
+**Honest framing, read first**: `memory` mode above proves recall across two *cleanly exiting*
+processes — each `run.sh` invocation reads stdin, finishes its work, and exits normally. That is a
+meaningfully weaker claim than "this survives a crash." `crash_recovery` mode exists to answer the
+harder, distinct question directly: **if the process is SIGKILL'd mid-flight — not given any chance
+to run cleanup code, flush buffers, or close connections gracefully — does the checkpoint written
+*before* the kill still survive, and can a brand-new process resume from it?**
+
+Two ops, dispatched by the request's `"op"` field (see `modes/crash_recovery.py` for the full
+contract docstring):
+
+- **`"op":"converse"`** (process A — the one meant to be killed): drives a short multi-turn
+  conversation on one `thread_id` from a list of plain-string `"turns"`. Each turn opens its OWN
+  `SqliteSaver.from_conn_string(...)` context manager, so turn *N*'s checkpoint is durably committed
+  (block closed, file flushed) strictly BEFORE turn *N+1* starts. It logs
+  `PROGRESS: crash_recovery converse turn N/M checkpointed` to stderr right after each commit — the
+  synchronization signal `test-crash.sh` polls for before sending `kill -9`.
+- **`"op":"resume"`** (process B — the fresh, un-killed one; also the default, so a plain
+  `{"mode":"crash_recovery","thread_id":...,"messages":[...]}` request behaves exactly like `memory`
+  mode): a brand-new process opens the SAME on-disk file for the SAME `thread_id` and answers one new
+  turn, with zero in-memory knowledge of process A.
+
+**Contract additions**: `"thread_id"` (non-empty string) is always required. `op="converse"` also
+requires a non-empty list of non-empty strings `"turns"`. `op="resume"` (default) requires
+`"messages"` exactly like `memory` mode.
+
 ### `structured` (native structured output)
 
 `ChatOpenAI.with_structured_output(schema, method="json_schema", include_raw=True)` inside a
@@ -189,6 +244,125 @@ for the real network call. `stream_usage=True` asks the provider for usage on th
 (OpenAI-compatible `stream_options.include_usage`); if unsupported, tokens fall back to `-1`/`-1`
 rather than being fabricated.
 
+### `memory_scoped` (hand-rolled compound-scope memory — tests the STORE, not the model)
+
+See "Multi-tenant honesty" above first. `modes.memory`'s checkpointer keys purely by `thread_id` —
+no tenant/user/product dimension. This mode proves scoped, isolated memory keyed by
+`(tenant_id, user_id, product_id[, session_id])` over `modes/scoped_store.py`'s hand-rolled
+on-disk SQLite key/value store. It makes **no LLM call** — it is a pure test of whether the
+hand-rolled scope key isolates correctly.
+
+**Contract additions**: required `"tenant_id"`, `"user_id"`, `"product_id"` (non-empty strings).
+Optional `"session_id"`, `"fact"` (value to write; default is a canned fact), `"fact_key"` (default
+`"note"`), `"cross_tenant_id"` (default `"<tenant_id>-cross-tenant"`), `"scoped_store_db_path"`.
+
+**Default scenario** (no `"op"` field — the full 3-step scenario in one invocation):
+
+```bash
+echo '{"mode":"memory_scoped","tenant_id":"tenant-a","user_id":"user-x","product_id":"product-p","fact_key":"renewal_date","fact":"The plan renews on the 3rd of every month."}' \
+  | bash run.sh
+```
+
+1. WRITEs the fact under scope `(tenant-a, user-x, product-p)`.
+2. RECALLs under the SAME scope -> `scoped_recall.same_scope_hit` (must be `true`).
+3. RECALLs under `cross_tenant_id` (different tenant, same user/product) -> `scoped_recall.cross_tenant_miss` (must be `true`).
+
+**Cross-process variant** (`"op": "write" | "recall"`): mirrors `modes.memory`'s
+cross-process pattern — reproduces the same scenario across TWO or more separate `run.sh`
+invocations sharing the same on-disk `SCOPED_STORE_DB_PATH` file, useful for proving the store
+genuinely persists and isolates across OS processes, not just within one Python object's lifetime.
+
+### `isolation_leak` (real agnes turn — proves, or exposes, a cross-tenant leak)
+
+Tenant A writes a SECRET fact into the same `ScopedStore` under its own scope. A **real agnes
+turn** then answers a question **as tenant B** (a different `tenant_id`, same
+`user_id`/`product_id`). The isolation assertion is on what the scoped store returns for tenant
+B's cross-tenant recall — that recall result is the ONLY thing about the secret's key that is ever
+allowed to reach the system prompt built for tenant B's turn. This is deliberately not a test of
+"is the model honest" — it tests whether the retrieval layer ever hands tenant A's secret to
+tenant B's prompt in the first place. If the hand-rolled scope key were built incorrectly (e.g. the
+adapter forgot `tenant_id` on write or read), the cross-tenant recall itself would return the
+secret, it would appear verbatim in the prompt handed to the real model, and `leak_detected` would
+flip to `true` — a leak at the **keying** layer, which LangGraph does nothing to prevent.
+
+**Contract additions**: required `"tenant_id"` (the WRITER tenant), `"user_id"`, `"product_id"`,
+`"secret_key"`, `"secret_value"` (non-empty strings). Optional `"cross_tenant_id"` (default
+`"<tenant_id>-cross-tenant"`), `"question"`, `"scoped_store_db_path"`.
+
+```bash
+echo '{"mode":"isolation_leak","tenant_id":"tenant-a","user_id":"user-x","product_id":"product-p","secret_key":"wifi_password","secret_value":"Xk9-Nebula-Vault-42"}' \
+  | bash run.sh
+```
+
+Real LLM calls: exactly 1 (the cross-tenant turn). `leak_detected` is `true` if EITHER the
+store-level cross-tenant recall returned the secret OR the model's reply contains the secret
+literal — `false` means isolation held at both layers.
+
+### `observability` (measures LangGraph's native observability surface — NOT the shared envelope)
+
+**This mode returns a different JSON shape than every other mode** — it is a diagnostic/report
+mode, not a chat turn, so it does not use `modes.common.envelope()`:
+
+```json
+{
+  "framework": "langgraph",
+  "mode": "observability",
+  "otel_supported": false,
+  "span_count": 0,
+  "span_names": ["..."],
+  "span_timings_ms": {"name": 0.0},
+  "logs_structured": false,
+  "log_sample": "string",
+  "notes": "string",
+  "error": "string"
+}
+```
+
+**The honest finding: LangGraph/LangChain emit no OpenTelemetry spans natively.** There is no
+`opentelemetry` import anywhere in the installed `langgraph`/`langchain-core` packages, no `OTEL_*`
+env var read anywhere in either, and `graph.invoke(...)` alone produces zero spans — verified by
+grep against this arena's own `.venv`, not assumed from documentation. `otel_supported` is
+therefore always `false`.
+
+What LangChain/LangGraph DO provide natively is the **callback system**
+(`langchain_core.callbacks.BaseCallbackHandler`): every chain, chat-model, and tool invocation
+inside a graph fires `on_chain_start/end`, `on_chat_model_start`/`on_llm_end`,
+`on_tool_start/end` (or the matching `*_error` variant) with a `run_id`/`parent_run_id` pair that
+already forms a real execution tree — this is the exact same hook LangSmith and every third-party
+LangChain tracer integration is built on, nothing more privileged is available.
+
+`modes/observability.py`'s `_OTelBridgeHandler` (this adapter's own ~80 lines, not a third-party
+auto-instrumentation package) bridges that native callback stream to real `opentelemetry-sdk`
+spans on a **private, non-global** `TracerProvider`, exported by an in-process
+`InMemorySpanExporter` via a `SimpleSpanProcessor` (synchronous export on `span.end()`) — no OTLP
+collector, no network hop, nothing leaves the process. Per-span attributes capture real provider
+token usage (`gen_ai.usage.input_tokens`/`output_tokens`) on LLM spans and tool input/output on
+tool spans.
+
+The representative turn instrumented is the same real ReAct `tools`-mode loop
+(`modes/tools.py`'s `calculate` tool, duplicated inline here to avoid importing another mode's
+private helpers): agent decides to call `calculate` -> the tool genuinely executes -> agent
+answers from the real result — at least two real `ChatOpenAI` calls plus one real tool execution,
+each wrapped in its own bridged span. If the request has no `"messages"`, a default arithmetic
+prompt is used so the mode is runnable standalone.
+
+**Logging**: `logs_structured` and `log_sample` come from a `_SafeLogCapture` that attaches a
+`logging.Handler` (INFO+) to `langchain`/`langgraph`-prefixed loggers **only** — `openai`/`httpx`
+loggers are deliberately excluded from capture (they can log request headers, including
+`Authorization`, at `DEBUG`) and any captured record containing a credential-shaped marker
+(`authorization`, `bearer `, `api_key`) is dropped outright, never surfaced. In the verified run
+below, zero LangChain/LangGraph log records were emitted at all for the turn — LangChain does not
+route its own diagnostics through Python's stdlib `logging` module by default; the callback stream
+above is the only native, observable instrumentation surface.
+
+**Contract addition**: `"messages"` is optional for this mode (falls back to a canned arithmetic
+prompt); every other field is the same request shape as every other mode.
+
+```bash
+echo '{"mode":"observability","messages":[{"role":"user","content":"Use the calculate tool to compute (482 * 17) + 391, then state the result plainly."}]}' \
+  | bash run.sh
+```
+
 ## Docker
 
 ```bash
@@ -210,7 +384,10 @@ mode can reach the real host-run embed server and Qdrant from inside the contain
 
 `memory` mode's checkpoint file lives at `/data/checkpoints.sqlite` inside the container by default
 — ephemeral per container unless a host directory is bind-mounted at `/data`
-(`-v $(pwd)/.data:/data`).
+(`-v $(pwd)/.data:/data`). `crash_recovery` mode's checkpoint file lives alongside it at
+`/data/checkpoints_crash.sqlite` (`CRASH_CHECKPOINT_DB_PATH`), a separate file, same volume-mount
+rule. `memory_scoped`/`isolation_leak`'s compound-scope fact store lives alongside both at
+`/data/scoped_store.sqlite` (`SCOPED_STORE_DB_PATH`), same volume-mount rule.
 
 ## Automated credential/env tests — `test-env.sh`
 
@@ -229,12 +406,149 @@ Runs three independent, PASS/FAIL-reported assertions and never prints the key i
 Verified run (2026): **`RESULT: ALL PASS`** — see "Verified live runs" below for the actual PASS
 lines.
 
+## Scoped-memory isolation tests — `test-isolation.sh`
+
+```bash
+bash arenas/live/langgraph/test-isolation.sh
+```
+
+Runs three independent, PASS/FAIL-reported assertions against `memory_scoped` and
+`isolation_leak`, plus a cross-process reproducibility check, and never prints the key itself:
+
+| Assertion | What it proves |
+|---|---|
+| **(1)** same-scope recall hit | `memory_scoped`: a fact written under `(tenant_id, user_id, product_id)` IS recalled under the exact same scope (`scoped_recall.same_scope_hit == true`). |
+| **(2)** cross-tenant recall miss | `memory_scoped`: the same fact is NOT recalled under a different `tenant_id` (`scoped_recall.cross_tenant_miss == true`). |
+| **(3)** zero leak | `isolation_leak`: a real agnes turn answered as a different tenant than the one that wrote a secret does not expose it (`leak_detected == false`), checked both at the store layer and in the model's reply. |
+
+(1)/(2) are also reproduced across THREE separate `run.sh` OS processes sharing the same on-disk
+`SCOPED_STORE_DB_PATH` file (via `"op":"write"`/`"op":"recall"`), proving the isolation genuinely
+holds cross-process, not just within one Python object's lifetime.
+
+Verified run (2026): **`RESULT: ALL PASS`** — see "Verified live runs" below for the actual PASS
+lines and JSON evidence.
+
+## Hard-crash recovery test — `test-crash.sh`
+
+```bash
+bash arenas/live/langgraph/test-crash.sh
+```
+
+Orchestrates the full `crash_recovery` scenario against real infra and never prints the key itself:
+
+| Assertion | What it proves |
+|---|---|
+| **(1)** genuine mid-turn kill | Process A is confirmed dead (`kill -0` fails) AND its captured stdout is exactly 0 bytes — it never reached its own final envelope `print()`, i.e. this was a real interruption, not a clean exit that merely produced an empty reply. |
+| **(2)** resumed | Process B (fresh OS process, same on-disk file, same `thread_id`) returns a clean envelope with no `error`. |
+| **(3)** pre-crash fact recalled | Process B's reply contains the exact secret fact stated in turn 1, recovered purely from what `SqliteSaver` had durably flushed to disk before the kill. |
+| **(4)** state not lost | `state_lost` (`= !precrash_fact_recalled`) is `false`. |
+
+`test-crash.sh` prints one final JSON object shaped exactly as this build's acceptance contract
+requires: `{"framework":"langgraph","mode":"crash_recovery","resumed":bool,
+"precrash_fact_recalled":bool,"state_lost":bool,"reply":str,"thread_id":str,"precrash_fact":str,
+"error":str,"process_a_confirmed_killed":bool,"process_a_stdout_bytes":int}`.
+
+**A real bug this build's own testing caught (and fixed) — worth documenting because it is easy to
+repeat**: the first working version of `test-crash.sh` launched process A as
+`( echo "$REQ" | bash run.sh >out 2>err ) & PID_A=$!` and then `kill -9 "$PID_A"`. That looked
+correct and even reported `PASS` on every assertion — but decoding the on-disk checkpoint chain
+afterward (`saver.serde.loads_typed(...)` against the raw sqlite rows) revealed turn 2's `AIMessage`
+reply WAS fully committed to disk, meaning the "killed" process had actually run turn 2 to
+completion in the background. The reason: `$!` after `( pipeline ) &` is the PID of the **subshell
+wrapper**, not the real work — the pipeline forks its own `echo` and `bash run.sh` children, and
+`bash run.sh`'s own last line is `exec ".../python" adapter.py` (replacing itself in place). Killing
+only the outer subshell PID leaves that already-`exec`'d python process — a *different* PID —
+running untouched. The fix: background `bash run.sh` directly with stdin redirected **from a file**
+(no pipe, no subshell): `bash run.sh <req.json >out 2>err & PID_A=$!` — now `$!` names the exact
+process that `exec`s into python, so `kill -9 "$PID_A"` reaches the real, in-flight agnes HTTP call.
+The re-run's checkpoint chain (see "Verified live runs" below) confirms turn 2 never got an
+`AIMessage` committed anywhere in the thread's history after the fix — a genuine mid-flight kill.
+
 ## Verified live runs
 
 All runs below are real calls against the real infrastructure described above (agnes-2.0-flash,
 the real e5 embed server at `127.0.0.1:8899`, the real Qdrant `arena_rag` collection at
-`localhost:6333`). This adapter's full build-and-verify session used **15 real agnes calls total**
-(the ≤15 budget for this build), broken down per mode below.
+`localhost:6333`). This adapter's original 6-mode build-and-verify session used **15 real agnes
+calls total** (the ≤15 budget for that build), broken down per mode below. The later
+`memory_scoped`/`isolation_leak` build (adding the two multi-tenant scoped-memory modes) used
+**2 more real agnes calls total** (the ≤8 budget for that build: `memory_scoped` makes zero LLM
+calls by design — it tests the store, not the model — and `isolation_leak` was exercised twice,
+once directly and once inside `test-isolation.sh`). The `crash_recovery` build (adding the hard-crash
+mode + `test-crash.sh`) used **7 real agnes calls total** against its own ≤8 budget: 1 smoke-test
+`qa` call, then two full `test-crash.sh` runs (3 calls each: converse-turn-1, converse-turn-2 [the
+one interrupted mid-flight by `kill -9` — its request was sent but its response was never received
+or processed], resume) — the first run caught the subshell/`$!` bug documented above (which had to
+be fixed and re-verified live, hence two full runs).
+
+### `crash_recovery` — real SIGKILL mid-turn-2, real recovery by a fresh process (post-fix run)
+
+Full `test-crash.sh` output:
+
+```text
+=== process A (op=converse): 2-turn conversation, thread_id=crash-thread-1784330204-76378 ===
+    process A pid=76388 launched
+    waiting for turn 1/2 checkpoint confirmation on stderr...
+    turn 1/2 checkpoint confirmed on disk (process A still running, now inside turn 2's real agnes call)
+=== sending SIGKILL to process A (pid=76388) mid turn-2 ===
+PASS (1): process A confirmed dead (kill -0 fails) and emitted ZERO stdout (never reached its final envelope print) — a genuine mid-turn kill, not a clean exit
+
+=== process B (op=resume): fresh process, same thread_id, same on-disk checkpoint file ===
+    {"framework": "langgraph", "mode": "crash_recovery", "model": "agnes-2.0-flash", "reply": "FALCON-77-VERDE", "input_tokens": 335, "output_tokens": 10, "latency_ms": 7146, "tool_calls": [], "retrieved": [], "structured": null, "ttft_ms": -1, "scoped_recall": null, "leak_detected": null, "error": ""}
+PASS (2): process B resumed cleanly (error empty, non-empty reply)
+PASS (3): process B's reply recalls the pre-crash (turn 1) fact (FALCON-77-VERDE)
+PASS (4): state_lost=false — turn 1's committed state survived the kill -9 intact
+
+=== FINAL JSON ===
+{
+  "framework": "langgraph",
+  "mode": "crash_recovery",
+  "resumed": true,
+  "precrash_fact_recalled": true,
+  "state_lost": false,
+  "reply": "FALCON-77-VERDE",
+  "thread_id": "crash-thread-1784330204-76378",
+  "precrash_fact": "FALCON-77-VERDE",
+  "error": "",
+  "process_a_confirmed_killed": true,
+  "process_a_stdout_bytes": 0
+}
+
+RESULT: ALL PASS
+```
+
+Independent confirmation, decoded straight from the on-disk `checkpoints_crash.sqlite` after the
+run (`saver.serde.loads_typed(...)` against the raw rows — not inferred from the JSON above):
+
+```text
+[0] step=-1 source=input n_msgs=0 -> []
+[1] step=0  source=loop  n_msgs=1 -> ["HumanMessage:'Remember this exactly: the secret l'"]
+[2] step=1  source=loop  n_msgs=2 -> ["HumanMessage:'...'", "AIMessage:'OK'"]
+[3] step=2  source=input n_msgs=2 -> ["HumanMessage:'...'", "AIMessage:'OK'"]
+[4] step=3  source=loop  n_msgs=3 -> [..., "HumanMessage:'Now, in one short sentence, tell me'"]   # turn 2 queued
+[5] step=4  source=input n_msgs=3 -> [..., "HumanMessage:'Now, in one short sentence, tell me'"]   # turn 2 about to run its LLM call — this is the LAST checkpoint process A ever wrote
+[6] step=5  source=loop  n_msgs=4 -> [..., "HumanMessage:'What was the secret launch code I t'"]   # process B's own new question, appended on top of the SAME n=3 state
+[7] step=6  source=loop  n_msgs=5 -> [..., "AIMessage:'FALCON-77-VERDE'"]                          # process B's real, correct answer
+```
+
+Turn 2's `AIMessage` (the anglerfish fact) **never appears anywhere in the checkpoint chain** —
+process A was killed strictly between checkpoint `[5]` (entering turn 2's step, before the real
+agnes call) and whatever checkpoint would have recorded its result. `ps aux | grep adapter.py`
+immediately after the test and again after an 8-second grace period found zero matching processes —
+no orphaned python silently finishing turn 2 in the background. Process B started from checkpoint
+`[5]`'s state (3 messages, turn 2's question present but unanswered), appended its own new question
+as checkpoint `[6]`, and its real agnes call correctly recalled the turn-1 secret in checkpoint `[7]`.
+
+**Answering the mode's own honest question directly: yes — for this specific pattern (each turn's
+`SqliteSaver` context manager closed, i.e. its transaction committed, before the next turn begins),
+LangGraph's on-disk `SqliteSaver` checkpoint IS durable across a real `kill -9`, not just a clean
+shutdown.** This is standard SQLite durability (the file is fsync'd on commit at `with` block exit),
+not a LangGraph-specific guarantee — LangGraph does nothing extra to protect data written mid-step
+that hasn't reached a commit boundary yet (see checkpoint `[5]` above: turn 2's *pending* human
+message DID get committed as its own checkpoint before the LLM call, which is why process B could
+see it, but that pending state carries no answer — a caller must not assume a turn "happened" just
+because its request checkpoint exists). The dev is responsible for the same discipline `memory` mode
+already documents: don't hold the `SqliteSaver` connection open across a long-lived process if
+crash-durability of each individual turn matters.
 
 ### `qa`
 
@@ -337,6 +651,65 @@ PASS (b2): key literal hits in 'docker run ... env' = 0
 RESULT: ALL PASS
 ```
 
+### `memory_scoped` — full 3-step scenario, one invocation, zero LLM calls
+
+```json
+{"framework": "langgraph", "mode": "memory_scoped", "model": "agnes-2.0-flash", "reply": "The plan renews on the 3rd of every month.", "input_tokens": -1, "output_tokens": -1, "latency_ms": 0, "tool_calls": [], "retrieved": [], "structured": {"recalled_same_scope": "The plan renews on the 3rd of every month.", "recalled_cross_tenant": null, "scope": {"tenant_id": "tenant-a", "user_id": "user-x", "product_id": "product-p", "session_id": null}, "cross_tenant_id": "tenant-a-cross-tenant", "fact_key": "renewal_date"}, "ttft_ms": -1, "scoped_recall": {"same_scope_hit": true, "cross_tenant_miss": true}, "leak_detected": null, "error": ""}
+```
+
+`scoped_recall.same_scope_hit=true`, `scoped_recall.cross_tenant_miss=true` — the fact written
+under `(tenant-a, user-x, product-p)` is recalled verbatim under the same scope, and returns
+nothing under a different `tenant_id` with the same `user_id`/`product_id`. Also reproduced across
+three separate `run.sh` OS processes via `"op":"write"`/`"op":"recall"` sharing the same on-disk
+`SCOPED_STORE_DB_PATH` file (see `test-isolation.sh` output below).
+
+### `isolation_leak` — real agnes turn, cross-tenant secret probe
+
+```json
+{"framework": "langgraph", "mode": "isolation_leak", "model": "agnes-2.0-flash", "reply": "I do not know.", "input_tokens": 329, "output_tokens": 6, "latency_ms": 6874, "tool_calls": [], "retrieved": [], "structured": {"writer_tenant_id": "tenant-a", "reader_tenant_id": "tenant-a-cross-tenant", "secret_key": "wifi_password", "store_level_cross_tenant_recall": null, "store_level_leak": false, "model_leaked_secret_in_reply": false}, "ttft_ms": -1, "scoped_recall": null, "leak_detected": false, "error": ""}
+```
+
+`leak_detected=false`: tenant A wrote `secret_value="Xk9-Nebula-Vault-42"` under `wifi_password`;
+tenant B's cross-tenant recall returned `null` (`store_level_cross_tenant_recall`), so the system
+prompt built for the real agnes call never contained the secret, and the model's real reply ("I do
+not know.") does not contain it either — isolation held at both the store layer and the model
+layer, checked independently.
+
+### `observability` — real ReAct turn instrumented via the OTel bridge (2 real agnes calls)
+
+```json
+{"framework": "langgraph", "mode": "observability", "otel_supported": false, "span_count": 9, "span_names": ["chain.LangGraph", "chain.agent", "llm.ChatOpenAI", "chain.tools_condition", "chain.tools", "tool.calculate", "chain.agent", "llm.ChatOpenAI", "chain.tools_condition"], "span_timings_ms": {"chain.LangGraph": 12947.852, "chain.agent": 6521.355, "llm.ChatOpenAI": 6518.19, "chain.tools_condition": 0.047, "chain.tools": 1.137, "tool.calculate": 0.44, "chain.agent#2": 6421.606, "llm.ChatOpenAI#2": 6419.649, "chain.tools_condition#2": 0.086}, "logs_structured": false, "log_sample": "", "error": ""}
+```
+
+(`notes` field omitted above for brevity — full text explains the findings below.) 9 real spans
+were emitted through the bridge for one `tools`-style turn: 1 root `chain.LangGraph` span, 2
+`chain.agent` rounds, 2 real `llm.ChatOpenAI` calls (the decide-to-call-tool call and the
+answer-from-result call), 2 `chain.tools_condition` routing decisions, 1 `chain.tools` node, and 1
+real `tool.calculate` execution — matching `modes/tools.py`'s documented "at least two real model
+calls" shape exactly. Per-span timings show the real cost breakdown: the two real network calls to
+agnes dominate (6518ms and 6420ms) while the routing/tool-node spans are sub-millisecond
+(`chain.tools_condition`: 0.05–0.09ms, `tool.calculate`: 0.44ms — genuinely local computation).
+`logs_structured=false` and `log_sample=""`: zero LangChain/LangGraph log records were emitted at
+INFO+ for this turn — confirms LangChain does not route its own diagnostics through Python's
+stdlib `logging` module by default. The API key literal was verified to appear zero times in this
+run's stdout or stderr (same `grep`-based proof pattern as `test-env.sh`'s assertion (c)).
+
+### `test-isolation.sh` (full output)
+
+```text
+=== (1)+(2) memory_scoped: full 3-step scenario in one invocation ===
+PASS (1): same-scope recall hit (same_scope_hit=true)
+PASS (2): cross-tenant recall missed (cross_tenant_miss=true)
+
+=== (1)+(2) reproducibility: same scenario across THREE separate run.sh processes ===
+PASS (1)/(2) cross-process: same-tenant hit + cross-tenant miss reproduced across 3 processes
+
+=== (3) isolation_leak: real agnes turn, zero leak ===
+PASS (3): zero leak (leak_detected=false) — secret never reached tenant B's store recall or reply
+
+RESULT: ALL PASS
+```
+
 ### Dry error-path checks (zero live calls — env validation / input validation fails before any HTTP request)
 
 ```text
@@ -345,12 +718,23 @@ stream,     missing OPENAI_API_KEY -> {"error": "OPENAI_API_KEY is not set", ...
 mode="bogus"                       -> {"error": "unknown mode 'bogus'; supported: [...]", ...}
 rag,    messages=[]                -> {"error": "no user message found in 'messages'", ...}
 memory, missing thread_id          -> {"error": "memory mode requires a non-empty string 'thread_id' field", ...}
+crash_recovery, missing thread_id  -> {"error": "crash_recovery mode requires a non-empty string 'thread_id' field", ...}
+crash_recovery, missing turns      -> {"error": "crash_recovery mode op='converse' requires a non-empty list of non-empty strings 'turns'", ...}
+crash_recovery, unknown op         -> {"error": "crash_recovery mode: unknown op 'bogus'; supported: converse, resume", ...}
+memory_scoped, missing product_id  -> {"error": "memory_scoped mode requires non-empty string fields: ['product_id']", ...}
+isolation_leak, missing fields     -> {"error": "isolation_leak mode requires non-empty string fields: ['product_id', 'secret_key', 'secret_value']", ...}
 ```
 
 ## Dependencies and licenses
 
 All **direct** dependencies are MIT or Apache-2.0. License data below is transcribed verbatim from
 `pip show <pkg>` / installed package metadata against this arena's `.venv` (not assumed).
+
+`memory_scoped` and `isolation_leak` add **zero new dependencies** — `modes/scoped_store.py` uses
+only `sqlite3` (Python standard library, PSF License) and stdlib `os`/`time`; `requirements.txt`
+is unchanged by this build. `crash_recovery` also adds **zero new dependencies** — it reuses the
+same `langgraph-checkpoint-sqlite` package `memory` mode already depends on, against a separate
+on-disk file.
 
 ### Direct dependencies
 
@@ -362,6 +746,8 @@ All **direct** dependencies are MIT or Apache-2.0. License data below is transcr
 | `langchain-qdrant` | 1.1.0 | MIT | `rag` |
 | `qdrant-client` | 1.18.0 | Apache-2.0 | `rag` |
 | `langgraph-checkpoint-sqlite` | 3.1.0 | MIT | `memory` |
+| `opentelemetry-api` | 1.44.0 | Apache-2.0 | `observability` |
+| `opentelemetry-sdk` | 1.44.0 | Apache-2.0 | `observability` |
 
 ### New transitive dependencies (pulled in by the three new direct deps above)
 
@@ -377,6 +763,7 @@ All **direct** dependencies are MIT or Apache-2.0. License data below is transcr
 | `portalocker` | 3.2.0 | BSD-3-Clause | qdrant-client local-mode file locking |
 | `protobuf` | 7.35.1 | BSD-3-Clause | grpcio |
 | `sqlite-vec` | 0.1.9 | MIT License, Apache License 2.0 (dual) | langgraph-checkpoint-sqlite, unused by this adapter's own code |
+| `opentelemetry-semantic-conventions` | 0.65b0 | Apache-2.0 | pulled in by `opentelemetry-sdk`; not directly imported by this adapter's code |
 
 ### Transitive dependencies already present in the original single-mode adapter (unchanged)
 
@@ -479,6 +866,15 @@ transitive deps above).
   constructor — the graph must be compiled and invoked *inside* the `with` block; the checkpoint
   is durably written to disk by the time the block exits, so a second, fully separate process can
   open the same file and see it.
+- **Bash gotcha, not a LangGraph one, but load-bearing for `test-crash.sh`**: `PID=$!` after
+  `( echo "$x" | bash run.sh ) &` captures the subshell wrapper's PID, not the real work — the
+  pipeline forks its own `echo` and `bash run.sh` children. Since `run.sh`'s last line is
+  `exec ".../python" adapter.py` (same PID, image replaced in place), the ACTUAL long-running
+  process is a *different* PID than the subshell's. `kill -9 "$PID"` on the subshell leaves that
+  already-`exec`'d python process running to completion in the background — a false-negative "crash"
+  that will still report all assertions PASS if you only check the reply, not the checkpoint chain.
+  Fix: background `bash run.sh` directly (stdin from a file, no pipe, no subshell wrapper) so `$!` is
+  the exact process that `exec`s into python.
 - `ChatOpenAI(..., stream_usage=True)` plus `graph.stream(..., stream_mode="messages")` yields
   `(AIMessageChunk, metadata)` pairs; only the *final* chunk in the OpenAI-compatible stream
   reliably carries `usage_metadata` (`stream_options.include_usage` semantics) — earlier chunks have

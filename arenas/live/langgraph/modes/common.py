@@ -31,6 +31,19 @@ DEFAULT_EMBED_API_KEY = os.environ.get("EMBED_API_KEY", "not-needed")
 DEFAULT_CHECKPOINT_DB = os.environ.get(
     "CHECKPOINT_DB_PATH", os.path.join(ADAPTER_DIR, ".data", "checkpoints.sqlite")
 )
+# crash_recovery mode: a SEPARATE on-disk checkpoint file from `memory`
+# mode's above, so a hard-crash test never clobbers (or is clobbered by)
+# memory mode's own checkpoint history.
+DEFAULT_CRASH_CHECKPOINT_DB = os.environ.get(
+    "CRASH_CHECKPOINT_DB_PATH", os.path.join(ADAPTER_DIR, ".data", "checkpoints_crash.sqlite")
+)
+# Hand-rolled compound-scope fact store (memory_scoped / isolation_leak
+# modes) — see modes/scoped_store.py. A separate on-disk file from the
+# LangGraph checkpointer above: this store has nothing to do with
+# LangGraph's own persistence, it is adapter-owned.
+DEFAULT_SCOPED_STORE_DB = os.environ.get(
+    "SCOPED_STORE_DB_PATH", os.path.join(ADAPTER_DIR, ".data", "scoped_store.sqlite")
+)
 
 
 def log(msg: str) -> None:
@@ -49,13 +62,18 @@ def envelope(
     retrieved: list[dict[str, Any]] | None = None,
     structured: Any = None,
     ttft_ms: int = -1,
+    scoped_recall: dict[str, Any] | None = None,
+    leak_detected: bool | None = None,
     error: str = "",
 ) -> dict[str, Any]:
     """Build the full multi-mode response envelope.
 
     ``retrieved``/``structured``/``ttft_ms`` default to the "not applicable
     to this mode" sentinel (``[]``/``None``/``-1``) rather than being
-    omitted, so every mode emits the same key set.
+    omitted, so every mode emits the same key set. ``scoped_recall`` and
+    ``leak_detected`` are additive fields for the ``memory_scoped`` and
+    ``isolation_leak`` modes respectively; they default to ``None`` for
+    every other mode (same "not applicable" convention).
     """
     return {
         "framework": FRAMEWORK,
@@ -69,6 +87,8 @@ def envelope(
         "retrieved": retrieved if retrieved is not None else [],
         "structured": structured,
         "ttft_ms": ttft_ms,
+        "scoped_recall": scoped_recall,
+        "leak_detected": leak_detected,
         "error": error,
     }
 

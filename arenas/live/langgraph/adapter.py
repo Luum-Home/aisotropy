@@ -12,12 +12,29 @@ extends, and ``README.md`` in this directory for the full multi-mode
 contract.
 
 Modes (dispatched by the request's ``"mode"`` field, default ``"qa"``):
-    qa         - plain single-turn chat (base contract, unchanged).
-    rag        - retrieval-augmented generation over Qdrant `arena_rag`.
-    tools      - a LangGraph ReAct loop that actually EXECUTES a tool.
-    memory     - a LangGraph checkpointer persisted across processes.
-    structured - ChatOpenAI.with_structured_output(schema).
-    stream     - real token streaming via graph.stream(...), reports ttft_ms.
+    qa             - plain single-turn chat (base contract, unchanged).
+    rag            - retrieval-augmented generation over Qdrant `arena_rag`.
+    tools          - a LangGraph ReAct loop that actually EXECUTES a tool.
+    memory         - a LangGraph checkpointer persisted across processes,
+                      keyed by a bare ``thread_id`` (no multi-tenant scope).
+    crash_recovery - like `memory`, but proves survival of a real `kill -9`
+                      mid-turn, not just a clean process exit. See
+                      modes/crash_recovery.py and test-crash.sh.
+    structured     - ChatOpenAI.with_structured_output(schema).
+    stream         - real token streaming via graph.stream(...), reports
+                      ttft_ms.
+    memory_scoped  - hand-rolled compound-scope memory
+                      (tenant_id, user_id, product_id[, session_id]) over a
+                      small on-disk store; proves same-scope recall hits and
+                      cross-tenant recall misses. No LLM call.
+    isolation_leak - a REAL agnes turn answered as a different tenant than
+                      the one that wrote a secret fact, to prove the secret
+                      never reaches that tenant's prompt.
+    observability  - bridges LangChain's native callback stream to real
+                      in-process OpenTelemetry spans (InMemorySpanExporter,
+                      no external collector) over a real ReAct tools turn,
+                      and reports what LangGraph's native surface emits.
+                      See modes/observability.py.
 
 Security: never print, log, or persist the API key. All diagnostics go to
 stderr; stdout carries exactly one JSON object and nothing else.
@@ -28,15 +45,31 @@ import json
 import os
 import sys
 
-from modes import common, memory, qa, rag, stream, structured, tools
+from modes import (
+    common,
+    crash_recovery,
+    isolation_leak,
+    memory,
+    memory_scoped,
+    observability,
+    qa,
+    rag,
+    stream,
+    structured,
+    tools,
+)
 
 MODES = {
     "qa": qa.run,
     "rag": rag.run,
     "tools": tools.run,
     "memory": memory.run,
+    "crash_recovery": crash_recovery.run,
     "structured": structured.run,
     "stream": stream.run,
+    "memory_scoped": memory_scoped.run,
+    "isolation_leak": isolation_leak.run,
+    "observability": observability.run,
 }
 
 

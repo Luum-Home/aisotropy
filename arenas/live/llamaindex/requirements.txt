@@ -8,3 +8,6 @@ llama-index-llms-openai-like==0.7.2
 llama-index-vector-stores-qdrant==0.10.2   # rag mode: QdrantVectorStore
 llama-index-embeddings-openai-like==0.3.1  # rag/tools modes: e5 query embeddings via EMBED_URL
 qdrant-client==1.18.0                      # transitive of vector-stores-qdrant; also used directly in corpus_lookup tool
+# Added for the observability mode:
+openinference-instrumentation-llama-index==4.4.3  # OTel-via-OpenInference integration for LlamaIndex
+opentelemetry-sdk==1.44.0                          # in-process TracerProvider + InMemorySpanExporter (no collector)

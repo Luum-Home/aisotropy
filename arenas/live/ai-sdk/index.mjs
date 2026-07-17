@@ -10,6 +10,18 @@
 //   memory     - generateText() with history persisted to real rqlite across runs
 //   structured - generateObject() against a zod schema
 //   stream     - streamText() with real streaming + time-to-first-token
+//   memory_scoped - generateText() with history persisted to real rqlite under a
+//                HAND-ROLLED compound scope (tenant_id/user_id/product_id[/session_id]);
+//                proves scoped recall + cross-tenant miss, not just session persistence
+//   isolation_leak - plants a secret under one scope, recalls under another, and
+//                proves (or disproves) a cross-tenant leak via a real agnes turn
+//   observability - wires an in-process OTel SDK (@ai-sdk/otel + InMemorySpanExporter)
+//                and runs a real multi-op tool-loop turn to measure the AI SDK's
+//                NATIVE OpenTelemetry span emission (names, counts, per-span timings)
+//   crash_recovery - proves survival of a HARD SIGKILL mid-conversation (not just a
+//                clean exit like `memory`): "role":"run" checkpoints turns to rqlite
+//                one by one; "role":"resume" is a completely fresh process that loads
+//                whatever committed and continues, recalling the pre-crash fact
 //
 // Contract:
 //   stdin  -> ONE JSON object, always including "mode" (defaults to "qa" when
@@ -26,6 +38,10 @@ import { runTools } from './lib/modes/tools.mjs';
 import { runMemory } from './lib/modes/memory.mjs';
 import { runStructured } from './lib/modes/structured.mjs';
 import { runStream } from './lib/modes/stream.mjs';
+import { runMemoryScoped } from './lib/modes/memory-scoped.mjs';
+import { runIsolationLeak } from './lib/modes/isolation-leak.mjs';
+import { runObservability } from './lib/modes/observability.mjs';
+import { runCrashRecovery } from './lib/modes/crash-recovery.mjs';
 
 const MODE_HANDLERS = {
   qa: runQa,
@@ -34,6 +50,10 @@ const MODE_HANDLERS = {
   memory: runMemory,
   structured: runStructured,
   stream: runStream,
+  memory_scoped: runMemoryScoped,
+  isolation_leak: runIsolationLeak,
+  observability: runObservability,
+  crash_recovery: runCrashRecovery,
 };
 
 /**

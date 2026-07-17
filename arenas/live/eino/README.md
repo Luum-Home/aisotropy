@@ -11,7 +11,16 @@ persistence layer for `memory` mode, because Eino has no built-in persisted-memo
 
 This is separate from `arenas/eino/` (the stub-model feature-parity arena) and extends the
 original single-shot `arenas/live/eino/` adapter (`qa` mode below is that adapter, unchanged)
-into six modes selected by a `"mode"` field on stdin.
+into ten modes selected by a `"mode"` field on stdin: the original six (`qa`, `rag`, `tools`,
+`memory`, `structured`, `stream`), two multi-tenant scoped-memory modes, `memory_scoped`
+and `isolation_leak` — see [Multi-tenant scoped memory](#multi-tenant-scoped-memory-memory_scoped-isolation_leak-modes)
+below for why these exist and what they prove — `crash_recovery`, which proves whether the
+app survives a **hard `kill -9` mid-conversation**, distinct from `memory` mode's clean-exit
+recall proof — see [`crash_recovery` mode](#crash_recovery-mode) below — and `observability`,
+which measures Eino's own tracing/logging surface (native `callbacks.Handler` vs. OTel-via-
+`eino-ext`) by actually running a multi-step turn through it — see
+[`observability` mode](#observability-mode) below. `observability` writes its own JSON contract,
+distinct from the shared one in [Contract](#contract) — see that section below.
 
 ## Contract
 
@@ -19,23 +28,36 @@ Reads **one JSON object from stdin**:
 
 ```jsonc
 {
-  "mode": "qa | rag | tools | memory | structured | stream",  // default "qa"
+  "mode": "qa | rag | tools | memory | structured | stream | memory_scoped | isolation_leak | crash_recovery | observability",  // default "qa"
   "system": "string",                        // optional system prompt
   "messages": [{"role": "user|assistant", "content": "string"}],
   "tools": [{"name": "...", "description": "...", "parameters": {/* JSON-Schema */}}], // qa mode only
-  "session_id": "string",                    // memory mode: required, correlates turns across process invocations
+  "session_id": "string",                    // memory/crash_recovery mode: required, correlates turns across process invocations; memory_scoped/isolation_leak: optional extra scope layer
   "top_k": 4,                                 // rag mode: retrieval depth (optional, default 4)
   "schema": {/* JSON-Schema object */},       // structured mode: override the default schema (optional)
-  "schema_name": "string"                     // structured mode: schema name (optional, default "structured_answer")
+  "schema_name": "string",                    // structured mode: schema name (optional, default "structured_answer")
+  "tenant_id": "string",                      // memory_scoped/isolation_leak: required
+  "user_id": "string",                        // memory_scoped/isolation_leak: required
+  "product_id": "string",                     // memory_scoped/isolation_leak: required
+  "fact": "string",                           // memory_scoped/isolation_leak: write/seed payload — store this under the scope above
+  "query": "string",                          // memory_scoped/isolation_leak: recall/probe payload — ask this against the scope above
+  "crash_turns": ["string"],                  // crash_recovery mode, producer call: ordered user turns to run+persist one at a time
+  "expect_substring": "string"                // crash_recovery mode, resumer call: substring the reply must contain to count as pre-crash recall
 }
 ```
+
+Exactly one of `fact` (write/seed) or `query` (recall/probe) must be set for `memory_scoped` and
+`isolation_leak`; both or neither is a validation error. Exactly one of `crash_turns` (producer)
+or `messages` (resumer) must be set for `crash_recovery`; both or neither is a validation error.
 
 Writes **exactly one JSON object to stdout** (all logs go to stderr):
 
 ```jsonc
 {
   "framework": "eino",
-  "mode": "qa | rag | tools | memory | structured | stream",
+  "mode": "qa | rag | tools | memory | structured | stream | memory_scoped | isolation_leak | crash_recovery",
+  // NOTE: "observability" mode does NOT use this contract at all — it writes a completely
+  // different JSON shape, documented in "observability mode" below.
   "model": "agnes-2.0-flash",
   "reply": "string",
   "input_tokens": 0,
@@ -45,7 +67,12 @@ Writes **exactly one JSON object to stdout** (all logs go to stderr):
   "retrieved": [{"doc_id": "string", "title": "string", "score": 0.0, "text": "string"}],
   "structured": null,
   "ttft_ms": 0,
-  "error": "string"
+  "error": "string",
+  "scoped_recall": null,   // memory_scoped recall calls only: {"same_scope_hit": bool, "cross_tenant_miss": bool, "recalled_text": "string"}
+  "leak_detected": null,   // isolation_leak probe calls only: bool (false = no leak, good)
+  "resumed": null,               // crash_recovery resumer calls only: bool — prior persisted turns were found on disk
+  "precrash_fact_recalled": null,// crash_recovery resumer calls only: bool — the reply actually contains expect_substring
+  "state_lost": null             // crash_recovery resumer calls only: bool — negation of resumed (no persisted turns survived at all)
 }
 ```
 
@@ -133,6 +160,120 @@ DB path: `EINO_ARENA_MEMORY_DB` (default `.data/memory.db`, relative to this dir
 `run.sh` already `cd`s here; the Docker image sets it to the absolute `/data/memory.db`, see
 [Packaging](#packaging)).
 
+### `crash_recovery` mode
+
+`memory` mode above only proves recall across a **clean process exit** — the process finishes,
+returns, and a later invocation reads what it wrote. `crash_recovery` proves something strictly
+stronger and different: does the app survive a **hard `kill -9` mid-conversation**, with no
+graceful shutdown, no `defer`, no `Close()` ever running? Implementation: `mode_crash.go`, driven
+end-to-end by `test-crash.sh`.
+
+It deliberately **reuses the exact same on-disk SQLite `memoryStore` that `memory` mode uses**
+(`mode_memory.go`'s `openMemoryStore`/`load`/`append` — the same `turns` table, the same file) —
+not a second, crash-only store — because the point is to test the durability of the one real
+persistence layer this adapter has, not to build a differently-tuned store that might pass a
+crash test for reasons that don't generalize.
+
+The scenario is two REAL, separate OS processes talking to the real agnes model:
+
+1. **Process A (producer)** runs a 2-turn conversation on one `session_id`
+   (`"crash_turns": ["turn 1 text", "turn 2 text"]`). Turn 1 states a fact; the model's Generate
+   call returns, and **only then** is the turn committed to SQLite (`mode_memory.go`'s
+   `store.append` opens no transaction until the Generate call it depends on has already
+   succeeded — so there is never a half-written turn on disk to begin with). Turn 2's real
+   network call is then dispatched. `test-crash.sh` waits for a stderr synchronization line
+   (`"turn 2 starting"`) that proves turn 1 is committed AND turn 2 is genuinely in-flight, then
+   sends `SIGKILL` directly to the process (a real standalone binary, not a `go run .` wrapper,
+   so the signal lands on the process actually holding the SQLite connection and the open HTTP
+   call — a `go run` parent can shield its child from a misdirected signal).
+2. **Process B (resumer)** is a completely fresh process (`"messages": [...]`, `crash_turns`
+   omitted) started after process A is confirmed dead. It loads whatever `session_id` already
+   has on the SAME on-disk file and answers a question only answerable by recalling the turn-1
+   fact, reporting three signals: `resumed` (prior turns were found on disk at all), `state_lost`
+   (the negation of `resumed` — nothing survived), and `precrash_fact_recalled` (the reply
+   actually contains `expect_substring`, i.e. the fact was truly recalled, not just that some
+   history existed).
+
+**HONEST durability note — read this before trusting `resumed: true` for anything beyond what it
+actually tests:** this on-disk SQLite store is durable across a hard `kill -9` **of the
+application process** for the reason demonstrated above — each turn is one committed SQLite
+transaction, and no transaction is ever opened for a turn whose model call hasn't already
+succeeded, so a mid-flight kill can only ever lose the *one* turn that was truly in-flight, never
+corrupt an already-committed one. It is **not** proof of durability across every failure class:
+this repo runs SQLite with its default rollback-journal/sync settings (no WAL, no
+`PRAGMA synchronous` override), so it relies on the OS's own fsync-on-commit guarantee — a kill
+of the *application process* (what this test does) leaves the OS page cache and disk intact, but
+an actual **host power-loss or OS crash** at the exact instant of an uncommitted fsync is a
+different, unverified failure mode this test does not exercise. In short: **durable across
+`kill -9` of the process, verified here; durability across power loss/host crash is a separate
+claim this test makes no assertion about.**
+
+DB path: same `EINO_ARENA_MEMORY_DB` env var as `memory` mode (see above) — `test-crash.sh`
+overrides it to an isolated temp file per run so the scenario never touches the shared
+`.data/memory.db` used by manual `memory`-mode smoke tests.
+
+### Multi-tenant scoped memory (`memory_scoped`, `isolation_leak` modes)
+
+**Honest note: Eino has no native multi-tenant memory isolation.** There is no key-prefixing
+primitive, no payload filter, nothing in Eino's component model that scopes stored state by
+tenant/user/product. Both modes below hand-roll a compound scope key —
+`tenant_id\x1ftenant_id\x1fuser_id\x1fproduct_id[\x1fsession_id]` (ASCII Unit Separator, joined
+in `scopeKey()`, `mode_scoped_memory.go`) — over the same kind of real, on-disk SQLite store
+`memory` mode already uses (`mode_memory.go`, new `scoped_facts` table in the same
+`.data/memory.db`). **The developer is responsible for getting this key right; a mistake here —
+forgetting to fold `tenant_id` into the key, swapping argument order, reusing a key across
+tenants — is a silent isolation leak, not a compile error.** `isolation_leak` mode exists
+specifically to catch that failure mode with a real, adversarial probe rather than trusting the
+implementation by inspection.
+
+**Contrast: aisotropy enforces multi-tenant isolation by construction**, not by developer
+discipline — see `docs/architecture/multi-tenancy.md` and
+`.claude/rules/constitutional-gates.md` in the aisotropy repo root. `tenant_id` travels
+exclusively via `context.Context`, injected once at the Huma handler boundary from the validated
+path param; every memory-tier read/write is required to filter by tenant (key-prefix in
+BadgerDB/rqlite, and for Qdrant a **payload filter applied during the HNSW scan itself**, not a
+post-filter — a post-filter is treated as an isolation leak, not a fix, per the constitutional
+gate). There is no code path where a forgotten field silently mixes two tenants' data — the
+isolation is structural, checked by the same gate that would block this arena's hand-rolled
+`scopeKey()` if it shipped inside aisotropy itself. This arena exists precisely to make that
+contrast concrete: Eino gives you a chat model and a graph; multi-tenant isolation is 100% on
+you.
+
+#### `memory_scoped` mode
+
+Stores or recalls a fact under the hand-rolled compound scope `(tenant_id, user_id, product_id[,
+session_id])`. Which operation runs is inferred from the payload: a non-empty `"fact"` writes (a
+pure store operation — no LLM call), a non-empty `"query"` recalls (a **real agnes `Generate`
+call**, grounded in a system prompt built from exactly what the scoped store returned for that
+scope; see `scopedGenerate` in `mode_scoped_memory.go`).
+
+The recall response's `scoped_recall` object reports two complementary views of the same store
+lookup:
+- `same_scope_hit`: `true` when the recall's own scope matched at least one stored fact — the
+  case that proves "recall under the same scope I wrote to" works.
+- `cross_tenant_miss`: `true` when it matched nothing — the case that proves "recall under a
+  scope I never wrote to" (e.g. a different `tenant_id`) correctly finds nothing.
+
+Both fields are always populated; whichever is `true` depends on what the caller is testing.
+`recalled_text` is the raw joined fact text the store returned (before the model ever sees it),
+so a grader can verify what was actually fed into the prompt, not just the model's paraphrase.
+
+#### `isolation_leak` mode
+
+Seeds a secret under one tenant's scope (`"fact"`, e.g. tenant A) or probes a scope for leakage
+(`"query"`, e.g. as tenant B), reusing the **exact same `scoped_facts` store** `memory_scoped`
+writes to (`openScopedMemoryStore`, same DB file, same table). The `leak_detected` boolean is
+**not** derived from the model's phrasing — it is computed in Go from what the store actually
+returned for the probing scope: every row is re-checked against the probing request's
+`tenant_id`, and `leak_detected` is `true` only if a row belonging to a *different* tenant came
+back. Given the store query filters by `scope_key` (which embeds `tenant_id`), this can only
+happen if `scopeKey()` itself was computed without `tenant_id` — i.e. the exact hand-rolled
+mistake this mode exists to catch.
+
+`false` (no leak) is the expected, verified result — see
+[Verified smoke tests](#isolation--multi-tenant-scoped-memory-real-agnes-calls) below for the
+real seed-under-A / probe-as-B run.
+
 ### `structured` mode
 
 Binds Eino's native structured-output config (`ChatModelConfig.ResponseFormat`, forwarded to
@@ -159,6 +300,85 @@ concatenated into `reply`; usage comes from whichever chunk carries it (the vend
 client already requests `stream_options.include_usage=true` on every streaming call). See
 `mode_stream.go`.
 
+### `observability` mode
+
+Measures Eino's own observability surface instead of answering a question. Unlike every other
+mode, `observability` writes a **different JSON contract**, not the shared one above:
+
+```jsonc
+{
+  "framework": "eino",
+  "mode": "observability",
+  "otel_supported": true,
+  "span_count": 5,
+  "span_names": ["ChatModel(OpenAI)", "calculate(Calculate)", "Tools", "ChatModel(OpenAI)", "ReActAgent"],
+  "span_timings_ms": {"ChatModel(OpenAI)": 6526.18, "ChatModel(OpenAI)#2": 6412.39, "ReActAgent": 12938.75, "Tools": 0.09, "calculate(Calculate)": 0.07},
+  "logs_structured": false,
+  "log_sample": "{\"time\":\"...\",\"level\":\"INFO\",\"msg\":\"eino_observability_turn\",...}",
+  "notes": "string — full write-up of what was measured and how"
+}
+```
+
+Implementation: `observability.go` (the OTel/callbacks plumbing) + `mode_observability.go` (the
+scenario + JSON contract). Ignores `mode`-contract fields like `tenant_id`; if `messages` is
+given it uses the last user message as the question, otherwise it defaults to the same
+arithmetic question `tools` mode's smoke test uses (`"What is (48 + 12) * 3 / 2? Use the
+calculator tool."`) — a genuine multi-step ReAct turn (tool-decision call → real tool execution
+→ final-answer call), not a single-shot call, so the trace is representative.
+
+**Native mechanism — `callbacks.Handler`.** Eino's *only* built-in observability primitive is
+`github.com/cloudwego/eino/callbacks` — the same `OnStart`/`OnEnd`/`OnError`/
+`OnStartWithStreamInput`/`OnEndWithStreamOutput` seam every other mode's `usageToolTracker`
+already uses (see `mode_tools.go`) to capture token usage and real tool-call arguments/results.
+It fires once per component invocation (`ChatModel`, `Tool`, the `Tools` node, and the graph
+itself) and hands the handler a `*callbacks.RunInfo{Name, Type, Component}` plus a
+component-typed input/output. There is **no built-in aggregation, span concept, or exporter** in
+`eino` core — a callback handler is a raw hook, not a tracing system.
+
+**OTel — via `eino-ext`, not `eino` core, and OTLP-only out of the box.** `eino` itself does not
+import `go.opentelemetry.io/otel`. The OTel integration lives in the separate `eino-ext` module,
+at two levels:
+
+- `github.com/cloudwego/eino-ext/libs/acl/opentelemetry` — builds a `*sdktrace.TracerProvider`
+  wired to `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc`. Its
+  `NewOpenTelemetryProvider` **only constructs an OTLP/gRPC exporter** — there is no in-memory or
+  stdout exporter option in that package, so it cannot be exercised offline as shipped.
+- `github.com/cloudwego/eino-ext/callbacks/apmplus` — the actual `callbacks.Handler`
+  implementation that turns Eino callback firings into real OTel spans (one span per component,
+  `gen_ai.*` semantic-convention attributes, plus metrics: token histograms, chat counters,
+  streaming TTFT/TPOT). It is built *on top of* the `opentelemetry` package above, so it inherits
+  the same OTLP-only constraint — it requires a live ByteDance APM Plus (or any OTLP) collector
+  endpoint (`Host`/`AppKey` in its `Config`) just to construct successfully; there is no
+  no-network mode.
+
+Since the task requires REAL infra with **no external collector**, this adapter does not import
+`eino-ext/callbacks/apmplus` (it would either fail to construct or silently try to dial a
+collector). Instead `observability.go` reimplements the *same shape* of handler apmplus uses —
+`tracer.Start()` on `OnStart`, `span.End()` on `OnEnd`/`OnError` — directly against
+`go.opentelemetry.io/otel/sdk/trace`, but swaps the exporter for
+`go.opentelemetry.io/otel/sdk/trace/tracetest.InMemoryExporter` (part of the OTel Go SDK itself,
+not a third-party mock) wired via `sdktrace.WithSyncer` (synchronous export, no batching
+goroutine, zero network I/O). This is a genuine, real OTel SDK — real `ReadOnlySpan`s with real
+start/end timestamps, real attributes, real span names from Eino's own `RunInfo` — the only thing
+swapped out is where the finished spans land.
+
+**What was actually observed** (one real run, `agnes-2.0-flash`, see
+[smoke test](#observability---real-in-memory-otel-spans-from-a-live-turn) below): **10 raw
+`callbacks.Handler` firings** (`OnStart`+`OnEnd` × 5 component invocations) converted **1:1 into
+5 real OTel spans** — `ReActAgent` (the whole turn, root span), `ChatModel(OpenAI)` ×2
+(tool-decision call, ~6.5s; final-answer call, ~6.4s — real agnes network latency, not
+synthetic), `Tools` (the tools-node wrapper, ~0.09ms), `calculate(Calculate)` (the actual
+evaluator execution, ~0.07ms). Chat-model spans additionally carry Eino's native
+`gen_ai.usage.prompt_tokens`/`gen_ai.usage.completion_tokens` attributes, sourced from
+`model.ConvCallbackOutput(...).TokenUsage` — the same field every other mode's token counts come
+from.
+
+**Logs.** `eino` core has no logging component and emits nothing structured on its own — there is
+no `eino.Logger` interface, no log line per component call, nothing to capture. `logs_structured`
+is honestly `false`. `log_sample` is a **DIY** example: this mode builds one `log/slog` JSON line
+on top of the *same* callback data (`raw_callback_events`, `span_count`, `total_ms`) to show what
+a hand-rolled structured log would look like — clearly not something Eino emits by itself.
+
 ## Real infrastructure this adapter reaches
 
 | Service | Reached via | Env var (default) |
@@ -166,7 +386,7 @@ client already requests `stream_options.include_usage=true` on every streaming c
 | agnes-2.0-flash chat | `eino-ext/components/model/openai` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` (required, no defaults — see `run.sh`) |
 | e5 embeddings server | `eino-ext/components/embedding/openai` | `EMBED_URL` (`http://127.0.0.1:8899`), `EMBED_MODEL` (`multilingual-e5-small-query`) |
 | Qdrant (`arena_rag`) | `github.com/qdrant/go-client` (gRPC) | `QDRANT_URL` (`http://localhost:6333`, REST-style — hostname is parsed out), `QDRANT_GRPC_PORT` (derived: REST port + 1 = `6334` unless overridden), `QDRANT_COLLECTION` (`arena_rag`) |
-| on-disk SQLite | `modernc.org/sqlite` | `EINO_ARENA_MEMORY_DB` (`.data/memory.db`) |
+| on-disk SQLite | `modernc.org/sqlite` | `EINO_ARENA_MEMORY_DB` (`.data/memory.db`) — shared by `memory`, `memory_scoped`/`isolation_leak` (separate table), and `crash_recovery` (same table as `memory`) |
 
 Every host is env-configurable specifically so the same binary works unchanged inside a Docker
 container reaching the host via `host.docker.internal` (see [Packaging](#packaging)).
@@ -245,6 +465,14 @@ $ echo '{"mode":"structured","messages":[{"role":"user","content":"What is the c
 {"framework":"eino","mode":"structured","model":"agnes-2.0-flash","reply":"{\n  \"answer\": \"Paris\",\n  \"confidence\": \"high\"\n}","input_tokens":398,"output_tokens":20,"latency_ms":6852,"tool_calls":[],"retrieved":[],"structured":{"answer":"Paris","confidence":"high"},"ttft_ms":0,"error":""}
 ```
 
+### `observability` — real in-memory OTel spans from a live turn
+
+```bash
+$ echo '{"mode":"observability"}' | bash run.sh
+{"framework":"eino","mode":"observability","otel_supported":true,"span_count":5,"span_names":["ChatModel(OpenAI)","calculate(Calculate)","Tools","ChatModel(OpenAI)","ReActAgent"],"span_timings_ms":{"ChatModel(OpenAI)":6526.177125,"ChatModel(OpenAI)#2":6412.390709,"ReActAgent":12938.754625,"Tools":0.0895,"calculate(Calculate)":0.070083},"logs_structured":false,"log_sample":"{\"time\":\"2026-07-17T23:22:33Z\",\"level\":\"INFO\",\"msg\":\"eino_observability_turn\",\"framework\":\"eino\",\"raw_callback_events\":10,\"span_count\":5,\"total_ms\":12938}","notes":"Eino ships NO built-in OTel exporter usable offline: ... Observed 10 raw callback firings (OnStart+OnEnd/OnError across every component) for this turn, converted 1:1 into 5 real OTel spans: [ChatModel(OpenAI) calculate(Calculate) Tools ChatModel(OpenAI) ReActAgent]. ..."}
+```
+(full `notes` text elided here for length — see [`observability` mode](#observability-mode) above for the complete write-up.) 5 real spans, real durations (the two `ChatModel` calls are ~6.5s/6.4s of genuine agnes network latency, not synthetic), exit code 0, exactly one JSON object on stdout — verified with `wc -l` on a captured stdout-only run. A parallel check with `source ../../../.env` confirmed `$OPENAI_API_KEY` appears in neither stdout nor stderr of this run.
+
 ### `tools` — real multi-step execution
 
 ```bash
@@ -267,6 +495,96 @@ $ echo '{"mode":"memory","session_id":"demo-1","messages":[{"role":"user","conte
 {"framework":"eino","mode":"memory","model":"agnes-2.0-flash","reply":"NR-4471","input_tokens":314,"output_tokens":7,"latency_ms":6950,"tool_calls":[],"retrieved":[],"structured":null,"ttft_ms":0,"error":""}
 ```
 Confirmed on disk: `sqlite3 .data/memory.db "SELECT turn_index, role, content FROM turns WHERE session_id='demo-1' ORDER BY turn_index"` returns all 4 persisted rows (2 user, 2 assistant) across both process invocations.
+
+### `crash_recovery` — real `kill -9` mid-turn-2, then a fresh process resumes
+
+```bash
+$ bash arenas/live/eino/test-crash.sh
+=== crash_recovery scenario: session_id=crash-test-1784330070-96170 db=/tmp/.../crash-memory.db ===
+--- building eino-crash-arena binary ---
+PASS: binary builds (exit=0)
+--- process A: starting (will be SIGKILLed mid-turn-2) ---
+PASS: process A reached turn 2 (in-flight) before being killed
+PASS: process A did not exit cleanly (was actually killed)
+PASS: turn 2 never reached disk (kill landed before its commit)
+--- process A stderr (for evidence) ---
+eino-crash-arena: turn 1 starting for session "crash-test-1784330070-96170"
+eino-crash-arena: turn 1 persisted for session "crash-test-1784330070-96170"
+eino-crash-arena: turn 2 starting for session "crash-test-1784330070-96170"
+--- process B: fresh process, resuming session ---
+PASS: process B (resumer) ran successfully (exit=0)
+--- process B stdout ---
+{"framework":"eino","mode":"crash_recovery","model":"agnes-2.0-flash","reply":"BLUE-FALCON-77","input_tokens":324,"output_tokens":8,"latency_ms":10542,"tool_calls":[],"retrieved":[],"structured":null,"ttft_ms":0,"error":"","scoped_recall":null,"leak_detected":null,"resumed":true,"precrash_fact_recalled":true,"state_lost":false}
+PASS: resumed=true (got=true)
+PASS: precrash_fact_recalled=true (got=true)
+PASS: state_lost=false (got=false)
+
+=== test-crash.sh summary: 8 passed, 0 failed ===
+```
+Process A's stderr shows `"turn 2 starting"` with no matching `"turn 2 persisted"` line — turn 2
+was genuinely in-flight (its real agnes HTTP call already dispatched) when `SIGKILL` landed, and
+it never reached disk. Process B — a brand-new PID, brand-new Go runtime, started only after
+process A was confirmed dead by `wait` — loaded turn 1 from the same on-disk file and answered
+`BLUE-FALCON-77` verbatim, the exact fact stated in turn 1 and never restated in process B's own
+input. `resumed=true` / `state_lost=false` / `precrash_fact_recalled=true` together are the
+scenario's PASS condition; see [HONEST durability note](#crash_recovery-mode) above for exactly
+what this test does and does not prove.
+
+### Isolation — multi-tenant scoped memory (real agnes calls)
+
+Write a fact under `tenant-a` (pure store op, no agnes call):
+```bash
+$ echo '{"mode":"memory_scoped","tenant_id":"tenant-a","user_id":"user-x","product_id":"prod-p","fact":"The secret launch code for project Nimbus is ALPHA-7291."}' | bash run.sh
+{"framework":"eino","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"stored fact for tenant=tenant-a user=user-x product=prod-p","input_tokens":-1,"output_tokens":-1,"latency_ms":0,"tool_calls":[],"retrieved":[],"structured":null,"ttft_ms":0,"error":"","scoped_recall":null,"leak_detected":null}
+```
+
+Recall under the **same** scope (real agnes call) — `same_scope_hit: true`:
+```bash
+$ echo '{"mode":"memory_scoped","tenant_id":"tenant-a","user_id":"user-x","product_id":"prod-p","query":"What is the secret launch code for project Nimbus?"}' | bash run.sh
+{"framework":"eino","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"The secret launch code for project Nimbus is ALPHA-7291.","input_tokens":343,"output_tokens":16,"latency_ms":6890,"tool_calls":[],"retrieved":[],"structured":null,"ttft_ms":0,"error":"","scoped_recall":{"same_scope_hit":true,"cross_tenant_miss":false,"recalled_text":"The secret launch code for project Nimbus is ALPHA-7291."},"leak_detected":null}
+```
+
+Recall the **same question** as `tenant-b` (same `user_id`/`product_id`, real agnes call) — `cross_tenant_miss: true`, no fact leaked into the reply:
+```bash
+$ echo '{"mode":"memory_scoped","tenant_id":"tenant-b","user_id":"user-x","product_id":"prod-p","query":"What is the secret launch code for project Nimbus?"}' | bash run.sh
+{"framework":"eino","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"I do not have access to that information. The stored facts for this scope contain no data regarding Project Nimbus or any associated launch codes.","input_tokens":331,"output_tokens":28,"latency_ms":9222,"tool_calls":[],"retrieved":[],"structured":null,"ttft_ms":0,"error":"","scoped_recall":{"same_scope_hit":false,"cross_tenant_miss":true,"recalled_text":""},"leak_detected":null}
+```
+
+`isolation_leak`: seed a secret under `tenant-a` (pure store op), then probe **as `tenant-b`** (real agnes call) — `leak_detected: false`:
+```bash
+$ echo '{"mode":"isolation_leak","tenant_id":"tenant-a","user_id":"user-x","product_id":"prod-p","fact":"TOP SECRET: tenant-a wire transfer PIN is 8842."}' | bash run.sh
+{"framework":"eino","mode":"isolation_leak","model":"agnes-2.0-flash","reply":"seeded secret under tenant=tenant-a scope","input_tokens":-1,"output_tokens":-1,"latency_ms":0,"tool_calls":[],"retrieved":[],"structured":null,"ttft_ms":0,"error":"","scoped_recall":null,"leak_detected":null}
+
+$ echo '{"mode":"isolation_leak","tenant_id":"tenant-b","user_id":"user-x","product_id":"prod-p","query":"What is the wire transfer PIN?"}' | bash run.sh
+{"framework":"eino","mode":"isolation_leak","model":"agnes-2.0-flash","reply":"I am not certain. The stored facts for this scope are \"(none)\".","input_tokens":328,"output_tokens":16,"latency_ms":6855,"tool_calls":[],"retrieved":[],"structured":null,"ttft_ms":0,"error":"","scoped_recall":null,"leak_detected":false}
+```
+
+Confirmed on disk: `sqlite3 .data/memory.db "SELECT tenant_id, user_id, product_id, fact FROM scoped_facts"` shows both facts stored only under `tenant-a` — no row with `tenant_id='tenant-b'` was ever written, which is exactly why the cross-tenant/probe queries above came back empty rather than needing the model to withhold anything.
+
+### `test-isolation.sh`
+
+```
+=== memory_scoped: compound-scope isolation ===
+PASS: memory_scoped write succeeds (tenant A) (error="")
+PASS: same-scope hit (scoped_recall.same_scope_hit) (got=true)
+PASS: same-scope reply contains the recalled fact
+PASS: cross-tenant miss (scoped_recall.cross_tenant_miss) (got=true)
+PASS: cross-tenant reply does NOT contain the secret
+
+=== isolation_leak: seed under tenant A, probe as tenant B ===
+PASS: isolation_leak seed succeeds (tenant A) (error="")
+PASS: zero leak (leak_detected=false) probing as tenant B (got=false)
+PASS: tenant B probe reply does NOT contain the secret
+
+=== direct store check: scoped_facts on disk holds only tenant A rows for this run ===
+PASS: on-disk store has zero rows for tenant B from this run (rows=0)
+
+=== test-isolation.sh summary: 9 passed, 0 failed ===
+```
+Each run uses a fresh `test-isolation-tenant-{a,b}-<pid>-<epoch>` namespace so repeated runs never
+collide with each other or with the manual smoke-test data above. Real agnes calls per run: 3
+(same-scope recall, cross-tenant recall, isolation_leak probe) — the write/seed calls are pure
+store operations.
 
 ### `rag` — grounded + trap (real e5 + real Qdrant)
 
@@ -342,6 +660,14 @@ part of the single-shot adapter.
 | github.com/cloudwego/eino-ext/libs/acl/openai | v0.1.17 | Apache-2.0 |
 | github.com/eino-contrib/jsonschema | v1.0.3 | MIT |
 | github.com/qdrant/go-client **(NEW)** | v1.18.3 | Apache-2.0 |
+| go.opentelemetry.io/otel **(NEW, observability mode)** | v1.44.0 | Apache-2.0 |
+| go.opentelemetry.io/otel/sdk **(NEW, observability mode)** | v1.44.0 | Apache-2.0 |
+| go.opentelemetry.io/otel/trace **(NEW, observability mode)** | v1.44.0 | Apache-2.0 |
+| go.opentelemetry.io/otel/metric **(NEW, observability mode, indirect)** | v1.44.0 | Apache-2.0 |
+| go.opentelemetry.io/auto/sdk **(NEW, observability mode, indirect)** | v1.2.1 | Apache-2.0 |
+| github.com/go-logr/logr **(NEW, observability mode, indirect)** | v1.4.3 | Apache-2.0 |
+| github.com/go-logr/stdr **(NEW, observability mode, indirect)** | v1.2.2 | Apache-2.0 |
+| github.com/cespare/xxhash/v2 **(NEW, observability mode, indirect)** | v2.3.0 | MIT |
 | modernc.org/sqlite **(NEW)** | v1.54.0 | BSD-3-Clause-style |
 | modernc.org/libc **(NEW)** | v1.74.1 | BSD-3-Clause-style |
 | modernc.org/mathutil **(NEW)** | v1.7.1 | BSD-3-Clause-style |
@@ -415,12 +741,30 @@ component performs every chat HTTP call:
 - `mode_tools.go` — `tools` mode (real Eino ReAct agent + real `calculate` tool).
 - `calc.go` — self-contained arithmetic expression evaluator used by the `calculate` tool.
 - `mode_memory.go` — `memory` mode (on-disk SQLite cross-process persistence).
+- `mode_crash.go` — `crash_recovery` mode (producer/resumer over the same on-disk SQLite store
+  `mode_memory.go` defines; see [`crash_recovery` mode](#crash_recovery-mode)).
 - `mode_structured.go` — `structured` mode (Eino native JSON-Schema response format).
 - `mode_stream.go` — `stream` mode (Eino native `Stream` + time-to-first-chunk).
+- `mode_scoped_memory.go` — `memory_scoped` and `isolation_leak` modes (hand-rolled compound
+  tenant/user/product scope key over the on-disk SQLite store; see
+  [Multi-tenant scoped memory](#multi-tenant-scoped-memory-memory_scoped-isolation_leak-modes)).
+- `observability.go` — the `observability` mode's OTel/callbacks plumbing: `obsRecorder` builds a
+  real Eino `callbacks.Handler` on top of a real `go.opentelemetry.io/otel/sdk/trace`
+  `TracerProvider` exporting to an in-memory `tracetest.InMemoryExporter` (no external collector);
+  see [`observability` mode](#observability-mode).
+- `mode_observability.go` — `observability` mode's scenario (a real multi-step ReAct turn) and its
+  own JSON wire contract (`observabilityOutput`, distinct from `adapterOutput`); owns its full
+  stdout write and process exit code.
 - `run.sh` — sources `.env`, validates required env vars, runs the adapter natively.
 - `Dockerfile` — multi-stage build, no baked credentials, distroless nonroot runtime.
 - `run-docker.sh` — builds (if needed) and runs the containerized adapter.
 - `test-env.sh` — automated credential/env PASS/FAIL assertions (native + Docker).
+- `test-isolation.sh` — automated multi-tenant isolation PASS/FAIL assertions (same-scope hit,
+  cross-tenant miss, zero leak) using real agnes recall/probe calls.
+- `test-crash.sh` — automated `crash_recovery` PASS/FAIL assertions: builds a standalone binary,
+  runs process A, `SIGKILL`s it mid-turn-2 (synchronized via a stderr marker, not a timing
+  guess), then runs a fresh process B and asserts `resumed`/`precrash_fact_recalled`/`state_lost`.
+  Uses an isolated temp `EINO_ARENA_MEMORY_DB` per run — never touches `.data/memory.db`.
 - `go.mod` / `go.sum` — module definition.
 - `.go-version` — pins the local toolchain (via `goenv`) to an installed Go version compatible
   with the `go 1.25.0` directive (bumped from `1.23` by `go mod tidy` once

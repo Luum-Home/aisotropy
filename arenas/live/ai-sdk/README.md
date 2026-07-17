@@ -10,7 +10,7 @@ This is an additive arena directory: it does not modify any other `arenas/<name>
 
 `qa` mode keeps the original single-shot behavior of this adapter, byte-compatible with the
 `arenas/live/SPEC.md` base contract and `arenas/live/tasks/suite.jsonl` (which never sets `mode`,
-so it defaults to `qa`). Five more modes are additive, each exercising a different AI SDK **native**
+so it defaults to `qa`). Nine more modes are additive, each exercising a different AI SDK **native**
 feature against **real** infrastructure — no mocks, no stubs anywhere in the request path.
 
 ## Modes
@@ -20,9 +20,36 @@ feature against **real** infrastructure — no mocks, no stubs anywhere in the r
 | `qa` (default) | `generateText()`, single-shot, tools declared without `execute` | agnes only |
 | `rag` | `embed()` + `generateText()` | agnes, the e5 embed server, Qdrant `arena_rag` |
 | `tools` | `generateText()` with a real `execute`d tool + `stopWhen: stepCountIs(N)` | agnes (multi-step) |
-| `memory` | `generateText()`, history loaded/appended around the call | agnes, rqlite |
+| `memory` | `generateText()`, history loaded/appended around the call, keyed by `session_id` only | agnes, rqlite |
 | `structured` | `generateObject()` against a zod schema | agnes only |
 | `stream` | `streamText()`, real token streaming + `ttft_ms` | agnes only |
+| `memory_scoped` | `generateText()` grounded in a **hand-rolled compound-scope** rqlite recall (`tenant_id`/`user_id`/`product_id`[/`session_id`]) | agnes, rqlite |
+| `isolation_leak` | `generateText()` grounded in an attacker-scope recall, adversarially probing for a secret planted under a different (victim) scope | agnes, rqlite |
+| `observability` | in-process OTel SDK (`@ai-sdk/otel` + `InMemorySpanExporter`) wired around a real, executed tool-loop `generateText()` call | agnes (multi-step) |
+| `crash_recovery` | `generateText()`, turns checkpointed to rqlite one-by-one; a SIGKILL-tested `role:"run"`/`role:"resume"` pair proves survival of a hard process kill mid-conversation, not just a clean exit | agnes, rqlite |
+
+### Honest note: multi-tenant memory isolation is NOT an AI SDK feature
+
+`memory` mode above keys purely by `session_id` — it proves persistence across process
+invocations, but it does **not** test scoped or multi-tenant memory, which is aisotropy's
+differentiator (`docs/architecture/multi-tenancy.md`). The **Vercel AI SDK has no native
+primitive for multi-tenant memory isolation** — `generateText()`/`streamText()` just take a flat
+`messages` array; there is no "scope," "tenant," or "namespace" concept anywhere in `ai` or
+`@ai-sdk/openai`.
+
+`memory_scoped` and `isolation_leak` below **hand-roll** a compound scope key
+(`tenant_id`, `user_id`, `product_id`, `session_id`) over the same real rqlite table shape
+`memory` mode uses (see `lib/scoped-store.mjs`), and every isolation guarantee comes from
+manually including **all four** of those columns in every `WHERE` clause. **The developer is
+responsible for that discipline — the SDK will not catch a mistake.** Forget one column (e.g.
+filter by `session_id` alone, or by `tenant_id` + `product_id` but not `user_id`) and you have a
+real cross-tenant data leak, not a hypothetical one — `isolation_leak` mode exists specifically to
+make that failure mode observable (see "Verification runs" below for a captured leak-positive
+control run). **Contrast: aisotropy enforces tenant scoping by construction** — `tenant_id`
+travels exclusively via `context.Context`, injected once at the Huma handler boundary from the
+validated path param, so there is no query path in aisotropy's memory tiers that *can* omit the
+tenant filter in the first place (`.claude/rules/constitutional-gates.md` → "Multi-tenant data
+isolation (hard gate)").
 
 ## Model + infra wiring (all via environment, never hardcoded)
 
@@ -62,11 +89,25 @@ echo '{"mode":"qa","messages":[{"role":"user","content":"Hello"}]}' \
 
 ```json
 {
-  "mode": "qa | rag | tools | memory | structured | stream",
+  "mode": "qa | rag | tools | memory | structured | stream | memory_scoped | isolation_leak | observability | crash_recovery",
   "system": "string, optional",
   "messages": [{"role": "user" | "assistant", "content": "string"}],
   "tools": [{"name": "string", "description": "string", "parameters": {"...JSON-Schema..."}}],
-  "session_id": "string, REQUIRED for mode=memory"
+  "session_id": "string, REQUIRED for mode=memory|crash_recovery",
+
+  "tenant_id": "string, REQUIRED for mode=memory_scoped|isolation_leak",
+  "user_id": "string, REQUIRED for mode=memory_scoped|isolation_leak",
+  "product_id": "string, REQUIRED for mode=memory_scoped|isolation_leak",
+  "fact": "string, optional -- memory_scoped: write this fact under the primary scope above",
+  "query": "string, optional -- memory_scoped/isolation_leak: the question asked of agnes (a default is used if omitted)",
+  "cross_scope": {"tenant_id": "string", "user_id": "string", "product_id": "string", "session_id": "string, optional"},
+  "victim": {"tenant_id": "string", "user_id": "string", "product_id": "string", "session_id": "string, optional"},
+  "secret": "string, REQUIRED for mode=isolation_leak -- planted under \"victim\" scope",
+
+  "role": "run | resume, REQUIRED for mode=crash_recovery",
+  "turns": ["string, 2 or 3 REQUIRED for role=run -- user turns run sequentially in-process, checkpointed to rqlite after each"],
+  "continuation": "string, REQUIRED for role=resume -- the follow-up turn a fresh process asks after loading rqlite state",
+  "expected_fact": "string, optional for role=resume -- substring checked against recovered history (state_lost) and the new reply (precrash_fact_recalled)"
 }
 ```
 
@@ -77,6 +118,27 @@ echo '{"mode":"qa","messages":[{"role":"user","content":"Hello"}]}' \
 - `rag` mode treats the last `user` message as the query.
 - `memory` mode requires a non-empty `session_id`; `messages` are the NEW turn(s) for this
   invocation only (prior turns are loaded from rqlite, not replayed by the caller).
+- `memory_scoped` requires non-empty top-level `tenant_id`/`user_id`/`product_id` (the "primary"
+  scope this request acts under; `session_id` is optional, defaults to `''`). `fact` is optional —
+  when present it is written into the store under the primary scope before the recall; omit it to
+  test recall-only (e.g. from a separate process invocation, to prove persistence). `cross_scope`
+  is optional — when present, it is recalled as the "different scope" probe used to compute
+  `cross_tenant_miss`.
+- `isolation_leak` requires non-empty top-level `tenant_id`/`user_id`/`product_id` (the
+  **attacker** scope actually making this request) plus a nested `victim` object (same shape) and
+  a non-empty `secret` string. The secret is planted under `victim`'s scope, then recalled under
+  the top-level (attacker) scope — that recall result is what a real agnes turn is grounded in.
+- `observability` ignores `tools`/`session_id`/scope fields — it always runs its own real
+  `calculate` tool loop (same tool as `tools` mode) with `experimental_telemetry: { isEnabled: true }`
+  wired to an in-process OTel pipeline; `messages`/`system` behave exactly as in `tools` mode.
+- `crash_recovery` requires a non-empty `session_id` plus `role: "run"` or `role: "resume"`.
+  `role: "run"` ("process A") additionally requires 2 or 3 non-empty `turns` strings, run
+  sequentially IN THIS SAME PROCESS, checkpointed to rqlite after each one completes — it is meant
+  to be killed (`kill -9`) partway through, by a caller like `test-crash.sh`. `role: "resume"`
+  ("process B") additionally requires a non-empty `continuation` string and ignores `turns`; it
+  loads whatever rqlite has for `session_id` (in a brand-new process) and asks one more real
+  question. `expected_fact` is optional but required in practice to get non-`null`
+  `state_lost`/`precrash_fact_recalled` values.
 
 ### Output contract (stdout, exactly one JSON object; all logs go to stderr)
 
@@ -93,14 +155,56 @@ echo '{"mode":"qa","messages":[{"role":"user","content":"Hello"}]}' \
   "retrieved": [{"doc_id": "string", "title": "string", "text": "string", "score": 0.0}],
   "structured": null,
   "ttft_ms": -1,
+  "recalled": "string",
+  "scoped_recall": {"same_scope_hit": true, "cross_tenant_miss": true, "same_scope_facts": [], "cross_scope_facts": []},
+  "leak_detected": null,
+  "attacker_visible_facts": [],
+  "otel_supported": null,
+  "span_count": 0,
+  "span_names": [],
+  "span_timings_ms": {},
+  "logs_structured": null,
+  "log_sample": "string",
+  "notes": "string",
+  "resumed": null,
+  "state_lost": null,
+  "precrash_fact_recalled": null,
   "error": "string"
 }
 ```
 
-`mode`, `retrieved`, `structured`, and `ttft_ms` are **additive** to the base
-`arenas/live/SPEC.md` contract: the shared Go runner (`arenas/live/runner`) decodes adapter
-stdout into a struct that silently ignores unknown JSON fields, so this stays backward compatible.
-Fields not populated by a given mode keep their zero value (`[]`, `null`, or `-1`).
+`mode`, `retrieved`, `structured`, `ttft_ms`, `recalled`, `scoped_recall`, `leak_detected`,
+`attacker_visible_facts`, `otel_supported`, `span_count`, `span_names`, `span_timings_ms`,
+`logs_structured`, `log_sample`, `notes`, `resumed`, `state_lost`, and `precrash_fact_recalled` are
+**additive** to the base `arenas/live/SPEC.md` contract: the shared Go runner (`arenas/live/runner`)
+decodes adapter stdout into a struct that silently ignores unknown JSON fields, so this stays
+backward compatible. Fields not populated by a given mode keep their zero value (`[]`, `{}`, `null`,
+`''`, `0`, or `-1`).
+
+- `otel_supported`/`span_count`/`span_names`/`span_timings_ms`/`logs_structured`/`log_sample`
+  (populated by `observability` only): whether the AI SDK's native OTel integration produced any
+  finished spans for the turn, how many, their names in emission order, a `{name: duration_ms}`
+  map (duplicate names get a ` #<n>` suffix so no timing is dropped), whether the closest thing to
+  "logs" (span attributes) is structured JSON, and one representative span's
+  `{name, kind, attributes}` payload as a JSON string.
+
+- `recalled` (populated by `memory_scoped`): the same-scope recalled facts, newline-joined.
+- `scoped_recall` (populated by `memory_scoped` only): `same_scope_hit` — the just-written `fact`
+  (or any fact, if none was written this call) was found under the primary scope; `cross_tenant_miss`
+  — the `cross_scope` probe (if supplied) did NOT return that fact.
+- `leak_detected` (populated by `isolation_leak` only): `false` = good, no cross-tenant leak;
+  `true` = the attacker scope's recall (or the model's reply) contained the victim's `secret`.
+- `attacker_visible_facts` (populated by `isolation_leak` only): every fact the attacker's scope
+  legitimately recalled — the raw evidence `leak_detected` is computed from.
+- `resumed`/`state_lost`/`precrash_fact_recalled` (populated by `crash_recovery` `role: "resume"`
+  only; stay `null` for `role: "run"` since the question doesn't apply to process A itself):
+  `resumed` — the fresh process B loaded ANY persisted history for `session_id` from rqlite;
+  `state_lost` — computed directly against what was loaded (not the model's behavior): `true` only
+  if nothing survived, or `expected_fact` is missing from the recovered rows; `precrash_fact_recalled`
+  — the live agnes reply to `continuation` actually contains `expected_fact` (a functional check,
+  distinct from `state_lost`'s storage-level check). See "`crash_recovery`" below for why
+  `state_lost=false` is the expected, honest outcome of this design even though the in-flight turn
+  process A was killed during is genuinely gone.
 
 On any error (network, API, malformed stdin, bad mode), the adapter catches it, fills in `error`,
 and still writes one valid JSON object to stdout with exit code 0 — the `error` field is the
@@ -153,6 +257,125 @@ only look at `reply`.
 `streamText()`, iterating `result.textStream` chunk by chunk. `ttft_ms` is set on the first chunk
 received (`process.hrtime.bigint()` delta from call start) — a latency dimension a non-streaming
 `generateText()` call cannot expose. `latency_ms` covers the full stream to completion.
+
+### `memory_scoped`
+
+Backed by `lib/scoped-store.mjs`, a hand-rolled compound-scope store over a new rqlite table
+(`ai_sdk_arena_scoped_memory`, `CREATE TABLE IF NOT EXISTS`, columns `tenant_id`/`user_id`/
+`product_id`/`session_id`/`fact`/`created_at`). One invocation:
+
+1. **Writes** `fact` (if provided) under the primary `(tenant_id, user_id, product_id, session_id)`
+   scope.
+2. **Recalls** under that SAME scope (`SELECT ... WHERE tenant_id=? AND user_id=? AND
+   product_id=? AND session_id=?`) → `same_scope_hit`.
+3. **Recalls** under `cross_scope` (typically a different `tenant_id`) → `cross_tenant_miss`.
+4. Grounds a real `generateText()` call in the same-scope recalled facts (system-prompt CONTEXT,
+   same pattern as `rag` mode) and answers `query`.
+
+Omitting `fact` on a later call with the same scope (a **separate** `node index.mjs` process
+invocation) recalls what an earlier invocation wrote — proving REAL rqlite persistence, not an
+in-process cache, the same property `memory` mode proves for `session_id`-only scoping.
+
+### `isolation_leak`
+
+Also backed by `lib/scoped-store.mjs` (same table). Plants `secret` under `victim`'s scope, then
+recalls under the attacker's (top-level) scope and grounds a real `generateText()` call in
+whatever that recall returned. `leak_detected` is `true` if the secret appears in the attacker's
+recall (`attacker_visible_facts`) **or** in the model's reply text (defense-in-depth) — but per the
+task, the authoritative isolation assertion is the store-level recall, not the model's behavior: a
+correctly-scoped store never lets the secret reach the model's context in the first place. A
+positive-control run (attacker scope == victim scope) legitimately returns `leak_detected: true`,
+since self-access to one's own data is expected, not a leak — this proves the detector isn't
+trivially always `false` (see `test-isolation.sh`).
+
+### `observability`
+
+Measures the AI SDK's **native** OpenTelemetry emission, not a bolted-on logger. `lib/otel.mjs`
+starts a fresh, in-process `NodeTracerProvider` (`@opentelemetry/sdk-trace-node`) wired to a
+`SimpleSpanProcessor` + `InMemorySpanExporter` (synchronous export on every `span.end()`, spans
+kept in a plain JS array in this process — **no external collector, no OTLP network egress**),
+registers it as the global OTel provider, then registers the AI SDK's own `@ai-sdk/otel`
+`OpenTelemetry` integration via `registerTelemetry(new OpenTelemetry())` (both from the `ai`
+package and the new `@ai-sdk/otel` package respectively). It then runs the same real, executed
+`calculate` tool loop as `tools` mode (`stopWhen: stepCountIs(5)`, `experimental_telemetry: {
+isEnabled: true, functionId: 'arena-observability-tools-turn' }`) — 2 real agnes chat calls
+(decide-to-call-tool, then finish-after-tool-result) plus 1 real tool execution, so the emitted
+span tree has more than one node.
+
+**Key finding: `experimental_telemetry: { isEnabled: true }` alone is NOT sufficient** in this AI
+SDK generation (`ai@7.0.31`). That flag only opts a given call INTO telemetry collection (or, set
+to `false`, opts it out) — collection requires a `Telemetry` integration to already be registered
+globally via `registerTelemetry()`. Without that registration, `isEnabled: true` is silently a
+no-op: zero spans, zero errors. This is a real version-specific gotcha this adapter had to
+discover empirically (confirmed by running with `experimental_telemetry` alone, no registration,
+and observing `span_count: 0`) — the docs describe registration as step 1 and enabling as step 2,
+but it is easy to skip step 1 and get no failure signal, only silent non-instrumentation.
+
+Once registered, every `generateText`/`streamText`/`embed` call in the process emits spans
+automatically per the [OTel GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
+(`gen_ai.*`-prefixed attributes) — a real run against agnes produced 6 spans for one tool-loop turn:
+a root `invoke_agent {modelId}` span (covers the whole operation), 2 `step N` spans, 2 `chat
+{modelId}` spans (one per real provider call — `gen_ai.client.operation.duration`,
+`gen_ai.usage.input_tokens`/`output_tokens`, full `gen_ai.input.messages`/`gen_ai.output.messages`
+payloads), and 1 `execute_tool calculate` span (real tool args + result, `gen_ai.execute_tool.duration`).
+Per-span wall-clock timing is native (`span.duration`, an OTel `HrTime` tuple converted to ms in
+`lib/otel.mjs`'s `spanDurationMs()`) — no manual instrumentation needed anywhere in this adapter's
+own code. There is no separate "structured logging" facility in the AI SDK: the closest equivalent
+is the span attribute payload itself, which IS fully structured JSON key/value data (not a
+plain-text log line) — `log_sample` in the output is exactly that payload for one representative
+span.
+
+### `crash_recovery`
+
+Backed by a new rqlite table (`ai_sdk_arena_crash_recovery`, `CREATE TABLE IF NOT EXISTS`, same
+shape `memory` mode's table uses). `memory` mode already proves persistence across TWO process
+invocations, but only ever across a **clean** exit — the adapter always runs its single stdin/stdout
+turn to completion and exits 0 before anything else touches that `session_id`. This mode proves the
+harder claim: survival of a **hard `kill -9` while a turn is actually in flight**.
+
+`role: "run"` ("process A") loops over 2-3 `turns` IN ONE PROCESS. For each turn it (1) calls
+`generateText()`, then (2) checkpoints that turn's user+assistant messages to rqlite in a single
+`/db/execute` call — rqlite executes a multi-statement request as one implicit transaction, so the
+checkpoint is all-or-nothing: either both rows land, or (if killed before the call returns) neither
+does. `test-crash.sh` starts this process, waits for turn 1's `PROGRESS: ... turn 1/2 committed`
+stderr marker, then waits again for turn 2's `PROGRESS: ... turn 2/2 calling agnes` marker (proving
+the second real agnes network call has started), then immediately sends `SIGKILL` — deliberately
+inside the window between "turn 2 started" and "turn 2 committed."
+
+`role: "resume"` ("process B") is a **completely fresh `node index.mjs` process** (new PID, new
+process heap — not a retry, not a caught signal, not a restart of the same process) invoked
+separately by `test-crash.sh` after process A is confirmed dead. It loads whatever rqlite has for
+the same `session_id`, computes `resumed` and `state_lost` directly from that loaded data, then
+makes one more real agnes call continuing the conversation and checks whether the reply actually
+uses the recovered fact (`precrash_fact_recalled`).
+
+**HONEST note — what actually survives a SIGKILL here, and what doesn't:**
+
+- **Durable, per-turn checkpoints survive a hard kill.** Turn 1's commit happens strictly before
+  turn 2 is even attempted, so nothing about killing the process during turn 2 can touch turn 1's
+  already-committed rows — proven directly against rqlite in `test-crash.sh` (`rqlite-has-exactly-
+  turn1-checkpoint`), not just inferred from the adapter's own output. This is why `state_lost`
+  correctly comes back `false`: no *durable* state was lost, only work that was never durable to
+  begin with.
+- **The in-flight turn is genuinely, permanently gone — not delayed, not replayed.** Turn 2's
+  content (`"...dolphins..."` in the test) never reaches rqlite; `test-crash.sh` independently
+  confirms zero matching rows exist (`turn2-in-flight-data-absent`). There is no WAL/journal replay,
+  no "resume the exact in-flight LLM call," no idempotency key that would let process B pick turn 2
+  back up — process B simply never knows turn 2 was attempted. If the caller cared about that turn,
+  it has to re-ask it explicitly (which is exactly what `continuation` does here).
+- **This is a consequence of the adapter's OWN checkpoint-after-each-turn design, not an AI SDK
+  feature.** `generateText()` itself holds no state between calls and offers no crash-recovery
+  primitive at all — every bit of the durability behavior described above (atomic per-turn commit,
+  load-on-resume, a completely separate process proving it) is hand-rolled in
+  `lib/modes/crash-recovery.mjs` over the same real, networked rqlite `memory` mode already uses.
+  Durability is bounded by checkpoint granularity: crash-safety here means "as of your last
+  completed turn," never "as of the exact byte the process was killed at."
+- **Answering the framework's own question directly: durable across SIGKILL, or only clean
+  shutdown?** Both, but at different granularities. Clean shutdown (like `memory` mode) preserves
+  every turn, because every turn gets to finish and checkpoint. A hard SIGKILL preserves every turn
+  that had ALREADY finished and checkpointed before the kill — and unconditionally discards the one
+  turn that was in flight at the moment of the kill. The AI SDK contributes nothing to either
+  guarantee; both come entirely from this adapter's rqlite checkpoint discipline.
 
 ## AI SDK version quirks handled
 
@@ -215,6 +438,56 @@ Runs and PASS/FAILs six assertions, never printing the key value itself (only ma
 
 Last verified run: `SUMMARY: 6 passed, 0 failed`.
 
+## Automated scoped-memory/isolation tests (`test-isolation.sh`)
+
+```bash
+bash arenas/live/ai-sdk/test-isolation.sh
+```
+
+Runs 4 real agnes calls (well under the 8-call budget) and PASS/FAILs 6 assertions, never printing
+the key value itself:
+
+1. **memory-scoped-same-scope-hit** — write a fact under `(tenant_id=test-tenant-a-<run>,
+   user_id=alice-<run>, product_id=widgets-pro-<run>, session_id=s1)`, recall the SAME scope in the
+   same call → `same_scope_hit == true`.
+2. **memory-scoped-cross-tenant-miss** — the same call's `cross_scope` (a different `tenant_id`)
+   recall does NOT contain the fact → `cross_tenant_miss == true`.
+3. **memory-scoped-cross-process-persistence** — a SECOND, separate `node index.mjs` process
+   invocation, same scope, recall-only (no `fact`) → `recalled` matches the fact written by
+   invocation #1, proving real rqlite persistence, not an in-process cache.
+4. **isolation-leak-zero-leak** — tenant B (attacker) queries after tenant A's (victim) secret is
+   planted → `leak_detected == false`.
+5. **isolation-leak-positive-control** — attacker scope == victim scope (self-access) →
+   `leak_detected == true`, proving the detector legitimately fires and isn't hardcoded to `false`.
+6. **key-never-logged** — the key value's match count is zero across all 4 calls' stdout/stderr.
+
+Last verified run: `SUMMARY: 6 passed, 0 failed`.
+
+## Automated crash-recovery test (`test-crash.sh`)
+
+```bash
+bash arenas/live/ai-sdk/test-crash.sh
+```
+
+Runs 3 real agnes calls (2 attempted by process A — the second deliberately interrupted mid-flight
+— plus 1 by process B; well under the 8-call budget) and PASS/FAILs 8 assertions, never printing the
+key value itself:
+
+1. **turn1-checkpoint-committed** — process A's stderr shows turn 1's checkpoint committed before
+   it is killed.
+2. **sigkill-delivered-mid-turn2** — process A was still alive and mid-turn-2 (not yet exited on its
+   own) at the exact moment `kill -9` was sent.
+3. **rqlite-has-exactly-turn1-checkpoint** — independent evidence pulled directly from rqlite (not
+   from the adapter): exactly 2 rows exist for the session (turn 1's user+assistant pair only).
+4. **turn2-in-flight-data-absent** — zero rqlite rows mention turn 2's topic, proving the in-flight
+   turn was truly never persisted (not a lucky timing race that happened to look right).
+5. **process-b-no-error** — the fresh resume process's `error` field is empty.
+6. **resumed-true** — `resumed == true`.
+7. **state-lost-false** — `state_lost == false`.
+8. **precrash-fact-recalled-true** — `precrash_fact_recalled == true`.
+
+Last verified run: `SUMMARY: 8 passed, 0 failed`.
+
 ## Verification runs (evidence)
 
 Real `agnes-2.0-flash` calls, run against the real local infra described above.
@@ -269,11 +542,107 @@ then the model rounded it correctly in its final answer):
 {"framework":"ai-sdk","mode":"stream","model":"agnes-2.0-flash","reply":"Maglev trains utilize powerful electromagnets to levitate above a guideway, eliminating physical contact with the track. This frictionless design allows them to achieve exceptionally high speeds while operating quietly and efficiently.","latency_ms":7094,"ttft_ms":6728,"error":""}
 ```
 
+**`memory_scoped`**, invocation #1 (fresh process, writes a fact under tenant `acme-corp` and
+proves a different tenant, `globex-inc`, cannot see it in the same call):
+
+```json
+{"framework":"ai-sdk","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"I do not have access to information about \"your\" favorite deploy region. The only fact I have in memory is that Alice's favorite deploy region is eu-west-1.","recalled":"Alice's favorite deploy region is eu-west-1.","scoped_recall":{"same_scope_hit":true,"cross_tenant_miss":true,"same_scope_facts":["Alice's favorite deploy region is eu-west-1."],"cross_scope_facts":[]},"error":""}
+```
+
+**`memory_scoped`**, invocation #2 (a *second, completely separate* `node index.mjs` process,
+same scope, no `fact` — recalls what invocation #1 wrote, purely from rqlite):
+
+```json
+{"framework":"ai-sdk","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"I do not have access to information about \"your\" favorite deploy region. The only fact I have in memory is that Alice's favorite deploy region is eu-west-1.","recalled":"Alice's favorite deploy region is eu-west-1.","scoped_recall":{"same_scope_hit":true,"cross_tenant_miss":true,"same_scope_facts":["Alice's favorite deploy region is eu-west-1."],"cross_scope_facts":[]},"error":""}
+```
+
+**`isolation_leak`**, negative test (attacker `globex-inc`/`bob` queries after victim
+`acme-corp`/`alice`'s secret is planted — zero leak):
+
+```json
+{"framework":"ai-sdk","mode":"isolation_leak","model":"agnes-2.0-flash","reply":"I do not know any secrets about your account. I have no information stored regarding your personal details or account status.","recalled":"","scoped_recall":null,"leak_detected":false,"attacker_visible_facts":[],"error":""}
+```
+
+**`isolation_leak`**, positive control (attacker scope == victim scope — self-access legitimately
+detected, proving the detector is real, not hardcoded `false`):
+
+```json
+{"framework":"ai-sdk","mode":"isolation_leak","model":"agnes-2.0-flash","reply":"I have no information about your account.","leak_detected":true,"attacker_visible_facts":["Alice's favorite deploy region is eu-west-1.","The acme production DB password is Tr0ub4dor-and-3.","The self-access verification code is XQ-4471."],"error":""}
+```
+
+**`test-isolation.sh`** full run:
+
+```
+PASS  memory-scoped-same-scope-hit -- error='' same_scope_hit=true
+PASS  memory-scoped-cross-tenant-miss -- error='' cross_tenant_miss=true
+PASS  memory-scoped-cross-process-persistence -- error='' recalled(fresh process) matches Test 1's fact
+PASS  isolation-leak-zero-leak -- error='' leak_detected=false (want false)
+PASS  isolation-leak-positive-control -- error='' leak_detected=true (want true)
+PASS  key-never-logged -- key-literal match count across all 4 tests' stdout/stderr = 0 (want 0)
+
+SUMMARY: 6 passed, 0 failed
+```
+
 **Docker**, `qa` and `rag` both verified end-to-end against the real local infra over
 `host.docker.internal` (see "Docker packaging" above) — same grounded answer and gold-doc
 retrieval as the native `rag` run.
 
+**`observability`** (real tool-loop turn, `experimental_telemetry: { isEnabled: true }` +
+`registerTelemetry(new OpenTelemetry())`; 6 real spans captured by the in-process
+`InMemorySpanExporter`, zero external collector):
+
+```json
+{"framework":"ai-sdk","mode":"observability","model":"agnes-2.0-flash","reply":"The result of $(23847 \\times 9182) / 17$, rounded to two decimal places, is **12880185.53**.","input_tokens":1395,"output_tokens":85,"latency_ms":14093,"tool_calls":[{"name":"calculate","arguments":{"expression":"(23847 * 9182) / 17"},"output":{"expression":"(23847 * 9182) / 17","result":12880185.529411765}}],"otel_supported":true,"span_count":6,"span_names":["chat agnes-2.0-flash","execute_tool calculate","step 1","chat agnes-2.0-flash","step 2","invoke_agent agnes-2.0-flash"],"span_timings_ms":{"chat agnes-2.0-flash":7042.617,"execute_tool calculate":0.425,"step 1":7044.726,"chat agnes-2.0-flash #2":7033.672,"step 2":7034.037,"invoke_agent agnes-2.0-flash":14083.245},"logs_structured":true,"error":""}
+```
+
+(`log_sample` and `notes` omitted above for brevity — see "Per-mode notes -> `observability`" for
+what they contain; `log_sample` is one representative span's `{name, kind, attributes}` payload,
+~1.4KB of structured `gen_ai.*` JSON.)
+
+**Negative-control run** (`experimental_telemetry: { isEnabled: true }` set on the call, but
+`registerTelemetry(new OpenTelemetry())` deliberately NOT called first — confirms registration,
+not the per-call flag, is what actually turns telemetry on):
+
+```json
+{"reply":"hi","span_count":0,"span_names":[]}
+```
+
+**`crash_recovery`**, process B (`role: "resume"`) — a completely fresh process, loaded rqlite state
+after process A was `kill -9`'d mid-turn-2, and recalled the pre-crash fact in a real completion:
+
+```json
+{"framework":"ai-sdk","mode":"crash_recovery","model":"agnes-2.0-flash","reply":"Zebra-9142","input_tokens":355,"output_tokens":8,"latency_ms":6739,"recalled":"user: Please remember this important fact and just acknowledge it in one short sentence, nothing else: The secret vault code is Zebra-9142.\nassistant: I have noted that the secret vault code is Zebra-9142.","resumed":true,"state_lost":false,"precrash_fact_recalled":true,"error":""}
+```
+
+**`test-crash.sh`** full run:
+
+```
+PASS  turn1-checkpoint-committed -- process A stderr shows 'turn 1/2 committed' before it is killed
+PASS  sigkill-delivered-mid-turn2 -- process A was still alive and mid-turn-2 at the moment kill -9 was sent
+PASS  rqlite-has-exactly-turn1-checkpoint -- raw rqlite row count for session = 2 (want 2)
+PASS  turn2-in-flight-data-absent -- rows mentioning turn 2's topic ('dolphin') for this session = 0 (want 0)
+PASS  process-b-no-error -- error field = '' (want empty)
+PASS  resumed-true -- resumed = true (want true)
+PASS  state-lost-false -- state_lost = false (want false)
+PASS  precrash-fact-recalled-true -- precrash_fact_recalled = true (want true)
+
+SUMMARY: 8 passed, 0 failed
+```
+
 ## Licenses (direct + meaningful transitive dependencies)
+
+`memory_scoped` and `isolation_leak` add **zero new npm dependencies**: `lib/scoped-store.mjs`
+reuses `lib/rqlite.mjs`'s existing native-`fetch` HTTP client (same pattern `memory` mode already
+uses), and both new mode files only import `generateText` from the already-installed `ai` package.
+
+`observability` adds **3 new direct dependencies** (`@ai-sdk/otel`, `@opentelemetry/api`,
+`@opentelemetry/sdk-trace-node`) plus their transitive OTel packages — all Apache-2.0, all resolved
+via a real `npm install` (`package.json` / `package-lock.json` updated accordingly).
+
+`crash_recovery` adds **zero new npm dependencies**: `lib/modes/crash-recovery.mjs` reuses
+`lib/rqlite.mjs`'s existing native-`fetch` HTTP client (same pattern `memory` mode already uses)
+and only imports `generateText` from the already-installed `ai` package. `package.json` /
+`package-lock.json` are unchanged by this addition.
 
 All packages actually installed (`npm install`, `package-lock.json`), checked against this repo's
 license policy (MIT/BSD/Apache-2.0/ISC/CC0 = safe; AGPL/SSPL/BSL/ELv2/Commons Clause/FSL = blocked):
@@ -296,6 +665,14 @@ license policy (MIT/BSD/Apache-2.0/ISC/CC0 = safe; AGPL/SSPL/BSL/ELv2/Commons Cl
 | `json-schema` | 0.4.0 | AFL-2.1 OR BSD-3-Clause (dual; BSD-3-Clause satisfies policy) | no (transitive, pre-existing) |
 | `@qdrant/js-client-rest` | 1.18.0 | Apache-2.0 | **yes — new, added for `rag` mode** |
 | `@qdrant/openapi-typescript-fetch` | 1.2.6 | MIT | **yes — new, transitive of `@qdrant/js-client-rest`** |
+| `@ai-sdk/otel` | 1.0.31 | Apache-2.0 | **yes — new, added for `observability` mode** |
+| `@opentelemetry/api` | 1.9.1 | Apache-2.0 | **yes — new, added for `observability` mode** |
+| `@opentelemetry/sdk-trace-node` | 2.9.0 | Apache-2.0 | **yes — new, added for `observability` mode** |
+| `@opentelemetry/sdk-trace-base` | 2.9.0 | Apache-2.0 | **yes — new, transitive of `@opentelemetry/sdk-trace-node`** |
+| `@opentelemetry/context-async-hooks` | 2.9.0 | Apache-2.0 | **yes — new, transitive of `@opentelemetry/sdk-trace-node`** |
+| `@opentelemetry/core` | 2.9.0 | Apache-2.0 | **yes — new, transitive of `@opentelemetry/sdk-trace-node`** |
+| `@opentelemetry/resources` | 2.9.0 | Apache-2.0 | **yes — new, transitive of `@opentelemetry/sdk-trace-node`** |
+| `@opentelemetry/semantic-conventions` | 1.43.0 | Apache-2.0 | **yes — new, transitive of `@opentelemetry/sdk-trace-node`** |
 
 **No restrictive licenses found** (no AGPL/SSPL/BSL/ELv2/Commons Clause/FSL anywhere in the
 install tree). This adapter's own `package.json` is licensed MIT, consistent with the rest of
@@ -310,14 +687,22 @@ this repo's stack policy.
 | `lib/output.mjs` | shared output shape + small utilities (`buildMessages`, `extractTokenCounts`, `msSince`) |
 | `lib/calculator.mjs` | real, `eval`-free arithmetic evaluator backing the `tools` mode's `calculate` tool |
 | `lib/rqlite.mjs` | minimal rqlite HTTP client (native `fetch`, no extra dependency) backing `memory` mode |
+| `lib/scoped-store.mjs` | hand-rolled compound-scope (`tenant_id`/`user_id`/`product_id`/`session_id`) rqlite store backing `memory_scoped` and `isolation_leak` |
+| `lib/otel.mjs` | in-process OTel wiring (`NodeTracerProvider` + `InMemorySpanExporter` + `@ai-sdk/otel` registration) backing `observability` |
 | `lib/modes/qa.mjs` | original single-shot mode |
 | `lib/modes/rag.mjs` | real RAG: embed → Qdrant search → grounded `generateText()` |
 | `lib/modes/tools.mjs` | real multi-step tool execution loop |
-| `lib/modes/memory.mjs` | rqlite-persisted conversational memory across process invocations |
+| `lib/modes/memory.mjs` | rqlite-persisted conversational memory across process invocations, keyed by `session_id` only |
 | `lib/modes/structured.mjs` | `generateObject()` against a zod schema |
 | `lib/modes/stream.mjs` | `streamText()` with time-to-first-token |
+| `lib/modes/memory-scoped.mjs` | write/recall a fact under a compound scope + prove cross-tenant miss, grounded in a real agnes turn |
+| `lib/modes/isolation-leak.mjs` | plant a secret under a victim scope, recall under an attacker scope, prove (or disprove) a real leak |
+| `lib/modes/observability.mjs` | wires the in-process OTel SDK, runs a real tool-loop turn, reports native span count/names/timings |
+| `lib/modes/crash-recovery.mjs` | `role:"run"` checkpoints a short conversation to rqlite turn-by-turn (meant to be SIGKILLed mid-turn); `role:"resume"` is a fresh process proving recovery + recall |
 | `run.sh` | native entrypoint (sources repo-root `.env`) |
 | `Dockerfile` | container image, no baked-in credentials |
 | `run-docker.sh` | build + run the container against real local infra via `host.docker.internal` |
 | `test-env.sh` | automated credential/env PASS/FAIL assertions |
+| `test-isolation.sh` | automated PASS/FAIL evidence: same-scope hit, cross-tenant miss, cross-process persistence, zero leak, positive control |
+| `test-crash.sh` | automated PASS/FAIL evidence: SIGKILL mid-turn-2, independent rqlite proof of partial commit, fresh-process resume + recall |
 | `.dockerignore` | keeps `.env`, `node_modules`, and test artifacts out of the build context |
