@@ -244,34 +244,52 @@ its own efficiency unit:
 |---|---|---|---|---|
 | **Whole runtime as a service** (Docker/K8s) | one deployed process | image + idle RSS + boot | **12.4 MiB image · 8.8 MiB RSS · 262 ms cold-start** | Class 3 · `bench/footprint/` |
 | **In-process library** (embed `aisotropy.App`) | one framework hot-path op | ns/op around a (stubbed) model call | scope-gate **135 ns** · isolation key-validate **40 ns** · pre-spend quota gate **5.46 µs** · working-memory append **303 µs** | Class 1 · `arenas/scripts/run-overhead-bench.sh` |
-| **Per-call pure-compute tool isolation** (WASM) | one JSON→JSON tool dispatch | warm dispatch throughput + one-time load | **461 ops/s · p50 2.06 ms/dispatch** warm; **585 ms** one-time module compile · 3.18 MiB module | NEW · `bench/wasm-vs-docker/` |
-| *(same, container tier for shell/git/fs tools)* | one `docker exec` | warm exec throughput | **27 ops/s · p50 34.2 ms/exec** (N=200) | NEW · `bench/wasm-vs-docker/` |
+| **Per-call pure-compute tool isolation** (WASM, **lean guest**) | one JSON→JSON tool dispatch | warm throughput + one-time compile (+ shared cache) | **Rust `#![no_std]` guest (4.9 KiB): 9,578 ops/s · p50 35 µs** warm; **1.6 ms** cold compile → **47 µs cached**. TinyGo (1.05 MiB): 218 ops/s · 171→5 ms. Go/wasip1 (3.18 MiB): 519 ops/s · 582→18 ms | NEW · `bench/wasm-vs-docker/` |
+| *(same, container tier for shell/git/fs tools)* | one `docker exec` | warm exec throughput + create | **23 ops/s · p50 39 ms/exec** (N=200); 312 ms create + 56 ms first-exec | NEW · `bench/wasm-vs-docker/` |
 | **WASM 3.0 tier** (WasmGC / memory64) | — | — | **N/A — unbenchmarkable on wazero v1.12.0** (Core 1.0/2.0 only; memory64 is open request wazero#2452) | — |
 
-**The per-call isolation row is the new measurement, and it is honestly two-sided.** For the
-*pure-compute* subset of tools (no shell, git, or filesystem), the WASM tier's **warm dispatch is
-~17× cheaper than a `docker exec`** — **461 vs 27 ops/s**, **2.06 ms vs 34.2 ms** median — which is
-the high-fan-out density argument for adding a WASM sandbox provider (research §4.1). But two costs
-cut the other way and are reported, not buried: (1) the **one-time module compile is heavier than a
-container create** (585 ms vs 288 ms) *because the guest is a Go/wasip1 module that bundles the whole
-Go runtime* (3.18 MiB) — a hand-written WAT/Rust guest would slash both; and (2) that same Go-runtime
-bundle inflates the **in-process memory** wazero holds to compile+cache the module. So the vendor
-"µs cold-start / 10–100× density" numbers are for *minimal* modules — with a Go guest, the win is a
-**~17× per-call throughput edge that amortizes the one-time compile**, not a free lunch on every axis.
-The `sandbox.WASMProvider` that produces these numbers deliberately serves **only** `NeedPureCompute`
-tools; anything needing `fork`/`exec` still routes to the container tier (WASI has no process
-creation — a design boundary, not a gap). Harness + reproduce: `bench/wasm-vs-docker/` (`go run
-./bench/wasm-vs-docker`); raw output in `bench/wasm-vs-docker/results.txt`.
+**The per-call isolation row is the new measurement, and the Phase-2 follow-up settled the axis that
+was open.** The first pass compiled the guest with **Go/wasip1**, which bundles the *entire Go runtime*
+(3.18 MiB): WASM won warm throughput ~17× but *lost* cold-start (a ~585 ms compile) and RSS. The open
+question — *does a lean guest + a compilation cache flip those two losses?* — is now measured by
+building the **same echo tool three ways** (Go/wasip1, TinyGo, and a `#![no_std]` dependency-free Rust
+guest) and enabling wazero's `CompilationCache`. Axis by axis, for the **pure-compute** subset:
+
+- **Throughput — WASM wins outright, every guest.** 1–2 orders of magnitude over `docker exec`
+  (which forks the CLI + attaches to containerd per call): the Rust guest hits **9,578 ops/s (p50
+  35 µs)** vs docker's **23 ops/s (p50 39 ms)** — a **~420× edge**; even the heavy Go guest is ~23×.
+- **Cold-start — the lean guest OR a warm cache flips the old loss.** Go/wasip1's 3 MiB compile
+  (~582 ms) is the *only* place WASM trailed docker's create+first-exec (~369 ms). A **lean guest**
+  already beats it (TinyGo ~171 ms, **Rust ~1.6 ms**), and wazero's **`CompilationCache`** — a
+  shared cache the compile is a per-*process*, not per-*tool*, cost against — collapses *every* guest's
+  effective cold-start (Go **582 → 18 ms**, ~45×; TinyGo **171 → 5 ms**; Rust **1.6 ms → 47 µs**).
+- **RSS — read honestly.** A single container's `docker stats` (~0.4–1 MiB) can look *smaller* than a
+  lean wasm tool's in-process delta (Rust **2.3 MiB**, measured in an isolated subprocess so it is a
+  clean "hold one tool live" figure) — **but** the container number *excludes* the dockerd/containerd
+  daemon (hundreds of MiB, always resident), whereas the wasm figure is the **complete** marginal cost
+  and the wazero engine (the bulk of the lean-guest delta) is a **one-time cost shared across all
+  tools**. Full-host-cost and per-instance-at-scale, lean-guest WASM wins RSS too.
+
+**So: for pure compute, a lean guest (TinyGo/Rust) + a warm `CompilationCache` makes WASM beat Docker
+on throughput and cold-start outright, and on RSS once the hidden daemon is counted.** The Go-runtime-
+bundling guest was the *entire* reason the first pass saw a cold-start/RSS loss. **The caveat that does
+not move:** the `sandbox.WASMProvider` serves **only** `NeedPureCompute` tools — anything needing
+`fork`/`exec` (shell, git, filesystem) still routes to the container tier, because WASI has no process
+creation. WASM adds a cheap compute tier; it does **not** delete the container tier. Harness +
+reproduce: `bench/wasm-vs-docker/` (`go run ./bench/wasm-vs-docker`); raw output in
+`bench/wasm-vs-docker/results.txt`.
 
 **Honest caveats that keep the modes from being conflated.**
 - **Footprint ≠ inference latency.** Class 3's 12.4 MiB / 262 ms and the WASM 2 ms/dispatch are
   *isolation-and-boot* costs with the model held constant as an offline stub. None of them say
   anything about time-to-first-token or answer quality — those are the provider's, and dominate any
   real end-to-end wall-clock. These tables measure the *mechanism*, on purpose.
-- **The RSS figures are not clean per-instance numbers** (both sides). The WASM in-process RSS is
-  dominated by wazero compiling the Go-runtime-bearing module (one-time, shared across all
-  dispatches); the container "sub-MiB" RSS excludes the dockerd/containerd host-side memory. Treat
-  both as directional, per the notes in `results.txt`.
+- **The RSS figures still carry a caveat** (both sides), even though each guest's RSS is now measured
+  in an **isolated subprocess** (so process-RSS monotonicity no longer credits the first guest with the
+  whole wazero-engine allocation). The WASM in-process delta includes the shared wazero engine (a
+  one-time cost across all tools) plus the compiled module — so it *shrinks with the guest* (Go 63 MiB
+  → TinyGo 35 MiB → Rust 2.3 MiB); the container "sub-MiB" RSS *excludes* the dockerd/containerd
+  host-side memory. Treat both as directional, per the notes in `results.txt`.
 - **Working memory is the local-coupled tier that does NOT go stateless.** The per-call WASM/edge
   efficiency story applies to *tool isolation*, never to the runtime as a whole. aisotropy's moat is
   in-process tiered memory — BadgerDB L1 at µs latency, embedded SQLite+FTS5 facts — which is

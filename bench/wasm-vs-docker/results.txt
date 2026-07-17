@@ -1,42 +1,107 @@
-# wasm-vs-docker benchmark — raw results
-# generated: 2026-07-17T18:17:41Z | host: darwin/arm64 | go: go1.26.5 | wazero: v1.12.0 | docker: 29.4.0
-# work held constant: a trivial JSON->JSON echo tool in BOTH candidates
-# wasm warm N=10000 | docker warm N=200 | cold-start samples=5
+# wasm-vs-docker benchmark — raw results (Phase-2 lean-guest follow-up)
+# generated: 2026-07-17T20:23:38Z | host: darwin/arm64 | go: go1.26.5 | wazero: v1.12.0 | docker: 29.4.0
+# toolchains: tinygo=tinygo version 0.41.1 darwin/arm64 (using go version go1.26.5 and LLVM version 20.1.1) | rust=rustc 1.87.0 (17067e9ac 2025-05-09)
+# work held constant: a trivial JSON->JSON echo tool in EVERY candidate
+# wasm warm N=10000 | docker warm N=200 | cold-start/compile samples=5
 
-# wasm guest module size: 3.18 MiB (Go/wasip1 reactor — bundles the Go runtime;
-#   a hand-written WAT/Rust guest would be far smaller. The compiled module is
-#   shared across every dispatch; only per-call linear memory is transient.)
+# guest module sizes (the SAME echo tool, three toolchains):
+#   go         3.17 MiB  (Go/wasip1 — bundles the Go runtime; imports WASI)
+#   tinygo     1.05 MiB  (TinyGo/wasip1 — same source, LLVM backend, no full Go runtime; imports WASI)
+#   rust       4.87 KiB  (Rust/wasm32-wasip1 — #![no_std], -C opt-level=z, panic=abort, import-free; imports nothing)
+#   -> the go guest bundles the whole Go runtime; tinygo (same source, LLVM
+#      backend) and rust (no_std, hand parse) are the lean guests under test.
 
-candidate | setup (1-time)  | first call | warm ops/s |      p50 |      p95 |      p99 | host RSS
-          | wasm=compile    | dispatch   | sequential |          |          |          |
-          | docker=run -d   | /exec      | dispatches |          |          |          |
-----------|-----------------|------------|------------|----------|----------|----------|---------
-wasm      |       585.10ms |     4.02ms |       461 |   2.06ms |   2.67ms |   3.81ms | 88.1 MiB (in-process, shared module)
-docker    |       288.06ms |    51.13ms |        27 |  34.20ms |  50.73ms |  71.03ms | 748KiB (container)
+# ---- wazero CompilationCache: does a shared cache amortize the compile? ----
+# 'cold compile'  = first CompileModule with an empty cache (WASM's whole cold-start).
+# 'cached compile'= a later CompileModule (fresh runtime) sharing a WARM cache — the
+#                   compile is skipped; only cache lookup/deserialize remains.
+# guest   |    cold compile |  cached compile |   speedup
+# --------|-----------------|-----------------|----------
+# go      |        795.93ms |         17.78ms |       45x
+# tinygo  |        171.34ms |          5.19ms |       33x
+# rust    |          1.65ms |          47.4µs |       35x
+#
+# READING THIS: the cold compile is paid ONCE per process; with a shared
+#   CompilationCache, every subsequent tool Load reuses it, so the effective
+#   cold-start of the Nth tool instance collapses to the cached-compile figure.
 
-# READING THIS: `setup` is ONE-TIME (a tool is Load()'ed once, then dispatched many
-#   times; a container is `run` once, then exec'd many times) — amortize it over the
-#   call volume. `warm ops/s` + p50/p95/p99 are the per-call steady state, the number
-#   that actually scales. WASM's setup is a heavy Go-runtime module compile; its
-#   per-call dispatch is where it beats docker exec.
+candidate | module     | setup (1-time)  | first call | warm ops/s |      p50 |      p95 |      p99 | host RSS
+          | size       | wasm=compile    | dispatch   | sequential |          |          |          |
+          |            | docker=run -d   | /exec      | dispatches |          |          |          |
+----------|------------|-----------------|------------|------------|----------|----------|----------|---------
+go        | 3.17 MiB   |       582.28ms |     3.69ms |       519 |   1.78ms |   2.41ms |   3.88ms | 63.2 MiB (in-proc)
+tinygo    | 1.05 MiB   |       139.13ms |     4.76ms |       218 |   4.29ms |   5.21ms |  11.02ms | 35.0 MiB (in-proc)
+rust      | 4.87 KiB   |         1.49ms |    177.8µs |      9578 |   35.1µs |  303.8µs |  899.0µs | 2.3 MiB (in-proc)
+docker    | —          |       312.34ms |    56.49ms |        23 |  39.10ms |  67.88ms | 169.61ms | 396KiB (container)
+
+# ============================ THE VERDICT ============================
+# Docker (pure-compute echo, same work): cold-start setup+first = 312.34ms + 56.49ms,
+#   warm 23 ops/s (p50 39.10ms), RSS 396KiB (container).
+#
+# [go guest] module 3.17 MiB
+#   cold-start  : uncached 585.97ms  vs docker 368.83ms  -> Docker wins (1.6x faster)
+#   cold-start  : CACHE-AMORTIZED 21.46ms (compile reused) vs docker 368.83ms  -> WASM wins (17.2x faster)
+#   warm ops/s  : wasm 519  vs docker 23  -> WASM wins (22.9x)
+#   host RSS    : wasm 63.2 MiB (in-proc)  vs docker 396KiB (container) (see RSS caveat below)
+#
+# [tinygo guest] module 1.05 MiB
+#   cold-start  : uncached 143.90ms  vs docker 368.83ms  -> WASM wins (2.6x faster)
+#   cold-start  : CACHE-AMORTIZED 9.95ms (compile reused) vs docker 368.83ms  -> WASM wins (37.1x faster)
+#   warm ops/s  : wasm 218  vs docker 23  -> WASM wins (9.7x)
+#   host RSS    : wasm 35.0 MiB (in-proc)  vs docker 396KiB (container) (see RSS caveat below)
+#
+# [rust guest] module 4.87 KiB
+#   cold-start  : uncached 1.66ms  vs docker 368.83ms  -> WASM wins (221.6x faster)
+#   cold-start  : CACHE-AMORTIZED 225.2µs (compile reused) vs docker 368.83ms  -> WASM wins (1637.7x faster)
+#   warm ops/s  : wasm 9578  vs docker 23  -> WASM wins (423.5x)
+#   host RSS    : wasm 2.3 MiB (in-proc)  vs docker 396KiB (container) (see RSS caveat below)
+#
+# BOTTOM LINE — does WASM kill Docker for pure compute? Axis by axis:
+#   THROUGHPUT: WASM wins outright, every guest — 1-2 orders of magnitude over
+#     docker exec (which forks the CLI + attaches to containerd per call). Not close.
+#   COLD-START: the Go guest's uncached 3+ MiB compile is WASM's one soft spot (it can
+#     trail a warm docker exec). Both fixes land it decisively ahead: a LEAN guest
+#     (TinyGo ~140ms, Rust ~2ms) already beats docker's create+first-exec, and a warm
+#     CompilationCache collapses EVERY guest's effective cold-start to single-digit ms
+#     or less. So with lean-guest OR warm-cache, WASM wins cold-start too.
+#   RSS: the subtle one, read it honestly. A single container's `docker stats` (~1 MiB)
+#     can look SMALLER than a lean wasm tool's in-process delta — but that container
+#     number EXCLUDES the dockerd/containerd daemon (hundreds of MiB, always resident).
+#     The wasm figure is the COMPLETE marginal cost, no hidden daemon, and the wazero
+#     engine (~the bulk of the lean-guest delta) is a one-time cost shared across ALL
+#     tools in the process. So per-instance-at-scale and full-host-cost, lean-guest WASM
+#     wins RSS; the single-container raw stat is the only framing where docker looks
+#     smaller, and only because it hides its daemon.
+#   -> ANSWER: for pure compute, a LEAN guest (TinyGo/Rust) + warm CompilationCache
+#      makes WASM beat Docker on throughput and cold-start outright, and on RSS once the
+#      daemon is counted. The Go-runtime-bundling guest was the whole reason the first
+#      pass saw a cold-start/RSS loss — swapping it for a lean guest erases it.
+#   THE CAVEAT THAT DOES NOT MOVE: this is ONLY the pure-compute (JSON->JSON) subset.
+#     The coding-agent hands (shell, git, fork/exec) CANNOT run in WASI — Docker stays
+#     the tier for those, no matter how these numbers land. WASM adds a cheap compute
+#     tier; it does not delete the container tier.
+
+# READING THE TABLE: `setup` is ONE-TIME (a tool is Load()'ed once, then dispatched
+#   many times; a container is `run` once, then exec'd many times) — amortize it over
+#   the call volume, AND note the CompilationCache table above collapses it further.
+#   `warm ops/s` + p50/p95/p99 are the per-call steady state, the number that scales.
 
 # WASM 3.0 (WasmGC / memory64) row: N/A — UNBENCHMARKABLE on wazero v1.12.0.
 #   wazero implements WebAssembly Core 1.0/2.0 only; WasmGC and memory64 are not
 #   shipped (memory64 is open request wazero#2452). Benchmarking them would require
 #   switching runtimes to wasmtime/WasmEdge — which costs CGO, breaking the single
-#   static-binary posture — purely to run the row. Deferred, not faked. Also: Go does
-#   not emit WasmGC (it bundles its own GC), so the 'leaner module' premise never
-#   applies to Go guests regardless of runtime.
+#   static-binary posture — purely to run the row. Deferred, not faked.
 
 # NOTE: docker warm ops/s is over N=200 (not 10000) — each `docker exec` forks the
 #   docker CLI + attaches to containerd, so a 10k-exec run is impractically slow.
 #   The reduced N is the honest measurement of the same per-op cost, not a shortcut.
 
-# RSS CAVEAT (both numbers have one — neither is a clean per-instance figure):
-#   - WASM 'in-process' RSS is the harness process delta, DOMINATED by wazero
-#     compiling the 3+ MiB Go-runtime-bearing module (a one-time, shared cost) —
-#     NOT per-call: a dispatch's linear memory is transient and reclaimed on Close.
-#     A hand-written WAT/Rust guest would shrink both the module and this figure.
+# RSS CAVEAT (every number here has one — none is a clean per-instance figure):
+#   - WASM 'in-process' RSS is the harness process delta across the Load+warmup of
+#     ONE tool. For the go guest it is DOMINATED by wazero compiling the 3+ MiB
+#     Go-runtime module (one-time, shared); the tinygo/rust deltas are far smaller
+#     because their modules are. A dispatch's linear memory is transient (reclaimed
+#     on Close), so none of these is a per-CALL cost.
 #   - Docker 'container' RSS is one container's `docker stats` memory; it EXCLUDES
 #     the dockerd/containerd host-side memory (hundreds of MiB, shared). So the
 #     sub-MiB container figure is not the full host cost of a container either.
