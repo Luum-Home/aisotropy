@@ -1,5 +1,17 @@
 # Dify arena — CONTAINERIZED image for the OFFLINE, LABELLED SIMULATION.
 #
+# Upstream (official) packaging: https://github.com/langgenius/dify/blob/main/docker/docker-compose.yaml
+#   (guide: https://docs.dify.ai/en/self-host/deploy/quick-start/docker-compose) —
+#   minimal variant because Dify's official deployment is a multi-service compose
+#   stack (`docker compose up -d` from dify/docker), roughly nine containers: api
+#   (Flask), worker (Celery), web, db (Postgres), redis, sandbox, ssrf_proxy, nginx,
+#   and a vector store (Weaviate by default). Dify ships NO in-process Python library
+#   AND its modified-Apache-2.0 LICENSE §1a forbids multi-tenant operation without a
+#   commercial license — so the real platform is deliberately NOT reproduced here. This
+#   single small image runs the arena's labelled simulation of Dify's data plane
+#   (Dify's real multi-tenant schema in Dify's own ORM, SQLAlchemy 2.0) offline,
+#   keyless, network-free. See docker/README.md and ../README.md.
+#
 # HONEST SCOPE (read this): this image does NOT run real Dify. Dify has no
 # in-process/embeddable Python library — it is a Flask + Celery + Postgres +
 # Redis multi-container server platform, and its own modified-Apache-2.0 LICENSE

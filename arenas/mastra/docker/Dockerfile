@@ -1,5 +1,17 @@
 # Mastra arena — minimal containerized server (mock model, no API key).
 #
+# Official packaging: https://mastra.ai/docs/deployment/building-mastra
+#   Mastra's own deploy path is `mastra build` -> a self-contained
+#   `.mastra/output/index.mjs` Node server, started with
+#   `node .mastra/output/index.mjs` (or `mastra start`). Mastra publishes NO
+#   official Dockerfile — its docs describe the built-output server and leave the
+#   container recipe to the operator.
+# Minimal variant because the arena's isolation smoke drives CUSTOM HTTP endpoints
+#   (/remember, /recall, /chat, /healthz — see docker/server.mjs) that the stock
+#   `mastra build` server does not expose. We therefore boot a tiny plain-node:http
+#   wrapper around the REAL @mastra/core Agent + @mastra/memory instead of the
+#   generated server, so the ownership guard under test is Mastra's own.
+#
 # Boots the smallest real Mastra app the arena's isolation smoke can be driven
 # against over HTTP: a Mastra Agent on an offline AI-SDK v5 mock model + real
 # @mastra/memory (LibSQLStore). See docker/server.mjs and docker/run.sh.

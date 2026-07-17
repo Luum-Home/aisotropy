@@ -1,5 +1,17 @@
 # Containerize the Letta arena's OFFLINE smoke (labelled behavioral simulation).
 #
+# Upstream (official) packaging: https://docs.letta.com/guides/docker  (image: letta/letta,
+#   https://hub.docker.com/r/letta/letta) — minimal variant because Letta's
+#   official image is a full SERVER: `docker run -v ~/.letta/.persist/pgdata:\
+#   /var/lib/postgresql/data -p 8283:8283 -e OPENAI_API_KEY=... letta/letta:latest`
+#   bundles Postgres+pgvector and exposes the agent REST API on :8283, and an agent
+#   turn calls a live LLM provider. Reproducing that needs a running server, a
+#   Postgres volume, and a provider key — the opposite of an OFFLINE, KEYLESS smoke.
+#   This variant instead installs the real `letta-client` SDK and exercises the real
+#   Letta Pydantic types against the documented server filter contract with a
+#   deterministic responder — a labelled simulation of the server plane, NOT the
+#   server. See docker/README.md and ../README.md.
+#
 # WHAT THIS PROVES — and, honestly, what it does NOT:
 #   PROVES:  the arena's offline isolation harness runs end-to-end in a CLEAN
 #            container — real `letta-client==1.12.1` installed fresh from

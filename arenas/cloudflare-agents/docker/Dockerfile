@@ -1,5 +1,17 @@
 # Containerized Cloudflare Agents arena smoke.
 #
+# Official runtime & deploy target: a Cloudflare Worker/Agent's REAL deploy target
+# is Cloudflare's EDGE via `wrangler deploy` (https://developers.cloudflare.com/workers/wrangler/commands/)
+# — a Worker is NOT shipped as a Docker image. The runtime itself is `workerd`
+# (https://github.com/cloudflare/workerd), the open-source "JavaScript / Wasm
+# server runtime based on the same code that powers Cloudflare Workers"; one of
+# its stated use cases is running Workers apps "on your own infrastructure".
+# `wrangler dev` runs that SAME workerd locally via Miniflare — the same runtime
+# used in production (https://developers.cloudflare.com/workers/development-testing/).
+# This image therefore runs workerd-in-Docker as the officially-supported
+# SELF-HOST / local-fidelity stand-in for the edge runtime, NOT the production
+# deploy path (which needs no container at all).
+#
 # HONEST FRAMING: Cloudflare Agents are Durable Objects that run on `workerd`
 # (Cloudflare's Apache-2.0 Workers runtime), NOT on a generic Linux container
 # process. Production durability + global uniqueness + per-object isolation are

@@ -1,5 +1,15 @@
 # Minimal containerized LangGraph arena app.
 #
+# Upstream (official) packaging: https://docs.langchain.com/langsmith/deploy-standalone-server
+#   — minimal variant because LangGraph's official image is built by the
+#   langgraph-cli (`langgraph build`) as a full Agent Server that REQUIRES two
+#   backing services at runtime: Redis (pub-sub broker for streaming background
+#   runs) and Postgres (assistants/threads/runs, thread state, long-term memory,
+#   and the "exactly once" task queue). Standing up that 3-service stack would
+#   defeat this smoke's purpose: proving containerized tenant isolation OFFLINE
+#   and KEYLESS. This single-process variant serves the same HTTP surface backed
+#   by LangGraph's own real InMemoryStore instead. See docker/README.md.
+#
 # Proves the framework's minimal app boots and serves HTTP in a container with
 # the keyless stub (no OPENAI/OPENROUTER key). Runs orbit.server (FastAPI +
 # uvicorn) on port 4112, backed by LangGraph's real InMemoryStore so the

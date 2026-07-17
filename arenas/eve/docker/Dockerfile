@@ -1,6 +1,17 @@
 # syntax=docker/dockerfile:1
 #
 # Docker smoke for the eve arena — ADDITIVE to the native run in ../README.md.
+#
+# Official packaging: https://github.com/vercel/eve  (docs: https://eve.dev/docs/guides/deployment)
+#   eve has NO official Docker/standalone-container guidance: its documented
+#   deployment target is Vercel (agents compile to Vercel Functions; Docker appears
+#   only as a LOCAL sandbox backend, not a server image). What IS official is the
+#   build+serve contract — `eve build` -> a self-contained Nitro `.output/` app,
+#   served by `eve start` (README: "serve the built `.output/` app"; runtime is
+#   "Nitro + Workflows"). This image boots exactly that official artifact,
+#   `node .output/server/index.mjs`, in a plain container — the reasonable default
+#   for a container smoke absent an official Dockerfile.
+#
 # Builds the real eve app (npm install + `eve build`) and boots the compiled
 # Nitro server (`.output/server/index.mjs`) with the OFFLINE deterministic mock
 # model (agent/lib/model.ts) — no API key, no network at runtime. HTTP on :4117.

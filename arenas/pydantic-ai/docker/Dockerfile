@@ -1,5 +1,14 @@
 # Minimal containerized image for the Pydantic AI arena orbit app.
 #
+# Upstream (official) packaging: https://ai.pydantic.dev/  — this image IS idiomatic: Pydantic
+#   AI ships NO official Docker image and NO official Dockerfile. It is a plain
+#   Python library ("bring the FastAPI feeling to GenAI"), so the official
+#   deployment story is standard Python packaging — install the wheel, run your
+#   ASGI app — with optional durable-execution backends (Temporal / DBOS / Prefect)
+#   for long-running workflows. A single-process FastAPI/uvicorn container like
+#   this one is exactly that idiomatic pattern, run keyless (TestModel stub) so the
+#   isolation smoke needs no provider key. See docker/README.md.
+#
 # Serves orbit.app (FastAPI/uvicorn on :4110) with the KEYLESS stub model
 # (pydantic_ai.models.test.TestModel) — no ANTHROPIC_API_KEY / OPENAI_API_KEY
 # is read or needed. The point is deployment realism: prove the framework's

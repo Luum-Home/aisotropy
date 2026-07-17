@@ -1,5 +1,21 @@
 # Multi-stage build for the Spring AI Orbit arena — CONTAINERIZED smoke.
 #
+# Official packaging: https://docs.spring.io/spring-boot/reference/packaging/container-images/dockerfiles.html
+#   (efficient-images: https://docs.spring.io/spring-boot/reference/packaging/container-images/efficient-images.html)
+# VARIANT because this arena is a plain JVM *library*, not a bootable Spring Boot
+# app: the pom (packaging=jar, exec-maven-plugin, NO spring-boot-maven-plugin /
+# no `repackage`) produces no executable Spring Boot jar, so the official
+# layered-jar recipe — `java -Djarmode=tools -jar application.jar extract
+# --layers` then `ENTRYPOINT ["java","-jar","application.jar"]` — does not apply
+# (there is no server to boot; we run four `main` methods off a classpath). We DO
+# keep the two structural principles the official docs teach: (1) a multi-stage
+# split — a build-tooling stage (Maven) feeding a slim JRE runtime stage — and
+# (2) cache-friendly layer separation (dependencies resolved keyed on pom.xml
+# alone, then copied as their own layer, separate from the app classes), which is
+# exactly the "efficient images" intent, just over a classpath instead of an
+# extracted fat jar. Base is eclipse-temurin (permissive) rather than the docs'
+# Liberica image; both are JRE-only runtime bases.
+#
 # HONEST FRAMING: this arena is a JVM *library* exercised through four `main`
 # methods (SmokeMain / ProductIsolationMain / FeatureDemoMain / StrengthsMain,
 # the `scripts/run.sh all` set), NOT an HTTP server. So the containerized smoke

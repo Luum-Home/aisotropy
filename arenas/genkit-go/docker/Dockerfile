@@ -4,6 +4,15 @@
 # Packages the REAL Firebase Genkit build (offline fake model) as a production
 # Go image: static binary on gcr.io/distroless/static-debian12:nonroot.
 #
+# Official packaging: https://genkit.dev/go/docs/cloud-run — Genkit's official Go
+# deploy path does NOT publish a Dockerfile; it ships to Cloud Run via buildpacks
+# (`gcloud run deploy --port 3400`, server binding 0.0.0.0:$PORT) and sets prod
+# via GENKIT_ENV. This image is the explicit-Dockerfile MINIMAL VARIANT of that
+# buildpack path: the same Go-on-Cloud-Run container shape (static binary, prod
+# env, single listen port) made hermetic and offline for the smoke — GENKIT_ENV=prod
+# matches the documented production setting (no dev Reflection server); the arena
+# fixes the listen port at 4116 instead of reading $PORT/3400.
+#
 # The dotprompt files are compiled into the binary via go:embed
 # (orbit/prompts/*.prompt), so the runtime image needs nothing but the binary.
 #

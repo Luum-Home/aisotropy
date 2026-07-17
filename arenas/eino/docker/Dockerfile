@@ -1,5 +1,15 @@
 # Eino arena — CONTAINERIZED smoke image.
 #
+# Official packaging: https://github.com/cloudwego/eino-examples/tree/main/quickstart/eino_assistant
+# — CloudWeGo's own reference Dockerfile is a multi-stage build (golang:1.22 ->
+# alpine:3.21) with a CGO_ENABLED=0 GOOS=linux static binary, EXPOSE 8080, and the
+# final stage installing ca-certificates + redis. This image is a MINIMAL VARIANT
+# of that pattern: it keeps the same multi-stage + CGO-free static build but lands
+# on distroless/static-debian12:nonroot and drops ca-certificates and redis,
+# because the arena runs the offline StubChatModel — no outbound TLS (no certs
+# needed) and no Redis vector store — so a hermetic distroless static image is
+# both leaner and closer to the smoke's actual dependency surface.
+#
 # Packages the arena's live Orbit server (cmd/server, port 4113) the way a
 # production Go service is shipped: multi-stage build -> a static, CGO-free
 # binary -> distroless/static-debian12:nonroot (no shell, no libc, non-root UID).

@@ -1,5 +1,16 @@
 # Containerized build+boot of the Orbit-on-Flue arena, for the DOCKER smoke.
 #
+# Official packaging: https://flueframework.com/docs/ecosystem/deploy/docker/
+#   Flue DOES ship an official container recipe: base `node:22-slim`, build with
+#   `flue build --target node` -> `dist/`, then `CMD ["node", "dist/server.mjs"]`
+#   (Hono server; PORT-configurable). This image tracks that official pattern —
+#   same base family (node:22-*-slim), same `flue build --target node` step, same
+#   `node dist/server.mjs` entrypoint. Deltas from the doc's template, all
+#   arena-specific: (1) pnpm (this arena's locked package manager — pnpm-lock.yaml)
+#   instead of npm; (2) an in-container OFFLINE fake-model sidecar so the smoke
+#   needs no API key and no network; (3) single-stage (Flue externalizes deps, so
+#   node_modules is required at runtime either way — see the doc's own note).
+#
 # Same app the native smokes drive (scripts/smoke.mjs, scripts/isolation.mjs),
 # but built and run entirely inside a plain Node container — proving Flue's
 # `--target node` output is a self-contained `node dist/server.mjs` process with
