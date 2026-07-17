@@ -50,6 +50,39 @@ _, _ = app.IngestTenantKnowledge(ctx, "acme",
 )
 ```
 
+## Ingesting PDFs and HTML (`IngestFile`)
+
+`IngestKnowledge` takes plain text. To ingest a **binary document** — a PDF or an HTML page — use
+`App.IngestFile`: it extracts the text and feeds it through the *exact same* scoped
+chunk → embed → store pipeline. Nothing else changes: same `(tenant, user)` isolation, same
+idempotent re-ingest-by-`ID`, same embedder.
+
+```go
+pdf, _ := os.ReadFile("handbook.pdf")
+
+n, err := app.IngestFile(ctx, "acme", "alice", aisotropy.FileDocument{
+	ID:          "handbook",
+	Data:        pdf,
+	ContentType: "application/pdf", // optional — omit to sniff from the bytes
+	Source:      "handbook.pdf",
+})
+```
+
+`ContentType` is a hint; leave it empty and the bytes are sniffed (a `%PDF-` magic prefix, an HTML
+doctype). PDF extraction uses [`github.com/ledongthuc/pdf`](https://github.com/ledongthuc/pdf)
+(BSD-3-Clause) and HTML uses `golang.org/x/net/html` (BSD-3-Clause) — both permissive, in line with the
+repo's MIT/Apache/BSD-only policy. There is also `IngestTenantFile` for the tenant-shared bucket.
+
+**Bring your own parser.** Extraction is a swappable seam, just like the embedder. Supply
+`aisotropy.WithExtractor(myExtractor)` to override the default — for example an OCR pipeline, a DOCX
+parser, or a remote extraction API. Your `Extractor` sees opaque bytes and a MIME hint, never a scope,
+so overriding it cannot affect tenant isolation.
+
+**Scanned/image PDFs need OCR.** The built-in extractor reads a PDF's *embedded text layer* only. A
+scanned or image-only PDF has none, so `IngestFile` returns an error wrapping
+`aisotropy.ErrEmptyContent` rather than silently ingesting nothing — plug an OCR-backed `Extractor` via
+`WithExtractor` to handle those.
+
 **Honesty note.** With no `WithEmbedder` and no `AISOTROPY_EMBED_URL`, the default is a deterministic
 **HashEmbedder placeholder**: it wires and tests the ingest → retrieve path end-to-end, but it does
 **not rank semantically**. Retrieval quality only becomes meaningful once you plug in a real model —

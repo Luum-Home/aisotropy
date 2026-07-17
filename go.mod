@@ -3,6 +3,7 @@ module github.com/Luum-Home/aisotropy
 go 1.25.1
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/anthropics/anthropic-sdk-go v1.56.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -15,6 +16,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/uuid v1.6.0
 	github.com/invopop/jsonschema v0.14.0
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/qdrant/go-client v1.18.3
 	github.com/rqlite/gorqlite v0.0.0-20260504155303-50d445fd0ab9
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
@@ -74,7 +76,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/net v0.55.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect

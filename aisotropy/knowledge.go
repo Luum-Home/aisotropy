@@ -34,8 +34,12 @@ type Document struct {
 	// ID is the caller-chosen document identifier; re-ingesting the same ID
 	// idempotently replaces its previously ingested chunks.
 	ID string
-	// Content is the document's plain-text body. Parsing (PDF/HTML/etc.
-	// extraction) is the caller's concern — this is plain text in.
+	// Content is the document's plain-text body. For binary formats (PDF,
+	// HTML) use App.IngestFile, which extracts text via the WithExtractor seam
+	// (github.com/ledongthuc/pdf for PDF, golang.org/x/net/html for HTML) and
+	// then feeds it through this same pipeline — so this field stays plain text
+	// in. A consumer can still pre-extract and set Content themselves; the
+	// built-in extraction is additive, not required.
 	Content string
 	// Source is optional provenance (url, filename, section) surfaced on
 	// retrieved chunks for citations.

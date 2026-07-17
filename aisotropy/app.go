@@ -155,6 +155,12 @@ type App struct {
 	chunkSize    int
 	chunkOverlap int
 
+	// extractor backs WithExtractor (aisotropy/ingest_file.go): the swappable
+	// byte->text seam IngestFile runs in front of the IngestKnowledge pipeline.
+	// nil means "unset" — IngestFile falls back to ingest.DefaultExtractor()
+	// (PDF + HTML + plain text), mirroring the embedder's BYO-or-default idiom.
+	extractor Extractor
+
 	// semanticOnce/semanticStore/semanticErr memoize ensureSemantic's
 	// lazily-built embedder+store pair, shared between Run and
 	// IngestKnowledge (aisotropy/knowledge.go) so the two surfaces never
@@ -181,6 +187,15 @@ type App struct {
 	turnOnce sync.Once
 	runtime  *appRuntime
 	turnErr  error
+
+	// configFile backs WithConfigFile: an explicit runtime config-file path
+	// (aisotropy/runtimeconfig.go). Empty means startRuntime falls back to the
+	// AISOTROPY_CONFIG_FILE env var and then the default search paths. The file's
+	// values are materialized into the process environment under env > file >
+	// default precedence, once, guarded by configOnce.
+	configFile string
+	configOnce sync.Once
+	configErr  error
 }
 
 // Option configures an App at construction time. Options are applied in order;
@@ -206,6 +221,19 @@ func New(opts ...Option) *App {
 // WithAddr sets the HTTP listen address. Default: AISOTROPY_ADDR, or ":8080".
 func WithAddr(addr string) Option {
 	return func(a *App) { a.addr = addr }
+}
+
+// WithConfigFile points the runtime at a config FILE (YAML or TOML) whose values
+// mirror the AISOTROPY_* / service env vars (aisotropy/runtimeconfig.go). At boot
+// the file is loaded and its values are materialized into the process
+// environment under env > file > default precedence: an explicit env var always
+// wins over the file, and any knob neither the env nor the file sets keeps its
+// built-in default. Passing "" (or omitting this option) falls back to the
+// AISOTROPY_CONFIG_FILE env var and then the default search paths, so a bare
+// App with no config file behaves exactly as before. A malformed file makes the
+// boot (Run/Turn) fail with a clear error rather than panic.
+func WithConfigFile(path string) Option {
+	return func(a *App) { a.configFile = path }
 }
 
 // WithTool registers a tool. It accumulates: call it once per tool. The runtime
@@ -345,6 +373,16 @@ func waitWorkers(ctx context.Context, wg *sync.WaitGroup) {
 //
 //nolint:gocognit,cyclop,funlen // large cohesive runtime constructor; refactor tracked in docs/architecture/phases-3-7-as-built.md debt ledger
 func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
+	// Materialize the optional runtime config file into the process environment
+	// BEFORE any env-reading resolver runs (llm.FromEnv reads ANTHROPIC_API_KEY
+	// immediately below, and the whole constructor reads AISOTROPY_* from the
+	// environment). env > file > default precedence is enforced inside
+	// materialize (already-set env vars are left untouched); a no-config app
+	// materializes nothing and boots identically. Guarded so it runs once per App.
+	if err := a.applyConfigFile(); err != nil {
+		return nil, err
+	}
+
 	llmClient := a.llmClient
 	if llmClient == nil {
 		llmClient = llm.FromEnv()
