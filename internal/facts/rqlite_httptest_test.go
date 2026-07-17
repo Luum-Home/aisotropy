@@ -48,6 +48,13 @@ type fakeRqlite struct {
 	// non-numeric string, so the store's row Scan into an int64 fails — driving
 	// the scan-error branch that guards against a garbage backend response.
 	malformedRows bool
+	// ddlError, when set, is returned as the per-statement result "error" for any
+	// statement containing "ADD COLUMN" — reproducing how a real rqlite reports the
+	// idempotent ALTER's "duplicate column" failure when that statement is run in
+	// its OWN single-statement request (results[i].error, the SQLite message
+	// preserved), which is exactly what migrate does per statement so the guard can
+	// see the text. Drives the migrate-idempotency regression in rqlite_migrate_test.go.
+	ddlError string
 }
 
 func newFakeRqlite(t *testing.T) *fakeRqlite {
@@ -101,11 +108,18 @@ func (f *fakeRqlite) handleExecute(w http.ResponseWriter, r *http.Request) {
 	stmts := decodeStatements(r)
 	results := make([]map[string]any, 0, len(stmts))
 	for _, st := range stmts {
+		query, _ := st[0].(string)
+		if f.ddlError != "" && strings.Contains(query, "ADD COLUMN") {
+			// Per-statement result error with the SQLite text preserved — how
+			// rqlite reports a single-statement ALTER's duplicate-column failure
+			// (results[i].error), which migrate must recognise and tolerate.
+			results = append(results, map[string]any{"error": f.ddlError})
+			continue
+		}
 		if f.resultError != "" {
 			results = append(results, map[string]any{"error": f.resultError})
 			continue
 		}
-		query, _ := st[0].(string)
 		args := st[1:]
 		switch query {
 		case upsertSQL:
