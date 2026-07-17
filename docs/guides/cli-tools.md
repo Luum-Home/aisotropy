@@ -25,7 +25,7 @@ are tracked.
 ## aisotropyd
 
 **Product surface.** The Aisotropy agent runtime binary. Since Phase 8
-([ADR-0013](../decisions/0013-public-extension-surface-facade-vs-promote.md)) it is a thin ~51-line
+([ADR-0013](../decisions/0013-public-extension-surface-facade-vs-promote.md)) it is a thin ~97-line
 consumer of the public builder `aisotropy.App`: it registers three **demo** tools (`search_docs`,
 `read_financials` gated on `read:financial-data`, `write_tasks` gated on `write:tasks`), the echo
 `DemoExecutor`, and the default persona, then calls `App.Run`. All real wiring — memory tiers, the

@@ -19,7 +19,7 @@ describe the *intended* design: [overview](overview.md), [request lifecycle](req
 Everything below is anchored in the composition root. **As of Phase 8 (ADR-0013) that root moved**:
 the wiring now lives in the importable builder [`aisotropy/app.go`](../../aisotropy/app.go)
 (`App.Run` constructs every tier, decorator, and route), and
-[`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go) is a 51-line thin consumer of it. Read
+[`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go) is a ~97-line thin consumer of it. Read
 this doc together with the one-screen [reality ledger](reality-ledger.md) (REAL vs dormant vs
 aspirational) and the [data model](data-model.md) / [API reference](api-reference.md).
 
@@ -582,7 +582,7 @@ threaded through the handlers:
 ## References
 
 - Wiring (composition root): [`aisotropy/app.go`](../../aisotropy/app.go) (`App.Run`);
-  [`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go) is the 51-line thin consumer of it
+  [`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go) is the ~97-line thin consumer of it
 - Handlers: [`internal/api/chat.go`](../../internal/api/chat.go),
   [`chat_stream.go`](../../internal/api/chat_stream.go),
   [`chat_agent.go`](../../internal/api/chat_agent.go)

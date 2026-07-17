@@ -125,11 +125,11 @@ noise cleanup; primitive self-improvement.
 **Built:** full [granular control](../architecture/granular-control.md) — rate limiting + circuit
 breaker, scope-based tools, dynamic prompt; physical multi-tenancy ([ADR-0007](../decisions/0007-multitenancy-fisico-db-unica-vs-por-tenant.md), hybrid/tiered).
 **Definition of done:**
-- [x] Per-tenant rate limiting with a clean 429 (token bucket in BadgerDB, checked before the LLM call; concurrency-tested). Model degradation at 95% quota is future work.
+- [x] Per-tenant rate limiting with a clean 429 (token bucket in BadgerDB, checked before the LLM call; concurrency-tested). Model degradation at 95% quota is delivered (opt-in via `AISOTROPY_CHEAP_MODEL`; `llm.DegradeAt` at `DefaultDegradeThreshold = 0.95`, wired on the streaming path).
 - [x] Tools injected according to scopes: without permission → the primitive doesn't exist for the LLM (`internal/tools`).
 - [x] Circuit breaker on the LLM client (opens on repeated provider failures; half-open recovery).
 - [~] Cost per token per tenant via OTel Span (`gen_ai.usage.*` captured; a dashboard is not built).
-- [ ] Distroless binary < 50 MB, startup < 1 s, idle RAM < 50 MB (everything except Qdrant). *(Not yet measured.)*
+- [x] Distroless binary < 50 MB, startup < 1 s, idle RAM < 50 MB (everything except Qdrant). *(Measured 2026-07-09, re-measured 2026-07-14: 32.87 MiB image, ~85 ms startup, ~30.3 MB idle RAM — all PASS; see [distroless](../deployment/distroless.md).)*
 
 **Touches:** everything. **Covers:** [OKR O7](okrs.md#o7--ready-for-enterprise-phase-7).
 

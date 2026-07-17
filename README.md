@@ -235,7 +235,7 @@ Phase 9 is partially delivered:**
   control (per-tenant rate limit, circuit breaker, cost meter, scope-gated tools).
 - **Phase 8 — adoption surface (shipped):** the public builder `aisotropy.App`
   ([ADR-0013](docs/decisions/0013-public-extension-surface-facade-vs-promote.md));
-  `cmd/aisotropyd` is a thin ~51-line consumer of it, and third parties build their own bot by
+  `cmd/aisotropyd` is a thin ~97-line consumer of it, and third parties build their own bot by
   importing `aisotropy/`.
 - **Phase 9 — composition surface (partial):** typed tool args (`WithTypedTool[T]`), MCP-backed
   tools (`WithMCPServer`), the embeddable in-process [`App.Turn`](docs/decisions/0031-embeddable-in-process-turn.md)
@@ -250,7 +250,7 @@ definition of done) and [docs/architecture/reality-ledger.md](docs/architecture/
 
 ## Running the reference binary
 
-The repo also ships `cmd/aisotropyd` — a thin ~50-line consumer of the same `aisotropy.App` builder
+The repo also ships `cmd/aisotropyd` — a thin ~97-line consumer of the same `aisotropy.App` builder
 (with demo tools) that doubles as the runnable reference. Requires Go 1.26+ (pinned via
 `.go-version`).
 

@@ -51,8 +51,8 @@ network readiness checks** against rqlite and Qdrant — with no code change. A 
 ```bash
 curl -s localhost:8080/healthz | jq        # liveness  -> {"status":"ok"}
 curl -s localhost:8080/health  | jq        # readiness -> {"status":"ok","checks":[
-                                           #   {"name":"facts","ok":true},       <- rqlite
-                                           #   {"name":"semantic","ok":true}]}   <- Qdrant
+                                           #   {"name":"facts","status":"ok","latency_ms":N},     <- rqlite
+                                           #   {"name":"semantic","status":"ok","latency_ms":N}]} <- Qdrant
 ```
 
 If a tier is down, `/health` returns HTTP 503 and names the degraded check — the

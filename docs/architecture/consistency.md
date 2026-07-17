@@ -153,7 +153,7 @@ aisotropy.App build [Go]  (cmd/aisotropyd/main.go is a thin consumer of this)
 
 *(status note 2026-07-14: reconciliation runs at `aisotropy/app.go:326` — **before** the Huma API
 is registered (`app.go:395`+) and before the server listens, not after. It happens inside the
-`aisotropy.App` builder, not literally in `main()`, which is a thin ~51-line consumer.)*
+`aisotropy.App` builder, not literally in `main()`, which is a thin ~97-line consumer.)*
 
 This closes the Outbox's full lifecycle: nothing ever written to `outbox:pending:*` is left
 floating indefinitely, even if the shutdown was abrupt.

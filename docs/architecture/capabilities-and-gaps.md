@@ -33,9 +33,9 @@ It is a companion to:
 | **Benchmarks** | 🟡 PARTIAL (honest) | [`arenas/BENCHMARKS.md`](../../arenas/BENCHMARKS.md): Class 1 = aisotropy's own **framework overhead** (model held constant as the keyless stub → every ns is the framework: identity→ctx, quota gate, hydration, tool gating, contract). Class 2 = **cost-governance effectiveness** (a token-counting stub proves the pre-spend quota gate + response cache cut spend). The cross-framework wall-clock table is a **documented reproducible method, NOT executed**. |
 | **Deployment — Docker** | ✅ REAL | Distroless `Dockerfile`; reference `docker-compose.yml` (aisotropyd + real networked rqlite:4001 + Qdrant:6333/6334) + `docker-compose.sleepcycle.yml` overlay (ADR-0016 lever #3). Bare binary falls back to in-process defaults. |
 | **Deployment — Kubernetes / Helm** | ❌ GAP | **Zero k8s manifests, zero Helm charts** in the repo. The "kubernetes" mentions are code comments (k8s named as a *possible* `SandboxProvider` backend you implement yourself). The single Go binary + Distroless image **is** k8s-deployable, but no `Deployment`/`StatefulSet`/`values.yaml`/HPA ships — orchestration is currently DIY. |
-| **PDF ingestion** | ❌ OUT BY DESIGN | `aisotropy/knowledge.go`: document `Content` is plain text; "Parsing (PDF/HTML/etc.) is the caller's responsibility." PDF/HTML extraction is BYO. (The `cmd/skill-import` "pdf-form-filler" is only an example skill *name*, not runtime PDF ingestion.) |
-| **openspec.dev** | ❌ NOT SUPPORTED | No references in the repo. |
-| **Spec-Driven Development (SDD)** | 🟡 DEV-PROCESS ONLY | SDD is used to **build** aisotropy (the agent tooling under `.claude/`), not a capability aisotropy offers to consumers. aisotropy-the-product does not "support SDD" as a feature. |
+| **PDF / HTML ingestion** | ✅ REAL | `App.IngestFile` (`aisotropy/ingest_file.go`) extracts text from a PDF or HTML document and feeds it through the SAME scoped `IngestKnowledge` chunk→embed→store pipeline — same `(tenant, user)` isolation, no new unscoped path. PDF via `github.com/ledongthuc/pdf` (BSD-3), HTML via `golang.org/x/net/html` (BSD-3); both permissive per the license gate (never `unidoc/unipdf`, AGPL). Extraction is a swappable seam (`WithExtractor`), mirroring BYO-embedder. **Bounded:** built-in extraction reads the embedded text layer only — a scanned/image-only PDF yields `ErrEmptyContent` and needs a BYO OCR `Extractor`. `IngestKnowledge` (plain text in) is unchanged and additive. |
+| **openspec.dev** | ❌ NOT SUPPORTED (deliberate, [ADR-0039](../decisions/0039-openspec-dev-spec-driven-development.md)) | OpenSpec is a **dev-time** spec-driven-development tool for AI coding assistants (markdown `openspec/specs` + `openspec/changes`, MIT, ~61k★) — it slots into ADR-0022's **AGENTS.md (dev-time) layer**, not a runtime import surface. Its artifacts map to no aisotropy primitive the generic knowledge path (ADR-0018) doesn't already cover, so no importer is built; and the `docs/decisions/` ADR log + `sdd-*` harness skills already provide in-repo SDD. Deferred with explicit revisit triggers (see ADR-0039). |
+| **Spec-Driven Development (SDD)** | 🟡 DEV-PROCESS ONLY (deliberate, [ADR-0041](../decisions/0041-sdd-as-consumer-feature.md)) | SDD is used to **build** aisotropy (the agent tooling under `.claude/`), not a capability aisotropy offers to consumers. aisotropy-the-product does not "support SDD" as a feature — ADR-0041 deferred it: the interpretations that have value are already served by the ADR-0016 wiring `Config`, the AGENTS.md dev layer, or app composition, and the novel one (behavior-in-spec) is forbidden by ADR-0002. |
 
 ## Known bounded limitations (honest)
 
@@ -62,7 +62,8 @@ It is a companion to:
      size / cold-start / RSS / dependency-tree weight per framework, run in a container. Do it for the
      **flagship few**, not all 12 arenas (consistent with the consolidation proposal's "12 → 3").
 3. **Conscious skips (scope-creep unless real demand):** PDF ingestion (BYO is fine), TOML config
-   (env + YAML cover it), openspec.dev, SDD-as-a-product-feature.
+   (env + YAML cover it), openspec.dev (now formalized as a defer decision,
+   [ADR-0039](../decisions/0039-openspec-dev-spec-driven-development.md)), SDD-as-a-product-feature.
 
 ## How the pieces fit at request time
 

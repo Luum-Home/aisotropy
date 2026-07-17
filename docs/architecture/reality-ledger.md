@@ -82,23 +82,19 @@ step behind the code.
 
 1. **The entry-point status was stale — now reconciled (2026-07-14).** `README.md` announced
    "Phase 0–1" and the `milestones.md` banner lagged on the ADR range; both now state the real
-   state (Phases 0–7 implemented, Phase 8 shipped, Phase 9 partial, ADRs through 0023 accepted).
+   state (Phases 0–7 implemented, Phase 8 shipped, Phase 9 partial, ADRs through 0038 accepted).
    This ledger remains the arbiter if they drift again.
-2. **`runtime-as-built.md` is itself behind.** It predates the Phase-8 façade (the wiring point is
-   now [`aisotropy/app.go`](../../aisotropy/app.go), not `cmd/aisotropyd/main.go`), ADR-0012 native
-   tool-calling, and ADR-0016…0019 — e.g. it still says "there is no native provider
-   function-calling," which ADR-0012 changed. It needs a refresh (tracked, not done here).
-3. **The "−72% fewer input tokens than LangChain" figure is measured against a naive baseline**
+2. **The "−72% fewer input tokens than LangChain" figure is measured against a naive baseline**
    (full-history LangChain, no summarization middleware). The *mechanism* (surgical context
    assembly) is a real efficiency lever; the number is a synthetic-harness artifact and must be
    quoted only with its `bench/token-economy/` caveat — never as "72% more efficient than
    LangChain."
-4. **Anthropic silently loses native tool-calling.** `FromEnv` precedence is OpenRouter > OpenAI >
+3. **Anthropic silently loses native tool-calling.** `FromEnv` precedence is OpenRouter > OpenAI >
    Anthropic > stub, but only `OpenAICompatClient` implements `CallTools`. With the stub or the
    Anthropic client, `/chat/agent` always takes the homegrown `agentloop` fallback. The
    best-supported provider for the *full* feature set is OpenAI-compatible/OpenRouter, not
    Anthropic.
-5. **`docker-compose.yml` is a reference artifact, not a recorded result.** There is no captured
+4. **`docker-compose.yml` is a reference artifact, not a recorded result.** There is no captured
    evidence the Qdrant/rqlite stack has been booted and health-checked in this repo; the "services
    are live / the moat is active" framing is aspirational verification.
 

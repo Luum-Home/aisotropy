@@ -90,7 +90,7 @@ Tested column: **yes** = default `go test ./...`; **partial** = tested via stub/
 | Qdrant networked semantic (`QDRANT_HOST`) | **DORMANT** | ledger row "Semantic memory" (CODE-ONLY networked) | partial (`manual`) |
 | rqlite networked facts (`RQLITE_URL`) | **DORMANT** | ledger row "Facts memory" (CODE-ONLY networked) | partial (`manual`) |
 | DataFusion sleep-cycle (`crates/sleep-cycle`, 4,779 Rust LOC, `AISOTROPY_SLEEPCYCLE_BIN`) | **DORMANT** | ledger row "Sleep cycle"; default suite uses a **bash stub** | partial (stub only) |
-| Native provider tool-calling (`ToolCaller`, only OpenRouter, ADR-0012) | **DORMANT** | ledger row "Native tool-calling"; [ledger gap #4](reality-ledger.md): Anthropic/stub silently fall back | partial (fake) |
+| Native provider tool-calling (`ToolCaller`, only OpenRouter, ADR-0012) | **DORMANT** | ledger row "Native tool-calling"; [ledger gap #3](reality-ledger.md): Anthropic/stub silently fall back | partial (fake) |
 | Bet-6 bitrate path (`internal/bitrate` 961 LOC, `crates/bitrate-scorer` 687 LOC, `cmd/bitrate-harness`, `AISOTROPY_BITRATE_BIN`) | **DORMANT** | [runtime-as-built env table](runtime-as-built.md); ADR-0014/0015 | partial |
 | Sovereign local embedder (`crates/embed` 547 LOC, ADR-0023 **proposed**) | **DORMANT / ASPIRATIONAL** | ADR-0023 still 🟡 proposed; `cmd/embed-bench` exists to decide if it's worth it | partial |
 | Physical tenant routing (`internal/routing`, ADR-0007) | **DORMANT (unadopted)** | [runtime-as-built §6](runtime-as-built.md): *"nothing outside the package imports it"* | yes (unit) |
@@ -124,7 +124,7 @@ Tested column: **yes** = default `go test ./...`; **partial** = tested via stub/
 | Surface | Class | Evidence | Tested? |
 |---|---|---|---|
 | 12 competitor arenas (`arenas/`, 5 languages) | **PERIPHERAL** | [`arenas/README.md`](../../arenas/README.md); 43-row matrix in `ARENA-SPEC-v2.md` | n/a (each self-contained) |
-| Token-economy bench (`bench/token-economy`) | **PERIPHERAL** | [ledger gap #3](reality-ledger.md): −72% figure is a synthetic-baseline artifact | n/a |
+| Token-economy bench (`bench/token-economy`) | **PERIPHERAL** | [ledger gap #2](reality-ledger.md): −72% figure is a synthetic-baseline artifact | n/a |
 | Compression bets 1–5 (`spikes/compression`, `docs/research/`) | **ASPIRATIONAL** | [ledger row "Compression bets 1–5"](reality-ledger.md): *"only Bet 6 is spike-validated offline"* | no (spikes) |
 | L2 composition SDK — graphs/workflows/teams (ADR-0016 lever #4) | **ASPIRATIONAL** | ADR-0016: deferred until "2–3 real consumers"; README: *"broader L2 SDK is pending"* | no |
 | k8s / Firecracker sandbox providers (ADR-0038) | **ASPIRATIONAL** | ADR-0038: *"doc sketches, not shipped implementations"* | no |

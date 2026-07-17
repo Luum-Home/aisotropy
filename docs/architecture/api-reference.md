@@ -14,8 +14,13 @@ its contract, and its error/streaming semantics. Payload shapes are in the [data
 which tiers back each route (real vs dormant) is in the [reality ledger](reality-ledger.md).
 
 All `/v1/...` routes take `tenant_id` and `user_id` as **path params** (`^[a-zA-Z0-9_-]{1,64}$`,
-Huma rejects with **422** before the handler runs), and `session_id` / `scopes` in the body. There
-is **no authentication in-process** today — see the [threat model](threat-model.md).
+Huma rejects with **422** before the handler runs), and `session_id` / `scopes` in the body.
+Identity **is authenticated in-process** (ADR-0024/0025): a fail-closed Huma middleware runs in front
+of every `/v1` route — a configured `Authenticator` with a must-agree bind (verified principal ==
+path `tenant_id`/`user_id`; 401 on missing/invalid credential, 403 on mismatch), or a **default-deny**
+gate (401 on every `/v1` request) when none is registered. The shipped `aisotropyd` binary opts into
+`NoAuth()` (path identity trusted, loudly warned) unless `AISOTROPY_JWT_SECRET` (HS256) or an RS256/JWKS
+mode is set. See the [threat model](threat-model.md).
 
 ## Operational endpoints (outside the OpenAPI contract)
 

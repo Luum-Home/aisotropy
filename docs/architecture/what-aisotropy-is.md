@@ -1,12 +1,23 @@
 ---
 type: Concept
-title: What Aisotropy is (and is not) — runtime, not a library, not a bot
-description: The taxonomic placement of Aisotropy in the agent-tooling space — it is a hostable multi-tenant agent RUNTIME (Letta-class), not an import-me library (LangChain/Mastra-class) and not a single finished bot. Documents the current extension model (wiring-level in cmd/aisotropyd, internal/ boundary) and the honest gap between "runtime" and "adoptable framework".
+title: What Aisotropy is (and is not) — a dual-surface runtime + library, not a bot
+description: The taxonomic placement of Aisotropy in the agent-tooling space — since Phase 8/9 (ADR-0013/0016/0031) it is a DUAL surface: a hostable multi-tenant agent RUNTIME (Letta-class) AND an importable Go library (via the public aisotropy/ façade + builder), with only the isolation-critical kernel sealed under internal/. It is still not a single finished bot. Documents the shipped extension model (public façade, App.Turn/App.Run) and what composition-SDK work remains.
 tags: [architecture, positioning, taxonomy, runtime, framework, extension, as-built]
 timestamp: 2026-07-09T00:00:00Z
 ---
 
 # What Aisotropy is (and is not)
+
+> **Status note (reconciled 2026-07-17).** This doc was first written at Phase 7 (2026-07-08), when the
+> only public surface was the HTTP contract. **Phases 8–9 changed the taxonomy**: Aisotropy is now a
+> **dual surface** — a sealed multi-tenant runtime **and** an importable Go library
+> ([ADR-0013](../decisions/0013-public-extension-surface-facade-vs-promote.md),
+> [ADR-0016](../decisions/0016-dual-surface-sealed-runtime-composition-sdk.md),
+> [ADR-0031](../decisions/0031-embeddable-in-process-turn.md)). The public `aisotropy/` façade + builder
+> ships (`go get …/aisotropy`, `aisotropy.New`, `app.Turn`, `app.Run`); only the isolation-critical
+> kernel stays under `internal/`. The "not a library / wiring-level extension only" passages below are
+> corrected inline; where any tension remains, the [reality ledger](reality-ledger.md) and the
+> [README](../../README.md) are the arbiters.
 
 A recurring question when reading this repository for the first time is: *"Is this the
 **framework** on which bots are built (like Mastra or the LangChain suite), or is it a
@@ -19,28 +30,33 @@ fixes *what category of thing it is* and *how you extend it today*.
 
 ## The one-line answer
 
-**Aisotropy is a hostable, multi-tenant AI-agent _runtime_.** It is the thing you *run* to host
-many tenants' agents — not a library you *import* to assemble your own app, and not a single
-finished bot. Its closest category neighbor is **Letta/MemGPT (a runtime/server)**, not
-LangChain or Mastra (import-me libraries/SDKs).
+**Aisotropy is a hostable, multi-tenant AI-agent _runtime_ that is also an importable Go library**
+(a dual surface, ADR-0016). You can *run* it to host many tenants' agents over its HTTP contract, **or
+`import` the public `aisotropy/` façade and call it in-process** (`app.Turn`) — what stays sealed is the
+isolation-critical kernel, not the whole codebase. It is still **not a single finished bot** (no persona,
+no domain). Its category neighbors are **Letta/MemGPT** (runtime/server) on the hosting axis and the
+composable SDKs (LangChain/Mastra) on the import axis — Aisotropy is deliberately both.
 
 ## The taxonomy, disambiguated
 
 | Category | Example | You interact with it by… | Is Aisotropy this? |
 |---|---|---|---|
-| **Import-me library / SDK** | LangChain, Mastra, Vercel AI SDK, Genkit | `import`-ing packages and composing them inside *your* application | **No** — the packages live under `internal/` and are not importable by third parties (Go visibility rule). |
+| **Import-me library / SDK** | LangChain, Mastra, Vercel AI SDK, Genkit | `import`-ing packages and composing them inside *your* application | **Yes, since Phase 8/9** — the public `aisotropy/` façade + builder is importable (`aisotropy.New`, `WithTypedTool`, `App.Turn`); only the isolation-critical kernel stays sealed under `internal/`. |
 | **Hostable runtime / server** | Letta/MemGPT, Aisotropy | Running the server (`aisotropyd`) and talking to it over its HTTP contract | **Yes.** |
 | **Single application / bot** | any concrete assistant with a persona + domain tools | Using the one product it is | **No** — there is no persona and no domain anywhere; every route is tenant/user/product-parametric. |
 | **Managed SaaS platform** | LangSmith platform, Letta Cloud | Signing up and paying per use | **No** — it is self-hosted and sovereign by design (100% MIT/Apache, runs on your hardware). |
 
-### Why it is not a library (LangChain/Mastra-class)
+### The sealed kernel vs. the importable façade
 
-- All the reusable machinery — `internal/llm`, `internal/memory`, `internal/facts`,
+- The isolation-critical **kernel** — `internal/llm`, `internal/memory`, `internal/facts`,
   `internal/semantic`, `internal/tenancy`, `internal/routing`, `internal/tools`,
-  `internal/agentloop`, `internal/primitives` — sits under **`internal/`**. Go forbids
-  importing an `internal/` package from another module, so **no third party can `import` these
-  today**. This is deliberate: the public surface is the *HTTP contract*, not a Go API.
-- You do not compose Aisotropy into your app; you run `aisotropyd` and call its endpoints.
+  `internal/agentloop`, `internal/primitives` — stays under **`internal/`**, so no third party can
+  `import` those packages directly (a consumer brings their own tools/backends but never their own
+  tenant-isolation).
+- The **public surface is a Go API too**, not only the HTTP contract: the importable `aisotropy/`
+  façade re-exports the extension seams as type aliases plus a functional-options builder
+  (ADR-0013/0016). So you can **either** run `aisotropyd` and call its endpoints **or** import
+  `aisotropy` and compose it into your Go app (`app.Turn` in-process, `app.Run` over HTTP).
 
 ### Why it is not a single bot (example-case reading)
 
@@ -64,35 +80,38 @@ executor only echoes the invocation; the code says so plainly (*"Real tools repl
 exist so the endpoints demonstrate scope-gated tool injection end-to-end — not to ship a
 domain.
 
-## The extension model today (honest as-built)
+## The extension model today (Phase 8+9 — shipped)
 
-Aisotropy is a runtime **in intent**, but its extension surface is delivered at **wiring
-level**, not as a published API. To build *your* bot on top today you edit the composition root
-[`cmd/aisotropyd/main.go`](../../cmd/aisotropyd/main.go):
+A third party builds *their* bot **from another Go module** by importing the public `aisotropy/`
+façade and supplying only *domain* (tools + executor + persona) — no fork, no `main.go` edit. The
+reusable engine stays sealed under `internal/`; the façade re-exports only the extension seams as type
+aliases plus a functional-options builder ([adoption surface](adoption-surface.md)):
 
-| Seam | What you do | Where |
+| Seam | What you do | Public API |
 |---|---|---|
-| **Tools** | Add `tools.Tool{Name, Description, RequiredScope}` entries to `tools.NewRegistry(...)` | `main.go` (currently 3 demo tools) |
-| **Tool execution** | Provide a real `agentloop.ToolExecutor` — *"the host application supplies the concrete implementation"* — replacing `echoExecutor` | `internal/agentloop` interface; wired in `main.go` |
-| **Persona / base prompt** | Supply the base prompt selected by `product_id` during hydration | `internal/api` hydration path |
-| **Backends** | Swap LLM provider, facts store (SQLite/rqlite), semantic store (in-memory/Qdrant) via env vars | `*.OpenFromEnv` constructors |
+| **Tools** | Register a typed Go function as a tool (its `jsonschema` tags drive the model's schema + arg decode) | `aisotropy.WithTypedTool[T](...)` ([`aisotropy/tools.go`](../../aisotropy/tools.go)) |
+| **Tool execution** | Supply a real `ToolExecutor` (the host's concrete implementation) | `aisotropy.WithToolExecutor(...)` |
+| **MCP tools** | Attach an MCP server's tools | `aisotropy.WithMCPServer(...)` ([`aisotropy/mcp.go`](../../aisotropy/mcp.go)) |
+| **Plugins** | Load a declarative `aisotropy-plugin.yaml` (mcp / go-import / wasm) | `aisotropy.WithPlugin` / `WithPluginDir` ([`aisotropy/extend.go`](../../aisotropy/extend.go), ADR-0032) |
+| **Persona / base prompt** | Supply the persona selected by `product_id` | `aisotropy.WithPersona(...)` |
+| **Backends** | Swap LLM provider, facts store (SQLite/rqlite), semantic store (in-memory/Qdrant), embedder | builder options + `*.OpenFromEnv` env |
+| **Config-file wiring** | Wiring-only YAML/JSON instead of code | `aisotropy.OptionsFromConfigFile(...)` ([`aisotropy/config.go`](../../aisotropy/config.go)) |
 
-Every tier is an interface with swappable implementations (`llm.Client`, `facts.Store`,
-`semantic.Store`, `agentloop.ToolExecutor`, `primitives.Rewriter`), so the *seams exist and are
-intentional* — but wiring them is a Go edit in `main.go`, not a config file, DSL, plugin
-registration, or SDK call.
+Two entry points on the same runtime value: `app.Turn(ctx, in)` runs one full pipeline in-process (no
+HTTP hop, [ADR-0031](../decisions/0031-embeddable-in-process-turn.md)); `app.Run(ctx)` serves the same
+runtime behind the HTTP contract. `cmd/aisotropyd/main.go` is itself a ~97-line consumer of this public
+surface — the runtime is dogfooded through its own API.
 
-## The gap between "runtime" and "adoptable framework"
+## What still stays sealed (by design) vs. what is pending
 
-What is missing for a third party to build their bot *without forking* is **not domain logic** —
-it is a **public extension surface**:
-
-- promote the extension packages out of `internal/` (or expose a stable façade), and/or
-- offer declarative agent/tool/persona registration instead of hand-wiring `main.go`.
-
-That promotion is tracked as **[Phase 8 — Adoption surface](../roadmap/milestones.md#phase-8--adoption-surface-public-api-and-sdk)**
-in the roadmap. Until then, the accurate description is: *a functional multi-tenant agent
-runtime with wiring-level extension points, not yet a published framework/SDK others adopt.*
+The one thing sealed on purpose is the **isolation-critical kernel** (tenancy/`Scope`/memory tiers):
+`internal/` packages remain un-importable so a consumer can bring their own tools/backends but never
+their own tenant-isolation ([ADR-0016](../decisions/0016-dual-surface-sealed-runtime-composition-sdk.md)).
+What is still **pending** is the broader **L2 composition SDK** — graphs/teams/workflows over
+ctx-scoped nodes (ADR-0016 lever #4), tracked in
+**[Phase 9 — Composition surface](../roadmap/milestones.md#phase-9--composition-surface-dual-a--b)**.
+The accurate description today: *a multi-tenant agent runtime that is also an importable, embeddable
+library, with the higher-order composition SDK still to come.*
 
 ## References
 

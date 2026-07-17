@@ -18,7 +18,7 @@ green `go build ./...` + `go test ./...`. The consumer-facing walkthrough is
 
 A third party can now build a bot from **another Go module** by importing one package and supplying
 only *domain* (tools + executor + persona). The reusable engine stays under `internal/`; nothing was
-promoted out of it. `cmd/aisotropyd/main.go` went from ~480 lines of hand-wiring to a **~51-line thin
+promoted out of it. `cmd/aisotropyd/main.go` went from ~480 lines of hand-wiring to a **~97-line thin
 consumer** of the same builder every external bot uses — the runtime is dogfooded through its own
 public surface.
 

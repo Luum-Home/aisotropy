@@ -22,7 +22,7 @@ timestamp: 2026-07-08T00:00:00Z
 - [Tiered memory](memory-tiers.md) — The three-tier memory system + batch. **The heart of the design.**
 - [Consistency](consistency.md) — Transactional Outbox, sleep cycle, idempotency, reconciliation. **The keystone of the design.**
 - [Multi-tenancy](multi-tenancy.md) — Isolation via `ctx` at every layer.
-- [Threat model](threat-model.md) — The security model for the isolation moat: trust boundary, threats, real-vs-aspirational mitigations, and the honest "identity is not authenticated yet" gap.
+- [Threat model](threat-model.md) — The security model for the isolation moat: trust boundary, threats, real-vs-aspirational mitigations, and the real-vs-opt-in in-process authentication posture (ADR-0024/0025).
 - [Granular control](granular-control.md) — Security × cost × behavior.
 - [Observability](observability.md) — OTel Semantic Conventions for LLMs.
 - [Session integration](session-integration.md) — Connection map between the runtime build and its verification layer.
