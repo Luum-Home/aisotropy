@@ -32,7 +32,9 @@ type Orbit struct {
 
 	// workingMemory is Orbit's DIY working memory. Eino has no built-in
 	// tenant-scoped store, so the developer owns this map AND its keying.
-	// A wrong key here is a silent cross-tenant read — the crux of FEATURES.md.
+	// A wrong/short key here silently reads another scope's notes — the crux of
+	// FEATURES.md. That is true of any string-keyed map; the point is the
+	// developer, not the framework, is responsible for composing the key.
 	workingMemory map[string][]string
 }
 
@@ -72,7 +74,8 @@ func New(ctx context.Context) (*Orbit, error) {
 
 // sessionKey is Orbit's DIY scoping key. The framework never sees tenant/user —
 // the developer must remember to build the full key. Forgetting the tenant part
-// is exactly the leak the isolation harness proves.
+// collapses two scopes onto one key — the footgun the isolation harness shows
+// (and which aisotropy avoids by composing the key from ctx by construction).
 func sessionKey(tenantID, userID, sessionID string) string {
 	return tenantID + ":" + userID + ":" + sessionID
 }

@@ -4,12 +4,13 @@
 //
 //	go run ./cmd/productiso
 //
-// It proves the THIRD isolation axis aisotropy scopes on — product_id — which
-// ADK Go has no primitive for. product_id is at best a fourth string the
-// developer hand-folds into the (appName, userID, sessionID) key; the framework
-// binds it to nothing. Fold it in and the composite key isolates; drop it (the
-// natural bug — ADK has no product slot to remind you) and two products for the
-// same tenant+user silently collide.
+// It maps aisotropy's 4 scope axes (tenant, user, session, product) onto ADK
+// Go's 3 native key slots (appName, userID, sessionID). The STRONGEST ADK config
+// gives the product axis its own native slot — one runner per product with
+// appName=product, bound at runner construction and un-droppable per request —
+// so a cross-product read is a storage miss by construction. The honest residual:
+// with only 3 native slots for 4 axes, exactly one axis (here tenant) has no slot
+// of its own, rides in userID, and is the drop-vulnerable one.
 package main
 
 import (
@@ -28,8 +29,9 @@ func main() {
 	fmt.Println(line)
 	fmt.Println("Real framework: real llmagent + real runner + real session.Service")
 	fmt.Println("Model: offline FakeModel (implements model.LLM) — no API key")
-	fmt.Println("aisotropy scopes (tenant, user, session, PRODUCT). ADK scopes")
-	fmt.Println("(appName, userID, sessionID) — product_id is a 4th axis it lacks.")
+	fmt.Println("aisotropy binds 4 axes (tenant, user, session, PRODUCT) from ctx.")
+	fmt.Println("ADK has 3 native slots (appName, userID, sessionID). STRONGEST config:")
+	fmt.Println("appName=product (one runner/product) makes the product axis native.")
 	fmt.Println()
 
 	rep, err := orbit.RunProductMatrix(context.Background())
@@ -54,17 +56,19 @@ func main() {
 
 	fmt.Println()
 	fmt.Println(strings.Repeat("-", 62))
-	fmt.Println("Verdict: product_id is [NOT-A-PRIMITIVE] in ADK Go. It isolates ONLY")
-	fmt.Println("while the developer keeps folding it into the key; the framework never")
-	fmt.Println("binds it to a caller, so dropping it is a one-line silent cross-product")
-	fmt.Println("read (LEAK* rows). aisotropy makes product_id a first-class scope axis.")
+	fmt.Println("Verdict: appName=product gives the product axis a NATIVE, non-droppable")
+	fmt.Println("slot — a cross-product read is a construction miss, and a competent dev")
+	fmt.Println("prevents the product leak this way. The honest residual: 3 native slots")
+	fmt.Println("for 4 axes means exactly one axis (tenant, once appName is spent on")
+	fmt.Println("product) rides in userID and is drop-vulnerable (LEAK* row). aisotropy")
+	fmt.Println("binds all 4 axes from ctx, so no axis is left to convention.")
 	fmt.Println(strings.Repeat("-", 62))
 
 	if rep.Failed {
 		fmt.Println("\nResult: FAILED — a correct-key probe leaked or the positive control broke.")
 		os.Exit(1)
 	}
-	fmt.Println("\nResult: PASS — real ADK Go end-to-end works; product-in-key isolates on the")
-	fmt.Println("correct path; and dropping product_id is a proven, one-line silent")
-	fmt.Println("cross-product read (LEAK* rows above).")
+	fmt.Println("\nResult: PASS — real ADK Go end-to-end works; appName=product isolates the")
+	fmt.Println("product axis by construction; and the residual axis (tenant in userID),")
+	fmt.Println("when dropped, is a genuine same-session read (LEAK* row above).")
 }

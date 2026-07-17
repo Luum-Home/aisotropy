@@ -9,14 +9,15 @@
 // framework ships it, a genuine plugin (localvec vector store, exp session
 // store, the evaluator runner). For each feature the demo prints:
 //
-//     FEATURE <n> <name>: [CLASS] <one-line evidence>
+//	FEATURE <n> <name>: [CLASS] <one-line evidence>
 //
 // CLASS legend (matches arenas/README.md):
-//   BUILT-IN      the framework ships it; exercised here through its own API
-//   CONVENTION    works only if the developer follows an unenforced discipline
-//   PARTIAL       the framework ships part of it; the rest is hand-rolled here
-//   DIY           no framework support; the demo builds & LABELS the hand-rolled version
-//   NOT-POSSIBLE  the framework offers no path; the closest thing is shown
+//
+//	BUILT-IN      the framework ships it; exercised here through its own API
+//	CONVENTION    works only if the developer follows an unenforced discipline
+//	PARTIAL       the framework ships part of it; the rest is hand-rolled here
+//	DIY           no framework support; the demo builds & LABELS the hand-rolled version
+//	NOT-POSSIBLE  the framework offers no path; the closest thing is shown
 //
 // HONESTY CONTRACT: a class is only [BUILT-IN] when the FRAMEWORK really
 // provides it and this file drove the framework's own code to prove it. Token

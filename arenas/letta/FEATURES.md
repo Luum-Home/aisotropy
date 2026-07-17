@@ -21,7 +21,7 @@ Each feature is one of: **BUILT-IN** (framework provides it), **CONVENTION**
 
 | # | Feature | Class | Real API surface / note |
 |---|---|---|---|
-| 1 | Multi-tenant isolation | **CONVENTION** | `identity_id`/`project_id`/`tags` are optional, developer-passed filters on `blocks.list`/`agents.list`/`passages.search`; per-user **key** isolation is **PAID** (Letta Cloud projects) |
+| 1 | Multi-tenant isolation | **CONVENTION** (org-wide) / **BUILT-IN by agent_id** (agent-scoped) | Org-wide `blocks.list`/`passages.search` take optional, developer-passed `identity_id`/`project_id`/`tags` — under-scope them and you scan the org. The **agent-scoped** subresources (`agents.blocks.list(agent_id)`, `agents.passages.search(agent_id)`) isolate by `agent_id` by construction; Letta's documented multi-tenant pattern is **one agent per principal**. Per-user **key** isolation is **PAID** (Letta Cloud projects) |
 | 2 | Structured output + retry | **BUILT-IN** (no repair loop) | `agents.create(response_format={"type":"json_schema", ...})`; validation provider-side, no fail-closed reflection retry |
 | 3 | Tool calling | **BUILT-IN** | LLM self-manages memory via base tools; `include_base_tools=True` |
 | 4 | Streaming (SSE) | **BUILT-IN** | `agents.messages.create(..., stream=True)` / `.stream()` |
@@ -32,6 +32,28 @@ Each feature is one of: **BUILT-IN** (framework provides it), **CONVENTION**
 | 9 | Observability | **PARTIAL** (native OTel BUILT-IN but SERVER-side) | RUN-VERIFIED: real `ProviderTrace` type carries `agent_tags`/`user_id`/`org_id`/`billing_context` per LLM call; `client.runs.trace.retrieve(run_id)` returns OTEL spans but its docstring requires **ClickHouse configured** — emission is server-side, **NOT-POSSIBLE from the offline client**. Client-side tenant-tagged spans are **DIY** (demo captures one in a real OTel `InMemorySpanExporter`); hosted per-tenant cost/health dashboards are **PAID** (Letta Cloud) |
 | 10 | Sovereignty / licensing | **BUILT-IN** (Apache 2.0) | Self-hostable via Docker/Postgres |
 | 11 | Language | Python | Server-side durable objects (not in-process) |
+
+## What Letta does genuinely well (steelman, RUN-VERIFIED where offline allows)
+
+Letta is a **memory-OS product**. Three capabilities are genuinely differentiated —
+things aisotropy does **not** productize the same way — each grounded in the pinned
+`letta-client==1.12.1` surface. Run:
+
+```bash
+arenas/letta/.venv/bin/python arenas/letta/scripts/strengths_demo.py            # exit 0
+arenas/letta/.venv/bin/python -m pytest arenas/letta/tests/test_strengths.py -q  # 6 passed
+```
+
+| Strength | Real SDK symbol | Status | aisotropy contrast (honest) |
+|---|---|---|---|
+| **Self-editing core memory** (MemGPT heritage) | `client.blocks.update(block_id, value=)` / `client.agents.blocks.update(block_label, agent_id, value=)`; base tools `core_memory_append` / `core_memory_replace` via `include_base_tools=True` | **RUN-VERIFIED** (offline) — a real `BlockResponse` rewritten in place across turns, edit persists | aisotropy's memory is runtime-hydrated & deterministic; it does **not** ship an LLM that edits its own core-memory blocks |
+| **Sleep-time consolidation** | `agents.create(enable_sleeptime=True)` (docstring: "memory management will move to a background agent thread"); `agents.messages.compact(...)` | **DESCRIBED** — lever SDK-verified offline; execution needs a server (**NOT-RUN**) | direct analog of aisotropy's DataFusion sleep cycle — but Letta ships it as a product API today; aisotropy's is dormant behind `AISOTROPY_SLEEPCYCLE_BIN` |
+| **Stateful agent-as-a-service** | durable `AgentState` (`id`/`memory`/`blocks`/`tools`/`sources`/`enable_sleeptime`); `agents.messages.list(agent_id)` recall history | **DESCRIBED** — state shape shown offline against the real type; cross-restart durability needs server+DB (**NOT-RUN**) | aisotropy is stateless-per-request, hydrating memory from its tiers each call — a deliberately different model; Letta's persistent agent is a real strength for long-lived assistants |
+
+**Two-sided read:** Letta is genuinely great at *stateful, self-editing,
+self-consolidating memory* (its home turf). aisotropy differs on a narrow but
+load-bearing axis — isolation-by-default and deterministic memory — with the
+single-org caveat detailed below.
 
 ## Built-in capabilities
 
@@ -58,13 +80,22 @@ Each feature is one of: **BUILT-IN** (framework provides it), **CONVENTION**
 
 ## Convention / DIY / missing
 
-### Multi-tenant isolation — CONVENTION (proven leak)
-- **Status:** `client.blocks.list(identity_id=?, project_id=?, tags=?)` — every filter
-  optional and developer-passed. Omit them and you scan the whole org. `blocks.retrieve(id)`
-  applies no tenant check. Proven in `scripts/smoke.py` and `tests/test_isolation.py`
-  against the real types.
+### Multi-tenant isolation — CONVENTION on the org-wide surface (proven), BUILT-IN by agent_id
+- **Status:** the ORG-WIDE primitives `client.blocks.list(identity_id=?, project_id=?, tags=?)`
+  take every filter as optional and developer-passed — omit them and you scan the whole org;
+  `blocks.retrieve(id)` applies no tenant check. Proven in `scripts/smoke.py` and
+  `tests/test_isolation.py` against the real types. **But** the AGENT-SCOPED subresources
+  (`client.agents.blocks.list(agent_id)`, `client.agents.passages.search(agent_id)`) require
+  an `agent_id` and isolate by construction — Letta's documented multi-tenant pattern is
+  **one agent per principal**, mapping verified caller → `agent_id` at the app layer. The
+  residual gap vs. aisotropy is that binding is single-org and app-level, not framework-level:
+  OSS Letta has no must-agree bind from an authenticated caller to a tenant, and the org-wide
+  primitives remain available with no guard. (Letta's older per-principal **identities** are
+  being deprecated in favour of per-agent scoping; in 1.12.1 the SDK exposes only
+  `agents.identities.attach/detach`, no top-level identities resource.)
 - **AISOTROPY COMPARISON:** aisotropy enforces isolation **by construction** — ctx
-  propagation + per-statement/key scoping; the unscoped read is *unrepresentable*.
+  propagation + per-statement/key scoping bound from the request boundary; the unscoped read
+  is *unrepresentable* and there is no org-wide primitive to fall back to.
 
 ### Structured output (fail-closed) — no repair loop
 - **Status:** `response_format` schema is honored by the provider, but there is no
@@ -130,7 +161,7 @@ arenas/letta/.venv/bin/python arenas/letta/scripts/feature_parity_demo.py   # ex
 | 13 | Scope-gated tools (gov by absence) | **DIY** | per-agent tool sets BUILT-IN, but caller-scope visibility gating is DIY |
 | 14 | Multi-step agent loop | **BUILT-IN** | server heartbeat/tool-chaining loop + `max_steps` + real `InitToolRule` tool_rules |
 | 15 | Typed tools + MCP | **BUILT-IN** | real `Tool` (JSON-schema args) via `client.tools.create/upsert` + native `client.mcp_servers` |
-| 16 | Bearer-token -> identity bind | **CONVENTION** | api_key bearer auths to the server; no must-agree bind to a path tenant. Tenant = `agents.identities`/tags; per-user keys PAID (Cloud) |
+| 16 | Bearer-token -> identity bind | **CONVENTION** | api_key bearer auths to the server; no must-agree bind to a path tenant. Isolation is per-agent-by-convention (one agent per principal; reads via `agents.blocks.list(agent_id)`/`agents.passages.search(agent_id)`) + app-layer caller→agent_id mapping; per-user keys PAID (Cloud). Older `agents.identities` are being deprecated in favour of per-agent scoping |
 | 17 | Per-tenant pre-spend quota gate | **DIY** | no check-before-request (`Usage` post-call; `max_steps` is a loop cap). DIY gate proven via call counter (rejected turn spent 0) |
 | 18 | Circuit breaker | **DIY** | no provider breaker in the client — DIY (open after N fails, fast-fail) |
 | 19 | Quota-pressure degradation | **DIY** | no built-in load-based model swap — DIY policy |
@@ -154,7 +185,7 @@ CONVENTION 1 · NOT-POSSIBLE 1.
 - **DIY (8):** #6, #10, #12, #13, #17, #18, #19, #23 — the whole governance
   surface (pre-spend gate, circuit breaker, degradation, scope-gated tools,
   reflection repair loop, response cache, eval) + composite memory scoring.
-- **CONVENTION (1):** #16 — identity binding (isolation leak proven in `smoke.py`).
+- **CONVENTION (1):** #16 — caller→tenant binding (single-org: no framework bind; org-wide under-scoping leak proven in `smoke.py`, agent-scoped reads isolate by `agent_id`).
 - **NOT-POSSIBLE (1):** #24 — transactional outbox.
 
 **The gap in one line:** Letta MATCHES aisotropy on memory tiers (its home turf —
@@ -163,57 +194,84 @@ CONVENTION 1 · NOT-POSSIBLE 1.
 aisotropy's governance-by-construction — pre-spend gate, fail-closed reflection,
 isolation binding, and the transactional outbox are DIY / CONVENTION / NOT-POSSIBLE.
 
-## Multi-PRODUCT isolation — the 3rd scope axis (RUN-VERIFIED, CROSS-PRODUCT LEAK)
+## Multi-PRODUCT scoping — the 3rd axis, honestly (RUN-VERIFIED)
 
 aisotropy scopes every memory read/write by **four** keys —
 `(tenant_id, user_id, session_id, product_id)` — bound once at the Huma boundary and
-propagated via `context.Context`. The isolation smoke here already showed the tenant/user
-axes leak in Letta (developer-passed convention). This closes the gap on the **product**
-axis, which the arena had never tested.
+propagated via `context.Context`. `test_isolation.py` already proves Letta leaks the
+tenant/user axes when a developer **under-scopes the org-wide primitives**. This section
+asks the honest follow-up for a third axis (product): what does a *competent* Letta
+developer do, and what genuine sharp edges remain?
 
-**Finding: `product_id` is just another developer-passed key the framework never binds to
-anything.** Letta's real list/search API surface —
-`client.blocks.list(project_id=, identity_id=, label=, tags=, match_all_tags=)` and
-`client.passages.search(query=, tags=, tag_match_mode=, archive_id=)` — has **no
-`product_id` parameter at all**. The only place a product boundary can live is a
-developer-invented `product:<id>` tag that must be passed (with `match_all_tags=True`) on
-*every* read. Miss it once and a sibling product reads your data.
+**The competent answer is one agent per principal.** Letta's documented multi-tenant
+pattern ([docs.letta.com/guides/agents/multi-user](https://docs.letta.com/guides/agents/multi-user))
+is a distinct agent per `(tenant, user, product)`, read through the **agent-scoped
+subresources**: `client.agents.blocks.list(agent_id)` and
+`client.agents.passages.search(agent_id, query=...)`
+([passages/search](https://docs.letta.com/api/python/resources/agents/subresources/passages/methods/search/)).
+Those **require** an `agent_id` (the real SDK rejects an empty one; the route is
+`/v1/agents/{agent_id}/archival-memory/search`) and return **only that agent's** memory.
+Isolation is by `agent_id`, **by construction** — no `product:<id>` tag, and nothing to
+forget. A competent developer therefore **avoids three of the four sharp edges** this
+arena's earlier draft dressed up as "cross-product leaks."
+
+What genuinely **remains** is narrower and real — Letta OSS is a **single org** with no
+framework binding between the caller and a tenant/product, so *if* you drop from the
+agent-scoped reads to the org-wide primitives:
+
+- **Single-org, no caller binding.** `client.blocks.list(...)` has `project_id` (tenant)
+  but no product filter and no caller binding; under-scoping returns a sibling's block.
+  This is the **same** single-org finding `test_isolation.py` proves for tenant/user — not
+  a distinct product mechanism.
+- **Unsafe DEFAULT, not a structural leak.** If you lean on the tag convention on the
+  org-wide surface, the SDK default `match_all_tags=False` (ANY-tag / OR) matches on the
+  shared tenant/user tags **even when you also pass a distinct `product:<id>` tag**. The
+  fix is one parameter away — `match_all_tags=True`. It is a DX footgun, not a cross-product
+  leak. (The default really is ANY-tag: the `blocks.list` docstring reads "*If True, only
+  returns blocks that match ALL given tags. Otherwise, … ANY of the passed-in tags.*")
+- **Genuine, but needs a foreign id.** `client.blocks.retrieve(id)` performs no ownership
+  check — but it only bites a caller who **already holds** a foreign block id (a
+  row-PK-without-row-level-security shape, not an ambient org-wide scan).
+
+> **Correction (adversarial-audit follow-up).** An earlier draft of this section modelled a
+> top-level org-wide `passages.search()` **without** `agent_id` as a fourth, distinct
+> "cross-product leak." That framing was wrong: the real `letta-client==1.12.1`
+> `client.passages.search` **accepts `agent_id`** (its docstring: "*If neither agent_id nor
+> archive_id is provided, searches ALL passages in the organization*"), and the isolated
+> path is the agent-scoped `agents.passages.search(agent_id)`. The org-wide search crossing
+> a boundary is just the same single-org finding, not a product-specific one. It has been
+> removed; the archival axis now demonstrates the agent-scoped search **isolating**.
 
 Run:
 ```bash
 arenas/letta/.venv/bin/python arenas/letta/scripts/product_isolation_demo.py   # exit 0
-arenas/letta/.venv/bin/python -m pytest arenas/letta/tests/test_product_isolation.py -q  # 6 passed
+arenas/letta/.venv/bin/python -m pytest arenas/letta/tests/test_product_isolation.py -q  # 8 passed
 ```
 
-RUN-VERIFIED output — same tenant `acme`, same user `alice`, two products
-(`checkout` seeded, `analytics` reading):
+RUN-VERIFIED output — same tenant `acme`, same user `alice`, two products each on its own
+agent (`checkout` seeded, `analytics` reading):
 
 ```
-[letta] Seeding (tenant=acme, user=alice, product=checkout) marker: lt-82a1934cf5713b89
-  OK  Positive control: product 'checkout' saw its own marker
-[letta] Leak #1 — product 'analytics' scopes by tenant+user (Letta has no product filter):
-  LEAK 'analytics' saw 'checkout' marker (product axis not enforced)
-[letta] Leak #2 — 'analytics' passes its OWN full tags but default OR match (real API default):
-  LEAK ANY-tag default matched checkout via shared tenant/user tags
-[letta] Leak #3 — client.blocks.retrieve(id) from a product-'analytics' path:
-  LEAK retrieve-by-id returned checkout's block, no product check
-[letta] Leak #4 — passages.search() scoped by tenant/user (no product):
-  LEAK archival search crossed the product boundary
+[letta] Seeding principal (acme/alice/checkout, agent=agent-af31436e…) marker: lt-…
+  OK  Positive control: checkout's agent saw its own marker
+[letta] Strongest config — one agent per principal, agent-scoped reads:
+  OK  agent-scoped reads isolate: checkout invisible to analytics' agent (no product tag needed)
+[letta] Residual sharp edges — ONLY if you use the ORG-WIDE primitives …:
+  NOTE org-wide blocks.list is single-org: no product filter, no caller binding
+  FOOTGUN ANY-tag default matched checkout; match_all_tags=True is clean
+  GENUINE retrieve-by-id returned checkout's block (needs a foreign id first)
 
-Result: CROSS-PRODUCT LEAK CONFIRMED — same tenant+user, wrong product reads the marker
+Result: agent-scoped reads isolate by construction; org-wide primitives remain single-org
 ```
 
-Four independent cross-product reads confirmed: (1) the natural Letta-native scope
-(project=tenant + tenant/user tags) omits product because there is no product filter to
-pass; (2) the real API default `match_all_tags=False` matches on shared tenant/user tags
-even when the caller passes its own `product:analytics` tag; (3) `blocks.retrieve(id)`
-performs no product check; (4) archival vector search on tenant/user tags crosses the
-boundary too. The positive control holds (harness healthy); the leak is the expected finding.
-
-- **AISOTROPY COMPARISON:** `product_id` is one of four ctx-propagated scope keys, enforced
-  per-statement — the cross-product read is **unrepresentable**, not one forgotten tag away.
-  In Letta the product axis is convention on top of convention: a tag on the tenant/user
-  tags that are *themselves* only convention. Class: **CONVENTION** (product isolation).
+- **AISOTROPY COMPARISON:** `product_id` is one of four ctx-propagated scope keys bound at
+  the boundary — enforced per-statement, the cross-product read is **unrepresentable** and
+  there is **no** org-wide primitive to fall back to. Letta reaches product isolation the
+  competent way (one agent per principal, isolated by `agent_id`); the residual gap is
+  narrower: the app must map verified caller → `agent_id` itself, and the org-wide
+  primitives carry no binding if a developer reaches for them. Class for product scoping via
+  the agent-scoped reads: **BUILT-IN (by agent_id)**; via the org-wide tag convention:
+  **CONVENTION** with an unsafe default.
 
 ## Dependency license posture — executable governance gate (RUN-VERIFIED)
 

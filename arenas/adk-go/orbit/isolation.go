@@ -41,24 +41,31 @@ func (r *Report) add(res Result) {
 	r.Results = append(r.Results, res)
 }
 
-// RunMatrix executes the adversarial isolation matrix against the REAL ADK Go
-// runner + session service. It proves two things at once:
+// RunMatrix executes the isolation matrix against the REAL ADK Go runner +
+// session service, for the config where appName is spent on the app ("orbit", a
+// single-product deployment) and tenant is the axis that rides in userID.
 //
-//  1. ADK Go's session.Service DOES scope by the composite
+// It proves two things:
+//
+//  1. ADK Go's session.Service scopes by the composite
 //     (appName, userID, sessionID) key — same construction class as
-//     adk-python's composite PK. When the developer folds tenant into the key,
-//     a cross-tenant read is correctly a miss.
+//     adk-python's composite PK. When tenant is kept in userID, a cross-tenant
+//     read is correctly a miss.
 //
-//  2. There is NO tenant primitive and NO binding of that key to an
-//     authenticated caller. The moment the developer drops the tenant
-//     component (a one-line bug), two tenants collide on the same key and one
-//     silently reads the other's memory. That is the leaky path — and it is
-//     exactly as cheap to write as the correct one.
+//  2. ADK exposes three native key slots. This deployment gave appName to the
+//     app and sessionID to the session, so tenant has no native slot of its own
+//     and rides in userID by convention. Drop it (a one-line bug) and two
+//     tenants collide on the same key — a genuine same-session read. It is a
+//     chosen mapping's residual, not an ADK inability to isolate: a deployment
+//     that instead spends appName on tenant (one runner per tenant) makes tenant
+//     native and non-droppable, at which point PRODUCT becomes the residual
+//     (see RunProductMatrix). Exactly one of {tenant, product} always lacks a
+//     native slot; the developer picks which.
 func RunMatrix(ctx context.Context) (*Report, error) {
 	rep := &Report{}
 
 	// ── Layer A: end-to-end through the real runner ─────────────────────────
-	// CORRECT convention: the developer folds tenant into the ADK userID.
+	// CORRECT path: tenant kept in the ADK userID (appName spent on the app).
 	good, err := New("orbit")
 	if err != nil {
 		return nil, err
@@ -102,11 +109,11 @@ func RunMatrix(ctx context.Context) (*Report, error) {
 		rep.add(Result{Label: "probe " + p.desc, Detail: detail, Leaked: leaked, MustIsolate: true})
 	}
 
-	// ── Layer B: the developer bug — tenant DROPPED from the key ────────────
-	// A second, buggy code path composes the ADK userID from the bare username
-	// and forgets the tenant. ADK has no tenant field to catch this. Two
-	// different tenants' "alice" now map to the SAME (appName, userID,
-	// sessionID) session -> silent cross-tenant read.
+	// ── Layer B: the residual axis dropped — tenant gone from userID ────────
+	// A second code path composes the ADK userID from the bare username and
+	// forgets the tenant. Because tenant has no native slot in this mapping,
+	// nothing in the framework catches it. Two different tenants' "alice" now map
+	// to the SAME (appName, userID, sessionID) session -> a same-session read.
 	buggy, err := New("orbit")
 	if err != nil {
 		return nil, err
@@ -122,8 +129,8 @@ func RunMatrix(ctx context.Context) (*Report, error) {
 	}
 	if strings.Contains(leak, Marker) {
 		rep.add(Result{
-			Label:  "LEAK PATH (tenant dropped from key: globex/alice reads acme/alice)",
-			Detail: "LEAK — bare-username key collides across tenants; ADK has no tenant binding to prevent it",
+			Label:  "LEAK PATH (residual axis dropped: globex/alice reads acme/alice)",
+			Detail: "LEAK — tenant has no native slot here; dropped from userID it collides -> same-session read",
 			Leaked: true,
 		})
 	} else {
@@ -143,7 +150,8 @@ func RunMatrix(ctx context.Context) (*Report, error) {
 }
 
 // rawSessionProbe hits the REAL session.InMemoryService() directly (no runner)
-// to make the "developer-passed key, trusted verbatim" property unmistakable.
+// to make the composite-key construction unmistakable at the storage layer: the
+// full key finds the session, a different key is a clean miss.
 func rawSessionProbe(ctx context.Context, rep *Report) error {
 	svc := session.InMemoryService()
 	const app = "orbit"
@@ -171,18 +179,21 @@ func rawSessionProbe(ctx context.Context, rep *Report) error {
 	_, err := svc.Get(ctx, &session.GetRequest{AppName: app, UserID: "globex|bob", SessionID: "s1"})
 	rep.add(Result{Label: "raw session: Get(globex|bob, s1)", Detail: boolStr(err != nil, "not found (composite key isolates)", "LEAK — found acme's session"), Leaked: err == nil, MustIsolate: true})
 
-	// The catch: nothing binds UserID to an authenticated caller. Code that
-	// passes the victim's exact identity string (attacker-controlled, replayed,
-	// or a dropped-tenant bug) gets the victim's session. The framework trusts
-	// the string verbatim.
-	got, err := svc.Get(ctx, &session.GetRequest{AppName: app, UserID: "acme|alice", SessionID: "s1"})
-	if err == nil {
+	// Auth is a separate layer from key construction, and it is near-parity.
+	// The bare session.Service (like any store) trusts whatever key it is handed;
+	// binding that key to an authenticated caller is middleware. ADK provides the
+	// seam for it (llmagent BeforeAgentCallback / BeforeModelCallback, plugins),
+	// and aisotropy itself trusts the path tenant_id verbatim in its default
+	// NoAuth mode, only verifying once AISOTROPY_JWT_SECRET is set (ADR-0024). So
+	// "the key is trusted until you add a gate" is true of both. This row is a
+	// parity note, not a leak.
+	if got, err := svc.Get(ctx, &session.GetRequest{AppName: app, UserID: "acme|alice", SessionID: "s1"}); err == nil {
 		v, _ := got.Session.State().Get("secret")
-		leaked := fmt.Sprint(v) == Marker
+		found := fmt.Sprint(v) == Marker
 		rep.add(Result{
-			Label:  "raw session: attacker/replay passes victim key (acme|alice, s1)",
-			Detail: boolStr(leaked, "LEAK — key is trusted verbatim, no identity binding", "isolated"),
-			Leaked: leaked,
+			Label:  "auth parity note: key is trusted until a gate binds it (ADK callbacks / aisotropy JWT)",
+			Detail: boolStr(found, "owner key returns owner data (both frameworks gate via middleware)", "unexpected miss"),
+			Leaked: false,
 		})
 	}
 	return nil

@@ -8,6 +8,40 @@ timestamp: 2026-07-15T00:00:00Z
 
 # Mastra — Features
 
+## Where Mastra genuinely wins (TS-native DX) — run-verified
+
+Before the isolation critique, the honest headline: Mastra is a **TypeScript-native agent framework**,
+and on its home turf it is excellent — a category aisotropy (a Go runtime) does not compete in at all.
+`scripts/strengths_demo.ts` (`npm run strengths`) executes these live against the pinned install
+(`@mastra/core@1.51.0`), fully offline, exit 0:
+
+### Durable, typed workflows — **BUILT-IN, run-verified**
+- **Symbols:** `createWorkflow`, `createStep` (`@mastra/core/workflows`); `Mastra` (`@mastra/core`);
+  `LibSQLStore` (`@mastra/libsql`).
+- **Executed:** `.then` (sequential) + `.branch` (conditional) control flow, plus **suspend/resume**
+  human-in-the-loop. A `$200` charge routes through the auto-approve branch; a `$5000` charge routes to
+  a `humanReview` step that **suspends** (run snapshot persisted), then `resume()`s with typed reviewer
+  input to a `success`. Each step carries Zod `input`/`output`/`resume`/`suspend` schemas end to end;
+  a malformed workflow input is **rejected at the Zod boundary** (verified).
+- **AISOTROPY COMPARISON:** aisotropy has a transactional outbox + async consolidation, but **no
+  TS-native, schema-typed workflow DSL with suspend/resume** — this is a Mastra strength, full stop.
+
+### First-class evals / scorers — **BUILT-IN, run-verified**
+- **Symbol:** `createScorer` (`@mastra/core/evals`).
+- **Executed:** a composable `preprocess → generateScore → generateReason` pipeline. A code-based
+  keyword-coverage scorer (no LLM) scores a complete answer `1.00` and an off-topic answer `0.00`, each
+  with a human-readable reason.
+- **AISOTROPY COMPARISON:** aisotropy exposes product-eval metrics (P@k/recall) over its own stores but
+  **no first-class, composable scorer abstraction** like Mastra's. Another Mastra win.
+
+### Batteries-included memory DX — **BUILT-IN**
+- Working memory + semantic recall + memory processors, all built-in and run-verified in
+  `scripts/feature_parity_demo.ts` (`npm run parity`, features 1/3/4/8/12).
+
+**The honest frame:** these are TS-native ergonomics aisotropy does not try to offer. The arena's one
+narrow counter-point — isolation *by default* via an unforgeable `Scope{}` axis wired from
+`context.Context` — is below, and it does **not** diminish the strengths above. Right tool, right job.
+
 ## Built-in capabilities
 
 ### Structured output (FAIL-CLOSED)
@@ -97,12 +131,17 @@ timestamp: 2026-07-15T00:00:00Z
   is a per-call responsibility, and the cost/health surface is DIY.
 
 ### Multi-tenant isolation
-- **Status:** Convention (closest of the three)
-- **Pattern:** `resourceId`/`threadId` with ownership validation
-- **AISOTROPY COMPARISON:** Mastra's scoping is server-authoritative (harder to get wrong than
-  Pydantic AI or LangGraph), but still convention-based. Bug mastra#11856 (`listMessages`
-  ignoring `resourceId`) proves the leak is real. aisotropy's `Scope{}` value object with
-  unexported fields makes leaks unrepresentable.
+- **Status:** Convention (four documented levers; isolable by a competent dev)
+- **Pattern:** `resourceId` + `threadId` (thread↔resource ownership-validated) + working-memory
+  `scope: 'resource'|'thread'` + `semanticRecall.filter` (MongoDB-style metadata filter over the
+  vector store, e.g. the docs' `filter: { projectId: { $eq: 'project-a' } }`).
+- **AISOTROPY COMPARISON:** Mastra's scoping keys are authoritative (harder to get wrong than
+  Pydantic AI or LangGraph), and a developer who applies the levers isolates correctly. The gap is
+  convention vs construction: every lever is a per-call responsibility, and the default path (axis in
+  no lever) silently does not partition — the class of omission behind `mastra#11856` (`listMessages`
+  missing the `resourceId` filter). aisotropy's `Scope{}` value object (unexported fields, built from
+  verified identity, auto-propagated via `context.Context`) makes a forgotten axis unrepresentable and
+  filters it server-side on every read.
 
 ## Comprehensive feature-parity walk (RUN-VERIFIED, `npm run parity`, exit 0)
 
@@ -150,37 +189,50 @@ quota-pressure degrade, identity-bind, health — is DIY here, though Mastra *do
 **approximate cost gate** (`CostGuardProcessor`) and a **per-tenant response cache** that the earlier
 notes missed.
 
-## Multi-PRODUCT isolation — the 3rd axis (run-verified)
+## Multi-PRODUCT isolation — the 3rd/4th axis (run-verified)
 
 `scripts/product_isolation_demo.ts` (`npm run product-isolation`) — RUNS OFFLINE against
-**real `@mastra/memory` + `LibSQLStore`**. Extends the tenant/user isolation smoke to
-aisotropy's THIRD scoping axis, `product_id`. aisotropy keys every memory read/write on
-FOUR native `context.Context` axes — `(tenant_id, user_id, session_id, product_id)`. Mastra's
-memory layer keys on exactly **TWO** opaque developer-passed strings: `resourceId` + `threadId`.
-There is **no `product_id` axis** in the framework (grep for `productId|product_id|productScope`
-over `@mastra/{core,memory}/dist` = **0 hits**, executed by the demo).
+**real `@mastra/memory` + `LibSQLStore` + `LibSQLVector`**. Extends the tenant/user isolation story to
+aisotropy's `product_id` axis. aisotropy keys every memory read/write on FOUR native
+`context.Context` axes — `(tenant_id, user_id, session_id, product_id)`. Mastra names two of them
+directly (`resourceId`, `threadId`) and exposes two more levers (working-memory `scope`,
+`semanticRecall.filter`). There is **no primitive NAMED `product_id`** (grep for
+`productId|product_id|productScope` over `@mastra/{core,memory}/dist` = **0 hits**, executed by the
+demo), but product isolation is achievable by placing product on one of the four levers.
 
 Executed evidence (exit 0):
 
 - **(a) Positive control** — `productX` under `(tenantA, userA, session-42)` reads its own
   marker. ✓
-- **(b) CROSS-PRODUCT LEAK (reproduced)** — a request for `product_id="productY"`, same
-  tenant+user+session, reads `productX`'s private marker. **This is a real leak.** Root cause:
-  `product_id` was carried as request/tool metadata (the natural mapping that mirrors aisotropy's
-  tenant/user/session onto Mastra's 2 keys), and `memory.recall({resourceId, threadId})` never
-  keys on it — the extra axis is a **no-op in the framework**.
-- **(c) HONEST nuance — Mastra DOES enforce ONE guard** — folding product into the resourceId
-  (`tenantA:userA:productX`) is protected: Mastra binds a `threadId` to its owning `resourceId`
-  and **THREW** `validateThreadIsOwnedByResource` ("Thread ... is for resource ...:productX but
-  resource ...:productZZZ-typo was queried") on a cross-resource read. But that guard is
-  **thread↔resourceId ownership, not product-awareness** — product isolation only works when
-  product is *smuggled into the opaque resourceId*. `product_id` itself is never a framework
-  scoping axis.
+- **(b) NAIVE / DEFAULT-CONVENTION path (no lever used)** — a request tags `product_id="productY"` as
+  metadata while reusing the SAME `resourceId`+`threadId`, and still reads `productX`'s marker.
+  `recall` keys on `resourceId`+`threadId`, so a product tag placed in **none** of the four levers is a
+  scoping no-op. This is a **developer omission, not a framework leak** — steps (c)/(d) prevent the
+  read. (The prior "CROSS-PRODUCT LEAK / never keys on it" framing was a strawman: reading back with
+  the same keys trivially returns the same data.)
+- **(c) COMPETENT path #1 — composite `resourceId`** — folding product into the `resourceId`
+  (`tenantA:userA:productX`) is protected: Mastra binds a `threadId` to its owning `resourceId` and
+  **THREW** `validateThreadIsOwnedByResource` ("Thread ... is for resource ...:productX but resource
+  ...:productZZZ-typo was queried") on a cross-product read. The read is **prevented**.
+- **(d) COMPETENT path #2 — `semanticRecall.filter`** — the docs' own metadata-filter lever
+  (`filter: { projectId: { $eq: 'project-a' } }`). Filtering recall to `resource_id = productX` returns
+  only `productX`'s row and not `productY`'s — the memory layer **does** key on the axis. Caveat: the
+  default message-embedding path indexes a fixed vector-metadata set
+  (`{message_id, thread_id, resource_id, role, content, created_at}` — verified here), so the filter
+  scopes on the indexed `resource_id` (i.e. the composite key). To filter on a bespoke `productId`
+  field you own the vector upsert (the RAG / knowledge-ingestion path) so it is actually indexed.
+- **Honest caveat kept:** on the bare message-history path (`semanticRecall` off) the only extra
+  per-call filter Mastra exposes is `dateRange` — there is no metadata filter there. Metadata/product
+  scoping therefore lives on the semantic-recall path (lever 4) or the composite key (lever 1). Pick
+  the right lever for the path you are on.
 
-**Verdict:** `product_id` isolation in Mastra is CONVENTION over 2 keys, not construction over 4
-axes. With aisotropy's 4 axes and Mastra's 2 keys, whichever axis will not fit into
-`resourceId`/`threadId` is the one that leaks — here, product. aisotropy filters `product_id`
-server-side on every read, so a wrong product reads nothing **by construction**.
+**Verdict:** `product_id` isolation in Mastra is **convention, not construction**. A competent
+developer isolates product with any of the four real levers (run-verified in (c) and (d)); the naive
+default path does not partition. The distinction from aisotropy is not "Mastra leaks" — it is that
+none of Mastra's levers is a server-authoritative, unforgeable, auto-propagated axis: each is applied
+per call, and a forgotten one silently fails open. aisotropy makes `product_id` a native `Scope{}`
+field filtered server-side on every read, so a wrong or forgotten product reads nothing **by
+construction**.
 
 ## Executable governance — dependency LICENSE posture (run-verified)
 

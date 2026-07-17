@@ -380,27 +380,51 @@ func runToolsAgentic(ctx context.Context) {
 func runAuth(ctx context.Context) {
 	hdr("AREA 4 — AUTH")
 
-	// FEATURE 16 — bearer-token -> identity binding.
-	// ADK has NO auth layer: runner.Run(ctx, userID, sessionID, ...) trusts the
-	// userID string verbatim; nothing binds it to a verified caller. A bearer ->
-	// identity gate is entirely developer middleware.
-	r, _, _ := newRunner(llmagent.Config{Name: "auth", Model: &countingModel{}})
-
-	// DIY bearer -> identity map (the middleware ADK does not provide).
-	tokens := map[string]string{"tok-acme-alice": "acme|alice"}
-	resolve := func(bearer string) (string, error) {
-		if id, ok := tokens[bearer]; ok {
-			return id, nil
+	// FEATURE 16 — identity-binding gate, at PARITY with aisotropy.
+	// Key construction and auth are separate layers. Without a gate, ADK trusts
+	// the userID string it is handed — exactly as aisotropy trusts the path
+	// tenant_id in its default NoAuth mode (ADR-0024), verifying only when
+	// AISOTROPY_JWT_SECRET is set. ADK provides the gate SEAM: an llmagent
+	// BeforeAgentCallback runs before the agent and, by returning content,
+	// short-circuits the turn WITHOUT invoking the model (see agent.go: "If it
+	// returns non-nil content ... the agent run will be skipped"). We install one
+	// that rejects an unbound identity and prove the model never runs. The
+	// credential check itself is developer code in BOTH frameworks.
+	cm := &countingModel{}
+	authorized := map[string]bool{"acme|alice": true} // stands in for verified JWT claims
+	refusal := &genai.Content{Role: genai.RoleModel,
+		Parts: []*genai.Part{{Text: "401 unauthorized: identity not bound"}}}
+	gate := func(c agent.Context) (*genai.Content, error) {
+		if !authorized[c.UserID()] {
+			return refusal, nil // short-circuit: agent + model skipped
 		}
-		return "", errors.New("401 unauthorized")
+		return nil, nil
 	}
-	// A forged/unbound identity string still works if you skip the DIY gate:
-	forged := "globex|admin"
-	_, _, _, _ = runTurn(ctx, r, forged, "s", "hi") // framework accepts it — no binding
-	// With the DIY gate a bad token is rejected before any turn:
-	_, err := resolve("tok-forged")
-	feature(16, "Bearer-token -> identity binding", "NOT-POSSIBLE",
-		fmt.Sprintf("runner accepted forged userID %q (no binding); DIY bearer gate rejected bad token (%v)", forged, err != nil))
+	r, _, _ := newRunner(llmagent.Config{Name: "auth", Model: cm,
+		BeforeAgentCallbacks: []agent.BeforeAgentCallback{gate}})
+
+	// Authorized identity: gate passes, model runs.
+	before := cm.Calls()
+	if _, _, _, err := runTurn(ctx, r, "acme|alice", "s-ok", "hi"); err != nil {
+		panic(err)
+	}
+	okRan := cm.Calls() > before
+
+	// Forged/unbound identity: gate rejects BEFORE the model.
+	beforeForged := cm.Calls()
+	reply, _, _, err := runTurn(ctx, r, "globex|admin", "s-bad", "hi")
+	if err != nil {
+		panic(err)
+	}
+	forgedBlocked := cm.Calls() == beforeForged && strings.Contains(reply, "401")
+
+	if okRan && forgedBlocked {
+		feature(16, "Identity-binding gate (auth)", "PARTIAL",
+			"llmagent BeforeAgentCallback (BUILT-IN seam) rejected an unbound userID before the model ran; credential check is DIY — parity with aisotropy NoAuth-vs-JWT")
+	} else {
+		feature(16, "Identity-binding gate (auth)", "PARTIAL",
+			fmt.Sprintf("BeforeAgentCallback seam ran; okRan=%v forgedBlocked=%v reply=%q", okRan, forgedBlocked, shorten(reply)))
+	}
 }
 
 // ===========================================================================

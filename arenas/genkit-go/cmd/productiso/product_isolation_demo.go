@@ -16,19 +16,22 @@
 //
 // THE POINT
 // ---------
-// Stable Genkit Go ships NO Session/Memory/Thread primitive (verified: the
-// genkit and ai packages expose Generate/Flows/Tools/Prompts but no Session
-// type). Multi-tenancy — and multi-PRODUCT-cy — is entirely developer-passed:
-// you build the store key yourself. product_id is therefore just another
-// string the developer may or may not fold into that key. The framework binds
-// it to NOTHING. So:
+// Genkit-Go v1.10.0 DOES ship an experimental session-memory primitive (ai/exp
+// SessionStore + localstore.NewInMemorySessionStore), but it is keyed by a
+// developer-chosen session id with NO tenant/user/product binding — its
+// SessionSnapshot/SessionState carry only a SessionID field, so it gives you
+// PERSISTENCE, not ISOLATION. There is no product (or tenant) primitive to bind
+// at all. Multi-tenancy — and multi-PRODUCT-cy — is therefore entirely
+// developer-passed: you build the store key yourself. product_id is just
+// another string the developer may or may not fold into that key. The framework
+// binds it to NOTHING. So:
 //
-//   (a) POSITIVE CONTROL — productX reads its own marker back. Works.
-//   (b) CROSS-PRODUCT LEAK — same tenant+user, a request for a DIFFERENT
-//       product reads productX's marker, because the product axis never
-//       entered the developer's key. The real genkit.Generate pipeline hands
-//       the fake model productX's history and it faithfully reveals the
-//       secret. That is the leak.
+//	(a) POSITIVE CONTROL — productX reads its own marker back. Works.
+//	(b) CROSS-PRODUCT LEAK — same tenant+user, a request for a DIFFERENT
+//	    product reads productX's marker, because the product axis never
+//	    entered the developer's key. The real genkit.Generate pipeline hands
+//	    the fake model productX's history and it faithfully reveals the
+//	    secret. That is the leak.
 //
 // HONESTY CONTRACT: this is a LEAK, and it is labelled a leak. Genkit enforces
 // nothing on the product axis — there is no product primitive to enforce with.

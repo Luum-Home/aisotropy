@@ -34,7 +34,7 @@ func main() {
 	fmt.Println()
 	fmt.Println(line)
 	if ok {
-		fmt.Println("SMOKE RESULT: PASS — real Eino stack exercised; isolation proof produced expected leak.")
+		fmt.Println("SMOKE RESULT: PASS — real Eino stack exercised; isolation matrix behaved as classified.")
 		return
 	}
 	fmt.Println("SMOKE RESULT: FAIL — see markers above.")
@@ -95,18 +95,24 @@ func part1Chatbot(ctx context.Context) bool {
 	return pass
 }
 
-// part2Isolation proves feature #1 against Eino's real checkpoint state model.
+// part2Isolation exercises feature #1 against Eino's real checkpoint state
+// model. Eino is an orchestration library with no tenancy primitive; its
+// compose.CheckPointStore is an interrupt/resume KV keyed by one developer
+// string, so per-tenant isolation is 100% developer key-composition.
 //
 // Pattern (mirrors aisotropy's isolation_e2e_test.go):
 //  1. Seed tenant A's secret under a checkpoint ID.
 //  2. Positive control: A reads its own checkpoint ID -> secret MUST appear.
-//  3. Negative probe (correct path): B reads its own tenant-scoped ID -> miss.
-//  4. LEAK probe (shared ID): A and B share a session ID -> B reads A's secret.
+//  3. Correct path: B reads its own tenant-scoped ID -> miss (isolation holds).
+//  4. Footgun path: keying by a bare session ID (no tenant) collapses A and B
+//     onto one key. This is what any string-keyed KV does — the point is that
+//     Eino has no tenant dimension to catch the omission, not that Eino "leaks".
 func part2Isolation(ctx context.Context) bool {
-	fmt.Println("[Part 2] Adversarial isolation vs Eino's real CheckPointStore")
+	fmt.Println("[Part 2] Isolation matrix vs Eino's real CheckPointStore")
 	fmt.Println(strings.Repeat("-", 64))
-	fmt.Println("  Eino state model: compose.CheckPointStore is Get/Set(ctx, checkpointID string).")
-	fmt.Println("  One bare string keys all persisted state. No tenant dimension exists.")
+	fmt.Println("  Eino state model: compose.CheckPointStore is Get/Set(ctx, checkpointID string)")
+	fmt.Println("  — an interrupt/resume KV, not a memory tier. One bare string keys all state;")
+	fmt.Println("  no tenant dimension exists, so scoping is the developer's key-composition.")
 	fmt.Println()
 
 	marker := "SECRET-ea-" + "9f3c1b7d2a" // distinctive tenant-A-only token
@@ -135,58 +141,63 @@ func part2Isolation(ctx context.Context) bool {
 		pass = false
 	}
 
-	// Negative probe (correct path): tenant B uses its OWN scoped ID -> miss.
+	// Correct path: tenant B uses its OWN scoped ID -> miss (isolation holds).
 	got, hit, err = hCorrect.Read(ctx, "tenantB:shared-session")
 	if err != nil {
-		fmt.Println("  ✗ negative-probe read error:", err)
+		fmt.Println("  ✗ correct-path read error:", err)
 		pass = false
 	} else if !hit || got != marker {
-		fmt.Println("  ✓ No leak (correct path): tenantB:shared-session did not resolve tenantA's secret")
+		fmt.Println("  ✓ Isolated (correct path): tenantB:shared-session did NOT resolve tenantA's secret")
 	} else {
-		fmt.Println("  ✗ unexpected leak on the correct path")
+		fmt.Println("  ✗ unexpected cross-read on the correct path")
 		pass = false
 	}
 
 	fmt.Println()
 
-	// ---- Leak path: SAME checkpoint ID reused across tenants ----
+	// ---- Footgun path: SAME checkpoint ID reused across tenants ----
 	// A real, one-line-apart mistake: the dev keys the checkpoint by the raw
-	// client session ID and forgets to bind the tenant. Eino cannot stop this.
-	hLeak, err := orbit.NewIsolationHarness(ctx)
+	// client session ID and forgets to bind the tenant, so two tenants collapse
+	// onto one key. A string-keyed KV then returns whatever was stored there —
+	// true of any such store, including aisotropy's BadgerDB. Eino simply has no
+	// tenant dimension to notice the omission.
+	hCollapse, err := orbit.NewIsolationHarness(ctx)
 	if err != nil {
 		fmt.Println("  ✗ harness build failed:", err)
 		return false
 	}
-	sharedID := "shared-session" // no tenant prefix — the leaky path
-	if err := hLeak.Seed(ctx, sharedID, marker); err != nil {
+	sharedID := "shared-session" // no tenant prefix — the footgun path
+	if err := hCollapse.Seed(ctx, sharedID, marker); err != nil {
 		fmt.Println("  ✗ seed(shared) failed:", err)
 		return false
 	}
 	fmt.Printf("  Tenant A seeded secret under checkpoint ID %q (no tenant prefix)\n", sharedID)
 
-	// Tenant B presents the same session ID. Eino resumes A's checkpoint.
-	got, hit, err = hLeak.Read(ctx, sharedID)
+	// Tenant B composes the same bare session ID -> the keys collapse.
+	got, hit, err = hCollapse.Read(ctx, sharedID)
 	if err != nil {
-		fmt.Println("  ✗ leak-probe read error:", err)
+		fmt.Println("  ✗ collapse-probe read error:", err)
 		pass = false
 	} else if hit && got == marker {
-		fmt.Printf("  ✗ LEAK CONFIRMED: tenant B resumed %q and Eino returned tenant A's secret: %s\n", sharedID, got)
-		fmt.Println("     Driven by Eino's real runtime — the checkpoint ID carries no tenant.")
+		fmt.Printf("  ! COLLAPSE: tenant B composes the same key %q and the store returns %s\n", sharedID, got)
+		fmt.Println("     Not an Eino bug — a string-keyed KV returns what was stored under the key")
+		fmt.Println("     you ask for. The failure is the dropped tenant segment; Eino has no tenant")
+		fmt.Println("     dimension to catch it. aisotropy composes the key from ctx so this can't happen.")
 	} else {
-		fmt.Printf("  (no leak this run: hit=%v got=%q)\n", hit, got)
+		fmt.Printf("  (no collapse this run: hit=%v got=%q)\n", hit, got)
 	}
 
 	// Direct-probe evidence: the real store holds A's state under a bare string.
-	keys := hLeak.Store().Keys()
+	keys := hCollapse.Store().Keys()
 	fmt.Printf("  Real CheckPointStore keyspace after tenant A: %v\n", keys)
 	fmt.Println("     -> a bare []string of developer-chosen IDs; no tenant/user field anywhere.")
 
-	// The isolation proof PASSES the smoke iff the framework leaked as expected
-	// (feature #1 is NOT covered by Eino). A non-leak would mean our proof is
-	// broken, so treat the confirmed leak as the expected outcome.
-	leaked := hit && got == marker
-	if !leaked {
-		fmt.Println("  ✗ expected the shared-ID leak to reproduce; it did not")
+	// The smoke PASSES iff the product-blind key collapsed onto the seed as
+	// classified (feature #1 = NOT-POSSIBLE by framework). A non-collapse would
+	// mean the harness itself is broken.
+	collapsed := hit && got == marker
+	if !collapsed {
+		fmt.Println("  ✗ expected the shared-ID keys to collapse; they did not")
 		pass = false
 	}
 	return pass

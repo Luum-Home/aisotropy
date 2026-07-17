@@ -95,38 +95,53 @@ timestamp: 2026-07-15T00:00:00Z
   (a sovereignty concern for regulated deployments).
 
 ### Multi-tenant isolation
-- **Status:** Convention (prefix-match)
-- **Pattern:** `Store.search()` uses namespace prefix matching
-- **AISOTROPY COMPARISON:** LangGraph's prefix-match is the weakest isolation of the three
-  competitors. A namespace like `('acme',)` scans ALL tenants starting with `'acme'`.
-  aisotropy's exact-key scoping + `Scope{}` value objects prevent this entirely.
+- **Status:** Tools provided; developer wires them
+- **Naive posture:** on the raw `Store`, `Store.search()` uses element-wise namespace prefix
+  matching and prefix depth is developer convention — a shallow prefix like `('acme',)` scans
+  every tenant nested under `acme`. That is an under-scoped query (a dev bug the primitive does
+  not catch), the same property any KV store has with no auth layer — not a framework defect.
+- **Correct posture:** deep namespaces `(org, user, ...)` + the LangGraph Server
+  `@auth.on.store()` handler (importable from `langgraph_sdk`, runs on every store op) rewrite/
+  assert the namespace to the authenticated caller, making cross-tenant reads structurally
+  impossible. Verified in `scripts/smoke.py` PART B via an identity-bound store facade.
+- **AISOTROPY COMPARISON:** aisotropy binds all four axes from the verified identity via
+  `context.Context` **by default**, as a `Scope{}` value object with unexported fields — a
+  wrong/forgotten key is unrepresentable. LangGraph gives you the same capability but you must
+  wire the auth handler. aisotropy's own raw stores also depend on its Scope/handler layer;
+  isolation is an application-boundary property in both. aisotropy's edge is default-wired +
+  unforgeable, not a stronger primitive.
 
 ### Multi-PRODUCT isolation (3rd axis) — RUN-VERIFIED via `product_isolation_demo.py`
 Run: `.venv/bin/python product_isolation_demo.py` (exit 0; OFFLINE, no LLM). Verified against
 langgraph 1.2.9. aisotropy scopes memory by a **4-axis `Scope` value object**
 `(tenant_id, user_id, session_id, product_id)`, all bound to the verified identity at the
-handler boundary and carried via `context.Context`. The earlier smoke covered tenant/user;
-this demo isolates the **product_id** axis, which the arenas had never tested.
+handler boundary and carried via `context.Context`. This demo isolates the **product_id** axis,
+under both the naive raw-store posture and the correct identity-bound posture.
 
-- **Status:** Convention — `BaseStore` has **no `product` concept**. `product_id` is just one
-  more element the developer stuffs into the namespace tuple `(tenant, user, product)`.
-- **Positive control (verified):** exact `get(("acme","userA","productX"), key)` reads
-  productX's own private marker. Correct full-depth scoping works.
-- **CROSS-PRODUCT LEAK (both mechanisms reproduced, same tenant+user):**
-  - **2a — shallow-prefix:** a handler "serving productY" that scopes to
+- **Status:** Tools provided; developer wires them. On the raw `BaseStore` there is **no
+  `product` concept** — `product_id` is one more element in the namespace tuple
+  `(tenant, user, product)`, and depth is developer convention.
+- **PART A — raw store + naive convention (developer bugs the primitive won't catch):**
+  - **Positive control (verified):** exact `get(("acme","userA","productX"), key)` reads
+    productX's own private marker. Correct full-depth scoping works.
+  - **2a — shallow-prefix bug:** a handler "serving productY" that scopes to
     `search(("acme","userA"))` and **forgets the product element** scans *every* product under
-    that user — productX's private marker surfaced (2 namespaces returned). The framework never
-    forces the product element into the query.
-  - **2b — wrong-product substitution:** an exact `get()` built with the **wrong product
-    string** (`productX` where `productY` belonged) returns productX's data. Nothing validates
-    the product element against the authenticated caller — `product_id` is an unbound string.
-- **Honesty control (verified):** exact `get()` at the *correct* `(tenant,user,productY)` depth
-  does NOT see productX's marker. Exact scoping is safe **if** the developer supplies the right
-  product element every single time — that "if" is the entire risk surface.
+    that user — productX's marker surfaced (2 namespaces). An under-scoped query.
+  - **2b — wrong-product bug:** an exact `get()` built with the wrong product string
+    (`productX` where `productY` belonged) returns productX's data. The raw store performs no
+    authorization — a same-key/wrong-key property of any KV store, not a LangGraph defect.
+  - **Naive-config control (verified):** exact `get()` at the *correct* `(tenant,user,productY)`
+    depth does NOT see productX's marker. Full-depth scoping is safe **if** the developer
+    supplies the right element every time.
+- **PART B — correct config (verified):** an identity-bound store facade (the `@auth.on.store()`
+  analogue, forcing `namespace[:3]` to the caller) **eliminates both bugs** — the shallow-prefix
+  search is rewritten to the caller's own namespace (productX never returned) and the
+  wrong-product `get()` is rejected. Cross-product read is structurally impossible.
 - **AISOTROPY COMPARISON:** `product_id` is a **field of the `Scope` value object**, constructed
-  from verified identity — a forgotten or wrong `product_id` is **unrepresentable**, not a
-  convention to remember. In LangGraph it is developer-owned namespace depth the framework
-  checks nowhere; a single missed/wrong tuple element = silent cross-product read.
+  from verified identity **by default** — a forgotten or wrong `product_id` is
+  **unrepresentable**. LangGraph reaches the same guarantee, but only once you wire the auth
+  handler; the raw primitive alone leaves depth to developer discipline. aisotropy's own raw
+  stores likewise rely on its Scope/handler layer; the edge is default-wired + unforgeable.
 
 ### Dependency LICENSE posture (executable governance) — RUN-VERIFIED via `scripts/license_scan.sh`
 Run: `./scripts/license_scan.sh` (exit 0; OFFLINE; reads installed venv metadata). Tool:
@@ -160,7 +175,7 @@ langchain-core 1.4.9 / langsmith 0.10.5 / opentelemetry-sdk 1.43.0. Every row be
 class the demo **prints after actually executing** the framework (or the DIY version it had
 to write, labelled DIY/NOT-POSSIBLE).
 
-**Tally: BUILT-IN 8 · PARTIAL 6 · DIY 9 · NOT-POSSIBLE 3 (26 total).**
+**Tally: BUILT-IN 8 · PARTIAL 7 · DIY 9 · NOT-POSSIBLE 2 (26 total).**
 
 | # | Feature | Class | Run-verified evidence |
 |---|---|---|---|
@@ -180,7 +195,7 @@ to write, labelled DIY/NOT-POSSIBLE).
 | 14 | Scope-gated tools | DIY | you filter the tool list by scope before binding; `write_tasks` absent when scope missing. Gate is your code |
 | 15 | Multi-step agent loop | BUILT-IN | `create_react_agent(model, tools)` ran reason→act→observe; tool actually invoked |
 | 16 | Typed tools / MCP | PARTIAL | `@tool` derives typed JSON-Schema BUILT-IN; MCP is a separate adapter pkg (not core) |
-| 17 | Bearer-token → identity bind | NOT-POSSIBLE | OSS library has no auth; identity + must-agree bind is DIY middleware (Platform `@auth` is the paid hosted server) |
+| 17 | Bearer-token → identity bind | PARTIAL | The bare `Store`/graph primitive has no auth; but `@auth` (incl. `@auth.on.store()`, importable from `langgraph_sdk`) binds identity + rewrites store namespaces when run in a LangGraph **Server** — self-hosted OSS server or the managed Platform tier. Managed control plane is paid; the handler pattern itself is OSS. aisotropy binds JWT→scope in the runtime by default (401 default-deny / 403 mismatch) |
 | 18 | Pre-spend per-tenant quota gate | DIY | no `UsageLimits`/`check_before_request`; hand-rolled gate proven (allowed Δ=1, rejected Δ=0) |
 | 19 | Circuit breaker | DIY | no breaker (`with_fallbacks` is failure-fallback); hand-rolled breaker opened after 5 fails, rest fast-failed |
 | 20 | Quota-pressure degradation | DIY | `with_fallbacks` is failure-based not pressure-based; hand-rolled pressure router (0.97→cheap, 0.40→primary) |
@@ -203,13 +218,41 @@ ships BUILT-IN: working memory, vector RAG, BYO embedder, the agent loop, stream
 cancellation, an exact response cache, and gen_ai OTel spans. All governance (pre-spend gate,
 circuit breaker, pressure degradation, per-tenant meter, scope-gating) is DIY.
 
+## What LangGraph does genuinely well (aisotropy has NO equivalent) — RUN-VERIFIED via `strengths_demo.py`
+
+Run: `.venv/bin/python strengths_demo.py` (exit 0; OFFLINE, no LLM). Verified against
+langgraph 1.2.9. The isolation demos show the one axis where aisotropy differs; this section is
+the honest other side. LangGraph is a **durable, stateful graph runtime**. aisotropy is a
+request/response LLM-OS with a memory hierarchy — it has **no durable graph, no checkpoint/resume,
+no human-in-the-loop pause topology, no time-travel, no cyclic-graph orchestration**. On these axes
+LangGraph wins outright. Each strength is exercised against the real API and self-validated.
+
+| Strength | Pinned API (langgraph 1.2.9) | Run-verified evidence |
+|---|---|---|
+| Durable execution + human-in-the-loop | `StateGraph`; `checkpoint.memory.InMemorySaver`; `types.interrupt` / `types.Command` | Graph paused at `interrupt()`; the compiled instance was **deleted** and a **new graph on the same saver** recovered the pending node (`('approval_gate',)`) + interrupt payload, then `Command(resume="APPROVED")` completed the run. State lives in the checkpointer, not the object. |
+| Time-travel over checkpoint history | `CompiledGraph.get_state_history(config)` | 5 checkpoints enumerated for a 3-iteration run; a **new run forked from a past checkpoint** (`steps=0`) replayed forward to `steps=3`. |
+| Streaming modes on a cyclic graph | `CompiledGraph.stream(..., stream_mode="values"\|"updates")`; `add_conditional_edges` (cycles) | A self-looping node (agent-loop topology) observed as full snapshots (`values`: 0→1→2→3) and per-node deltas (`updates`: 3×`{'tick': ...}`) in the same run. |
+
+**AISOTROPY COMPARISON (honest):** aisotropy does **not** implement a durable graph engine and
+makes no claim to. Its streaming is LLM token deltas over Huma SSE with `ctx` cancellation — not a
+graph-topology stream — and its "reflection loop" is a bounded in-request retry, not a resumable
+checkpointed workflow. If your problem is a long-running, pausable, human-gated, forkable stateful
+workflow, **LangGraph is the right tool and aisotropy is not**. aisotropy's differentiation is a
+different axis entirely: multi-tenant isolation-by-default (unforgeable `Scope`), governance
+defaults (pre-spend gate, breaker, per-tenant meter), and self-hosted sovereignty.
+
 ## Summary
 
-LangGraph has the **largest ecosystem** and the most mature checkpointing/story, but its
-isolation model (prefix-match `Store.search()`) is the weakest of the three. Production
-observability (LangSmith) is paid/SaaS-gated, which is a sovereignty concern.
+LangGraph has the **largest ecosystem** and the most mature checkpointing story. Its isolation
+model is robust when wired (deep namespaces + `@auth.on.store()` identity binding make cross-tenant
+reads structurally impossible) but it is opt-in wiring, not a default — on the raw `Store`,
+namespace depth is developer convention. Production observability (LangSmith) is paid/SaaS-gated,
+which is a genuine sovereignty concern.
 
 **vs. aisotropy:** LangGraph wins on ecosystem and checkpointing maturity; aisotropy wins on
-isolation-by-construction, cost governance, observability, and sovereignty. The trade is:
-largest ecosystem with paid SaaS dependency vs. complete self-hostable runtime with constitutional
-guarantees.
+isolation-**by-default** (the Scope value object binds all four axes automatically and cannot carry
+a wrong/forgotten key), cost governance, self-hosted observability, and sovereignty. Both enforce
+isolation at the application boundary — the difference is whether it is on by default and
+unforgeable, not whether one framework can be made secure and the other cannot. The trade is:
+largest ecosystem with isolation-you-wire + a paid SaaS observability path vs. a complete
+self-hostable runtime with isolation and governance wired by default.

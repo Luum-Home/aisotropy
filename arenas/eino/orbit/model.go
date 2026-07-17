@@ -96,7 +96,7 @@ func (m *StubChatModel) answer(input []*schema.Message, lastUser string, hasTool
 	}
 
 	// Echo any working-memory notes injected by the app into the system prompt.
-	// This is what makes leaked memory VISIBLE in the model output.
+	// This is what makes a wrong-key working-memory read VISIBLE in the output.
 	if notes := systemNotes(input); notes != "" {
 		b.WriteString("Based on your history (" + notes + "), ")
 	}

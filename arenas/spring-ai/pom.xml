@@ -15,9 +15,8 @@
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <!-- Pinned: latest Spring AI 1.x GA line (2.0.0 GA also exists; core memory/advisor/
-             structured-output API is identical across both). -->
-        <spring-ai.version>1.1.8</spring-ai.version>
+        <!-- Pinned: latest Spring AI GA line. -->
+        <spring-ai.version>2.0.0</spring-ai.version>
     </properties>
 
     <dependencyManagement>

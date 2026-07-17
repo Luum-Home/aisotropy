@@ -519,10 +519,20 @@ def area_auth():
     rule("AREA D — AUTH / IDENTITY")
 
     # ── F17 bearer-token -> identity ──
-    # The LangGraph LIBRARY has no auth. Identity binding (verify a bearer token,
-    # bind principal.tenant == path.tenant, mint a scope) is entirely your web
-    # middleware. (LangGraph PLATFORM, the hosted server, adds an @auth handler —
-    # but that's the paid/hosted product, not the OSS library exercised here.)
+    # The bare Store/graph primitive has no auth. But LangGraph SERVER exposes an
+    # @auth handler (Auth class + @auth.on / @auth.on.store, importable from
+    # langgraph_sdk) that verifies the bearer token, binds identity, and can
+    # rewrite/assert store namespaces on every op. It runs in a LangGraph server
+    # (self-hosted OSS server or the managed Platform tier); the managed control
+    # plane is paid, but the handler pattern itself is OSS. Below we (a) confirm
+    # the Auth surface is importable and (b) run a toy verifier standing in for it.
+    try:
+        from langgraph_sdk import Auth  # noqa: F401
+        _a = Auth()
+        auth_surface = bool(getattr(getattr(_a, "on", None), "store", None))
+    except Exception:
+        auth_surface = False
+
     def diy_auth(bearer: str, path_tenant: str) -> Optional[dict]:
         # toy verifier: token format "tenant:user:scopes"
         try:
@@ -534,11 +544,13 @@ def area_auth():
         return {"tenant": t, "user": u, "scopes": set(scopes.split(","))}
     good = diy_auth("acme:alice:read", "acme")
     mismatch = diy_auth("acme:alice:read", "globex")   # cross-tenant -> reject
-    feature(17, "Bearer-token → identity bind", "NOT-POSSIBLE",
-            f"OSS library has NO auth surface; identity+must-agree bind is DIY middleware "
-            f"(good={good['tenant'] if good else None}, cross-tenant rejected={mismatch is None}). "
-            f"LangGraph Platform's @auth is the PAID hosted server. aisotropy binds JWT→scope in "
-            f"the runtime (401 default-deny / 403 mismatch).")
+    feature(17, "Bearer-token → identity bind", "PARTIAL",
+            f"langgraph_sdk.Auth importable with on.store handler={auth_surface}; @auth verifies "
+            f"the token + binds identity + rewrites store namespaces when run in a LangGraph "
+            f"SERVER (self-hosted OSS or managed Platform; managed plane is paid). Bare library "
+            f"needs the server or DIY middleware (toy: good={good['tenant'] if good else None}, "
+            f"cross-tenant rejected={mismatch is None}). aisotropy binds JWT→scope in the runtime "
+            f"BY DEFAULT (401 default-deny / 403 mismatch).")
 
 
 # =============================================================================

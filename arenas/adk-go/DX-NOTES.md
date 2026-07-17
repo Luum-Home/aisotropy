@@ -38,14 +38,27 @@ engine (`workflowagent`, sequential/parallel/loop), structured output
 
 ## The painful
 
-### No tenant primitive, no identity binding
-`runner.Run(ctx, userID, sessionID, …)` trusts the identity strings verbatim.
-There is no `TenantID` and nothing binds `userID` to an authenticated caller.
-Multi-tenancy is entirely "fold tenant into `userID` and never get it wrong."
-The leaky path (drop the tenant component) is literally one token shorter than
-the correct path — see `TestTenantDropLeaks`. `adk-python#1641` shows even the
-keyed backend leaked when one sub-query forgot part of the key; ADK Go hands you
-the same footgun and doesn't even own the tenant dimension.
+### Three native slots, four axes — one axis is hand-composed
+ADK's session key has three native slots: `appName` (bound at runner
+construction), `userID`, `sessionID`. `appName` is genuinely non-droppable per
+request — one runner per product (or per tenant) makes that axis native, and a
+cross-value read is a construction miss (`TestProductAppNameIsolatesByConstruction`).
+The friction is arity: aisotropy scopes on four axes, ADK offers three slots, so
+exactly one axis must be concatenated into `userID` by hand. Keep it in the key
+and it isolates; drop it and two values collide — a same-session read
+(`TestResidualAxisDropLeaks`). It is a real footgun, but a bounded one: it is one
+axis, on the developer's chosen mapping, not "ADK cannot isolate." `adk-python#1641`
+is the reminder that even a native slot leaks if a query forgets it — per-query
+discipline matters in both frameworks.
+
+### Auth is a seam you must wire (near-parity)
+`runner.Run(ctx, userID, sessionID, …)` trusts the identity strings it is handed;
+binding them to an authenticated caller is middleware. ADK gives you the seam — an
+`llmagent` `BeforeAgentCallback` can reject an unbound identity before the model
+runs (`FEATURE 16`, exercised for real in `cmd/parity`). Worth noting aisotropy is
+in the same boat by default: it trusts the path `tenant_id` verbatim in NoAuth
+mode and only verifies when `AISOTROPY_JWT_SECRET` is set (ADR-0024). This is a
+wire-it-yourself layer in both, not an ADK-specific gap.
 
 ### Heavy dependency graph
 `go mod tidy` pulls the full cloud + genai + OTel + gRPC + sqlite tree (dozens
@@ -65,16 +78,19 @@ constitutional gate requires.
 ## The verdict
 
 ADK Go is a **real, protocol-rich agent runtime** with clean model/session
-seams and genuine OTel observability. Its isolation is convention: the composite
-key is real, but the tenant dimension and identity binding are the developer's
-job, and the leaky path is a one-liner.
+seams and genuine OTel observability. Its isolation is real composite-key
+construction across three native slots; a competent developer makes any one
+extra axis native by running one runner per value of it (`appName`). The honest
+residual is arity — four axes onto three slots leaves exactly one axis
+hand-composed in `userID`, and dropping it is the leaky path.
 
 **Best for:** teams (esp. in the Google ecosystem) wanting MCP/A2A + graph
-orchestration + OTel, who own their multi-tenant discipline.
+orchestration + OTel, who scope on ≤3 axes (or bind the extra one to `appName`).
 
-**Worst for:** regulated multi-tenant SaaS wanting isolation-by-construction and
-pre-spend cost control without a Vertex gradient.
+**Worst for:** regulated multi-tenant SaaS wanting all four axes bound by
+construction and pre-spend cost control without a Vertex gradient.
 
 **vs. aisotropy:** ADK wins on protocol breadth and ties on OTel; aisotropy wins
-on isolation-by-construction (tenant in `ctx`, unscoped read unrepresentable),
-self-hostable tiered memory, pre-spend governance, and sovereignty.
+on all-axes isolation-by-construction (four axes in `ctx`, no axis hand-composed),
+self-hostable tiered memory, and pre-spend governance. Auth is near-parity (both
+trust the identity until a gate binds it).

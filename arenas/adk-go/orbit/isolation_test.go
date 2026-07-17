@@ -48,9 +48,10 @@ func TestCompositeKeyIsolates(t *testing.T) {
 	}
 }
 
-// TestTenantDropLeaks proves the leaky path: drop the tenant component from the
-// developer-passed key and two tenants collide silently. ADK Go has no tenant
-// binding to prevent this — it is the whole point of the arena.
+// TestTenantDropLeaks proves the residual-axis leaky path: in the appName=app
+// deployment, tenant has no native slot and rides in userID. Drop it and two
+// tenants collide silently — a genuine same-session read, the chosen mapping's
+// one residual (not an ADK inability to isolate).
 func TestTenantDropLeaks(t *testing.T) {
 	ctx := context.Background()
 	o, err := New("orbit")

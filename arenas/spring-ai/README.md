@@ -1,7 +1,7 @@
 # Spring AI Arena
 
 > **Framework:** [Spring AI](https://github.com/spring-projects/spring-ai) — real dependencies:
-> `spring-ai-client-chat` / `spring-ai-model` / `spring-ai-commons` **1.1.8** (Apache-2.0, Java/JVM).
+> `spring-ai-client-chat` / `spring-ai-model` / `spring-ai-commons` **2.0.0** (Apache-2.0, Java/JVM).
 > **Positioning:** The enterprise-JVM entrant. Spring-idiomatic `ChatClient` + advisor pipeline,
 > Micrometer observability native, Spring Boot autoconfig — but chat memory is a thin layer keyed by
 > a single opaque `conversationId` string with **zero tenant/principal binding**.
@@ -11,14 +11,14 @@
 ## What is real here (read this first)
 
 This is a **REAL integration**, not a source-only analysis. Orbit is compiled and run against the
-genuine Spring AI 1.1.8 jars; every isolation and feature claim below was **executed offline with no
+genuine Spring AI 2.0.0 jars; every isolation and feature claim below was **executed offline with no
 provider key**, using a deterministic `EchoChatModel` that implements the real
 `org.springframework.ai.chat.model.ChatModel` interface — so `ChatClient`, the memory advisor, the
 memory window, and the structured-output converter all run through the actual framework pipeline.
 
 | Piece | Status |
 |---|---|
-| `spring-ai-client-chat` / `spring-ai-model` / `spring-ai-commons` **1.1.8** | **Real dependency** — resolved from Maven Central, pinned in `pom.xml`, 41-dep tree |
+| `spring-ai-client-chat` / `spring-ai-model` / `spring-ai-commons` **2.0.0** | **Real dependency** — resolved from Maven Central, pinned in `pom.xml`, 34-dep tree |
 | `ChatClient` + `MessageChatMemoryAdvisor` + `MessageWindowChatMemory` + `InMemoryChatMemoryRepository` | **Real** — Orbit wires the genuine types (`orbit/Orbit.java`) |
 | `ChatMemory` / `ChatMemoryRepository` API (the isolation surface) | **Real** — signatures verified with `javap` and exercised in the smoke |
 | `BeanOutputConverter<Ticket>` structured output | **Real** — `getFormat()` / `getJsonSchema()` / `convert()` executed |
@@ -36,12 +36,12 @@ an offline keyless run; the core is exercised directly.
 
 ## Setup
 
-Requires **JDK 21+** and **Maven 3.9+** (built and run here on **JDK 26** + **Maven 3.9.9**). First
+Requires **JDK 21+** and **Maven 3.9+** (built and run here on **JDK 26** + **Maven 3.9.16**). First
 run needs network to fetch the Spring AI jars into `~/.m2`; offline afterward.
 
 ```bash
 # from arenas/spring-ai/
-mvn compile                 # resolves the real Spring AI 1.1.8 tree, compiles Orbit
+mvn compile                 # resolves the real Spring AI 2.0.0 tree, compiles Orbit
 ```
 
 ## Run the demos (offline, no key)
@@ -61,7 +61,7 @@ only when the harness is healthy AND the expected leaks reproduced (positive/hon
 
 **Convention — memory keyed by a single opaque `conversationId` string, bound to no principal.**
 
-Spring AI's entire memory contract (verified via `javap` against the 1.1.8 jars) is:
+Spring AI's entire memory contract (verified via `javap` against the 2.0.0 jars) is:
 
 ```java
 interface ChatMemory {
@@ -97,7 +97,7 @@ to the same key).
 
 ## What actually executed (closed loop)
 
-Offline, JDK 26 + Maven 3.9.9, no provider key. Pasted output below is verbatim.
+Offline, JDK 26 + Maven 3.9.16, no provider key. Pasted output below is verbatim.
 
 ```
 $ mvn compile
@@ -130,7 +130,7 @@ RESULT: exit 0 — all feature checks passed on the real Spring AI API.
 exit=0
 
 $ ./scripts/license_scan.sh
-Total dependencies scanned: 41
+Total dependencies scanned: 34
 [PASS] No strong-copyleft or source-available blocker licenses in the tree.
 None — the Spring AI tree is 100% permissive (Apache-2.0 / MIT / BSD / CC0).
 Result: PASS — no hard-blocker licenses; tree is fully permissive.
@@ -144,10 +144,14 @@ Micrometer→OTel span bridge (needs `micrometer-tracing` + an exporter). The in
 
 ## Version note
 
-Pinned to the mature **1.x GA line (1.1.8)**. Spring AI **2.0.0 GA** also exists; the memory /
-advisor / `BeanOutputConverter` API used here is unchanged across both. The one relevant 2.0
-addition is **self-correcting structured output** (a provider-native + schema-validation retry) —
-noted under feature 2.2 in `FEATURES.md`, since 1.x has no repair loop.
+Pinned to the current **2.0.0 GA** line (bumped from 1.1.8). The memory / advisor /
+`BeanOutputConverter` API Orbit uses is unchanged across the 1.x→2.0 jump — the bump recompiled
+and re-ran clean with **zero source changes** (verified: `mvn clean compile` + `./scripts/run.sh all`,
+all three demos exit 0). 2.0 runs on **Spring Framework 7** and **Jackson 3.x** (core/databind), which
+shrinks the resolved tree from 41 to 34 deps. The one relevant 2.0 addition is **self-correcting
+structured output** (a provider-native + schema-validation retry) — noted under feature 2.2 in
+`FEATURES.md`; Orbit still exercises the plain converter, so that retry loop is available but not
+wired here.
 
 ## Deliverables
 

@@ -45,19 +45,21 @@ func main() {
 
 	fmt.Println()
 	fmt.Println(strings.Repeat("-", 62))
-	fmt.Println("Isolation model: developer-passed (appName,userID,sessionID) key.")
-	fmt.Println("ADK Go has NO tenant primitive and does NOT bind the key to an")
-	fmt.Println("authenticated caller. The composite key isolates WHEN the developer")
-	fmt.Println("folds tenant into it; drop the tenant component (one line) and two")
-	fmt.Println("tenants collide silently. Contrast adk-python composite-PK + #1641,")
-	fmt.Println("where even the keyed backend leaked when a subquery dropped user_id.")
+	fmt.Println("Isolation model: composite (appName, userID, sessionID) key — 3 native")
+	fmt.Println("slots, appName bound at runner construction. This deployment spends")
+	fmt.Println("appName on the app, so tenant rides in userID and is the residual axis:")
+	fmt.Println("keep it and the key isolates; drop it and two tenants collide. A")
+	fmt.Println("deployment that spends appName on tenant makes tenant native instead")
+	fmt.Println("(then product is the residual — see cmd/productiso). Exactly one of")
+	fmt.Println("{tenant, product} lacks a native slot; the developer chooses which.")
 	fmt.Println(strings.Repeat("-", 62))
 
 	if rep.Failed {
 		fmt.Println("\nResult: FAILED — a correct-key probe leaked or the positive control broke.")
 		os.Exit(1)
 	}
-	fmt.Println("\nResult: PASS — real ADK Go end-to-end works; composite key isolates on the")
-	fmt.Println("correct path; and the leaky path (dropped tenant / unbound key) is a proven,")
-	fmt.Println("one-line silent cross-tenant read (LEAK* rows above).")
+	fmt.Println("\nResult: PASS — real ADK Go end-to-end works; the composite key isolates on")
+	fmt.Println("the correct path; and dropping the residual axis (tenant, in userID) is a")
+	fmt.Println("genuine same-session read (LEAK* rows above) — a chosen-mapping residual,")
+	fmt.Println("not an ADK inability to isolate.")
 }

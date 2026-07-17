@@ -18,15 +18,19 @@ Everything below was checked against the real source in the module cache
 
 ## 1. Multi-tenant isolation — **NOT-POSSIBLE** (by framework)
 
-- **Real API:** `compose.CheckPointStore { Get(ctx, id string) ([]byte,bool,error); Set(ctx, id string, []byte) error }` + `compose.WithCheckPointID(string)`.
+- **Real API:** `compose.CheckPointStore { Get(ctx, id string) ([]byte,bool,error); Set(ctx, id string, []byte) error }` + `compose.WithCheckPointID(string)` — a human-in-the-loop interrupt/resume KV, not a memory tier.
 - **Finding:** the persistence key is a single developer-supplied string. No tenant/user dimension
   exists anywhere in the interface, and there is **no default implementation**. Per-node state
-  (`WithGenLocalState`) carries only the fields the developer declares.
-- **Proof (exercised):** `orbit/memory.go` builds a real interrupt/checkpoint graph; `TestIsolationSharedIDLeaks`
-  seeds tenant A under `"shared-session"` and shows tenant B resume the same ID and receive tenant
-  A's secret — driven by Eino's real runtime.
-- **AISOTROPY:** isolation by construction (ctx propagation + per-statement/key scoping). The leaky
-  path is unrepresentable.
+  (`WithGenLocalState`) carries only the fields the developer declares. Eino is an orchestration
+  library with no tenancy primitive — the same category as LangGraph or Pydantic AI.
+- **Proof (exercised):** `orbit/memory.go` builds a real interrupt/checkpoint graph; `TestIsolationSharedIDCollapses`
+  seeds tenant A under `"shared-session"` and shows that when tenant B composes the same bare ID the
+  keys collapse and the store returns the seeded value — driven by Eino's real runtime. This is what
+  any string-keyed KV does (including aisotropy's BadgerDB); the classification is NOT-POSSIBLE
+  because Eino has no tenant dimension to catch a dropped segment, not because Eino "leaks".
+- **AISOTROPY:** isolation by construction — the scope key is composed from ctx (per-statement/key
+  scoping), so a wrong/short key is unrepresentable. No string-keyed store can catch a bad key
+  after the fact; aisotropy's edge is that the developer never composes the key by hand.
 
 ## 2. Structured output + retry — **DIY / partial**
 
@@ -120,6 +124,28 @@ Everything below was checked against the real source in the module cache
   framework; the architectural difference (orchestration library vs sovereign multi-tenant runtime)
   is the whole story.
 
+## What Eino does genuinely well (STEELMAN — RUN-VERIFIED, `cmd/strengths/eino_strengths_demo.go`)
+
+The checklist above maps where Eino has **no** answer (tenancy, tiered memory, pre-spend gate). The
+other half of a fair comparison is where Eino is genuinely strong — its home axis: **type-safe,
+composable, streaming graph orchestration in Go**. Eino is ByteDance's production framework
+(LangGraph-for-Go); aisotropy is a multi-tenant *runtime*, not a general orchestration library, so on
+this axis Eino is the reference and it earns it. Three strengths, each grounded in a real v0.9.12
+symbol and executed offline (exit 0):
+
+| Strength | Real v0.9.12 API | Run-verified evidence |
+|---|---|---|
+| 1. **Type-safe graph + free mode boxing** | `compose.NewGraph[I,O]` · `compose.InvokableLambda[I,O]` · `compose.Runnable[I,O]` | Typed `string→int` graph (`START→parse→double→END`); Go generics **compile-check** every edge. The one compiled `Runnable` served `Invoke` (→`10`) and `Stream` (→`[10]`) with no extra code — author Invoke-only, get `Invoke/Stream/Collect/Transform` all boxed and type-checked. |
+| 2. **First-class stream primitives** | `schema.Pipe[T]` · `StreamReader.Copy(n)` · `schema.MergeStreamReaders[T]` | `Copy(3)` → 3 independent readers each saw the full `[1 2 3 4 5]` (framework-managed fan-out buffering); `MergeStreamReaders` folded 2 streams into `[10 20 30 40 50]` exactly-once. Streaming is a native concern, not bolted on. |
+| 3. **Callbacks / aspects (AOP seam)** | `callbacks.NewHandlerBuilder().OnStartFn/OnEndFn().Build()` · `compose.WithCallbacks` | One handler, attached at call time, wrapped every component: **3 start / 3 end** spans (`[Graph Lambda Lambda]`) around a 2-node graph, node bodies untouched. This is the seam eino-ext's Langfuse/APMPlus/LangSmith backends plug into. |
+
+**Run:** `go run ./cmd/strengths` (from `arenas/eino/`) — exits 0, prints 3/3.
+
+This is fully consistent with the de-strawman: Eino **is** a genuinely strong Go orchestration library
+**and** it has no tenancy/isolation axis. Both are true; neither cancels the other. aisotropy's
+differentiator is the narrow-but-decisive axis Eino doesn't play on — isolation-by-default, composed
+from `context.Context` so a wrong scope key is unrepresentable.
+
 ## Summary
 
 Eino is a genuinely capable **Go-native orchestration library** (LangGraph-for-Go) with real,
@@ -193,23 +219,28 @@ story one axis over — and this closes it, by RUNNING against the real Eino v0.
 - **Real API (unchanged):** `compose.CheckPointStore { Get/Set(ctx, id string) }` + `compose.WithCheckPointID(string)`.
   product_id is **not** a dimension the framework knows about — only a substring the developer concatenates
   into the single checkpoint-ID string.
-- **Proof (exercised — `cmd/productiso/product_isolation_demo.go`, exit 0):**
-  - **(A) Positive control:** `acme/alice/productX` seeds a marker under the fully qualified key
+- **Proof (exercised — `cmd/productiso/product_isolation_demo.go`, exit 0) — both paths at equal weight:**
+  - **(A) Correct path (isolated):** `acme/alice/productX` seeds a marker under the fully qualified key
     `"acme:alice:productX:s-42"` and reads its OWN marker back. `acme/alice/productY`, using its OWN
-    fully qualified key `"acme:alice:productY:s-42"`, **MISSES** — isolation holds *only because the dev
-    remembered to put product in the key*. Eino ran no product check; it compared two different strings.
-  - **(B) CROSS-PRODUCT LEAK:** a one-line-apart mistake — the dev's key composer drops the product
-    segment (`productBlindKey` → `"acme:alice:s-42"`). productX seeds under that product-blind key; then
-    **same tenant + same user + WRONG product (productY)** reads the identical key and Eino hands back
-    **productX's secret** (`SECRET-productX-7b41e9a0c2`). Direct store probe: keyspace is `[acme:alice:s-42]`
-    — a bare `[]string`, **no product_id column/tag/filter anywhere** in `Get/Set(ctx, id string)`.
+    fully qualified key `"acme:alice:productY:s-42"`, **MISSES** — isolation holds because the two
+    products get two different keys. This is the supported, correct usage: Eino ran no product check;
+    it compared two distinct strings, which is exactly right for a correctly composed key.
+  - **(B) Footgun path (collapses):** a one-line-apart mistake — the dev's key composer drops the product
+    segment (`productBlindKey` → `"acme:alice:s-42"`). With product dropped, productX and productY compose
+    the **identical** string, so the store returns the seeded value (`SECRET-productX-7b41e9a0c2`). This is
+    **not Eino returning the wrong thing** — a string-keyed KV faithfully returns what was stored under the
+    queried key, exactly as any such store does (including aisotropy's BadgerDB). Direct store probe:
+    keyspace is `[acme:alice:s-42]` — a bare `[]string`, **no product_id column/tag/filter anywhere** in
+    `Get/Set(ctx, id string)`, so Eino has no dimension to catch the dropped segment.
 - **Verdict:** `product_id` is **CONVENTION-ONLY** — a developer substring the framework binds to nothing.
-  A wrong product_id reads another product's private state. Identical failure mode to the tenant/user axis
-  already shown; the extra key buys zero enforcement.
-- **AISOTROPY:** all four axes (tenant/user/session/product) are scoped by construction; the leaky path
-  is unrepresentable.
+  Correct keying isolates (A); a dropped segment collapses two products onto one key (B). Identical story to
+  the tenant/user axis already shown; the extra key buys zero framework enforcement (it is a DIY
+  classification, not an Eino bug).
+- **AISOTROPY:** all four axes (tenant/user/session/product) are composed from ctx by construction, so a
+  wrong/short key is unrepresentable. No string-keyed store can catch a bad composed key after the fact;
+  aisotropy's edge is that the developer never hand-composes it.
 
-**Run:** `go run ./cmd/productiso` (from `arenas/eino/`) — exits 0, prints `LEAK CONFIRMED` for the wrong-product read.
+**Run:** `go run ./cmd/productiso` (from `arenas/eino/`) — exits 0; prints the correct path isolating and the footgun path collapsing.
 
 # GAP 2 (RUN-VERIFIED) — executable governance = dependency LICENSE posture — **PASS (holds the permissive line)**
 

@@ -54,8 +54,14 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		sessionID = "default"
 	}
 
-	// CONVENTION, not construction: the developer must fold tenant into the ADK
-	// identity key. ADK Go has no tenant field; forget this and tenants collide.
+	// This single-runner deployment spends appName on the app ("orbit"), so
+	// tenant is the residual axis and rides in userID by convention. Keep it and
+	// the composite key isolates; drop it and two tenants collide. (A deployment
+	// that needs product isolation too would run one runner per product so
+	// appName carries product natively — see cmd/productiso.) Binding userID to an
+	// authenticated caller is a separate middleware concern (ADK callbacks;
+	// aisotropy JWT) — here, like aisotropy's NoAuth mode, the path identity is
+	// trusted as-is.
 	identity := tenantID + "|" + userID
 
 	reply, err := bot.Reply(context.Background(), identity, sessionID, req.Prompt)

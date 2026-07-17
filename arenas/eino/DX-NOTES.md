@@ -41,12 +41,17 @@ interrupt ID from the first run (not just the checkpoint ID) took reading the fr
 `checkpoint_test.go`. Powerful for human-in-the-loop workflows; more machinery than "save/load a
 session" if that's all you want.
 
-### The isolation gap is real and reproduced
-The whole point: `compose.CheckPointStore` is `Get/Set(ctx, checkpointID string)`. A single string
-keys all state. Building Orbit, there was no place to put a tenant — I had to invent
-`sessionKey(tenant,user,session)` myself, and the isolation smoke proves that if a developer keys the
-checkpoint by a raw client session ID (forgetting the tenant), tenant B resuming the same ID gets
-tenant A's secret. **Eino's real runtime produced the leak** — this is not a simulated map.
+### The isolation gap is real (no tenant dimension), and reproduced
+The whole point: `compose.CheckPointStore` is `Get/Set(ctx, checkpointID string)` — an interrupt/resume
+KV, not a memory tier. A single string keys all state. Building Orbit, there was no place to put a
+tenant — I had to invent `sessionKey(tenant,user,session)` myself. The isolation smoke shows both
+paths: correct keying isolates, and if a developer keys the checkpoint by a raw client session ID
+(dropping the tenant), the keys collapse and tenant B composing the same ID gets tenant A's secret.
+That collapse is what **any** string-keyed store does — including aisotropy's BadgerDB — so it is not
+an Eino defect; the gap is that Eino has **no tenant dimension** to catch the omission and no default
+store, leaving all scoping to the developer. It runs on Eino's real runtime, not a simulated map.
+aisotropy closes this upstream: it composes the scope key from `context.Context`, so a wrong/short key
+is unrepresentable in the first place.
 
 ## The good
 

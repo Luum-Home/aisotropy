@@ -1,14 +1,14 @@
 ---
 type: Developer notes
 title: "Spring AI — DX notes"
-description: Honest enterprise-JVM developer-experience assessment of Spring AI 1.1.8 for a multi-tenant production support chatbot.
+description: Honest enterprise-JVM developer-experience assessment of Spring AI 2.0.0 for a multi-tenant production support chatbot.
 tags: [arenas, spring-ai, dx, developer-experience, jvm]
 timestamp: 2026-07-16T00:00:00Z
 ---
 
 # Spring AI — DX Notes
 
-Assessed by actually building Orbit against Spring AI 1.1.8 (JDK 26, Maven 3.9.9) — compiling and
+Assessed by actually building Orbit against Spring AI 2.0.0 (JDK 26, Maven 3.9.16) — compiling and
 running the memory / advisor / structured-output pipeline offline with a keyless fake `ChatModel`.
 
 ## The good
@@ -35,7 +35,7 @@ LLM-as-judge relevancy/faithfulness. Most arenas make you reach for a SaaS produ
 Spring AI keeps them local and OSS.
 
 ### Fully OSS, pure-permissive tree, no SaaS gate
-The 41-dependency tree is **100% permissive** (Apache-2.0 / MIT / BSD / CC0) with **zero** copyleft,
+The 34-dependency tree is **100% permissive** (Apache-2.0 / MIT / BSD / CC0) with **zero** copyleft,
 zero MPL leaf, zero source-available packages — cleaner than the Python arenas' `certifi`-MPL leaf.
 There is no paid/hosted tier anywhere in the framework: nothing is NOT-POSSIBLE or PAID. For a
 regulated, self-hosted deployment, the license and sovereignty posture is excellent.

@@ -9,21 +9,25 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// This file proves Orbit feature #1 (tenant isolation) against Eino's REAL
+// This file exercises Orbit feature #1 (tenant isolation) against Eino's REAL
 // state model: compose.CheckPointStore + compose.WithCheckPointID.
 //
-// Eino persists graph state at an interrupt by serializing it into a
-// CheckPointStore keyed by ONE developer-supplied string (the checkpoint ID).
-// The interface (from the real framework) is literally:
+// Category note: CheckPointStore is a human-in-the-loop INTERRUPT/RESUME KV, not
+// a memory tier. Eino persists graph state at an interrupt by serializing it into
+// the store keyed by ONE developer-supplied string (the checkpoint ID). The
+// interface (from the real framework) is literally:
 //
 //	type CheckPointStore interface {
 //	    Get(ctx, checkPointID string) ([]byte, bool, error)
 //	    Set(ctx, checkPointID string, checkPoint []byte) error
 //	}
 //
-// There is no tenant dimension anywhere. If two tenants share a checkpoint ID,
-// the second tenant's resume loads the first tenant's private state. The leak is
-// driven by Eino's runtime, not by our test harness.
+// There is no tenant dimension anywhere — Eino is an orchestration library with
+// no tenancy primitive by design. If two tenants compose the same checkpoint ID,
+// the second tenant's resume loads whatever was stored under that string. That is
+// what any string-keyed KV does (including aisotropy's BadgerDB); the point is
+// that Eino has no tenant dimension to catch a wrong/short composed key. The
+// round-trip below is driven by Eino's real runtime, not by our test harness.
 
 func init() {
 	// Eino serializes checkpoint state via a registered type. Register Orbit's
@@ -183,8 +187,10 @@ func (h *IsolationHarness) Seed(ctx context.Context, checkpointID, secret string
 // secret Eino restores from that checkpoint. If no checkpoint (and no interrupt
 // handle) exists under the ID, it returns ("", false, nil) — a clean miss.
 //
-// The leak: call Read with a checkpoint ID that another tenant Seeded, and Eino
-// hands you their secret.
+// The footgun: call Read with a checkpoint ID that another tenant composed to the
+// same string, and Eino hands you what was stored there — a string-keyed KV
+// faithfully returning the value under the queried key. Correct, distinct keys
+// (Scenario A in the demos) stay isolated.
 func (h *IsolationHarness) Read(ctx context.Context, checkpointID string) (string, bool, error) {
 	interruptID, ok := h.interruptIDs[checkpointID]
 	if !ok {

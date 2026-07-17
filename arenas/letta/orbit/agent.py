@@ -27,11 +27,19 @@ ORBIT_PERSONA = (
 
 
 def build_agent_payload(cfg: OrbitConfig, scope: TenantScope) -> dict:
-    """Build the REAL `client.agents.create(...)` payload for one tenant/user.
+    """Build the REAL `client.agents.create(...)` payload for one principal.
 
     Uses the genuine Letta multi-tenancy levers: per-agent `memory_blocks`,
     `tags`, `project_id`, and (Cloud) `identity_ids`. Returns a plain dict so it
     can be asserted offline and splatted into the real API on the live path.
+
+    Isolation note: Letta's documented multi-tenant pattern is ONE AGENT PER
+    PRINCIPAL — reads then go through the agent-scoped subresources
+    (`agents.blocks.list(agent_id)` / `agents.passages.search(agent_id)`), which
+    isolate by `agent_id`. The agent name below keys on (tenant, user); when a
+    finer axis such as product is in play, give each (tenant, user, product) its
+    own agent so the boundary rides on `agent_id` rather than a `tags` convention
+    (see `scripts/product_isolation_demo.py`).
     """
     return dict(
         name=f"orbit-{scope.tenant_id}-{scope.user_id}",

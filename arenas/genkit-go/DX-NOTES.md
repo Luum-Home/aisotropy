@@ -35,13 +35,20 @@ renders `{{handlebars}}` templates through the same pipeline. Good separation of
 
 ## The painful
 
-### No isolation primitive — and it's invisible
-The single biggest gap for a multi-tenant runtime: stable Genkit exposes **no** `Session`,
-`Memory`, `Thread`, or `Conversation` type. You hand-roll a session store and pass keys into
-`ai.WithMessages`. Nothing binds a key to a tenant, and nothing warns you. The correct path
-(`tenant:user:session`) and the leaky path (`session`) are one string apart — and this arena's
-`TestIsolationLeak` shows a wrong key returning another tenant's secret through the real model.
-The docs are quiet exactly where you'd want guidance.
+### A memory primitive exists, but no isolation primitive — and the gap is invisible
+The single biggest gap for a multi-tenant runtime. Genkit-Go v1.10.0 **does** ship a session-memory
+primitive — the experimental `ai/exp` `SessionStore` + `localstore.NewInMemorySessionStore`
+(July-2026 Agents API preview, gated behind `requireExperimental`) — so "no memory at all" would be
+wrong. But that primitive is keyed by a developer-chosen session id with **no** tenant/user/product
+binding (`SessionSnapshot`/`SessionState` carry only a `SessionID`): it gives you **persistence, not
+isolation**. There is no tenant-scoped `Session`/`Memory`/`Thread` type. You still hand-roll the
+tenant binding and pass keys into `ai.WithMessages`; nothing binds a key to a tenant, and nothing
+warns you. The correct path (`tenant:user:session`) and the leaky path (`session`) are one string
+apart — `TestIsolationLeak` shows a wrong key returning another tenant's secret through the real
+model, and `TestRealSessionStoreIsTenantUnaware` reproduces the same read against the framework's
+**real** `localstore` SessionStore. (JS-vs-Go asymmetry: Genkit-JS has had stable-ish
+`ai.chat()`/`Session`/`SessionStore` longer; Go got there only via this preview.) The docs are quiet
+exactly where you'd want guidance.
 
 ### Schema instructions leak into the prompt text
 A concrete gotcha: `GenerateData` appends the JSON schema as instruction text to the user message.
@@ -55,9 +62,11 @@ Genkit ships OTel tracing, but the attributes are `genkit:*` / `genkit:metadata:
 `gen_ai.*` semantic conventions (re-verified against v1.10.0 source — zero `gen_ai.*` keys). For a
 team standardizing on OTel gen_ai dashboards/alerts, this is a real integration liability.
 
-### Memory / cost are on you
-No working-memory store, no vector store in-tree, no facts journal, no pre-spend cost gate.
-`ModelResponse.Usage` is post-hoc only. Everything tiered/governed is DIY or third-party
+### Tenant binding / cost governance are on you
+Genkit ships an experimental working-memory store (`ai/exp` SessionStore) and an in-tree offline
+vector store (`plugins/localvec`), but no facts/FTS journal and no pre-spend cost gate.
+`ModelResponse.Usage` is post-hoc only. The tenant/user/product binding on the session store, the
+tiered memory of different nature, and every governance gate are DIY or third-party
 (`genkitx-temporal` for durability).
 
 ### Dev-mode side effects

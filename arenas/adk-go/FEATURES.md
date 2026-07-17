@@ -14,55 +14,111 @@ real `orbit/` integration in this arena (builds, tests, and smokes offline).
 Coverage classes: **BUILT-IN** (framework primitive), **CONVENTION** (works,
 but by developer discipline), **PARTIAL**, **DIY**, **PAID**, **NOT-POSSIBLE**.
 
-## #1 Multi-tenant isolation — CONVENTION (no tenant binding)
+## What ADK does genuinely well (steelman) — RUN-VERIFIED
+
+**RUN-VERIFIED** by `cmd/strengths/strengths_demo.go` (`go run ./cmd/strengths`,
+exit 0) against the real, pinned `google.golang.org/adk/v2@v2.0.0` — only the
+model is faked via the `model.LLM` seam. ADK Go is Google's agent framework and
+is genuinely strong where aisotropy — a single cognitive **runtime**, not a
+multi-agent orchestration toolkit — does not compete. The isolation critique
+below (#1/#1b) is *narrow*; these are the counterweight.
+
+- **Multi-agent delegation — BUILT-IN (ADK's flagship).** `llmagent.Config.SubAgents`
+  (`agent/llmagent/llmagent.go:194`) auto-injects the framework's `transfer_to_agent`
+  tool (`internal/llminternal/agent_transfer.go`, `transferAgentName`). The demo's
+  coordinator emits `transfer_to_agent(agent_name="refunds_agent")`; the runner
+  routes **in-process** to that specialist and one `runner.Run` returns both the
+  transfer event and the sub-agent's answer (final event `Author=="refunds_agent"`,
+  and the sub-agent's context even carries the transfer tool's `FunctionResponse`).
+  **aisotropy has no agent-to-agent transfer** — this is squarely ADK's domain.
+- **Full callback pipeline — BUILT-IN.** `Before/AfterModelCallbacks`
+  (`llmagent.go:228/237`), `Before/AfterToolCallbacks` (`llmagent.go:316/322`), plus
+  `Before/AfterAgentCallbacks` (`agent.go:129`) and `On*ErrorCallbacks`. The demo
+  records the real fire order on a tool-using turn: `BeforeModel → AfterModel →
+  BeforeTool → AfterTool → BeforeModel → AfterModel` — the tool bracketed inside
+  the model loop. A clean governance/cache/observability seam (the same
+  `BeforeModelCallbacks` seam backs the response-cache in #12 and the auth gate
+  in #16).
+- **gen_ai OTel semantic-convention spans — BUILT-IN, self-hostable.** With no ADK
+  config (`internal/telemetry` reads the global `otel.GetTracerProvider()`), the
+  framework emits `invoke_agent <name>` (`internal/telemetry/node_tracing.go`) and
+  `generate_content <model>` spans carrying `gen_ai.*` attributes; the demo
+  captured 7 across the two spans. This is the dimension where ADK **ties**
+  aisotropy (see #9/#21) and beats Eino/Genkit's proprietary telemetry.
+
+**AISOTROPY COMPARISON (honest):** ADK wins on multi-agent orchestration
+(sub-agents, `transfer_to_agent`, A2A, workflow graph) and ties on gen_ai OTel.
+aisotropy is a single-runtime with a different narrow edge — isolation-by-default
+(all four scope axes bound from `context.Context` as an unforgeable `Scope`).
+Delegation vs. isolation-by-construction are different tools, not the same
+scoreboard.
+
+## #1 Multi-tenant isolation — BUILT-IN construction + one residual axis
 
 - **Real mechanism:** `session.Service.Get/Create` keyed by composite
-  `(appName, userID, sessionID)`. `runner.Run(ctx, userID, sessionID, …)`
-  passes `userID`/`sessionID` straight through.
-- **Why CONVENTION, not BUILT-IN construction:** ADK has no `TenantID` field
-  and does not bind the identity to an authenticated caller. The composite key
-  isolates *when the developer folds tenant into it*; drop that component and
-  two tenants collide silently (proven in `orbit/isolation.go`,
-  `TestTenantDropLeaks`).
-- **AISOTROPY COMPARISON:** aisotropy carries `tenant_id` in `context.Context`
-  and scopes every memory read per-statement/per-key — the unscoped read is
-  unrepresentable. ADK's *construction class* matches `adk-python`'s composite
-  PK, but `adk-python#1641` shows even that leaked when a sub-query dropped the
-  `user_id` filter. ADK Go leaves the whole *tenant* dimension to discipline.
+  `(appName, userID, sessionID)` — **three native slots**. `appName` is bound at
+  runner construction (`runner.Config.AppName` → `r.appName`; `runner.Run(ctx,
+  userID, sessionID, …)` never takes an `appName`), so it is a native,
+  non-droppable-per-request key component. `userID`/`sessionID` are per-request.
+- **The real story — 4 axes onto 3 slots:** aisotropy binds four axes
+  (`tenant_id, user_id, session_id, product_id`) from `context.Context`. ADK has
+  three native slots. A competent developer binds any one axis to `appName` by
+  running one runner per value of it (one runner per tenant, or per product),
+  making that axis native and non-droppable. But three slots cannot cover four
+  axes: exactly one axis has no slot of its own, must be concatenated into
+  `userID` with no framework-enforced separator, and is the developer-discipline,
+  drop-vulnerable residual. This is proven both ways in `orbit/isolation.go`
+  (`appName`=app, tenant residual → `TestResidualAxisDropLeaks` in
+  `product_isolation_test.go`) and `orbit/product_isolation.go` (`appName`=product,
+  tenant residual).
+- **The leak is a chosen-mapping residual, not an ADK inability.** When the
+  residual axis is kept in `userID`, the composite key isolates cleanly
+  (`TestCompositeKeyIsolates`); drop it and two tenants collide on the same
+  `(appName, userID, sessionID)` session — a genuine same-session read. It is the
+  cost of composing a 4th axis by hand, on exactly one axis at a time.
+- **AISOTROPY COMPARISON:** aisotropy carries all four axes in `context.Context`
+  and scopes every memory read per-key — no axis is left to hand-composition, so
+  the drop is unrepresentable. ADK gives you three native slots and you compose
+  the fourth. `adk-python#1641` (a sub-query that dropped the `user_id` filter)
+  shows even a native slot leaks if a query forgets it — the risk is per-query
+  discipline in both frameworks; aisotropy narrows the hand-composed surface to
+  zero.
 - **Correction:** the prior arena claim ("no scoping / untyped `map[string]any`")
   was factually wrong about the real framework and is fixed here.
 
-## #1b Multi-PRODUCT isolation (3rd axis) — CONVENTION (no product binding)
+## #1b Multi-PRODUCT isolation (4th axis) — STRONGEST config makes it native
 
 **RUN-VERIFIED** by `orbit/product_isolation.go` + `cmd/productiso/product_isolation_demo.go`
 (`go run ./cmd/productiso`, exit 0) and `orbit/product_isolation_test.go`
 (`go test ./orbit`, ok) against the real runner + `session.Service`.
 
 - **The axis:** aisotropy scopes memory by the composite
-  `(tenant_id, user_id, session_id, product_id)`. The prior arenas only tested
-  tenant/user; `product_id` — the axis a single tenant+user uses to keep two of
-  *their own* products' memory apart — was never tested here until now.
-- **Real mechanism:** ADK Go's key is `(appName, userID, sessionID)`. There is
-  **no `ProductID` field**. `product_id` can only exist as a 4th string the
-  developer hand-folds into the ADK key (e.g. `userID = "acme|alice|productX"`),
-  and the framework binds it to nothing — trusted verbatim.
-- **Positive control (passes):** `acme|alice|productX` writes a marker and reads
-  it back — `marker present`.
-- **Correct-path isolation (passes):** with product folded into the key,
-  `acme|alice|productY` (SAME tenant+user, different product) reads → `no marker`.
-  The raw `session.Service` probe confirms `Get(acme|alice|productY, s1)` is a
-  miss.
-- **CROSS-PRODUCT LEAK (proven, actually happens):** drop `product_id` from the
-  key — the *natural* bug, since ADK has no product slot to remind you it should
-  be there — and productX's write + productY's read collapse onto the same
-  `(acme|alice, s-shared)` session. **`productY reads productX's marker`**
-  (`LEAK*` row, run-verified). Nothing in the framework prevents it; `product_id`
-  is a convention label, not a boundary. The raw probe also shows any caller that
-  names productX's exact key gets productX's session (no identity binding).
-- **AISOTROPY COMPARISON:** aisotropy makes `product_id` a first-class scope axis
-  carried through `context.Context`, so the product-less read is unrepresentable.
-  In ADK Go the 3rd axis is pure developer discipline — and, like the tenant
-  axis, the leaky path is one line shorter than the correct one.
+  `(tenant_id, user_id, session_id, product_id)`. `product_id` is the axis a
+  single tenant+user uses to keep two of *their own* products' memory apart.
+- **STRONGEST ADK config — `appName = product`, one runner per product.** Because
+  `appName` is bound at runner construction and is never a per-request argument,
+  a per-product runner makes the product axis a **native, non-droppable** key
+  component. A cross-product read is a storage miss **by construction** — no
+  per-request code path can "forget" it. A competent developer prevents the
+  product-axis leak exactly this way.
+- **Positive control (passes):** `productX`'s runner writes a marker and reads it
+  back — `marker present`.
+- **Cross-product isolation by construction (passes):** `productY`'s runner reads
+  the SAME `userID` + `sessionID` → `no marker`. The raw `session.Service` probe
+  confirms `Get(appName=productY, acme|alice, s1)` is a miss because the `appName`
+  differs — not because of any per-request discipline.
+- **The honest residual (the surviving leak):** with `appName` spent on product
+  and `sessionID` on session, `userID` must carry BOTH tenant and user. Tenant is
+  now the axis with no native slot; keep it in `userID` and a different tenant
+  isolates, drop it and two tenants' `alice` collide → a genuine same-session read
+  (`LEAK*` row). This is the one residual of mapping 4 axes onto 3 slots, and it
+  is symmetric: spend `appName` on tenant instead and PRODUCT becomes the
+  residual. Exactly one of {tenant, product} always lacks a native slot; the
+  developer picks which.
+- **AISOTROPY COMPARISON:** aisotropy binds all four axes from `context.Context`,
+  so neither tenant nor product is ever hand-composed and no axis is drop-prone.
+  ADK gives three native slots (one bindable to product via `appName`) and leaves
+  the fourth to the developer.
 
 ## #2 Structured output + retry — BUILT-IN
 
@@ -205,7 +261,7 @@ is faked via the framework's own `model.LLM` seam) to justify each class. Every
 the closest ADK primitive. Synthetic token counts (`len/4`) and keyword-set
 "embeddings" are labeled; no API key, no network.
 
-**Tally: 6 BUILT-IN · 4 PARTIAL · 1 PAID · 9 DIY · 5 NOT-POSSIBLE (25 total).**
+**Tally: 6 BUILT-IN · 5 PARTIAL · 1 PAID · 9 DIY · 4 NOT-POSSIBLE (25 total).**
 
 | # | Feature | Class | Run-verified evidence (real ADK path) |
 |---|---|---|---|
@@ -224,7 +280,7 @@ the closest ADK primitive. Synthetic token counts (`len/4`) and keyword-set
 | 13 | Scope-gated tools (governance by absence) | PARTIAL | `tool.FilterToolset`+`AllowedToolsPredicate` (BUILT-IN) hid `write_tasks`; **scope→identity binding is DIY** (ADK has no scope) |
 | 14 | Multi-step agent loop (tool call) | BUILT-IN | runner ran 2 model steps: `FunctionCall get_weather` → real tool exec → final text |
 | 15 | Typed tools + MCP | BUILT-IN | `functiontool.New[T]` inferred JSON-Schema `params=[city]` from the Go struct; `tool/mcptoolset` consumes MCP natively |
-| 16 | Bearer-token → identity binding | NOT-POSSIBLE | runner accepted a forged `userID` verbatim (no binding); a bearer→identity gate is entirely DIY middleware |
+| 16 | Identity-binding gate (auth) | PARTIAL | `llmagent BeforeAgentCallback` (BUILT-IN seam) rejected an unbound `userID` before the model ran; the credential check is DIY — parity with aisotropy's NoAuth-vs-JWT (ADR-0024) |
 | 17 | Per-tenant PRE-SPEND quota gate | DIY | no ADK primitive (cost is post-hoc); DIY gate rejects over-budget tenant **before** `runner.Run` (model never runs) |
 | 18 | Circuit breaker (fast-fail) | DIY | no ADK primitive; DIY breaker opens after 5 failures then fast-fails |
 | 19 | Quota-pressure degradation (cheap model) | DIY | no ADK primitive; DIY router picks a cheap model at ≥95% pressure |
@@ -242,17 +298,24 @@ keyword recall) — and nothing else. There is **no self-hostable vector tier**
 importance/recency scoring**, **no supersede**, **no transactional outbox**, and
 **no sleep-cycle consolidation**. aisotropy's 4-tier temperature hierarchy
 (BadgerDB µs / SQLite+FTS5 / cosine vectors / DataFusion batch) collapses here to
-2 tiers + a large DIY surface (9 DIY + 5 NOT-POSSIBLE of 25).
+2 tiers + a large DIY surface (9 DIY + 4 NOT-POSSIBLE of 25).
 
 ## Summary
 
 ADK Go is a **real, capable orchestration runtime**: structured output, tools
 (MCP/A2A), SSE, session/memory backends, and OTel `gen_ai` observability are
-all first-class and verified here against source. Its isolation is
-**convention with no tenant binding** — the composite key is real construction,
-but nothing supplies or enforces a tenant dimension, so the leaky path is one
-line shorter than the correct one.
+all first-class and verified here against source. Its isolation is real
+composite-key **construction across three native slots** (`appName` bound at
+runner construction, `userID`, `sessionID`). The honest thesis of this arena:
+aisotropy binds **four** scope axes from `context.Context` by default (an
+unforgeable `Scope`); ADK gives you **three native slots** and you compose the
+fourth. A competent developer makes any one extra axis native by running one
+runner per value of it (e.g. `appName=product`); the remaining axis rides in
+`userID` by convention and is the drop-vulnerable residual — a chosen-mapping
+cost on exactly one axis at a time, not an ADK inability to isolate.
 
 **vs. aisotropy:** ADK wins on protocol breadth (MCP, A2A) and ties on OTel;
-aisotropy wins on isolation-by-construction, self-hostable tiered memory,
-pre-spend cost governance, and sovereignty (no Vertex gradient).
+aisotropy wins on all-axes isolation-by-construction, self-hostable tiered
+memory, pre-spend cost governance, and sovereignty (no Vertex gradient). Auth is
+near-parity: both trust the identity until a gate binds it (ADK
+`BeforeAgentCallback`; aisotropy JWT, else its default NoAuth mode).

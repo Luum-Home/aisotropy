@@ -1,14 +1,14 @@
 ---
 type: Feature matrix
 title: "Spring AI — features vs aisotropy"
-description: Coverage map of Spring AI 1.1.8 capabilities vs aisotropy's built-ins, grounded in what was executed or source-verified against the shipped jars.
+description: Coverage map of Spring AI 2.0.0 capabilities vs aisotropy's built-ins, grounded in what was executed or source-verified against the shipped jars.
 tags: [arenas, spring-ai, features, comparison, jvm]
 timestamp: 2026-07-16T00:00:00Z
 ---
 
 # Spring AI — Features
 
-**Framework:** Spring AI 1.1.8 (`spring-ai-client-chat` / `spring-ai-model` / `spring-ai-commons`),
+**Framework:** Spring AI 2.0.0 (`spring-ai-client-chat` / `spring-ai-model` / `spring-ai-commons`),
 Apache-2.0, Java/JVM. **Integration status: REAL** — Orbit compiled and run against the genuine jars
 with a keyless `EchoChatModel`. Each row is tagged **RAN** (executed in a demo here) or
 **SOURCE** (verified from the shipped classes via `javap`/`unzip -l`, or from the reference docs;
@@ -87,11 +87,13 @@ OpenAPI come from separate Spring MVC + springdoc declarations. Not one definiti
 ### 2.2 Fail-closed reflection loop (502) — **PARTIAL** · RAN
 `BeanOutputConverter.convert()` parses + validates and **throws** on malformed JSON (fail-closed
 *parse*). **Executed:** `getFormat()`/`getJsonSchema()` produced, `convert(json)` → typed `Ticket`
-(`FeatureDemoMain` line 3). But **1.x has no bounded repair/retry loop** — a schema violation is an
-exception, not an automatic re-request with the typing error. Spring AI **2.0** adds *self-correcting
-structured output* (provider-native + schema-validation retry) per the
-[2026-06 blog](https://spring.io/blog/2026/06/23/spring-ai-self-correcting-structured-output/); on
-1.1.8 the repair loop is DIY. → PARTIAL. aisotropy's reflection loop is default and returns 502.
+(`FeatureDemoMain` line 3) — the plain converter is fail-closed at the *parse* step: a schema
+violation **throws**, it is not an automatic re-request with the typing error. Spring AI **2.0** now
+ships *self-correcting structured output* (provider-native + schema-validation retry) per the
+[2026-06 blog](https://spring.io/blog/2026/06/23/spring-ai-self-correcting-structured-output/), so a
+bounded repair loop is available in-framework (it was DIY in 1.x). Orbit still exercises the plain
+converter, not that retry advisor — SOURCE, not executed here. → PARTIAL. aisotropy's reflection loop
+is default and returns 502.
 
 ### 2.3 SSE + immediate ctx-cancel — **BUILT-IN** · SOURCE
 `StreamingChatModel.stream(Prompt) : Flux<ChatResponse>` (confirmed via `javap`; `ChatModel` extends
@@ -190,13 +192,12 @@ No enforced isolation/cost/license/contract gates. DIY.
 Apache-2.0, fully self-hostable, no SaaS gate anywhere in the framework. BUILT-IN.
 
 ### 5.7 Dependency license posture (scanned) — **PERMISSIVE** · RAN
-`license-maven-plugin` over the real 1.1.8 tree (`scripts/license_scan.sh`, exit 0):
-- **41 dependencies scanned**, **100% permissive**.
-- **Apache-2.0** (~31): all Spring / Spring-AI / Jackson / Micrometer / Reactor / victools /
-  networknt / snakeyaml / itu / classmate / swagger / validation-api.
-- **MIT** (4): jtokkit, `mcp-core`, `mcp-json-jackson2`, slf4j-api; **MIT-0** (1): reactive-streams.
+`license-maven-plugin` over the real 2.0.0 tree (`scripts/license_scan.sh`, exit 0):
+- **34 dependencies scanned**, **100% permissive**.
+- **Apache-2.0** (27): all Spring 7 / Spring-AI 2.0 / Jackson (2.x annotations + 3.x core/databind) /
+  Micrometer / Reactor / victools / networknt / itu / classmate / swagger / commons-logging / jspecify.
+- **MIT** (2): jtokkit, slf4j-api; **MIT-0** (1): reactive-streams.
 - **BSD** (4): ST4 (BSD), ANTLR 3 (BSD), ANTLR 4 (BSD-3-Clause), HdrHistogram (BSD-2-Clause/CC0).
-- **CC0 / Public Domain** (1): LatencyUtils.
 - **Strong copyleft (GPL/AGPL/LGPL): 0. Weak copyleft (MPL-2.0): 0. Restricted/source-available
   (BUSL/SSPL/ELv2/Commons-Clause/FSL): 0.**
 - **Verdict:** a **pure permissive line** — stronger than the Python arenas (Pydantic AI / LangGraph /

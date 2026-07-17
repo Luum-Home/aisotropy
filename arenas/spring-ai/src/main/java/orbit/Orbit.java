@@ -17,7 +17,7 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 
 /**
- * Orbit — a minimal multi-tenant support chatbot built on the REAL Spring AI 1.1.8 API.
+ * Orbit — a minimal multi-tenant support chatbot built on the REAL Spring AI 2.0.0 API.
  *
  * <p>Wiring (all genuine Spring AI types, no provider key required):
  * <pre>

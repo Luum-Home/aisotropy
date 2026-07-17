@@ -50,9 +50,10 @@ GENKIT_ENV=prod go run ./scripts/
 
 `GENKIT_ENV=prod` keeps Genkit from starting its dev-mode Reflection server. The smoke proves the
 build runs on the real framework (dotprompt, structured output, tool-calling) and then drives the
-adversarial isolation exercise through `genkit.Generate`. **It exits 1 by design** — a confirmed
-cross-tenant leak is the expected result for a convention-based framework (same contract as the
-other arenas' smokes).
+adversarial isolation exercise through `genkit.Generate`. **It exits 0 on the expected outcome** —
+a confirmed cross-tenant leak *is* the pass condition for a convention-based framework (the positive
+control verified AND the leak reproduced); it exits 1 only if the leak could *not* be reproduced or
+the positive control broke.
 
 ```bash
 GENKIT_ENV=prod go test ./orbit/ -v    # same proof as a pass/fail regression test
@@ -78,15 +79,54 @@ curl -sN -X POST localhost:4116/v1/tenant/acme/user/alice/chat/stream \
 The live server namespaces the store key as `tenant:user:session` — the *correct* convention. It
 is still only a convention: nothing in Genkit forces or checks it (see the smoke for the leak).
 
+## What Genkit Go does genuinely well
+
+This arena's core claim is narrow — *isolation-by-default* — and it would be a strawman to leave it
+there. Genkit Go is a **strong, general-purpose AI application library** with genuinely excellent
+DX, backed by Firebase/Google. Three real strengths, each **exercised offline against the pinned
+v1.10.0 API** (run `GENKIT_ENV=prod go run ./cmd/strengths`, exit 0):
+
+| # | Strength | Real v1.10.0 API (module cache) | Proven by |
+|---|---|---|---|
+| 1 | **Flows** — observable, composable, individually-runnable/deployable units. Tracing is automatic. | `genkit.DefineFlow` / `genkit.DefineStreamingFlow`; `core.Flow.Run` / `core.Flow.Stream` | a flow composing a flow ran and auto-emitted OTel spans on Genkit's own `TracerProvider`; a streaming flow delivered progressive chunks |
+| 2 | **Dotprompt** — prompt-as-config with a typed input schema; model + template + schema live in a `.prompt` file, hot-editable, no recompile. | `genkit.LookupPrompt`; `ai.Prompt.Execute` + `ai.WithInput` | `orbit_support.prompt` executed with two different input structs through the same file |
+| 3 | **Model-agnostic provider abstraction** — every provider is registered by name; caller code is provider-independent. | `genkit.DefineModel` / `genkit.LookupModel`; `ai.Model` + `ai.WithModelName` | one identical `genkit.Generate` call, switching only the model-name string, dispatched to two distinct providers |
+
+Beyond these, the arena also exercises **structured output** (`genkit.GenerateData[T]`), a **real
+tool-call loop** (`genkit.DefineTool`), **SSE streaming with ctx-cancel** (`ai.WithStreaming`), an
+**offline vector store** (`plugins/localvec`), and an **evaluator runner** (`genkit.DefineEvaluator`
+/ `genkit.Evaluate`) — see [FEATURES.md](FEATURES.md).
+
+**Honest framing:** Genkit's flow + dotprompt + deployment DX is a real strength — for building and
+shipping AI features (especially on Firebase/Google Cloud), it is excellent. **aisotropy is a
+self-hosted, multi-tenant Go runtime — a different niche.** The two overlap on one axis:
+isolation-by-default, where Genkit's memory primitive is experimental and tenant-unaware (next
+section), so tenant binding is on the developer. Both statements are true; this arena keeps both.
+
 ## Isolation model
 
-**Convention — developer-passed session key. Genkit Go ships no isolation primitive at all.**
+**Convention — developer-passed session key. Genkit-Go v1.10.0 ships an EXPERIMENTAL/preview
+session-memory primitive, but NO isolation primitive.**
 
-Verified against v1.10.0: the `genkit` and `ai` packages expose Generate / Flows / Tools /
-Prompts but **no** public `Session`, `Memory`, `Thread`, or `Conversation` type. Multi-tenancy is
-entirely developer-built: you assemble `[]*ai.Message` yourself and hand them to `ai.WithMessages`.
-The session store ([`orbit/store.go`](orbit/store.go)) is keyed by a bare string chosen by the
-developer; nothing ties that key to a tenant.
+Verified against v1.10.0: Genkit-Go **does** ship a session/memory primitive — the experimental
+`github.com/firebase/genkit/go/ai/exp` + `genkit/exp` Agents API, with a pluggable `SessionStore`
+and a shipped in-memory implementation, `localstore.NewInMemorySessionStore` (it persists and
+replays `Messages` across turns; Firestore via plugin). It was formalized in the **July-2026 Genkit
+Agents API preview** (TS + Go). But it is keyed by a **developer-chosen session id with NO
+tenant / user / product binding** — the `SessionSnapshot` / `SessionState` structs carry only a
+`SessionID` field, so it provides **persistence, not isolation**. Two identities that reuse one
+session id share memory. There is still **no** public `Session`-scoped-by-tenant / `Memory` /
+`Thread` type that binds identity; multi-tenancy remains entirely developer-built.
+
+- **JS-vs-Go asymmetry (honest):** Genkit-**JS** has shipped `ai.chat()` / `Session` / `SessionStore`
+  for longer and more stably; Genkit-**Go** reached rough parity only via this July-2026
+  preview/beta surface, which is gated behind `requireExperimental` and explicitly "may change."
+- **We reproduce the leak against Genkit's REAL primitive.** `TestRealSessionStoreIsTenantUnaware`
+  (`orbit/isolation_test.go`) drives `localstore.NewInMemorySessionStore` directly — no DIY store in
+  the path — and shows a tenantB read of a shared session id returns tenantA's messages verbatim,
+  because the store's only key is the session id. The isolation-leak flow below (`orbit/store.go`)
+  uses a DIY stand-in with **identical** semantics for the end-to-end `genkit.Generate` path; the
+  real `exp` SessionStore behaves the same way (session-id-keyed, tenant-unaware — see `cmd/parity`).
 
 ```go
 // orbit/orbit.go — the chat flow (real genkit.DefineFlow)
@@ -101,7 +141,8 @@ resp, _ := genkit.Generate(ctx, g,
 // If the key belonged to another tenant, that tenant's secret is now in the reply.
 ```
 
-The correct path and the leaky path are one string apart, and the framework validates neither.
+The correct path and the leaky path are one string apart, and the framework validates neither —
+including its own `exp` SessionStore, which has no tenant field to validate against.
 
 ## Features covered (11-point checklist)
 
@@ -109,11 +150,11 @@ See [FEATURES.md](FEATURES.md) for the full coverage map with honesty classes. S
 
 | # | Feature | Class | Notes |
 |---|---|---|---|
-| 1 | Multi-tenant isolation | **CONVENTION** | No `Session`/`Memory` type; developer-passed key. Leak proven through real `Generate`. |
+| 1 | Multi-tenant isolation | **CONVENTION** | An experimental `ai/exp` `SessionStore` (+ `localstore`) ships memory, but it is session-id-keyed with **no** tenant/user/product binding — persistence, not isolation. Leak proven through real `Generate` **and** against the real `localstore` SessionStore (`TestRealSessionStoreIsTenantUnaware`). |
 | 2 | Structured output | **BUILT-IN** | `genkit.GenerateData[T]` with JSON-schema validation (proven offline). |
 | 3 | Tools | **BUILT-IN** | `genkit.DefineTool` + real tool-call round trip (proven offline). |
 | 4 | Streaming (SSE) | **BUILT-IN** | `ai.WithStreaming` callback; SSE endpoint streams real chunks. |
-| 5 | Working memory | **DIY** | No built-in session store; `genkitx-temporal` (3rd-party) for durability. |
+| 5 | Working memory | **BUILT-IN (experimental)** | `ai/exp` `SessionStore` + shipped `localstore.NewInMemorySessionStore` persist/replay `Messages` (July-2026 Agents API preview; gated behind `requireExperimental`, "may change"). Tenant binding is DIY. Durable exec is 3rd-party (`genkitx-temporal`). |
 | 6 | Semantic memory | **DIY** | Retriever/indexer interfaces exist; concrete vector store is BYO/plugin. |
 | 7 | Facts memory | **DIY** | No equivalent. |
 | 8 | Cost governance | **DIY** | `ModelResponse.Usage` is post-hoc; no pre-spend gate. |
@@ -131,8 +172,10 @@ Ran on this machine, Go 1.25.3, genkit v1.10.0:
 
 - `go build ./...` — clean
 - `gofmt -l` — clean; `go vet ./...` — clean
-- `GENKIT_ENV=prod go run ./scripts/` — features pass, isolation leak confirmed, exit 1 (expected)
-- `GENKIT_ENV=prod go test ./orbit/ -v` — `TestIsolationLeak` PASS, `TestFeaturesRunOffline` PASS
+- `GENKIT_ENV=prod go run ./scripts/` — features pass, isolation leak confirmed, exit 0 (expected pass)
+- `GENKIT_ENV=prod go run ./cmd/strengths/` — flows + dotprompt + provider-abstraction all exercised, exit 0
+- `GENKIT_ENV=prod go test ./orbit/ -v` — `TestIsolationLeak` PASS, `TestRealSessionStoreIsTenantUnaware`
+  PASS (leak reproduced against Genkit's real `localstore` SessionStore), `TestFeaturesRunOffline` PASS
 - `GENKIT_ENV=prod go run ./cmd/server/` — `/healthz`, `/chat`, `/chat/stream` all respond
 
 See [DX-NOTES.md](DX-NOTES.md) for the developer-experience assessment.

@@ -10,10 +10,13 @@
 //   - genkit.GenerateData[T]      real structured output
 //   - genkit.DefinePrompt / .prompt (dotprompt) via WithPromptFS
 //
-// The one thing the framework does NOT provide is tenant isolation. Stable
-// Genkit Go has no Session/Memory type; multi-tenancy is developer-passed
-// (see store.go). This build makes that boundary explicit so the isolation
-// smoke can drive a real cross-tenant leak through the real generate pipeline.
+// The one thing the framework does NOT provide is tenant isolation. Genkit-Go
+// v1.10.0 does ship an experimental ai/exp session-memory primitive
+// (localstore.NewInMemorySessionStore), but it is keyed by a developer-chosen
+// session id with no tenant/user/product binding — persistence, not isolation.
+// Multi-tenancy is therefore developer-passed (see store.go). This build makes
+// that boundary explicit so the isolation smoke can drive a real cross-tenant
+// leak through the real generate pipeline.
 package orbit
 
 import (

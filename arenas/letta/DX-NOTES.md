@@ -51,12 +51,20 @@ either stand up the full server stack or model the data plane yourself. We did t
 explicitly and with the real types — but it's friction aisotropy simply doesn't have (its
 stub LLM + in-process stores run with zero external services).
 
-### Multi-tenancy is developer-passed — and easy to get wrong
-`client.blocks.list()` with no arguments returns **every** block in the org.
-`client.blocks.retrieve(id)` does **no** tenant check. The correct, scoped call and the
-org-wide leak are one keyword argument apart, and the type system does nothing to stop you.
-Per-*user* key isolation only appears in Letta Cloud (per-project keys) — OSS is single-org.
-For regulated multi-tenant SaaS this is a real liability.
+### Multi-tenancy is single-org — isolate per-agent, map the caller yourself
+The honest shape: OSS Letta is a **single org**. Two read surfaces, and you have to know the
+difference. The **org-wide** primitives (`client.blocks.list()` with no arguments returns
+**every** block in the org; `client.blocks.retrieve(id)` does **no** tenant check) are
+one keyword argument from a cross-read, and the type system does nothing to stop you. The
+**agent-scoped** subresources (`client.agents.blocks.list(agent_id)`,
+`client.agents.passages.search(agent_id)`) DO isolate — they require an `agent_id` and never
+span agents — so Letta's documented pattern is **one agent per principal**, with your app
+mapping verified caller → `agent_id`. That works, but the binding is app-level, not
+framework-level: nothing forbids a developer from reaching for the org-wide primitive, and
+there's no must-agree bind from an authenticated caller to a tenant. Per-*user* key isolation
+only appears in Letta Cloud (per-project keys); the older per-principal **identities** are
+being deprecated in favour of per-agent scoping. For regulated multi-tenant SaaS, the fact
+that the unsafe primitive is always one call away is a real liability.
 
 ### LLM-self-managed memory — probabilistic, not deterministic
 Memory is edited by the LLM via tool calls — emergent, hard to audit. aisotropy's memory is

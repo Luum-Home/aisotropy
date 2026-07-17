@@ -33,17 +33,34 @@ After three years of v0.x churn, 1.0 shipped with a stable API. TheOSS core is M
 
 ## The painful
 
-### Prefix-match `Store.search()` — fundamental isolation weakness
-This is the critical flaw. `Store.search()` is an **element-wise** prefix scan over the
-namespace tuple. Namespace tenants as `(org, tenant, user)` and a search of just `("acme",)` —
-one element short of full scoping — returns EVERY tenant nested under the `acme` org
-(`tenantA`, `tenantB`, ...). This is not a bug you can fix with better docs; it's baked into the
-search semantics. (The match is element-wise, not string-prefix: `search(("tenant",))` does not
-match `("tenantA", ...)`. The leak is the shallow-prefix scan over a shared namespace root.)
+### Isolation is opt-in wiring, not a default
+On the raw `Store`, `Store.search()` is an **element-wise** prefix scan over the namespace tuple.
+Namespace tenants as `(org, tenant, user)` and a search of just `("acme",)` — one element short of
+full scoping — returns EVERY tenant nested under the `acme` org (`tenantA`, `tenantB`, ...). On the
+bare primitive, prefix depth is developer convention: this is an under-scoped query, the same class
+of bug any KV store has when hit with no authorization layer — **not** a framework defect, and not
+specific to LangGraph. (The match is element-wise, not string-prefix: `search(("tenant",))` does not
+match `("tenantA", ...)`.)
 
-aisotropy's exact-key scoping (`{tenant}:{user}:{session}`) + `Scope{}` value objects with
-unexported fields make cross-tenant reads **unrepresentable**. LangGraph's prefix-match is
-structurally leaky.
+The fix ships with the framework and it works. LangGraph Server's `@auth.on.store()` handler
+(importable from `langgraph_sdk`) runs on every store op and can rewrite/assert the namespace to
+the authenticated caller. Combined with deep namespaces `(org, user, product)`, asserting
+`namespace[:3] == (org, user, product)` makes both the shallow-prefix scan and a wrong-key read
+**structurally impossible** — the direct analogue of aisotropy's Scope. The demos prove it: an
+identity-bound store facade (plain app code, no server needed) closes both the tenant-axis and
+product-axis leaks on the OSS store.
+
+The honest, narrower difference: aisotropy binds all four axes
+(`tenant_id`, `user_id`, `session_id`, `product_id`) from the verified identity via
+`context.Context` **by default**, as a `Scope{}` value object with unexported fields — a
+wrong/forgotten key is unrepresentable. LangGraph gives you the same capability but you must wire
+it. aisotropy's own raw stores likewise depend on its Scope/handler layer; isolation is an
+application-boundary property in both. aisotropy's edge is that the binding is default-wired and
+the value object cannot be forged.
+
+Residual sovereignty note: the `@auth.on.store()` namespace-**rewrite** runs inside a LangGraph
+server (self-hosted or the managed Platform tier). The namespace-**assertion** pattern is plain app
+code any dev can add on the OSS store.
 
 ### LangSmith is paid/SaaS-gated
 Production tracing and persistence require LangSmith, which is:
@@ -68,17 +85,19 @@ façade pattern avoids this — the public API (`aisotropy/`) is stable; the int
 ## The verdict
 
 LangGraph is the **ecosystem play** — largest community, most integrations, fastest
-time-to-first-prototype for single-tenant. But the prefix-match isolation weakness and
-paid LangSmith dependency are real concerns for multi-tenant regulated deployments.
+time-to-first-prototype for single-tenant. Multi-tenant isolation is achievable and robust
+(deep namespaces + `@auth.on.store()`), but it is wiring you own rather than a default; the paid
+LangSmith dependency for production observability is a genuine sovereignty concern.
 
-**Best for:** Teams that need ecosystem breadth, fast prototyping, and can tolerate SaaS
-observability dependency. Single-tenant or trusted multi-tenant (non-adversarial) use cases.
+**Best for:** Teams that need ecosystem breadth and fast prototyping, are willing to wire the
+authorization layer for multi-tenant isolation, and can tolerate a SaaS observability dependency.
 
-**Worst for:** Regulated multi-tenant SaaS where cross-tenant leaks are unacceptable and
-self-hosted observability is required. The prefix-match leak + LangSmith SaaS dependency
-make this a poor fit.
+**Worst for:** Teams that want tenant isolation guaranteed by default (not by remembering to wire
+the auth handler) and self-hosted observability with no SaaS path.
 
 **vs. aisotropy:** LangGraph wins on ecosystem and time-to-prototype; aisotropy wins on
-isolation-by-construction, sovereignty, and long-term maintainability for regulated
-multi-tenant workloads. The trade is: ecosystem breadth + fast prototype vs. structural
-guarantees + self-hosted sovereignty.
+isolation-**by-default** (the Scope value object binds all four axes automatically and cannot carry
+a wrong key), self-hosted observability, and long-term maintainability. The trade is: ecosystem
+breadth with isolation-you-wire + a paid observability path vs. isolation-wired-by-default +
+self-hosted sovereignty. Both enforce isolation at the application boundary; the difference is
+whether it is on by default and unforgeable.

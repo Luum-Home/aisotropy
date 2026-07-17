@@ -7,14 +7,27 @@ import (
 )
 
 // SessionStore is the arena's conversation memory. This is the honest heart of
-// the isolation story: stable Genkit Go ships NO session/memory/thread
-// primitive. Multi-tenancy is entirely developer-passed — you assemble
-// []*ai.Message yourself and hand them to ai.WithMessages. The store key is a
-// bare string chosen by the developer; nothing in the framework ties that key
-// to a tenant, so a wrong key silently reads another tenant's history.
+// the isolation story.
 //
-// (Verified against github.com/firebase/genkit/go v1.10.0: the genkit and ai
-// packages expose Generate/Flows/Tools/Prompts but no Session type.)
+// Genkit-Go v1.10.0 DOES ship a session/memory primitive — the EXPERIMENTAL
+// ai/exp Agents API with a pluggable SessionStore and a shipped in-memory
+// localstore.NewInMemorySessionStore (persists+replays Messages across turns).
+// But that primitive is keyed by a developer-chosen session id with NO
+// tenant/user/product binding (its SessionSnapshot/SessionState carry only a
+// SessionID field) — it provides PERSISTENCE, not ISOLATION.
+//
+// This type is a deliberately minimal DIY stand-in with IDENTICAL semantics
+// (session-id-keyed, tenant-unaware) so the end-to-end genkit.Generate leak
+// path stays small and legible. The leak is NOT an artifact of the stand-in:
+// orbit/isolation_test.go's TestRealSessionStoreIsTenantUnaware reproduces the
+// exact same cross-tenant read against Genkit's REAL localstore SessionStore.
+// Either way, multi-tenancy is developer-passed — you assemble []*ai.Message
+// yourself and hand them to ai.WithMessages; the store key is a bare string,
+// and nothing in the framework ties it to a tenant, so a wrong/shared key
+// silently reads another tenant's history.
+//
+// (Verified against github.com/firebase/genkit/go v1.10.0: no tenant-scoped
+// Session/Memory type exists; the exp SessionStore is session-id-keyed only.)
 type SessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string][]*ai.Message

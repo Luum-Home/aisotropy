@@ -18,13 +18,19 @@ more agent-building**.
 aisotropy achieves the same outcome through the builder pattern (`New(WithLLM(...), WithMemory(...))`),
 but Mastra's DX is more cohesive because it's all in one ecosystem.
 
-### `resourceId`/`threadId` scoping — closest to construction
-Mastra's memory scoping is the most authoritative of the three competitors. `resourceId` acts
-as a tenant-level partition, and `threadId` as a session-level partition. The ownership
-validation makes it harder to accidentally cross tenants than Pydantic AI's `RunContext`.
+### Four real scoping levers — closest to construction
+Mastra's memory scoping is the most authoritative of the three competitors. It gives a competent
+developer four levers: `resourceId` (owner partition, with thread↔resource ownership validation),
+`threadId` (session partition), working-memory `scope: 'resource'|'thread'`, and
+`semanticRecall.filter` (MongoDB-style metadata filter over the vector store — the docs' own
+`filter: { projectId: { $eq: 'project-a' } }`). Applied, they isolate tenants, users, and products
+correctly (run-verified in `scripts/product_isolation_demo.ts`).
 
-aisotropy goes further: `Scope{}` value objects with unexported fields make cross-tenant reads
-**unrepresentable** in type system. Mastra gets close but not all the way.
+aisotropy goes further on the axis that matters: `Scope{}` value objects with unexported fields,
+built from verified identity and auto-propagated via `context.Context`, make a wrong or forgotten
+axis **unrepresentable** and filter it server-side on every read. Mastra's levers are real but
+convention — each is a per-call responsibility, and the default (axis in no lever) silently does not
+partition. That per-call convention is exactly the surface `mastra#11856` slipped through.
 
 ### Memory processors — cognitive efficiency
 Automatic trimming of retrieved messages before they hit the context window. This is a real
@@ -54,10 +60,13 @@ the space) or Pydantic AI's polished DX, Mastra feels like the newcomer.
 aisotropy's Go ecosystem is smaller than Python/TS but more mature for infrastructure — the
 language itself enforces stricter patterns that help with long-lived projects.
 
-### mastra#11856 — real cross-tenant leak
-Even the closest framework to isolation-by-construction had a production bug: `listMessages`
-ignored `resourceId` and only filtered by `threadId`, leaking data across tenants sharing a
-thread. This is the class of bug that aisotropy's value-object `Scope` prevents at the type level.
+### mastra#11856 — the convention gap, illustrated by a historical bug
+Even the framework with the most authoritative keys shipped this bug (since fixed): `listMessages`
+ignored `resourceId` and filtered only by `threadId`, crossing tenants that shared a thread. It is
+the concrete face of the convention gap — one forgotten filter on one path. Because Mastra's scoping
+is a per-call convention rather than an auto-propagated identity axis, the surface for this class of
+mistake exists framework-wide. aisotropy's value-object `Scope` (unexported fields, server-derived,
+carried via `context.Context`) filters the axis on every read, so the same mistake cannot compile.
 
 ### Partial built-in, partial DIY
 Memory and vectors are built-in, but facts journal, cost governance, and observability are DIY.

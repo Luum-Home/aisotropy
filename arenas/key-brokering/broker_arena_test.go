@@ -1,40 +1,47 @@
-// Package keybrokering is an adversarial arena that proves — head-to-head, under
-// REAL Docker containers — where a coding agent's provider key physically lives.
+// Package keybrokering proves aisotropy's OWN key-broker invariant with running
+// code, and honestly situates it against the wider agent-sandbox field.
 //
-// The claim under test used to be "asserted (we read their code)". This arena
-// upgrades it to "proven adversarially", the same way the isolation matrix in
-// arenas/README.md turns "should isolate" into a reproduced cross-tenant leak:
-// we run BOTH execution models against a live daemon and probe the container's
-// own environment with `printenv`, the ground-truth of what a process inside the
-// box can read.
+// aisotropy's RunTask is a clean implementation of the STANDARD "sandbox-as-tool"
+// pattern (LangChain's "Pattern 2"): the model runs HOST-side, only tool execution
+// is sandboxed, and the provider key never enters the sandbox. That is NOT an
+// aisotropy innovation — it is table stakes across the field (E2B, Daytona,
+// deepagents, the OpenAI Agents SDK / Anthropic code-interpreter integrations all
+// run the model host-side and keep the key out of the sandbox). aisotropy's
+// contribution is narrower: the pattern is wired-by-default with the invariant
+// ENFORCED in code (Spec.Env is left nil + assertNoProviderSecret), and there is a
+// real, narrower edge specifically against coding-CLI-in-a-box orchestrators.
 //
-// Two execution models, one probe:
+// Two execution models, one probe — but note the ASYMMETRY in what each proves:
 //
-//   - The coding-CLI-in-a-box (the "sandcastle" pattern). The model-calling
-//     process (Claude Code, Codex, Cursor, …) runs INSIDE the container, so the
-//     provider credential must be injected into the container env. Sandcastle
-//     does exactly this: its startContainer maps the merged provider env into
-//     `docker run … -e KEY=VALUE` flags (see src/DockerLifecycle.ts:126 in the
-//     pinned clone, and the README's honest note). We reproduce that model
-//     faithfully at the container-env level: stand up a container WITH the key in
-//     its env via aisotropy's own Docker provider (the same `-e` mechanism), then
-//     `printenv` from inside — the key is PRESENT. That is the security-relevant
-//     fact, independent of which coding CLI runs on top.
+//   - The coding-CLI-in-a-box (the "sandcastle" pattern). An UNMODIFIED third-party
+//     coding CLI (Claude Code, Codex, Cursor, …) runs INSIDE the container, so —
+//     under sandcastle's no-proxy design — the provider credential must be injected
+//     into the container env. Sandcastle's own README states it: "No API key proxy
+//     exists. The key flows directly into the container environment," and its
+//     startContainer maps the merged provider env into `docker run … -e KEY=VALUE`
+//     flags (src/DockerLifecycle.ts:126 in the pinned clone). Side A does NOT run
+//     sandcastle's binary; it is aisotropy's own container reproducing that `-e`
+//     injection mechanism to show `printenv` sees the key — a minimal repro of
+//     sandcastle's DOCUMENTED behavior. Sandcastle's behavior is established by the
+//     source citation in README.md, not by this test.
 //
-//   - aisotropy's RunTask (the broker). The model call happens HOST-side; only
-//     the tool EXECUTIONS the model chooses run inside the container, and the
-//     sandbox Spec.Env is left nil by construction. We drive the REAL public
-//     App.RunTask with a live provider key in the HOST process, wrap the Docker
-//     provider in a probe, and assert the container env carries NEITHER the key's
-//     value NOR its name — while the task still completes host-side and merges a
-//     real commit to HEAD.
+//   - aisotropy's RunTask (Pattern 2, invariant enforced) — the genuinely sound
+//     proof. The model call happens HOST-side; only the tool EXECUTIONS the model
+//     chooses run inside the container, and the sandbox Spec.Env is left nil by
+//     construction. We drive the REAL public App.RunTask with a live provider key
+//     in the HOST process, wrap the Docker provider in a probe, and assert the
+//     container env carries NEITHER the key's value NOR its name — while the task
+//     still completes host-side and merges a real commit to HEAD.
+//
+// Nuance: key-in-container is intrinsic to sandcastle's NO-PROXY design specifically,
+// not a law of the category. A proxy sidecar (LiteLLM-style, or Claude Code pointed
+// at ANTHROPIC_BASE_URL with a dummy token) could keep the real key host-side even
+// with a CLI in the box.
 //
 // Honesty gate: docker/git-gated (t.Skip when absent, like the rqlite/qdrant
 // suites), no secret-shaped literal in source (the canary is assembled at
 // runtime), and the caveats are documented in README.md — a full sandcastle run
-// needs a real coding CLI + model, which this arena does not stand up; the
-// key-INJECTION difference is what is provable at the container-env level, and it
-// is the fact that matters.
+// needs a real coding CLI + model, which this arena does not stand up.
 package keybrokering
 
 import (
@@ -152,11 +159,14 @@ func (c *scriptedHostClient) StreamChat(_ context.Context, _, _ string) (<-chan 
 	return ch, nil
 }
 
-// TestKeyBrokering_HeadToHead is the adversarial proof. Side A reproduces the
-// coding-CLI-in-a-box key injection (key PRESENT in the container env); Side B
-// drives aisotropy's real RunTask with the key live in the HOST process and
-// proves the task container env is key-free (key ABSENT) while the task still
-// completes and merges a commit.
+// TestKeyBrokering_HeadToHead proves aisotropy's own invariant. Side A is a repro,
+// not an adversarial contest: it stands up aisotropy's OWN container with the key
+// injected via `-e` to show `printenv` sees it (a minimal repro of sandcastle's
+// documented behavior — sandcastle's binary is NOT run; see the source citation in
+// README.md). Side B is the genuinely sound proof: it drives aisotropy's real
+// public RunTask with the key live in the HOST process and proves the task
+// container env is key-free (key ABSENT) while the task still completes and merges
+// a commit.
 func TestKeyBrokering_HeadToHead(t *testing.T) {
 	if !dockerReady() {
 		t.Skip("docker unavailable; skipping key-brokering arena")
@@ -176,24 +186,26 @@ func TestKeyBrokering_HeadToHead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 
-	// ---- Side A: coding-CLI-in-a-box (the sandcastle key-injection model) ----
-	// Faithful minimal repro at the container-env level: sandcastle injects the
-	// provider credential via `docker run … -e KEY=VALUE` (DockerLifecycle.ts:126)
-	// because the coding agent runs INSIDE the box. We do the same through
-	// aisotropy's own Docker provider by putting the key in Spec.Env — the exact
-	// `-e` mechanism — and then read it back from inside the container.
+	// ---- Side A: repro of sandcastle's documented `-e` key injection ----
+	// NOT sandcastle's binary and NOT an adversarial contest — aisotropy's own
+	// container reproducing the injection mechanism sandcastle documents (`docker
+	// run … -e KEY=VALUE`, DockerLifecycle.ts:126, under its no-proxy design). We
+	// put the key in Spec.Env — the exact `-e` mechanism — and read it back from
+	// inside the container to show `printenv` sees it. This proves the near-
+	// tautology "if you pass -e KEY=VALUE, printenv shows KEY"; sandcastle's actual
+	// behavior is established by the source citation in README.md.
 	sandcastleEnv := sideACodingCLIInABox(ctx, t, image, keyName, canary)
 	if !strings.Contains(sandcastleEnv, canary) {
-		t.Fatalf("Side A (coding-CLI-in-a-box): expected key VALUE in container env, absent:\n%s", sandcastleEnv)
+		t.Fatalf("Side A (sandcastle injection repro): expected key VALUE in container env, absent:\n%s", sandcastleEnv)
 	}
 	if !strings.Contains(sandcastleEnv, keyName) {
-		t.Fatalf("Side A (coding-CLI-in-a-box): expected key NAME in container env, absent:\n%s", sandcastleEnv)
+		t.Fatalf("Side A (sandcastle injection repro): expected key NAME in container env, absent:\n%s", sandcastleEnv)
 	}
-	t.Logf("Side A  coding-CLI-in-a-box : %s PRESENT in container env (injected via docker -e, sandcastle model)", keyName)
+	t.Logf("Side A  sandcastle injection repro : %s PRESENT in container env (our own '-e' repro of sandcastle's documented behavior)", keyName)
 
-	// ---- Side B: aisotropy RunTask (the broker) ----
-	// A real provider key lives in the HOST process env; RunTask must keep it
-	// host-side and stand up a key-free task container.
+	// ---- Side B: aisotropy RunTask (Pattern 2, invariant enforced) ----
+	// The genuinely sound proof. A real provider key lives in the HOST process env;
+	// RunTask must keep it host-side and stand up a key-free task container.
 	t.Setenv(keyName, canary)
 
 	repo := t.TempDir()
@@ -241,21 +253,22 @@ func TestKeyBrokering_HeadToHead(t *testing.T) {
 	if got := gitShow(t, repo, "HEAD:note.txt"); got != "brokered-hands" {
 		t.Fatalf("Side B: HEAD:note.txt = %q, want brokered-hands (task work missing)", got)
 	}
-	t.Logf("Side B  aisotropy RunTask   : %s ABSENT in container env; task still ran (commit %s merged to HEAD)", keyName, short(res.Commits[0]))
+	t.Logf("Side B  aisotropy RunTask          : %s ABSENT in container env; task still ran (commit %s merged to HEAD)", keyName, short(res.Commits[0]))
 
-	t.Log("PASS: coding-CLI-in-a-box: key PRESENT in container env; aisotropy RunTask: key ABSENT, task still ran")
+	t.Log("PASS: '-e' injection is printenv-visible (sandcastle model); aisotropy RunTask: key ABSENT, task still ran")
 }
 
-// sideACodingCLIInABox stands up one container with the key in its env (the
-// coding-CLI-in-a-box model) and returns what `printenv` sees from inside. The
-// container is torn down before return.
+// sideACodingCLIInABox stands up one of aisotropy's OWN containers with the key in
+// its env and returns what `printenv` sees from inside — a minimal repro of the
+// `-e` injection sandcastle documents (it does NOT run sandcastle). The container
+// is torn down before return.
 func sideACodingCLIInABox(ctx context.Context, t *testing.T, image, keyName, canary string) string {
 	t.Helper()
 	provider := aisotropy.DockerSandbox()
 	sb, err := provider.Create(ctx, aisotropy.SandboxSpec{
 		Image: image,
-		// The key IS injected into the container env — exactly sandcastle's
-		// `docker run … -e KEY=VALUE`, because the coding agent runs inside.
+		// The key IS injected into the container env — the same `docker run …
+		// -e KEY=VALUE` mechanism sandcastle uses under its no-proxy design.
 		Env: map[string]string{keyName: canary},
 	})
 	if err != nil {

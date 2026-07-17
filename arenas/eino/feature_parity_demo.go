@@ -196,8 +196,9 @@ func cosine(a, b []float64) float64 {
 // cosineStore implements BOTH the REAL indexer.Indexer and retriever.Retriever
 // seams over an in-process cosine index. Eino ships NO in-core vector store, and
 // crucially NO tenant dimension on either option struct — so the (tenant,user)
-// filter below is OURS, read from ctx. A forgotten tenant filter = a cross-tenant
-// leak the framework cannot stop.
+// filter below is OURS, read from ctx. The tenant filter is entirely the
+// developer's responsibility (DIY); Eino has no tenant dimension to enforce it,
+// so omitting the filter would return other tenants' docs.
 type stored struct {
 	id, content, tenant string
 	vec                 []float64

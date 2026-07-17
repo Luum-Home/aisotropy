@@ -1,15 +1,23 @@
 ---
 type: Survey
 title: "Adversarial isolation matrix — 12 arenas (Pydantic AI, Mastra, LangGraph, Eino, ADK Go, Genkit Go, Letta, Dify, Cloudflare Agents, Spring AI, Flue, eve) + adjacent sandcastle"
-description: Executable smoke tests that prove tenant-isolation-by-construction is aisotropy's surviving differentiator. Each arena writes secret-A into a shared session, then reads from every cross-tenant identity — a marker appearing in the wrong tenant's response is a proven leak. 12 arenas across 5 languages, plus an honest adjacent note on sandcastle.
-tags: [arenas, isolation, adversarial, pydantic-ai, mastra, langgraph, eino, adk-go, genkit-go, letta, dify, cloudflare-agents, spring-ai, flue, eve, competitive]
+description: A fair, two-sided comparison. aisotropy's narrower thesis — tenant isolation BY DEFAULT via an unforgeable 4-axis Scope wired from context.Context — is ONE axis where it differs. The cross-scope read each arena's smoke exercises is a same-key/wrong-key developer bug (true of any KV store, including aisotropy's own BadgerDB), reproduced against each competitor's weakest config; a competent dev avoids it with the framework's proper primitive, shown here at equal weight. Every arena also carries a run-verified "what this framework is genuinely great at" section. 12 arenas across 5 languages, plus an honest adjacent note on sandcastle.
+tags: [arenas, isolation, adversarial, steelman, pydantic-ai, mastra, langgraph, eino, adk-go, genkit-go, letta, dify, cloudflare-agents, spring-ai, flue, eve, competitive]
 timestamp: 2026-07-15T00:00:00Z
 ---
 
 # Arenas — Adversarial isolation comparison
 
-> **Goal:** Prove that writing the *right path* and the *leaky path* costs the same in every
-> framework — and that every framework except aisotropy leaks when you take the leaky path.
+> **Goal:** A fair, two-sided comparison. aisotropy's real differentiator is *narrow*: tenant
+> isolation is enforced **by default** via an unforgeable 4-axis `Scope`
+> (`tenant/user/session/product`) wired from `context.Context`, so no request-path code can issue an
+> unscoped read. The cross-scope "leak" each arena's smoke exercises is a **same-key / wrong-key
+> developer bug** — the property of *any* KV store with no auth layer, including aisotropy's own
+> BadgerDB — reproduced against each competitor's *weakest* config; a competent developer avoids it
+> with the framework's proper primitive, and the correct-config path is shown here at equal weight.
+> What actually differs is **convention vs. construction**: whether isolation is on-by-default and
+> unforgeable, not whether a framework *can* be made secure. Each arena also documents, run-verified,
+> **what that framework is genuinely great at** — the axes where aisotropy does not compete.
 > **Coverage:** **12 frameworks across 5 languages** (Python, TypeScript, Go, Java/JVM, and
 > TypeScript-on-Workers) vs. the aisotropy runtime — the original 7 (Pydantic AI, Mastra, LangGraph,
 > Eino, ADK Go, Genkit Go, Letta) plus 5 new entrants (Dify, Cloudflare Agents, Spring AI, Flue, eve).
@@ -43,8 +51,8 @@ paid/proprietary product) · `NOT-POSSIBLE` (framework cannot provide it by cons
 
 | # | Feature | Pydantic AI (Py) | Mastra (TS) | LangGraph (Py) | Eino (Go) | ADK Go (Go) | Genkit Go (Go) | Letta (Py) | **aisotropy (Go+Rust)** |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | **Multi-tenant isolation** | CONVENTION — `deps.tenant_id` | CONVENTION — `resourceId`/`threadId` | CONVENTION — prefix-match `Store.search` | **NOT-POSSIBLE** — bare `CheckPointStore` string key | CONVENTION — composite `(app,user,session)` key, **no tenant binding** | CONVENTION — **no primitive**, dev-built store | CONVENTION — optional dev-passed filters (per-user key = PAID) | **BY CONSTRUCTION** — ctx + per-statement/key scoping |
-| 1b | **Multi-product isolation** (4th scope axis, run-verified ▶) | CONVENTION — `deps.product_id`, bound to nothing | CONVENTION — product rides unkeyed metadata over 2-key memory | CONVENTION — unbound namespace element; shallow prefix scans past it | CONVENTION — folded into the bare `CheckPointStore` string; drop segment → leak | CONVENTION — no `ProductID`; folded into `userID`, trusted verbatim | CONVENTION — **no product primitive**; dev-built key | CONVENTION — no `product_id` param; only a dev-invented `product:<id>` tag | **BY CONSTRUCTION** — `product_id` rides ctx in `Scope` like tenant/user |
+| 1 | **Multi-tenant isolation** | DIY / out-of-scope — stateless lib, no memory tier by design (not a defect) | CONVENTION — `resourceId`/`threadId` + 2 more levers (isolable by a competent dev) | CONVENTION — deep namespaces + `@auth.on.store()` identity binding (naive shallow prefix is a dev bug) | **NOT-POSSIBLE** — no tenancy tier by design (orchestration lib, like Pydantic AI); footgun ≠ bug | CONVENTION — composite `(app,user,session)`; `app_name` native non-droppable slot + auth callbacks | CONVENTION — experimental `ai/exp` `SessionStore` (session-keyed, tenant-unaware) | CONVENTION org-wide / **BUILT-IN by `agent_id`** (one-agent-per-principal isolates by construction) | **BY CONSTRUCTION** — ctx + per-statement/key scoping (isolation *by default*) |
+| 1b | **Multi-product isolation** (4th scope axis, run-verified ▶) | DIY / out-of-scope — `product_id` is one more dev-computed key, no memory tier | CONVENTION — competent dev isolates via composite `resourceId` or `semanticRecall.filter`; naive tag path is a no-op | CONVENTION — deep namespace + `@auth.on.store()` prevents the cross-read; shallow prefix is a dev bug | CONVENTION — correct key isolates; a dropped segment collapses two products (same as any string-keyed KV) | **PARTIAL** — `app_name = product` (one runner/product) makes it native + non-droppable; one residual axis rides `userID` | CONVENTION — experimental `SessionStore` is session-keyed; product folded in by dev | CONVENTION org-wide / **BUILT-IN by `agent_id`** — competent dev avoids 3 of 4 old "leaks" | **BY CONSTRUCTION** — `product_id` rides ctx in `Scope` like tenant/user |
 | 2 | Structured output + retry | BUILT-IN — fail-closed `raise ModelRetry` | BUILT-IN — AI-SDK v5 | BUILT-IN — `OutputFixingParser` | PARTIAL — parser only, no repair loop | BUILT-IN — `OutputSchema` node validation | BUILT-IN — `GenerateData[T]`, no repair loop | BUILT-IN — `response_format` json_schema, no repair loop | BUILT-IN — Gollem reflection (fail-closed) |
 | 3 | Tools | BUILT-IN — function tools | BUILT-IN — native tool calling | BUILT-IN — graph nodes | BUILT-IN — `InferTool` + ReAct | BUILT-IN — `tool.Tool` (+MCP/A2A native) | BUILT-IN — `DefineTool` | BUILT-IN — LLM tool calls | BUILT-IN — `WithTypedTool[T]` (scope-gated) |
 | 4 | Streaming (SSE) | BUILT-IN — `AsyncAgent.stream` | BUILT-IN — `ai_sdk` | BUILT-IN — callback handler | BUILT-IN — `StreamReader` | BUILT-IN — `StreamingModeSSE` | BUILT-IN — `WithStreaming` | BUILT-IN — `stream=True` | BUILT-IN — Huma SSE + `ctx` cancel |
@@ -110,9 +118,11 @@ all seven arenas + aisotropy, offline, every demo exit 0:
 
 - **Structured-output fail-closed** ✓ (already, row 2) — the reflection loop returns 502 rather than
   garbage; a true fail-closed retry only in Pydantic AI and Mastra, PARTIAL/DIY elsewhere.
-- **Multi-product isolation** ✓ (row 1b) — the cross-product read is *executed* and leaks in every
-  arena (`product_id` is a developer-passed key the framework binds to nothing); in aisotropy it
-  rides `context.Context` in the `Scope` value object like tenant/user, so it is unrepresentable-to-get-wrong.
+- **Multi-product isolation** ✓ (row 1b) — the naive-config cross-product read is *executed* in every
+  arena and surfaces the marker (a developer-passed key the framework binds to nothing — a dev bug,
+  not a defect; the correct-config path isolates and is shown at equal weight); in aisotropy
+  `product_id` rides `context.Context` in the `Scope` value object like tenant/user, so it is
+  unrepresentable-to-get-wrong.
 - **Dependency license posture** ✓ (row 10b) — real license scans of the installed tree; all seven
   clear the hard-blocker gate (0 GPL/AGPL/BUSL/SSPL/ELv2/Commons-Clause/FSL), aisotropy holds 100%
   MIT/Apache by construction.
@@ -145,75 +155,132 @@ smoke).
 | Letta | **PARTIAL** | `letta-client==1.12.1` real SDK; real `BlockResponse`/`AgentState`/`Passage` types; payloads validated against real `AgentCreateParams`; 7/7 pytest + smoke exit 0 | Isolation smoke is a **labelled** simulation of the server's block/passage plane (real SDK types, real filter contract); no live `agents.create` turn ran — Letta OSS needs a running server + DB + LLM key. Live path only activates with `LETTA_BASE_URL` and pings honestly |
 | Dify | **SOURCE-VERIFIED** | Real backend cloned at HEAD `1aea3460`; `api/models` + `api/services/conversation_service.py` + RAG datasource + `LICENSE` + `pyproject.toml` read line-by-line; `python -m compileall` OK, `pytest` 9 passed, real `pip-licenses` on the harness venv (7/7 permissive) | **NOT EXECUTED** against a live Dify — it is a multi-container server with no in-process library. The isolation/product smoke is a **labelled** behavioral simulation: Dify's real schema (`App.tenant_id`, `Conversation.app_id`-only, `Dataset/DocumentSegment.tenant_id`) transcribed into its own ORM (SQLAlchemy 2.0), each query citing `api/<path>:<line>`. Live path activates on `DIFY_API_URL`/`DIFY_API_KEY` |
 | Cloudflare Agents | **REAL** | `agents@0.17.4` (MIT); `OrbitAgent extends Agent<Env,State>`, `this.sql` DO SQLite, `getAgentByName`+`routeAgentRequest` — signatures verified against installed `.d.ts`. Ran in real `workerd` via `@cloudflare/vitest-pool-workers` (7 passed) + live `wrangler dev --local` over HTTP; per-object isolation + FTS5 probe confirmed | Model turns/streaming/MCP source-verified from `.d.ts`; the runtime is a **rented** Cloudflare-platform boundary (`workerd`/miniflare simulate DOs locally, production isolation is not self-hostable OSS) |
-| Spring AI | **REAL** | `spring-ai-client-chat/model/commons` **1.1.8**; `EchoChatModel` implements the real `ChatModel`, so `ChatClient` + `MessageChatMemoryAdvisor` + `MessageWindowChatMemory` + `InMemoryChatMemoryRepository` + `BeanOutputConverter` all run through the genuine pipeline. `mvn compile` BUILD SUCCESS; `SmokeMain`/`ProductIsolationMain`/`FeatureDemoMain`/`license_scan.sh` all exit 0; signatures verified with `javap` | Only the model is a keyless echo; a real provider turn, streaming Flux cancellation, Micrometer→OTel bridge, `VectorStore` are source-verified (not executed), labelled as such |
+| Spring AI | **REAL** | `spring-ai-client-chat/model/commons` **2.0.0**; `EchoChatModel` implements the real `ChatModel`, so `ChatClient` + `MessageChatMemoryAdvisor` + `MessageWindowChatMemory` + `InMemoryChatMemoryRepository` + `BeanOutputConverter` all run through the genuine pipeline. `mvn compile` BUILD SUCCESS; `SmokeMain`/`ProductIsolationMain`/`FeatureDemoMain`/`license_scan.sh` all exit 0; signatures verified with `javap` | Only the model is a keyless echo; a real provider turn, streaming Flux cancellation, Micrometer→OTel bridge, `VectorStore` are source-verified (not executed), labelled as such |
 | Flue | **REAL** | `@flue/runtime@1.0.0-beta.9` (Apache-2.0, Astro team, on the Pi harness `@earendil-works/pi-ai@0.80.7`); real `defineAgent`/`defineTool`+valibot/`AgentRouteHandler` guard/`sqlite()` durable adapter/Hono app. `flue build --target node` compiled; two smokes ran fully offline via a fake `openai-completions` model + the built server as real subprocesses over HTTP (durable crash-safe recall + cross-product leak), both exit 0 | Only the model is a ~40-line keyless fake; findings tagged `[RAN]`/`[SRC from shipped .d.ts+bundle]`/`[DOC from flue docs read]`, never general knowledge |
 | eve | **REAL** | `eve@0.24.5` (Apache-2.0, Vercel) on Node 24; `eve build` → real Nitro/rolldown compile (5.74MB server); booted offline, real `/eve/v1/health`+`/info`, a real 9-event NDJSON turn via mock model; `scripts/smoke.mjs` via `eve/client` 6/6 PASS incl. proven cross-product leak; `license-checker` ran; clean from-scratch reproducibility run | Only the model is a mock; Vercel Sandbox, AI Gateway, production workflow world, Connect OAuth, Observability dashboard are source-verified from shipped docs (not run) |
 
 ## DX verdicts
 
-### The GO-NATIVE cluster (Eino, ADK Go, Genkit Go) — the decisive comparison
+### The GO-NATIVE cluster (Eino, ADK Go, Genkit Go)
 
-These three share aisotropy's host language, so their **isolation story is the most decisive
-comparison** — nothing about Python's GIL or TypeScript's runtime can be blamed for the gap; it is
-purely a design choice. In all three, tenant isolation is a **string key the developer must own and
-never get wrong**, and the leaky path is literally one string-concatenation (or one dropped token)
-away from the correct one:
+These three share aisotropy's host language, so the isolation axis is a clean design comparison —
+nothing about Python's GIL or TypeScript's runtime is in play. The difference is **convention vs.
+construction**: all three leave tenancy as a key the developer composes, where aisotropy composes it
+from `context.Context` by default. That is one axis; each is genuinely strong on its own turf, and
+the naive cross-scope read each smoke exercises is a same-key/wrong-key developer bug reproduced
+against the framework's weakest config — a competent developer avoids it with the framework's proper
+primitive.
 
-- **Eino** — `NOT-POSSIBLE` by the framework. `compose.CheckPointStore` is `Get/Set(id string)`
-  keyed by a single developer-supplied string via `WithCheckPointID` — no tenant/user dimension
-  anywhere, and **no default implementation**. The proof is driven by Eino's real interrupt/resume
-  machinery: seed tenant A under `"shared-session"`, resume the bare ID as tenant B, and Eino
-  restores tenant A's secret. `store.Keys()` returns `[shared-session]` — a bare `[]string` of
-  developer-chosen IDs. Excellent Go-native velocity (type-safe `InferTool` + ReAct, clean model
-  seam) but heavy transitive tree (sonic asm loader, gonja) and a checkpoint/resume API that needs
-  the interrupt ID from the first run, not just the checkpoint ID.
-- **ADK Go** — `CONVENTION` with real construction but **no tenant binding**. `session.Service`
-  keys by composite `(app,user,session)`; fold tenant into the key and `globex|bob`/`acme|bob`
-  isolate correctly — drop the tenant component (bare `"alice"`) and `globex`'s alice reads
-  `acme`'s memo (`TestTenantDropLeaks`). `runner.Run` trusts the caller strings verbatim: no
-  identity binding. **The one place ADK ties aisotropy** is observability — real OTel `gen_ai.*`
-  semconv — which differentiates it from Eino (proprietary APMPlus) and Genkit (proprietary
-  schema). Heavy dep graph (aiplatform + genai + gRPC + sqlite); rich memory is Vertex-tethered.
-- **Genkit Go** — `CONVENTION`, and arguably the **weakest of the three**: stable Genkit ships
-  **no** `Session`/`Memory`/`Thread` type at all (`go doc` confirms). You build the store yourself
-  and hand history to `ai.WithMessages`; nothing binds the key to the request identity, so a
-  mis-passed key re-leaks even after you invent namespacing. Generation ergonomics are genuinely
-  strong and shipped (`GenerateData[T]`, `DefineTool`, dotprompt), but observability is a real
-  liability for gen_ai-standardizing teams: `genkit:*` attributes with **zero** `gen_ai.*` keys.
+- **Eino** — `NOT-POSSIBLE` **because Eino is a graph-orchestration library with no memory/tenancy
+  tier by design** (the same category as Pydantic AI or LangGraph), not because it "leaks."
+  `compose.CheckPointStore` is `Get/Set(id string)`, a human-in-the-loop interrupt/resume KV keyed
+  by one developer string via `WithCheckPointID` — there is no tenant dimension for it to enforce.
+  The smoke seeds tenant A under `"shared-session"` and resumes the bare ID as tenant B; the store
+  returns A's value **exactly as any string-keyed KV does** (aisotropy's own BadgerDB included). A
+  dropped segment collapsing two keys is a footgun, not a framework bug. **Genuinely great at:**
+  type-safe, composable, **streaming graph orchestration in Go** — `NewGraph[I,O]` compile-checks
+  every edge, one compiled `Runnable` serves `Invoke/Stream/Collect/Transform` for free, and
+  `StreamReader.Copy`/`MergeStreamReaders` make streaming a native concern. aisotropy is a runtime,
+  not a general orchestration library, so on this axis Eino is the reference.
+- **ADK Go** — `CONVENTION` with real construction across **three native slots**. `session.Service`
+  keys by composite `(appName, userID, sessionID)`; `appName` is bound at runner construction and is
+  **never a per-request argument**, so a competent developer makes any one axis native and
+  non-droppable by running one runner per value of it (e.g. `appName=product`). Three slots can't
+  cover four axes, so exactly one axis rides `userID` by convention and is the drop-vulnerable
+  residual — the honest cost of composing a 4th axis by hand. Note the symmetry: aisotropy **itself**
+  trusts the path `tenant_id` in its default NoAuth mode (ADR-0024), and ADK offers `BeforeAgent`/
+  `BeforeModel` auth **callbacks** to bind identity (arena feature 16 is `PARTIAL`, not
+  `NOT-POSSIBLE`). **The one place ADK ties aisotropy** is observability — real OTel `gen_ai.*`
+  semconv, self-hostable — which beats Eino (proprietary APMPlus) and Genkit (proprietary schema).
+  **Genuinely great at:** multi-agent orchestration — `transfer_to_agent`, sub-agents, A2A, a full
+  callback pipeline — which aisotropy does not attempt at all.
+- **Genkit Go** — `CONVENTION`. **Correction to earlier drafts: Genkit-Go v1.10.0 does ship a memory
+  primitive** — the experimental `ai/exp` Agents API with a pluggable `SessionStore` and a shipped
+  in-memory `localstore.NewInMemorySessionStore` (July-2026 preview, gated behind
+  `requireExperimental`). It is keyed by a developer-chosen session id with no tenant/user/product
+  binding, so it gives you **persistence, not isolation** — the leak stands against the real
+  primitive, but "no Session/Memory/Thread type at all" was false. **Genuinely great at:** flows +
+  dotprompt + a model-agnostic provider abstraction — `DefineFlow`/`DefineStreamingFlow` turn a
+  function into an observable, deployable unit with auto-emitted spans; `.prompt` files hold the
+  template + typed input schema hot-editable outside Go source; one `Generate` call dispatches to any
+  provider by name. Observability is the real trade-off for gen_ai-standardizing teams: `genkit:*`
+  attributes with **zero** `gen_ai.*` keys.
 
-**Go-native takeaway:** same language as aisotropy, opposite philosophy. All three treat tenancy as
-app-layer scaffolding the developer bolts on — exactly the scaffolding that silently breaks.
-aisotropy makes the unscoped read *unrepresentable*.
+**Go-native takeaway:** same language as aisotropy, different *category* — three capable
+orchestration/application libraries vs. one sovereign multi-tenant runtime. aisotropy's narrow edge
+is that isolation is on-by-default and unforgeable; each of the three is the better tool on its own
+axis (graph orchestration, multi-agent delegation, flow/deploy DX).
 
 ### The Python / TypeScript cluster
 
-- **Pydantic AI (Py)** — `CONVENTION` via `RunContext[deps].tenant_id`; strongest fail-closed
-  structured-output story (`raise ModelRetry`). Wrong `tenant_id` → silent cross-read.
-- **Mastra (TS)** — `CONVENTION` via `resourceId`/`threadId`; strong built-in resource-scoped +
-  vector memory. Wrong key, or the `threadId`-only leak (mastra#11856), cross-reads.
-- **LangGraph (Py)** — `CONVENTION` via prefix-match `Store.search()`; a short prefix scans across
-  tenants. Its observability is `PAID` (LangSmith SaaS) — the only arena where the standard
-  telemetry path is a hosted product.
+- **Pydantic AI (Py)** — `DIY / out-of-scope`, **not a leak**: it is a stateless agent library that
+  ships no memory or multi-tenancy layer by design ("agents are stateless and designed to be
+  global"). `deps` is pure dependency injection; a wrong developer-computed key reads the wrong slice
+  because there is no framework boundary to reject it — plain-dict behavior. **Genuinely great at:**
+  type-safe structured output as a *validated contract* (fail-closed `raise ModelRetry` self-repair,
+  typed `Union` routing) and first-class typed dependency injection — best-typed agent-loop DX of the
+  set.
+- **Mastra (TS)** — `CONVENTION` via `resourceId`/`threadId` plus two more levers (working-memory
+  `scope`, `semanticRecall.filter`); a competent developer isolates correctly (run-verified via a
+  composite `resourceId` and a metadata filter), the naive default path silently does not partition
+  (the class behind mastra#11856). **Genuinely great at:** TS-native, schema-typed **durable
+  workflows** with suspend/resume human-in-the-loop, first-class composable **evals/scorers**, and
+  batteries-included memory DX — none of which aisotropy offers.
+- **LangGraph (Py)** — `CONVENTION`: on the raw `Store`, `search()` uses element-wise namespace
+  prefix matching and a shallow prefix is an under-scoped **dev bug**; deep namespaces plus the
+  LangGraph-Server `@auth.on.store()` handler rewrite the namespace to the authenticated caller and
+  make the cross-read structurally impossible (run-verified). Its managed observability path
+  (LangSmith) is a paid SaaS — a genuine sovereignty consideration. **Genuinely great at:** durable,
+  stateful **graph execution** — checkpoint/resume, human-in-the-loop interrupts, time-travel over
+  checkpoint history, cyclic-graph streaming — where aisotropy has no equivalent and makes no claim.
 - **Letta (Py)** — the **closest conceptual neighbor**: its Core/Recall/Archival memory hierarchy
   is nearly isomorphic to aisotropy's BadgerDB/FTS5/Qdrant tiers, and it is the **only** arena that
   ships productized sleep-time consolidation (`enable_sleeptime=True`) — a direct analog of
-  aisotropy's DataFusion sleep cycle. But isolation is `CONVENTION` (optional dev-passed
-  `identity_id`/`project_id`/`tags`; per-user *key* isolation is `PAID` Letta Cloud only), memory
-  is LLM-self-managed (probabilistic, hard to audit) vs. aisotropy's deterministic runtime
-  hydration, and it is a server, not an embeddable in-process runtime.
+  aisotropy's DataFusion sleep cycle. Isolation is `CONVENTION` org-wide but **`BUILT-IN` by
+  `agent_id`**: the agent-scoped subresources (`agents.blocks.list(agent_id)`,
+  `agents.passages.search(agent_id)`) isolate by construction, and Letta's documented multi-tenant
+  pattern — **one agent per principal** — lets a competent developer avoid three of the four sharp
+  edges an earlier draft dressed up as "leaks" (the residual: OSS Letta is single-org with no
+  framework caller-binding, and the org-wide primitives carry no guard). Memory is LLM-self-managed
+  (probabilistic) vs. aisotropy's deterministic hydration, and it is a server, not an in-process
+  runtime. **Genuinely great at:** self-editing core memory + sleep-time consolidation +
+  stateful-agent-as-a-service — Letta validates the memory-OS thesis and productizes it today.
+
+## What each framework is genuinely great at (the steelman, run-verified)
+
+Isolation-by-default is one axis. On every *other* axis a competitor leads, and each arena's
+`strengths_demo` exercises it against the pinned framework offline. aisotropy does not compete on
+these — they are real, and they are the framework's to keep.
+
+| Framework | Genuinely great at (run-verified) |
+|---|---|
+| **LangGraph** | Durable, stateful **graphs** — checkpoint/resume, human-in-the-loop interrupts, time-travel over checkpoint history, cyclic-graph streaming. aisotropy has no durable graph engine. |
+| **Mastra** | TS-native, schema-typed **durable workflows** (suspend/resume HITL), first-class composable **evals/scorers**, batteries-included **memory DX**. |
+| **Letta** | Self-editing **core memory** (MemGPT) + **sleep-time consolidation** + stateful agent-as-a-service — validates and productizes the memory-OS thesis today. |
+| **ADK Go** | Multi-agent **orchestration** — `transfer_to_agent`, sub-agents, A2A, full callback pipeline — plus self-hostable **gen_ai OTel** (ties aisotropy). |
+| **Pydantic AI** | Best-typed agent-loop DX — **type-safe structured output** as a validated contract (fail-closed self-repair, typed `Union` routing) + first-class **typed DI**. |
+| **Eino** | Type-safe, composable **streaming graph orchestration** in Go — generics compile-check every edge; one `Runnable` boxes `Invoke/Stream/Collect/Transform`. |
+| **Genkit Go** | **Flows** + **dotprompt** + a model-agnostic **provider abstraction** — observable/deployable units, hot-editable typed prompts, one-call provider swap. |
+| **sandcastle** *(adjacent)* | Running a **whole, unmodified coding CLI in a box** (Claude Code / Codex / Cursor) with isolated workspaces + merge-back — a niche aisotropy's `RunTask` does not attempt. |
+
+aisotropy keeps two honest concessions here: **ADK Go ties on OTel `gen_ai`**, and **Letta validates
+the memory-OS thesis** (isomorphic tiers + productized sleep-time). aisotropy's own credible edge is
+the *combination*: isolation by default (unforgeable 4-axis `Scope` wired from ctx), governance
+defaults (per-tenant pre-spend gate, breaker, cost meter), and 100% MIT/Apache self-hostable
+sovereignty — a sovereign multi-tenant runtime, not the best tool on any single axis above.
 
 ## Isolation model summary
 
 | Framework | Integration | Isolation model | Failure mode |
 |---|---|---|---|
 | **aisotropy** | — | **By construction** — ctx propagation + per-statement/key scoping | Unrepresentable — `Scope{}` has unexported fields |
-| Pydantic AI | REAL | Convention — `RunContext[deps].tenant_id` | Wrong `tenant_id` → silent cross-read |
-| Mastra | REAL | Convention — `resourceId`/`threadId` | Wrong key or mastra#11856 (threadId-only) |
-| LangGraph | REAL | Convention — prefix-match `Store.search()` | Short prefix scans across tenants |
-| Eino | REAL | **None** — bare `CheckPointStore` string key | Wrong checkpoint-ID → silent cross-read |
-| ADK Go | REAL | Convention — composite `(app,user,session)` key, **no tenant binding** | Drop the tenant fold → silent cross-read (one line shorter) |
-| Genkit Go | REAL | Convention — developer-built store, **no primitive** | Wrong/mis-passed session key → silent cross-read |
-| Letta | PARTIAL | Convention — dev-passed `identity_id`/`project_id`/`tags` | Omit filter → org-wide scan; per-user key is PAID only |
+| Pydantic AI | REAL | DIY / out-of-scope — stateless lib, no memory tier by design | Wrong dev-computed key → wrong slice (plain-dict; no framework layer to reject it) |
+| Mastra | REAL | Convention — `resourceId`/`threadId` + 2 levers (isolable by a competent dev) | Naive default path (axis in no lever); composite key / metadata filter prevent it |
+| LangGraph | REAL | Convention — deep namespaces + `@auth.on.store()` identity binding | Naive shallow prefix is a dev bug; identity-bound store makes cross-read impossible |
+| Eino | REAL | None **by design** — orchestration lib, no tenancy tier | Dropped-segment key collapse (any string-keyed KV); footgun ≠ framework bug |
+| ADK Go | REAL | Convention — composite `(app,user,session)`; `appName` native slot + auth callbacks | Drop the one hand-composed residual axis → cross-read (native slots don't drop) |
+| Genkit Go | REAL | Convention — experimental `ai/exp` `SessionStore` (session-keyed, tenant-unaware) | Mis-passed session key → cross-read (persistence, not isolation) |
+| Letta | PARTIAL | Convention org-wide / **BUILT-IN by `agent_id`** (one-agent-per-principal) | Org-wide under-scope → scan; agent-scoped reads isolate by construction |
 | Dify | SOURCE-VERIFIED | Convention — shared-schema `tenant_id` `.where()`, **no RLS**; `Conversation` scoped only via `app_id` | Skip the app-ownership gate → `.where(app_id)` cross-reads; no `product_id` exists |
 | Cloudflare Agents | REAL | **By construction (storage)** — one DO = one separate SQLite; cross-object read unrepresentable — but name-mapping is convention, runtime RENTED | Mis-assemble the `(t,u,p)` object name → two products share one SQLite (proven in `workerd`) |
 | Spring AI | REAL | Convention — opaque `conversationId` bound to nothing | Wrong/guessed id → cross-read; `findConversationIds()` scans all tenants; delimiter-injection collision |
@@ -222,15 +289,18 @@ aisotropy makes the unscoped read *unrepresentable*.
 
 ## Bottom line
 
-**Isolation is `CONVENTION` / developer-passed in eleven of the twelve frameworks — the Go-native
-cluster included — and `BY CONSTRUCTION` only in aisotropy.** This is now proven across **12
-frameworks in 5 languages** (Python, TypeScript, Go, Java/JVM, TypeScript-on-Workers). Language is
-not the variable: Eino, ADK Go, and Genkit Go are the same Go as aisotropy's core, and all three
-still leave tenancy as a string the developer must never fumble. In every arena the leaky read and
-the correct read are one line — one string, one keyword, one dropped token — apart, and the type
-system does nothing to stop the leak. In aisotropy the leaky path does not exist: `tenant_id` travels
-in `context.Context` and every memory read is scoped per-statement/per-key, so no code path can issue
-an unscoped read.
+**Isolation is `CONVENTION` / developer-owned in the shared-store frameworks and `BY CONSTRUCTION`
+only in aisotropy — that is the *one* narrow axis this matrix isolates.** Every arena can be made
+secure: a competent developer applies the framework's proper primitive (Mastra's composite
+`resourceId`, LangGraph's `@auth.on.store()`, ADK's per-runner `appName`, Letta's one-agent-per-
+principal) and the cross-scope read never happens. The naive path each smoke exercises is a
+same-key/wrong-key developer bug — the property of any KV store with no auth layer, aisotropy's own
+BadgerDB included — reproduced against each framework's weakest config; the correct-config path is
+shown here at equal weight. What differs is *default posture*: in aisotropy `tenant_id`/`product_id`
+travel in `context.Context` as an unforgeable `Scope`, every memory read is scoped per-statement/
+per-key, and the unscoped read is unrepresentable — isolation is on **by default**, not a discipline
+the developer must remember. That is a real edge for a sovereign multi-tenant runtime; it is *not* a
+claim that the other frameworks "leak," and it is one axis among many where each competitor leads.
 
 Two of the original arenas cost aisotropy an honest concession: **ADK Go ties on OTel `gen_ai`
 observability**, and **Letta validates the memory-OS thesis** (isomorphic tiers + productized
@@ -302,7 +372,7 @@ design in the arenas that adopt the `leak = exit 1` contract.
 | `genkit-go/` | Go 1.23+ | `go get github.com/firebase/genkit/go@v1.10.0` | `GENKIT_ENV=prod go run ./scripts/` | `GENKIT_ENV=prod go run ./cmd/server/` | 4116 |
 | `dify/` (src) | Python 3.13 | `python -m venv .venv && pip install -r requirements.txt` | `python scripts/smoke.py` + `python scripts/product_isolation_demo.py` | n/a — needs full Dify stack via `DIFY_API_URL`/`DIFY_API_KEY` | n/a (server platform) |
 | `cloudflare-agents/` | Node 20+ / pnpm | `pnpm install` (`agents@0.17.4` + wrangler + vitest) | `pnpm smoke` (= `vitest run` → 7 passed) | `pnpm dev` (real `workerd` Durable Objects) | 4117 / 8787 |
-| `spring-ai/` | JDK 21+ / Maven 3.9+ | `mvn compile` (real `spring-ai` 1.1.8, 41-dep tree) | `SmokeMain` + `ProductIsolationMain` + `FeatureDemoMain` (via `mvn exec:java`) | n/a — JVM library, no HTTP server | n/a (JVM lib) |
+| `spring-ai/` | JDK 21+ / Maven 3.9+ | `mvn compile` (real `spring-ai` 2.0.0, 41-dep tree) | `SmokeMain` + `ProductIsolationMain` + `FeatureDemoMain` (via `mvn exec:java`) | n/a — JVM library, no HTTP server | n/a (JVM lib) |
 | `flue/` | Node + pnpm | `pnpm install` + `flue build --target node` | `pnpm run smoke` + `pnpm run isolation` | built `dist/server.mjs` (file-backed SQLite) | local subprocess |
 | `eve/` | Node 24+ | `npm install` + `eve build` | `node scripts/smoke.mjs` (6/6 PASS) | `node .output/server/index.mjs` | 4117 |
 
@@ -320,12 +390,17 @@ Every arena runs the **same adversarial pattern**:
 
 1. **Seed tenant A** with a unique marker token in a shared session ID.
 2. **Positive control**: Tenant A reads its own session — marker must appear.
-3. **Negative probes**: Tenants B, users B, mixed identities read the same session — marker must NOT appear.
-4. **Result**: If the marker appears in a cross-tenant read, the framework leaks.
+3. **Naive-convention path**: a cross-scope read using the framework's *weakest* config (a wrong or
+   under-scoped developer-computed key) — the marker surfaces, a same-key/wrong-key developer bug.
+4. **Correct-config path (shown at equal weight)**: the same read using the framework's proper
+   primitive (composite key, identity-bound store, per-runner slot, agent-scoped subresource) — the
+   marker does NOT surface.
 
-The leak is demonstrated in every framework — the difference is **how hard it is to write the
-correct path vs the leaky path**. In aisotropy, the leaky path is **unrepresentable** (no code
-path issues an unscoped read). In the others, both paths are one line apart.
+The naive-path cross-read is reproducible in the shared-store frameworks, but it is a **developer
+bug**, not a framework defect — the property of any KV store with no auth layer, aisotropy's own
+BadgerDB included. The real difference is *default posture*: in aisotropy the unscoped read is
+**unrepresentable** (no code path issues one), so the naive path does not exist; in the others the
+naive path and the correct path both exist and the developer must choose the correct one.
 
 ## References
 

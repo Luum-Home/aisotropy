@@ -93,10 +93,12 @@ func TestIsolationCorrectPathNoLeak(t *testing.T) {
 	}
 }
 
-// TestIsolationSharedIDLeaks: THE crux. Two tenants sharing one checkpoint ID
-// cross-read via Eino's real runtime. Eino provides no mechanism to prevent it,
-// so this leak is the EXPECTED (documented) outcome for feature #1.
-func TestIsolationSharedIDLeaks(t *testing.T) {
+// TestIsolationSharedIDCollapses: THE crux. When two tenants compose the SAME
+// bare checkpoint ID (a dropped tenant segment), their state collapses onto one
+// key via Eino's real runtime. Eino has no tenant dimension to catch the
+// omission, so this collapse is the EXPECTED outcome for feature #1 — the same
+// behavior any string-keyed KV exhibits, not an Eino defect.
+func TestIsolationSharedIDCollapses(t *testing.T) {
 	ctx := context.Background()
 	h, err := NewIsolationHarness(ctx)
 	if err != nil {
@@ -107,13 +109,14 @@ func TestIsolationSharedIDLeaks(t *testing.T) {
 	if err := h.Seed(ctx, "shared-session", secret); err != nil {
 		t.Fatalf("Seed: %v", err)
 	}
-	// Tenant B presents the same session id -> Eino resumes tenant A's state.
+	// Tenant B composes the same session id -> the keys collapse and Eino
+	// returns what was stored under that string.
 	got, hit, err := h.Read(ctx, "shared-session")
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
 	if !hit || got != secret {
-		t.Fatalf("expected the documented cross-tenant leak, but did not reproduce: hit=%v got=%q", hit, got)
+		t.Fatalf("expected the shared-ID keys to collapse, but did not reproduce: hit=%v got=%q", hit, got)
 	}
 	// Evidence: the real checkpoint store keys state by a bare string.
 	keys := h.Store().Keys()

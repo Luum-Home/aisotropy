@@ -16,14 +16,52 @@ Coverage classes: **BUILT-IN** (framework ships it) · **CONVENTION** (works onl
 follows an unenforced discipline) · **DIY** (you build it yourself / BYO) · **PAID** (requires a
 paid/hosted service) · **NOT-POSSIBLE** (no path).
 
+## What Genkit Go does genuinely well (steelman, run-verified)
+
+Before the gap analysis: Genkit Go is a **strong, general-purpose AI application library** with real
+strengths. The 11-point checklist below is scored against *aisotropy's multi-tenant-runtime thesis*,
+which is deliberately narrow — it is not a verdict on Genkit's overall quality. Three headline
+strengths, each **exercised offline against the real v1.10.0 API** in `cmd/strengths`
+(`go run ./cmd/strengths`, exit 0):
+
+- **Flows — BUILT-IN, excellent.** `genkit.DefineFlow` / `genkit.DefineStreamingFlow` (genkit/genkit.go)
+  turn a function into a named, **observable, composable, deployable** unit: `core.Flow.Run` /
+  `core.Flow.Stream` (core/flow.go). Proven: a flow composing another flow ran and **auto-emitted
+  OTel spans** on Genkit's own `tracing.TracerProvider` with zero extra wiring; a streaming flow
+  delivered progressive chunks. Flows are the unit Genkit deploys as HTTP handlers and shows in its
+  Dev UI — a genuine DX advantage.
+- **Dotprompt — BUILT-IN, excellent.** `genkit.LookupPrompt` + `ai.Prompt.Execute` + `ai.WithInput`
+  (ai/generate.go). The model, handlebars template, and **typed input schema** live in a `.prompt`
+  file (`orbit/prompts/orbit_support.prompt`), not Go source — hot-editable, no recompile. Proven:
+  executed with two different input structs through the same file.
+- **Model-agnostic provider abstraction — BUILT-IN, excellent.** `genkit.DefineModel` /
+  `genkit.LookupModel` + the `ai.Model` interface + `ai.WithModelName`. Every provider (googlegenai,
+  openai, anthropic, ollama, ...) is a registry entry selected by name; **caller code is
+  provider-independent**. Proven: one identical `genkit.Generate` call, changing only the model-name
+  string, dispatched to two distinct providers with different output.
+
+**Honest niche statement:** Genkit's flow + dotprompt + deployment DX (Firebase/Google-backed) is
+excellent for building and shipping AI features. aisotropy is a **self-hosted, multi-tenant Go
+runtime** — a *different* niche. They overlap on exactly one axis (isolation-by-default), covered in
+§1. Everything below is scored on that axis; it does not diminish the strengths above.
+
 ## The 11-point checklist
 
-### 1. Multi-tenant isolation — CONVENTION (arguably weaker: no primitive at all)
-- **Mechanism:** developer-passed session key into a developer-built store (`orbit/store.go`),
-  fed to `ai.WithMessages`. Verified: stable Genkit exposes **no** `Session`/`Memory`/`Thread`
-  type in the `genkit` or `ai` packages.
-- **Proven:** `TestIsolationLeak` seeds tenantA's secret and reads it back from a `tenantB`
-  identity through the real `genkit.Generate` — the model returns tenantA's secret.
+### 1. Multi-tenant isolation — CONVENTION (memory primitive exists, but it is tenant-unaware)
+- **Mechanism:** developer-passed session key, fed to `ai.WithMessages`. Genkit-Go v1.10.0 **does**
+  ship a session-memory primitive — the **experimental** `ai/exp` Agents API with a pluggable
+  `SessionStore` and a shipped in-memory `localstore.NewInMemorySessionStore` (July-2026 Agents API
+  preview; gated behind `requireExperimental`, "may change"). But it is keyed by a developer-chosen
+  session id with **no** tenant/user/product binding — its `SessionSnapshot`/`SessionState` carry
+  only a `SessionID` field. It gives you **persistence, not isolation**. There is no tenant-scoped
+  `Session`/`Memory`/`Thread` type; multi-tenancy stays developer-built. (JS-vs-Go asymmetry:
+  Genkit-**JS** has had stable-ish `ai.chat()`/`Session`/`SessionStore` longer; Go reached parity
+  only via this preview/beta.)
+- **Proven — twice:** `TestIsolationLeak` seeds tenantA's secret and reads it back from a `tenantB`
+  identity through the real `genkit.Generate` (via a DIY stand-in store with identical semantics);
+  **and** `TestRealSessionStoreIsTenantUnaware` reproduces the same cross-tenant read against
+  Genkit's REAL `localstore.NewInMemorySessionStore` — no DIY store in the path — because the store's
+  only lookup key is the session id.
 - **AISOTROPY:** isolation by construction — ctx-propagated tenant + per-key/per-statement scoping;
   the unscoped read is unrepresentable (`Scope{}` has unexported fields).
 
@@ -33,9 +71,10 @@ paid/hosted service) · **NOT-POSSIBLE** (no path).
   aisotropy scopes memory by **(tenant, user, session, product_id)** and the product axis
   (two products of the *same* tenant+user — e.g. alice@acme's `orbit-crm` vs `orbit-helpdesk`)
   was never tested here.
-- **Mechanism:** Genkit ships no product/session/memory primitive, so `product_id` is just
-  another developer-passed string. Nothing folds it into the store key; the framework binds it
-  to **nothing**.
+- **Mechanism:** Genkit's shipped memory primitive (the experimental `ai/exp` SessionStore) is
+  keyed by a session id alone and has no product/tenant concept, so `product_id` is just another
+  developer-passed string. Nothing folds it into the store key; the framework binds it to
+  **nothing**.
 - **Proven — positive control:** `orbit-crm` seeds a marker and reads it back through the real
   pipeline (`✓ POSITIVE CONTROL: orbit-crm read its own marker back through genkit.Generate`).
 - **Proven — CROSS-PRODUCT LEAK (label it a leak):** with the common `tenant:user:session` key
@@ -69,10 +108,17 @@ paid/hosted service) · **NOT-POSSIBLE** (no path).
   the real callback. The live server relays them as SSE `data:` frames.
 - **AISOTROPY:** Huma SSE with `ctx` cancellation that stops the upstream LLM call immediately.
 
-### 5. Working memory — DIY
-- **Mechanism:** none built in. You build the store (this arena did, `orbit/store.go`). Durable
-  execution is a **third-party** plugin (`genkitx-temporal`).
-- **AISOTROPY:** BadgerDB working memory by default (µs, in-process), doubling as the outbox.
+### 5. Working memory — BUILT-IN (experimental), tenant binding DIY
+- **Mechanism:** Genkit-Go v1.10.0 ships an **experimental** session store — `ai/exp` `SessionStore`
+  + the in-memory `localstore.NewInMemorySessionStore` (persists/replays `Messages` across turns;
+  Firestore via plugin), part of the July-2026 Agents API preview (gated behind
+  `requireExperimental`, "may change"). It is exercised in `cmd/parity` (feature #2) and
+  `TestRealSessionStoreIsTenantUnaware`. What stays **DIY** is the tenant/user/product binding: the
+  store is keyed by a bare session id. This arena keeps a minimal DIY stand-in (`orbit/store.go`)
+  for the end-to-end leak path — identical semantics. Durable execution is a **third-party** plugin
+  (`genkitx-temporal`).
+- **AISOTROPY:** BadgerDB working memory by default (µs, in-process), doubling as the outbox — and
+  bound to `(tenant, user, session, product)` from ctx by construction.
 
 ### 6. Semantic memory (vectors) — DIY
 - **Mechanism:** Genkit ships retriever/indexer *interfaces* and plugins (e.g. pgvector), but no
@@ -178,12 +224,14 @@ paid/hosted service) · **NOT-POSSIBLE** (no path).
 | 24 | Transactional outbox (atomic msg+event) | DIY | no outbox; `SaveSnapshot` gives single-snapshot atomicity only; cross-store atomic write is DIY |
 | 25 | Async consolidation (offline dedup) | DIY | no sleep-cycle primitive; DIY offline dedup |
 
-### Corrections to the 11-point checklist from the v1.10.0 deep-dive
-- **Working memory (§5 above said DIY):** v1.10.0 ships an **experimental** Agents/Session API
-  (`genkit/exp` + `ai/exp`) with a pluggable `SessionStore` — an in-memory store is shipped
-  (`localstore`), Firestore via plugin. It persists conversation `Messages` + custom state and is
-  exercised here. Still keyed by a **developer-passed session id with no tenant binding**, so the
-  isolation leak stands; and it is gated behind `requireExperimental`.
+### Corrections to the earlier draft of this arena
+- **Working memory / "no memory primitive at all":** the earlier draft's headline was FALSE.
+  v1.10.0 ships an **experimental** Agents/Session API (`genkit/exp` + `ai/exp`) with a pluggable
+  `SessionStore` — an in-memory store is shipped (`localstore.NewInMemorySessionStore`), Firestore
+  via plugin. It persists conversation `Messages` + custom state and is exercised here (§5, `cmd/parity`
+  feature #2, and `TestRealSessionStoreIsTenantUnaware`). It is still keyed by a **developer-passed
+  session id with no tenant/user/product binding**, so it is persistence, not isolation, and the
+  leak stands against the real primitive; it is gated behind `requireExperimental` ("may change").
 - **Semantic memory (§6 above said DIY):** Genkit ships an **official in-tree offline vector store**,
   `plugins/localvec` (cosine, on-disk), plus first-party `pinecone`/`weaviate`/`postgresql`/`alloydb`
   plugins. The demo drives `localvec` end-to-end offline, so vector RAG is BUILT-IN (via plugin);

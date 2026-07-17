@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
-# run.sh — the key-brokering arena, head-to-head against REAL Docker.
+# run.sh — the key-brokering arena against REAL Docker.
+#
+# aisotropy's RunTask is a clean implementation of the STANDARD "sandbox-as-tool"
+# pattern (LangChain's Pattern 2 — model host-side, only tool execution sandboxed),
+# with the key-broker invariant enforced in code. That is table stakes across the
+# agent-sandbox field; the differentiator is specifically against coding-CLI-in-a-box
+# orchestrators like sandcastle. This driver proves aisotropy's OWN invariant and
+# reproduces sandcastle's DOCUMENTED `-e` injection (it does not run sandcastle).
 #
 # Two parts, both docker-gated (exit 0 + SKIP when docker is absent, matching the
 # repo's honesty gate so CI never fails merely because Docker is missing):
 #
-#   PART 1  A language-agnostic, pure-`docker` demonstration of the two execution
-#           models at the container-env level — no Go build required, so it runs
-#           even if the surrounding tree is mid-edit:
-#             Side A  coding-CLI-in-a-box (the sandcastle model): the provider key
-#                     is injected into the container env (`docker run -e KEY=...`)
-#                     because the coding agent runs INSIDE the box → `printenv`
-#                     from inside REVEALS the key.
-#             Side B  aisotropy RunTask (the broker): the task container is started
-#                     WITHOUT the key (host holds it) → `printenv` from inside does
-#                     NOT reveal the key, and the sandboxed "hands" still do work.
+#   PART 1  A language-agnostic, pure-`docker` demonstration at the container-env
+#           level — no Go build required, so it runs even if the tree is mid-edit.
+#           Note the ASYMMETRY: Side A is a repro, Side B is the real fact.
+#             Side A  sandcastle injection repro: our OWN container with the key
+#                     injected via `docker run -e KEY=...` (the mechanism sandcastle
+#                     documents under its no-proxy design) → `printenv` from inside
+#                     REVEALS the key. This is NOT sandcastle's binary; sandcastle's
+#                     behavior is established by the source citation in README.md.
+#             Side B  aisotropy RunTask (Pattern 2, invariant enforced): the task
+#                     container is started WITHOUT the key (host holds it) →
+#                     `printenv` does NOT reveal the key, and the sandboxed "hands"
+#                     still do work.
 #
-#   PART 2  The strong, real-code proof: aisotropy's PUBLIC App.RunTask driven with
+#   PART 2  The genuinely sound proof: aisotropy's PUBLIC App.RunTask driven with
 #           a live key in the HOST process, asserting the task container env is
 #           key-free while a real commit merges to HEAD (TestKeyBrokering_HeadToHead).
 #
@@ -50,20 +59,21 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 || {
 }
 
 echo
-echo "-- PART 1: pure-docker head-to-head (language-agnostic) --"
+echo "-- PART 1: pure-docker demonstration (language-agnostic) --"
 
-# ---- Side A: coding-CLI-in-a-box (sandcastle key-injection model) ----
-# The coding agent runs INSIDE the container, so the key is injected via `-e`.
+# ---- Side A: repro of sandcastle's documented `-e` key injection ----
+# Our OWN container reproducing the mechanism sandcastle documents (`-e KEY=...`
+# under its no-proxy design). NOT sandcastle's binary — see README.md source cite.
 docker run -d --name "$SIDE_A_CTR" -e "${KEY_NAME}=${CANARY}" "$IMAGE" sleep 120 >/dev/null
 A_ENV="$(docker exec "$SIDE_A_CTR" printenv || true)"
 if printf '%s\n' "$A_ENV" | grep -q "$CANARY"; then
-  echo "Side A  coding-CLI-in-a-box : ${KEY_NAME} PRESENT in container env  (injected via 'docker run -e', sandcastle model)"
+  echo "Side A  sandcastle injection repro : ${KEY_NAME} PRESENT in container env  (our own '-e' repro of sandcastle's documented behavior)"
 else
   echo "Side A  UNEXPECTED: key not present in container env" >&2
   exit 1
 fi
 
-# ---- Side B: aisotropy RunTask (the broker) ----
+# ---- Side B: aisotropy RunTask (Pattern 2, invariant enforced) ----
 # The task container is started WITHOUT the key. The key lives only in THIS host
 # shell's env (exported below) — the aisotropy model spends it host-side and never
 # forwards it into the sandbox. Note: NO '-e ANTHROPIC_API_KEY' on the run line.
@@ -78,18 +88,18 @@ fi
 docker exec "$SIDE_B_CTR" sh -c 'echo brokered-hands > /tmp/note.txt' >/dev/null
 HANDS="$(docker exec "$SIDE_B_CTR" cat /tmp/note.txt || true)"
 if [ "$HANDS" = "brokered-hands" ]; then
-  echo "Side B  aisotropy RunTask   : ${KEY_NAME} ABSENT in container env; hands still ran (wrote note.txt)"
+  echo "Side B  aisotropy RunTask          : ${KEY_NAME} ABSENT in container env; hands still ran (wrote note.txt)"
 else
   echo "Side B  UNEXPECTED: sandboxed hands did not run" >&2
   exit 1
 fi
 
 echo
-echo "PART 1 PASS: coding-CLI-in-a-box: key PRESENT in container env; aisotropy RunTask: key ABSENT, hands still ran"
+echo "PART 1 PASS: '-e' injection is printenv-visible (sandcastle model); aisotropy RunTask: key ABSENT, hands still ran"
 
-# ---- PART 2: the real-code proof via the public App.RunTask ----
+# ---- PART 2: the genuinely sound proof via the public App.RunTask ----
 echo
-echo "-- PART 2: real-code proof (aisotropy public App.RunTask) --"
+echo "-- PART 2: real-code proof of aisotropy's invariant (public App.RunTask) --"
 if ! command -v go >/dev/null 2>&1; then
   echo "SKIP PART 2: go toolchain unavailable; PART 1 already proved the container-env fact."
   exit 0

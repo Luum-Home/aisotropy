@@ -6,6 +6,7 @@
   "scripts": {
     "smoke": "node scripts/smoke.js",
     "product-isolation": "tsx scripts/product_isolation_demo.ts",
+    "strengths": "tsx scripts/strengths_demo.ts",
     "cost-obs": "tsx scripts/cost_obs_demo.ts",
     "parity": "tsx scripts/feature_parity_demo.ts",
     "serve": "echo 'Mastra live serve requires full project setup. See README.md for instructions.'",

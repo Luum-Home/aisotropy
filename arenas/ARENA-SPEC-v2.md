@@ -182,14 +182,14 @@ transactional-outbox→idempotent consolidation, contradiction resolution, healt
 
 ---
 
-## Area 4 — Isolation & auth (★ the surviving differentiator + its governance)
+## Area 4 — Isolation & auth (★ the narrow by-default differentiator + its governance)
 
 ### 4.1 ★ Multi-tenant isolation BY CONSTRUCTION
 - **What it is:** `tenant_id`/`user_id` travel exclusively via `context.Context`; every storage op scopes by key-prefix / SQL `WHERE` / in-scan Qdrant `Must`-filter — no request-path code can issue an unscoped read. The unscoped read is *unrepresentable*, not merely discouraged.
 - **doc_reference:** `docs/vision/thesis.md` §"isolation enforced per storage operation"; `docs/architecture/multi-tenancy.md`; `.claude/rules/constitutional-gates.md` §"Multi-tenant data isolation"; `arenas/README.md` (the isolation matrix).
 - **aisotropy_mechanism:** BadgerDB key `tenant:{t}:user:{u}:session:{s}` (no cross-prefix iterator); facts `tenant_id=? AND user_id=?`; Qdrant `Must` filter during HNSW.
-- **proof_type:** architectural-property (**already demoed via the leak arena** — the adversarial smoke proves every other framework leaks and aisotropy can't).
-- **arena_test_idea:** Classify (done): write secret-A in a shared session as tenant A, read from every cross-tenant identity; a marker in the wrong tenant's response = leak. aisotropy = unrepresentable; all 7 arenas = CONVENTION/NONE.
+- **proof_type:** architectural-property (**demoed via the isolation arena** — the adversarial smoke shows the naive cross-scope read is a same-key/wrong-key developer bug in the shared-store frameworks, avoidable with each framework's proper primitive, and *unrepresentable* in aisotropy because no code path composes the key by hand).
+- **arena_test_idea:** Classify (done): write secret-A in a shared session as tenant A, read from a cross-tenant identity. The naive-config read (wrong/under-scoped developer key) surfaces the marker — a dev bug, true of any KV store incl. aisotropy's own BadgerDB — while the correct-config read (composite key / identity-bound store / per-runner slot / agent-scoped subresource) does not. aisotropy = isolation *by default* (unrepresentable-to-get-wrong); the shared-store arenas = CONVENTION (a stateless lib like Pydantic AI/Eino is DIY/out-of-scope, not a defect).
 
 ### 4.2 ★ Value-object Scope (unforgeable)
 - **What it is:** `facts.Scope`, `semantic.Scope`, `tenancy.Scope` have unexported fields — a bare `Scope{}` literal doesn't compile outside its package, and all constructors route through one shared identity validator; an unscoped statement is a *construction-time error*.
@@ -230,8 +230,16 @@ transactional-outbox→idempotent consolidation, contradiction resolution, healt
 - **What it is:** aisotropy scopes memory by *four* axes — `(tenant_id, user_id, session_id, product_id)`. The arenas were originally probed on tenant/user only; `product_id` is the axis they were never tested on. A single tenant+user operating multiple products must not read another product's slice.
 - **doc_reference:** `.claude/rules/architecture.md` §"Layer conventions" (the `Scope` value object); `docs/architecture/multi-tenancy.md`; each arena's `FEATURES.md` (run-verified product-isolation demo).
 - **aisotropy_mechanism:** `product_id` is a field of the `Scope` value object, built from verified identity and carried via `context.Context` exactly like `tenant_id`/`user_id`; every storage op filters on it. A wrong/forgotten `product_id` is *unrepresentable*, not merely discouraged — the same by-construction guarantee as the tenant/user axes (4.1–4.2).
-- **proof_type:** architectural-property in aisotropy (by-construction) — but **run-verified as an executable leak in every arena**: the cross-product read is *actually executed* offline (fake model + shared store), exit 0, in all seven.
-- **arena_test_idea:** Same tenant+user, seed product X's marker, read as product Y; a marker in Y's response is a leak. Run-verified: **all 7 arenas leak** — `product_id` is a developer-passed key the framework binds to nothing (Pydantic AI: a `deps` field; Mastra: rides unkeyed metadata over 2-key `resourceId`/`threadId` memory; LangGraph: an unbound namespace element a shallow prefix scans past; Eino: folded into a bare `CheckPointStore` string, dropped-segment leaks; ADK Go: no `ProductID`, folded into `userID`; Genkit Go: *no memory primitive at all*; Letta: no `product_id` API param, only a dev-invented `product:<id>` tag with a `match_all_tags=False` default). aisotropy = unrepresentable. Per-arena evidence in each `FEATURES.md`.
+- **proof_type:** architectural-property in aisotropy (by-construction) — the cross-product read is *run-verified offline* in every arena on the **naive-config path** (fake model + shared store), exit 0, with the correct-config path shown at equal weight.
+- **arena_test_idea:** Same tenant+user, seed product X's marker, read as product Y. Run-verified: on each framework's *weakest* config the naive read surfaces the marker — a same-key/wrong-key developer bug the framework binds `product_id` to nothing, true of any KV store incl. aisotropy's own BadgerDB — but a competent developer isolates with the framework's proper primitive:
+  - **Pydantic AI** — DIY / out-of-scope: a stateless lib with no memory tier; `product_id` is one more dev-computed key, no framework layer to reject a wrong one (not a defect).
+  - **Mastra** — CONVENTION: a composite `resourceId` (thread↔resource ownership-validated) or `semanticRecall.filter` isolates; the naive tag-in-metadata path is a scoping no-op.
+  - **LangGraph** — CONVENTION: a deep namespace + `@auth.on.store()` identity binding makes the cross-read structurally impossible; a shallow prefix is a dev bug.
+  - **Eino** — CONVENTION / NOT-POSSIBLE-by-framework: a correctly composed key isolates; a dropped product segment collapses two keys (any string-keyed KV behaves so). Eino has no tenancy tier by design.
+  - **ADK Go** — PARTIAL: `appName = product` (one runner per product) makes the product axis a native, non-droppable key component by construction; the residual is the one axis with no native slot, ridden in `userID`.
+  - **Genkit Go** — CONVENTION: the experimental `ai/exp` `SessionStore` (session-id-keyed) gives persistence, not isolation; product folded into the key by dev. (Earlier "no memory primitive at all" was false.)
+  - **Letta** — CONVENTION org-wide / BUILT-IN by `agent_id`: the agent-scoped subresources (`agents.passages.search(agent_id)`) isolate by construction; one-agent-per-principal is the documented pattern; the org-wide `match_all_tags=False` default is a DX footgun, not a structural leak.
+  aisotropy = isolation by default (`product_id` rides ctx in `Scope`, unrepresentable-to-get-wrong). Per-arena evidence in each `FEATURES.md`.
 
 ---
 
@@ -401,13 +409,13 @@ top of the original 41 (multi-product isolation; dependency license posture). Th
 | 3.2 ▶ | Native vs homegrown agent loop (double gate) | executable-demo | BUILT-IN | BUILT-IN | BUILT-IN | BUILT-IN | BUILT-IN | BUILT-IN | BUILT-IN | REAL (fallback) / CODE-ONLY (native) |
 | 3.3 ▶ | Typed tools + MCP | architectural-property | PARTIAL | PARTIAL | PARTIAL | BUILT-IN | BUILT-IN | BUILT-IN | BUILT-IN | REAL |
 | 3.4 | Model-selection gateway | executable-demo | PARTIAL | PARTIAL | PARTIAL | DIY | DIY | DIY | DIY | REAL |
-| 4.1 | Isolation BY CONSTRUCTION | architectural-property | CONVENTION | CONVENTION | CONVENTION | NOT-POSSIBLE | CONVENTION | CONVENTION | CONVENTION | REAL (by-construction; demoed via leak arena) |
+| 4.1 | Isolation BY CONSTRUCTION | architectural-property | DIY | CONVENTION | CONVENTION | NOT-POSSIBLE | CONVENTION | CONVENTION | CONVENTION | REAL (by-construction; demoed via isolation arena) |
 | 4.2 | Value-object Scope (unforgeable) | architectural-property | DIY | DIY | DIY | DIY | DIY | DIY | DIY | REAL (by-construction) |
 | 4.3 | Qdrant in-scan filter (not post-filter) | architectural-property | DIY | CONVENTION | CONVENTION | DIY | PAID | DIY | CONVENTION | REAL (by-construction) |
-| 4.4 ▶ | Authenticated-identity seam (must-agree bind) | executable-demo | DIY | DIY | NOT-POSSIBLE | DIY | NOT-POSSIBLE | DIY | CONVENTION | REAL |
+| 4.4 ▶ | Authenticated-identity seam (must-agree bind) | executable-demo | DIY | DIY | PARTIAL | DIY | PARTIAL | DIY | CONVENTION | REAL |
 | 4.5 | JWKS key rotation | executable-demo | DIY | DIY | DIY | DIY | DIY | DIY | DIY | REAL (CODE-ONLY default) |
 | 4.6 | Guardrails (redact/inject/output) | executable-demo | DIY | PARTIAL | DIY | DIY | PARTIAL | DIY | DIY | REAL |
-| 4.7 ▶ | Multi-product isolation (4th scope axis) | architectural-property | CONVENTION | CONVENTION | CONVENTION | CONVENTION | CONVENTION | CONVENTION | CONVENTION | REAL (by-construction; product_id rides ctx, leak run-reproduced in all 7 arenas) |
+| 4.7 ▶ | Multi-product isolation (4th scope axis) | architectural-property | DIY | CONVENTION | CONVENTION | CONVENTION | PARTIAL | CONVENTION | CONVENTION | REAL (by-construction; product_id rides ctx; naive-config cross-read run-reproduced, correct-config isolation shown at equal weight) |
 | 5.1 ▶ | Per-tenant PRE-SPEND quota gate (429) | executable-demo | BUILT-IN (per-run) | PARTIAL | DIY | DIY | DIY | DIY | DIY | REAL (per-tenant, by-construction) |
 | 5.2 ▶ | Circuit breaker | executable-demo | DIY | DIY | DIY | DIY | DIY | DIY | DIY | REAL |
 | 5.3 ▶ | Quota-pressure model degradation | executable-demo | DIY | DIY | DIY | DIY | DIY | DIY | DIY | REAL |
@@ -431,26 +439,30 @@ run-verified** against the pinned upstream framework, offline, all seven arenas 
 
 † Row 5.7 is scored on a *license-posture* scale (PERMISSIVE / weak-copyleft / restricted), not the
 coverage-class legend, so it is excluded from the BUILT-IN tally below. Row 4.7 (multi-product
-isolation) uses the coverage classes and contributes `+1 CONVENTION` to every arena.
+isolation) uses the coverage classes: CONVENTION for the shared-store frameworks (Mastra, LangGraph,
+Eino, Genkit, Letta org-wide), DIY for Pydantic AI (stateless lib, no memory tier), and PARTIAL for
+ADK Go (`appName=product` makes it native by construction).
 
 ### BUILT-IN tally per arena (across the 42 coverage-class rows)
 
 | Class | Pydantic AI | Mastra | LangGraph | Eino | ADK Go | Genkit Go | Letta |
 |---|---|---|---|---|---|---|---|
 | BUILT-IN | 7 | 11 | 8 | 5 | 7 | 8 | 9 |
-| PARTIAL | 7 | 9 | 10 | 5 | 8 | 6 | 10 |
-| CONVENTION | 2 | 3 | 3 | 4 | 2 | 2 | 4 |
-| DIY | 24 | 17 | 18 | 26 | 18 | 25 | 18 |
+| PARTIAL | 7 | 9 | 11 | 5 | 10 | 6 | 10 |
+| CONVENTION | 0 | 3 | 3 | 4 | 1 | 2 | 4 |
+| DIY | 26 | 17 | 18 | 26 | 18 | 25 | 18 |
 | PAID | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
-| NOT-POSSIBLE | 2 | 2 | 3 | 2 | 5 | 1 | 1 |
+| NOT-POSSIBLE | 2 | 2 | 2 | 2 | 4 | 1 | 1 |
 
 Reading the tally: **Mastra (11 BUILT-IN)** and **Letta (9)** are the broadest out-of-the-box
 frameworks; **Eino (5 BUILT-IN, 26 DIY)** is the leanest — a Go orchestration library, not a
-runtime. ADK Go carries the most **NOT-POSSIBLE (5)** — its rich memory is Vertex-tethered
-(PAID) and it binds no tenant/identity. But BUILT-IN counts flatter breadth, not the axis that
-matters here: **isolation,
-tiered memory, and pre-spend governance** — where every arena either falls to CONVENTION/DIY or
-hits a structural NOT-POSSIBLE, and aisotropy is by-construction.
+runtime. ADK Go carries the most **NOT-POSSIBLE (4)** — its rich memory is Vertex-tethered
+(PAID) — though it binds identity via `Before*` auth callbacks (`PARTIAL`, not `NOT-POSSIBLE`) and
+makes any one scope axis native via `appName`. But BUILT-IN counts flatter breadth, not the axis that
+matters here: **isolation *by default*,
+tiered memory, and pre-spend governance** — where every arena falls to CONVENTION/DIY (or, for a
+stateless lib, out-of-scope), and aisotropy is by-construction. On every *other* axis a competitor
+leads (see each arena's run-verified strengths section).
 
 ---
 
@@ -460,7 +472,7 @@ Five frameworks are folded into the comparison after the original seven: **Dify*
 Flask+Celery platform), **Cloudflare Agents** (TS on Workers + Durable Objects), **Spring AI**
 (Java/JVM), **Flue** (TS durable-agent harness, Astro team), and **eve** (TS filesystem-first
 durable agents, Vercel). Four ran as **REAL** offline integrations against the pinned upstream
-framework (Cloudflare Agents `agents@0.17.4` in real `workerd`, Spring AI `1.1.8` on JDK 26, Flue
+framework (Cloudflare Agents `agents@0.17.4` in real `workerd`, Spring AI `2.0.0` on JDK 26, Flue
 `@flue/runtime@1.0.0-beta.9`, eve `0.24.5` — all smokes exit 0); **Dify is SOURCE-VERIFIED, NOT
 EXECUTED** (it is a multi-container server platform with no in-process library — cloned at HEAD
 `1aea3460`, read line-by-line, its real schema transcribed into its own ORM for a labelled
@@ -535,10 +547,12 @@ aisotropy, offline, every demo exit 0:
 
 - **Structured-output fail-closed** (§2.2 ✓) — the reflection loop returns 502 rather than garbage;
   BUILT-IN as a true fail-closed retry in only Pydantic AI and Mastra, PARTIAL/DIY elsewhere.
-- **Multi-product isolation** (§4.7 / row 4.7 ✓) — the 4th scope axis. The cross-product read was
-  *executed* in every arena and leaks (CONVENTION / developer-passed on a key the framework binds to
-  nothing); in aisotropy `product_id` rides `context.Context` in the `Scope` value object like
-  tenant/user, so the wrong-product read is unrepresentable.
+- **Multi-product isolation** (§4.7 / row 4.7 ✓) — the 4th scope axis. On each framework's *weakest*
+  config the cross-product read was *executed* in every arena and surfaces the marker (CONVENTION /
+  developer-passed on a key the framework binds to nothing — a dev bug, not a defect; the
+  correct-config path isolates and is shown at equal weight); in aisotropy `product_id` rides
+  `context.Context` in the `Scope` value object like tenant/user, so the wrong-product read is
+  unrepresentable.
 - **Dependency license posture** (§5.7 / row 5.7 ✓) — real `pip-licenses`/`license-checker`/
   `go-licenses` scans of the installed tree; all seven clear the hard-blocker gate, aisotropy holds
   100% MIT/Apache by construction.
@@ -591,10 +605,13 @@ distinctive property in the catalog.
   so a crash between the turn write and the event write orphans one); the other two (Eino, Genkit)
   can only DIY a non-durable pair. Sleep-cycle consolidation is BUILT-IN only in Letta and DIY
   everywhere else.
-- **Isolation by construction** (rows 4.1–4.3) — CONVENTION in six arenas, NOT-POSSIBLE in Eino,
-  and the unforgeable value-object Scope (4.2) plus in-scan payload filter (4.3) exist nowhere else.
-  The leak arena already proved every framework leaks on the one-line-cheaper path and aisotropy
-  cannot.
+- **Isolation *by default*** (rows 4.1–4.3) — CONVENTION in the shared-store arenas (DIY/out-of-scope
+  for a stateless lib like Pydantic AI; NOT-POSSIBLE-by-design in Eino), and the unforgeable
+  value-object `Scope` (4.2) plus in-scan payload filter (4.3) exist nowhere else. Each arena *can* be
+  isolated with its proper primitive; aisotropy's narrow edge is that the unscoped read is
+  unrepresentable, so isolation is on by default rather than a discipline the developer must remember.
+  This is one axis — on graph orchestration, multi-agent delegation, memory-OS productization, and DX
+  a competitor leads.
 - **Per-tenant PRE-SPEND quota gate** (row 5.1) — Pydantic AI's `UsageLimits` is a real pre-spend
   gate but **per-run, not per-tenant**; Mastra's `CostGuardProcessor` is a real pre-call gate but
   **cost/pricing-approximate** (a zero-cost fake can't trip it). The deterministic **per-tenant
@@ -631,10 +648,12 @@ and lean on a real ecosystem, and the isolation/governance gaps are yours to pap
 
 If you are building a **multi-tenant LLM product where a cross-tenant leak is an incident, cost
 overrun is a P1, and memory must be auditable**, the calculus flips. In every arena, tenant
-isolation is a string the developer must never fumble, the pre-spend gate is per-run or absent, the
-memory is one flat store the LLM self-manages, and the crash-safe outbox is structurally
-impossible. aisotropy makes the leaky read *unrepresentable*, gates spend *per-tenant before the
-call*, and writes the turn and its consolidation intent in *one ACID transaction* — the three
+isolation is a developer-owned convention you must wire and never fumble — each *can* be isolated
+with its proper primitive (composite key, `@auth.on.store()`, per-runner `appName`, one-agent-per-
+principal), but the default path is not scoped and a forgotten axis fails open; the pre-spend gate
+is per-run or absent, memory is typically one flat store, and a crash-safe outbox is structurally
+hard. aisotropy makes the unscoped read *unrepresentable* by default, gates spend *per-tenant before
+the call*, and writes the turn and its consolidation intent in *one ACID transaction* — the three
 things no arena provides by construction. The price is real: a smaller ecosystem, a younger
 codebase, features that are CODE-ONLY until you provision Qdrant/rqlite/the Rust binaries, and DX
 that trails the field. **The differentiator is not "more features" — Mastra and Letta have more

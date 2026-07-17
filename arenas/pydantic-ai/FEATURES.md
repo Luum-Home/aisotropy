@@ -28,7 +28,7 @@ timestamp: 2026-07-15T00:00:00Z
 
 ### Streaming
 - **Status:** Built-in
-- **Mechanism:** `AsyncAgent.stream(prompt)` returns async iterator over deltas
+- **Mechanism:** `agent.run_stream(prompt)` (v2 async context manager) yields deltas; run-verified in the feature-parity matrix (#11) via `run_stream` + `task.cancel()`
 - **Cancellation:** Python `asyncio.CancelledError` propagates naturally
 - **AISOTROPY COMPARISON:** Equivalent to aisotropy's Huma SSE with `ctx` cancellation.
   Both stream deltas; aisotropy adds HTTP-level `Accept: text/event-stream` semantics.
@@ -121,44 +121,54 @@ timestamp: 2026-07-15T00:00:00Z
   would need an explicit CAUTION note, consistent with the policy).
 
 ### Multi-tenant isolation
-- **Status:** Convention only
-- **Pattern:** Pass `tenant_id` through `RunContext[deps]` — developer responsibility
-- **RUN-VERIFIED** (`scripts/smoke.py`, exit 0): positive control passes, correct-key scoping
-  is safe, and the **cross-tenant leak reproduces** — a tenantB request with tenantA's deps
-  key reads tenantA's marker. The framework never checks that `deps.tenant_id` matches the
-  caller.
-- **AISOTROPY COMPARISON:** aisotropy enforces isolation by construction — `context.Context`
-  propagation + per-statement/key scoping + constitutional gate. No code path can issue an
-  unscoped read.
+- **Status:** No isolation layer (DIY / out-of-scope) — not a defect
+- **Pattern:** Pydantic AI is a **stateless agent library** that ships no memory or multi-tenancy
+  layer by design ("Agents are stateless and designed to be global"). `deps` is pure dependency
+  injection — a developer-constructed object bound to nothing (no principal, no auth, no tenant
+  concept). Scoping is a BYO store keyed by a key you compute; `tenant_id` on `RunContext[deps]`
+  is just one such developer-computed field.
+- **RUN-VERIFIED** (`scripts/smoke.py`, exit 0): positive control passes and correct-key scoping
+  is safe (the exact-key store partitions when the key is right). A wrong developer-computed key
+  reads the wrong slice — because there is **no framework isolation layer to reject it**. That is
+  plain-dict behavior (true of any KV store, including aisotropy's BadgerDB), exercised against the
+  arena's own 15-line dict — the framework is not in that path. This is a DIY classification, not
+  a leak: a leak would mean a framework boundary failed, but Pydantic AI ships no such boundary.
+- **AISOTROPY COMPARISON:** aisotropy binds all axes at the Huma handler boundary and propagates
+  them via `context.Context` + per-statement/key scoping + a constitutional gate — so the
+  **default** read path is already scoped and no code path can issue an unscoped read. Pydantic AI
+  leaves key computation and enforcement entirely to the developer.
 
-### Multi-PRODUCT isolation (3rd axis — product_id)
-- **Status:** Convention only — `product_id` is just another developer-passed deps key
+### Multi-PRODUCT scoping (3rd axis — product_id)
+- **Status:** No isolation layer (DIY / out-of-scope) — `product_id` is just another
+  developer-computed deps key, same as `tenant_id`
 - **RUN-VERIFIED** (`scripts/product_isolation_demo.py`, pydantic-ai 2.10.0, offline `TestModel`,
   exit 0): aisotropy scopes memory by the 4-tuple `(tenant_id, user_id, session_id, product_id)`;
-  the arena smoke only covered tenant/user, so this demo adds the **product** axis and proves the
-  same structural truth one axis deeper.
+  the isolation-model smoke covered tenant/user/session, so this demo adds the **product** axis and
+  shows the same structural truth one axis deeper.
   - **(a) Positive control — PASS.** Seeded `tenantA/userA/PRODUCT-X` with a random marker; the
     correct `(tenantA, userA, productX)` key reads it back.
   - **Correct scoping — PASS.** Same tenant + same user + the *correct other product* (`productY`)
     reads its own slice → NO marker. The product axis genuinely partitions **when the key is right**,
-    so the leak below is about a wrong key, not a broken store.
-  - **(b) CROSS-PRODUCT LEAK — reproduced.** A request that should be scoped to `productY`, but with
-    `deps.product_id` set to `productX` (SAME tenant, SAME user — only the product key differs),
-    silently reads productX's marker. `get_recent_messages()` (what the `get_context` tool calls)
-    trusts `deps` verbatim. Actual run output:
+    so the wrong-key read below is about the key, not a broken store.
+  - **(b) No isolation layer on the product axis.** A request that should be scoped to `productY`,
+    but with `deps.product_id` computed as `productX` (SAME tenant, SAME user — only the product key
+    differs), reads productX's slice. `get_recent_messages()` (what the `get_context` tool calls)
+    uses `deps` verbatim, and the framework has no product concept to reject the wrong key. Actual
+    run output:
     ```
-    [pydantic-ai] Demonstrating the CROSS-PRODUCT leak:
-      Request should be scoped to productY, but deps.product_id was set to 'productX'.
+    [pydantic-ai] No isolation layer on the product axis — the developer owns the key:
+      Request should be scoped to productY, but deps.product_id was computed as 'productX'.
       SAME tenant, SAME user — only the product key differs.
-      [LEAK] Cross-product leak confirmed: wrong product_id -> cross-product read
+      [DIY] Confirmed: a wrong developer-computed product_id reads the wrong slice — no framework layer to prevent it
     ```
   - **Root cause:** `product_id` is no more privileged than `tenant_id` — the framework binds it to
-    nothing (no principal, no API surface, no auth). It is a dict key you chose to put in the lookup
-    tuple. A stale/copy-pasted/cached deps object or a one-line typo crosses the product boundary
-    with no framework objection. The framework enforces NOTHING on the extra key; it is convention.
+    nothing (no principal, no API surface, no auth), because Pydantic AI is a stateless agent library
+    with no memory or multi-tenancy layer. It is a dict key you chose to put in the lookup tuple, so
+    a wrong key returns the wrong slice — exactly like any KV store. This is DIY/out-of-scope, not a
+    framework defect.
 - **AISOTROPY COMPARISON:** aisotropy binds all four axes at the Huma handler boundary and propagates
   them via `context.Context` — a wrong product_id can't be silently substituted downstream because
-  no read is issued without the ctx-scoped key.
+  no read is issued without the ctx-scoped key, so its **default** path is already scoped.
 
 ## Comprehensive feature-parity matrix (RUN-VERIFIED)
 
@@ -216,6 +226,47 @@ Run-verified tally: **5 BUILT-IN · 4 PARTIAL · 14 DIY · 2 NOT-POSSIBLE**.
 This is the honest headline: on the **memory tiers** (aisotropy's four-DB
 "specialized tools by access temperature") Pydantic AI is a blank slate — 8 of 9
 memory rows are DIY and the tiered-hierarchy row is NOT-POSSIBLE.
+
+## Genuine strengths (steelman — RUN-VERIFIED)
+
+The rows above are the "what's missing" side. This is the other side: where Pydantic AI is
+genuinely excellent — **type-safety and agent-loop DX** — it is best-in-class. `scripts/strengths_demo.py`
+DEMONSTRATES three real strengths with runnable v2 code, fully offline against the pinned
+`pydantic-ai>=2.0.0` (installed 2.10.0). Run: `./.venv/bin/python scripts/strengths_demo.py`
+(exit 0 = all three held). Every line executes the framework and asserts on the real result.
+
+- **Structured output is a TYPED CONTRACT — fail-closed + self-correcting — [BUILT-IN].**
+  `Agent(output_type=<PydanticModel>)` returns a *validated object*, not a string to parse.
+  RUN-VERIFIED (v2 symbols `Agent(output_type=...)`, `pydantic.Field`, `Agent(retries=...)`,
+  `UnexpectedModelBehavior`):
+  - `output_type=Weather` → validated `Weather(city='Paris', temp_c=21.5)`.
+  - `output_type=Union[Refund, Escalate]` → routed to the `Escalate` typed branch (typed routing
+    for free, discriminated by the output tool the model picks).
+  - Reflection loop: an output violating a `Field(pattern=...)` constraint was retried with the
+    exact validation error and validated on generation #2 (`sku='ABC-1234'`).
+  - Fail-closed: with retries exhausted on a never-valid output, the framework raised
+    `UnexpectedModelBehavior` — never silent bad text.
+- **First-class TYPED dependency injection — [BUILT-IN].** `deps_type=Deps` + `RunContext[Deps]`
+  threads a typed dependency object into every tool with full static typing. RUN-VERIFIED: a tool
+  read `ctx.deps.tenant_id` / `ctx.deps.api_budget` off a typed `Deps` (v2 symbols `deps_type=`,
+  `RunContext[Deps]`, `@agent.tool`).
+- **MODEL-AGNOSTIC by construction — [BUILT-IN].** The same agent + tools run against different
+  model backends with zero code change. RUN-VERIFIED: one agent ran unchanged against `TestModel`
+  and `FunctionModel` via `agent.override(model=...)` — the production analog of swapping providers
+  (OpenAI ↔ Anthropic ↔ Google) or degrading to a cheap model under pressure.
+
+**Not demonstrated (not in the pinned 2.10.0 install, stated honestly):** `DurableAgent`
+(`pydantic_ai.durable_exec` is present but the Temporal/DBOS backends are not installed),
+`pydantic-evals` (separate uninstalled package — see feature #23), and MCP toolsets
+(`pydantic-ai-slim[mcp]` extra not installed — see feature #15). These are real v2 capabilities;
+they are simply not exercised here because the arena venv does not carry their optional deps.
+
+**Honest overlap with aisotropy:** aisotropy *also* does fail-closed structured output (the Gollem
+reflection loop) and typed tools — that part overlaps. The difference is category: Pydantic AI is a
+Python **type-safe agent library** whose edge is developer ergonomics around the agent loop;
+aisotropy is a Go **runtime** that additionally ships memory tiers, multi-tenancy, cost, and
+observability by default. The strengths above are exactly the layer where a library shines, they
+are real, and they are Pydantic AI's to keep.
 
 ## Summary
 

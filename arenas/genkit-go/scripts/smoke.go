@@ -6,9 +6,11 @@
 //
 //  1. The Orbit chatbot is a genuine Genkit build: dotprompt, structured output
 //     (GenerateData), and tool-calling all execute through the real pipeline.
-//  2. Genkit Go has NO tenant isolation. Stable Genkit ships no Session/Memory
-//     type; multi-tenancy is developer-passed. A wrong session key drives a
-//     real cross-tenant leak straight through genkit.Generate.
+//  2. Genkit Go has NO tenant isolation. v1.10.0 ships an experimental ai/exp
+//     session-memory primitive (localstore SessionStore), but it is keyed by a
+//     developer-chosen session id with no tenant binding — persistence, not
+//     isolation. Multi-tenancy is developer-passed, so a wrong session key
+//     drives a real cross-tenant leak straight through genkit.Generate.
 //
 // Pattern (mirrors aisotropy's isolation_e2e_test.go):
 //   - Seed tenantA's secret into a shared session key via the real chat flow.
@@ -63,8 +65,9 @@ func main() {
 	// reproduced, or the positive control broke.
 	if passed {
 		fmt.Println("\nResult: PASS — positive control verified AND the expected cross-tenant leak reproduced")
-		fmt.Println("Root cause: Genkit Go has no Session/Memory primitive; the session")
-		fmt.Println("            key is developer-passed convention, not enforced construction.")
+		fmt.Println("Root cause: Genkit Go's memory primitive (exp SessionStore) is keyed by a")
+		fmt.Println("            developer-passed session id with no tenant binding — persistence,")
+		fmt.Println("            not isolation. The key is convention, not enforced construction.")
 	} else {
 		fmt.Println("\nResult: FAIL — could not reproduce the expected leak (or positive control failed); see details above")
 		os.Exit(1)

@@ -1,17 +1,26 @@
 #!/usr/bin/env node
 /**
- * Adversarial isolation smoke test for Mastra.
+ * Isolation KEYING-MODEL smoke for Mastra — CONVENTION vs CONSTRUCTION.
  *
- * Proves that tenant-isolation-by-convention leaks: even with server-authoritative
- * resourceId/threadId keys, a missing or wrong key results in cross-tenant reads.
+ * IMPORTANT: this file is a small SIMULATION of the keying model (a hand-written
+ * store), NOT the real framework. The authoritative, real-`@mastra/memory` demo is
+ * `scripts/product_isolation_demo.ts` (`npm run product-isolation`), which shows the
+ * naive path AND two competent paths that prevent the cross-product read.
  *
- * Uses Mastra's in-memory storage — no LLM API key needed.
+ * What this simulation illustrates: a keyed store faithfully returns data for the
+ * key you hand it. `resourceId` is a developer-passed opaque string, so if the app
+ * passes the WRONG resourceId (a cached/forged/omitted one), it reads the wrong
+ * data — because the key is a convention, not a server-derived, unforgeable Scope.
+ * That is the convention-vs-construction point, not a claim that "the framework
+ * leaks": the real framework additionally validates thread↔resource ownership (see
+ * the product demo). aisotropy derives the axis from verified identity and filters
+ * it server-side on every read, so a wrong key is unrepresentable by construction.
  *
  * Pattern (mirrors aisotropy's isolation_e2e_test.go):
  *   1. Seed tenantA with a unique marker in a shared thread.
  *   2. Positive control: tenantA reads its own thread → marker MUST appear.
- *   3. Negative probes: tenantB, tenantA/userB, tenantB/userA read the same thread
- *      → marker must NOT appear. If it does, the framework leaks.
+ *   3. Wrong-key probes: pass another/omitted resourceId for the same thread → the
+ *      store returns whatever the passed key addresses (convention, not construction).
  */
 
 const crypto = require('crypto');
@@ -59,11 +68,12 @@ class MemoryStore {
   }
 
   /**
-   * Get messages from a thread — THIS IS WHERE THE LEAK HAPPENS.
+   * Get messages from a thread — keyed by (resourceId, threadId).
    *
-   * If resourceId is omitted or wrong, this returns messages from
-   * a different tenant's thread. In Mastra, listMessages was threadId-only
-   * (bug mastra#11856), which is exactly this pattern.
+   * The store faithfully returns data for the key it is handed. If the app passes a
+   * wrong or omitted resourceId, it addresses a different tenant's thread — because
+   * the key is a developer-passed convention. The real Mastra `listMessages` was once
+   * threadId-only (bug mastra#11856, since fixed), the same class of convention gap.
    */
   getMessages(resourceId, threadId, limit = 5) {
     const key = `${resourceId}:${threadId}`;
@@ -75,11 +85,11 @@ class MemoryStore {
   }
 
   /**
-   * SEARCH — the real leak vector.
+   * SEARCH by threadId alone (no resourceId) — models the mastra#11856 shape.
    *
-   * If you search by threadId alone (without resourceId), you scan
-   * ALL tenants' threads with that threadId. This is equivalent to
-   * LangGraph's prefix-match `store.search(('acme',))`.
+   * Searching by threadId without a resourceId scans ALL tenants' threads with that
+   * threadId — the omitted-filter convention gap (equivalent to LangGraph's
+   * prefix-match `store.search(('acme',))`). Applying the resourceId filter closes it.
    */
   searchThreads(threadId, limit = 5) {
     const results = [];
@@ -129,24 +139,24 @@ function testIsolation() {
   ];
 
   // Note: for tenantA/userB we use a DIFFERENT threadId since they share
-  // the tenant but not the session. The real leak is across tenants.
+  // the tenant but not the session. The wrong-key read that matters is across tenants.
   for (const [resourceId, desc] of probes) {
     const results = store.getMessages(resourceId, threadId, 5);
     const hasMarker = results.some(m => m.content.includes(marker));
 
     if (hasMarker) {
-      details.push(`  ✗ CROSS-TENANT LEAK: ${desc} (${resourceId}/${threadId}) saw tenantA's marker!`);
-      console.log(`  ✗ CROSS-TENANT LEAK: ${desc} saw marker!`);
+      details.push(`  ✗ WRONG-KEY READ: ${desc} (${resourceId}/${threadId}) addressed tenantA's marker`);
+      console.log(`  ✗ WRONG-KEY READ: ${desc} addressed marker`);
       leaked = true;
     } else {
-      details.push(`  ✓ No leak: ${desc} did not see marker`);
-      console.log(`  ✓ No leak: ${desc}`);
+      details.push(`  ✓ Isolated: ${desc} did not see marker`);
+      console.log(`  ✓ Isolated: ${desc}`);
     }
   }
 
-  // ── Demonstrate the search leak (equivalent to mastra#11856) ──
+  // ── Demonstrate the threadId-only search gap (models mastra#11856) ──
   console.log();
-  console.log('[mastra] Demonstrating the search leak (threadId-only):');
+  console.log('[mastra] Demonstrating the threadId-only search gap (omitted resourceId filter):');
 
   // Seed tenantB's thread with the same threadId
   store.saveMessage('tenantB', threadId, {
@@ -160,22 +170,24 @@ function testIsolation() {
 
   if (searchHasMarker) {
     details.push(
-      '  ✗ SEARCH LEAK: threadId-only search across tenants revealed tenantA\'s marker',
-      '     This is equivalent to mastra#11856 (listMessages threadId-only)',
+      '  ✗ THREADID-ONLY SEARCH GAP: omitting the resourceId filter scans across tenants',
+      '     Models mastra#11856 (listMessages threadId-only, since fixed). Adding the',
+      '     resourceId filter closes it — the fix is applying the convention.',
     );
-    console.log('  ✗ SEARCH LEAK: threadId-only scan revealed cross-tenant data');
+    console.log('  ✗ THREADID-ONLY SEARCH GAP: omitted resourceId filter scans across tenants');
     leaked = true;
   } else {
-    details.push('  ✓ Search did not leak (no marker in results)');
-    console.log('  ✓ Search did not leak');
+    details.push('  ✓ Search scoped (no marker in results)');
+    console.log('  ✓ Search scoped');
   }
 
-  // ── Demonstrate the resourceId convention leak ──
+  // ── Demonstrate the developer-passed-key convention ──
   console.log();
-  console.log('[mastra] Demonstrating the resourceId convention leak:');
-  console.log('  The developer passes resourceId to MemoryStorage.');
-  console.log('  If the wrong resourceId is passed, you read the wrong tenant\'s data.');
-  console.log('  The framework does NOT validate that resourceId matches the authenticated tenant.');
+  console.log('[mastra] Demonstrating the developer-passed-key convention:');
+  console.log('  resourceId is an opaque string the app supplies on each call.');
+  console.log('  Pass the wrong one (cached/forged/omitted) and you address the wrong data.');
+  console.log('  It is a convention, not a server-derived, unforgeable Scope. (The real');
+  console.log('  framework does add thread↔resource ownership validation — see the product demo.)');
   console.log();
 
   // Simulate: request comes from tenantB, but developer accidentally
@@ -185,10 +197,10 @@ function testIsolation() {
     const results = store.getMessages(wrongRid, threadId, 5);
     if (results.some(m => m.content.includes(marker))) {
       details.push(
-        `  ✗ ACTUAL LEAK: developer passed wrong resourceId "${wrongRid}" → saw tenantA's marker`,
-        '     This is the convention leak: resourceId is developer-passed, not enforced.',
+        `  ✗ WRONG-KEY READ: app passed wrong resourceId "${wrongRid}" → addressed tenantA's marker`,
+        '     Convention, not construction: resourceId is developer-passed, not identity-derived.',
       );
-      console.log(`  ✗ ACTUAL LEAK: wrong resourceId "${wrongRid}" → cross-tenant read`);
+      console.log(`  ✗ WRONG-KEY READ: wrong resourceId "${wrongRid}" → wrong-tenant data`);
       leaked = true;
     }
   }
@@ -212,14 +224,15 @@ for (const d of details) {
 }
 console.log('-'.repeat(60));
 
-// PASS = positive control verified AND the expected convention leak reproduced
-// (consistent with the other 6 arenas: exit 0 = arena ran and demonstrated its finding).
+// PASS = positive control verified AND the wrong-key convention read reproduced
+// (consistent with the other arenas: exit 0 = arena ran and demonstrated its finding).
 if (passed) {
-  console.log('\nResult: PASS — positive control verified AND the expected cross-tenant leak reproduced');
-  console.log('Root cause: resourceId is developer-passed convention, not');
-  console.log('            framework-enforced construction.');
+  console.log('\nResult: PASS — positive control verified AND the wrong-key convention read reproduced');
+  console.log('Point: resourceId is a developer-passed convention, not an identity-derived,');
+  console.log('       unforgeable Scope. The real framework adds thread↔resource ownership');
+  console.log('       validation; see scripts/product_isolation_demo.ts for the authoritative demo.');
 } else {
-  console.log('\nResult: FAIL — could not reproduce the expected leak (or positive control failed); see details');
+  console.log('\nResult: FAIL — could not reproduce the expected finding (or positive control failed); see details');
 }
 
 process.exit(passed ? 0 : 1);
