@@ -40,6 +40,14 @@ type fakeRqlite struct {
 	resultError string
 	// notOpen makes /status report a store that has no leader yet.
 	notOpen bool
+	// onSearchPool, when set, is called with the candidate-pool argument the
+	// store requested on a searchSQL query (args[3]) — lets a test assert the
+	// pool-floor computation without a live node.
+	onSearchPool func(int)
+	// malformedRows makes /db/query return one row whose created_at cell is a
+	// non-numeric string, so the store's row Scan into an int64 fails — driving
+	// the scan-error branch that guards against a garbage backend response.
+	malformedRows bool
 }
 
 func newFakeRqlite(t *testing.T) *fakeRqlite {
@@ -132,10 +140,25 @@ func (f *fakeRqlite) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	switch query {
 	case searchSQL:
+		if f.onSearchPool != nil && len(args) >= 4 {
+			f.onSearchPool(int(asFloat(args[3])))
+		}
+		if f.malformedRows {
+			f.writeRows(w,
+				[]string{"id", "tenant_id", "user_id", "content", "importance", "created_at", "updated_at", "superseded_by", "relevance"},
+				[][]any{{"id1", "acme", "alice", "c", 0.5, "not-a-number", 0, "", -1.0}})
+			return
+		}
 		f.writeRows(w,
 			[]string{"id", "tenant_id", "user_id", "content", "importance", "created_at", "updated_at", "superseded_by", "relevance"},
 			f.searchRows(args))
 	case exportAllSQL:
+		if f.malformedRows {
+			f.writeRows(w,
+				[]string{"id", "tenant_id", "user_id", "content", "importance", "created_at", "updated_at", "superseded_by"},
+				[][]any{{"id1", "acme", "alice", "c", 0.5, "not-a-number", 0, ""}})
+			return
+		}
 		f.writeRows(w,
 			[]string{"id", "tenant_id", "user_id", "content", "importance", "created_at", "updated_at", "superseded_by"},
 			f.exportRows())

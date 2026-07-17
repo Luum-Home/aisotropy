@@ -65,11 +65,14 @@ jobs:
         run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
 
       - name: Coverage floor
-        # Weighted statement coverage over internal/... + aisotropy + cmd/aisotropy.
-        # Floor starts at 70% (just under today's ~73.5%) and RATCHETS UP toward
-        # 85% and ultimately the 98%-on-business-logic goal as coverage lands.
-        # Raise the second argument when the tree clears the next rung.
-        run: .github/scripts/coverage-floor.sh coverage.out 85
+        # Weighted statement coverage over internal/... + aisotropy + cmd/aisotropy,
+        # with internal/semantic/qdrant.go excluded (integration-gated behind the
+        # `manual` build tag — needs a live Qdrant gRPC server; see the script
+        # header). Floor is 92%, a small buffer under the promoted set's current
+        # ~93%, and RATCHETS toward the ~95% honest ceiling (the remaining gap
+        # is qdrant.go's live-service branches plus a few unreachable defensive
+        # guards). Raise the second argument when the tree clears the next rung.
+        run: .github/scripts/coverage-floor.sh coverage.out 92
 
       - name: Upload coverage profile
         if: always()

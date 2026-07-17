@@ -23,6 +23,17 @@
 #   (arenas/* and examples/* that are SEPARATE modules never appear here at all —
 #    the root `go test ./...` does not descend into them.)
 #
+# Also excluded: internal/semantic/qdrant.go — the ONE integration-gated file in
+# the promoted set. QdrantStore drives a live Qdrant gRPC server (a real network
+# service), so its statements are only exercised by qdrant_manual_test.go /
+# qdrant_newpaths_manual_test.go, which sit behind the `manual` build tag and run
+# only when a Qdrant instance is provisioned. It is NOT dead code — it is the
+# production semantic backend when QDRANT_HOST is set — but faking a gRPC server
+# in a unit test would exercise nothing real, so we exclude its statements from
+# the weighted floor exactly like the thin mains. The rest of internal/semantic
+# (the in-memory store, scoping, kinds, TTL/eviction, reranker, embedders,
+# factory) IS unit-tested and stays in the floor.
+#
 # Usage:
 #   .github/scripts/coverage-floor.sh [coverage_profile] [floor_percent]
 # Defaults: coverage.out, 70
@@ -67,6 +78,14 @@ awk -v mod="$MODULE" -v floor="$FLOOR" '
     else if (index(file, mod "/aisotropy/")   == 1) include = 1
     else if (index(file, mod "/cmd/aisotropy/") == 1) include = 1
     if (!include) next
+
+    # Integration-gated exclusion: internal/semantic/qdrant.go needs a live
+    # Qdrant gRPC server and is covered only by the `manual`-tagged
+    # qdrant_manual_test.go, so its statements never appear in a unit-test
+    # coverage.out. Excluding it keeps the floor honest — the same treatment the
+    # thin mains get — rather than letting a real-but-unexercised-in-CI file drag
+    # the promoted-set number down. (See the header of this script for details.)
+    if (index(file, mod "/internal/semantic/qdrant.go") == 1) next
 
     stmts = $(NF - 1)
     count = $NF

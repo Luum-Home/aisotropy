@@ -309,6 +309,23 @@ func (rt *appRuntime) close(ctx context.Context) {
 	rt.closeOnce.Do(func() { rt.closeFn(ctx) })
 }
 
+// waitWorkers blocks until every worker tracked by wg has returned, or until ctx
+// is done — whichever comes first. It is how closeFn joins the background workers
+// after cancelling their context but before closing the stores they touch, so a
+// worker mid-operation cannot race a store Close. The wait is bounded so a stuck
+// worker degrades teardown to best-effort (close anyway) rather than hanging it.
+func waitWorkers(ctx context.Context, wg *sync.WaitGroup) {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
 // startRuntime builds the shared runtime core and starts its background workers,
 // returning it with a close() that performs the full teardown. It is the single
 // dependency-construction path both Run (HTTP) and Turn (in-process) boot from,
@@ -452,12 +469,24 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	// returned close() owns stopping the workers, so they keep draining until
 	// teardown regardless of which entry point booted the runtime.
 	workerCtx, stopWorker := context.WithCancel(context.Background())
+	// workerWG tracks every background worker started on workerCtx so closeFn can
+	// WAIT for them to observe stopWorker() and exit BEFORE closing the stores they
+	// read/write. Without this join a worker mid-operation races Close and panics
+	// ("DB Closed"): launchWorker wraps each goroutine to signal Done on return.
+	var workerWG sync.WaitGroup
+	launchWorker := func(fn func()) {
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			fn()
+		}()
+	}
 	if n, rerr := wm.RecoverOutbox(ctx, sink); rerr != nil {
 		slog.Error("cold-boot outbox reconciliation failed", "err", rerr)
 	} else if n > 0 {
 		slog.Info("cold-boot outbox reconciliation drained orphaned events", "count", n)
 	}
-	go wm.RunOutboxWorker(workerCtx, sink, outboxPollInterval) //nolint:contextcheck // workerCtx intentionally outlives ctx (which is cancelled on signal) so this worker keeps draining until stopWorker() during graceful shutdown
+	launchWorker(func() { wm.RunOutboxWorker(workerCtx, sink, outboxPollInterval) }) //nolint:contextcheck // workerCtx intentionally outlives ctx (which is cancelled on signal) so this worker keeps draining until stopWorker() during graceful shutdown
 
 	// OTel tracing (ADR-0010, no-op by default), circuit breaker, and the OTel
 	// decorator shared by the streaming and reflection paths.
@@ -480,14 +509,16 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 			Engram: factEngram,
 			Runner: sleepcycle.Worker{BinaryPath: bin, Tracer: tracer},
 		}
-		go coordinator.RunScheduler(workerCtx, sleepCycleInterval, func(s sleepcycle.Summary, serr error) { //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
-			if serr != nil {
-				slog.Error("sleep cycle failed", "err", serr)
-				return
-			}
-			if s.Dropped > 0 {
-				slog.Info("sleep cycle consolidated facts", "rows_in", s.RowsIn, "dropped", s.Dropped)
-			}
+		launchWorker(func() { //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
+			coordinator.RunScheduler(workerCtx, sleepCycleInterval, func(s sleepcycle.Summary, serr error) {
+				if serr != nil {
+					slog.Error("sleep cycle failed", "err", serr)
+					return
+				}
+				if s.Dropped > 0 {
+					slog.Info("sleep cycle consolidated facts", "rows_in", s.RowsIn, "dropped", s.Dropped)
+				}
+			})
 		})
 		slog.Info("sleep-cycle worker scheduled", "bin", bin, "interval", sleepCycleInterval)
 	} else {
@@ -505,8 +536,10 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 			TurnMaxAge:   semanticTurnTTLFromEnv(),
 			TurnMaxCount: semanticTurnMaxFromEnv(),
 		}
-		go pruner.RunTurnPruneScheduler(workerCtx, turnPruneInterval, func(perr error) { //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
-			slog.Error("turn-vector pruning failed", "err", perr)
+		launchWorker(func() { //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
+			pruner.RunTurnPruneScheduler(workerCtx, turnPruneInterval, func(perr error) {
+				slog.Error("turn-vector pruning failed", "err", perr)
+			})
 		})
 		slog.Info("turn-vector pruning scheduled", "ttl", semanticTurnTTLFromEnv(), "max", semanticTurnMaxFromEnv(), "interval", turnPruneInterval)
 	}
@@ -677,14 +710,16 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 			Runner: bitrate.Worker{BinaryPath: bin, Tracer: tracer},
 			Store:  bitrateStore,
 		}
-		go coordinator.RunScheduler(workerCtx, bitrateInterval, func(ms []bitrate.Measurement, merr error) { //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
-			if merr != nil {
-				slog.Error("bitrate measurement failed", "err", merr)
-				return
-			}
-			if len(ms) > 0 {
-				slog.Info("bitrate measured memory lift", "samples", len(ms))
-			}
+		launchWorker(func() { //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
+			coordinator.RunScheduler(workerCtx, bitrateInterval, func(ms []bitrate.Measurement, merr error) {
+				if merr != nil {
+					slog.Error("bitrate measurement failed", "err", merr)
+					return
+				}
+				if len(ms) > 0 {
+					slog.Info("bitrate measured memory lift", "samples", len(ms))
+				}
+			})
 		})
 		slog.Info("bitrate scorer scheduled", "bin", bin, "interval", bitrateInterval)
 	} else {
@@ -772,7 +807,7 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	// (wired in Run).
 	primStore := primitives.NewStore()
 	frictionDetector := primitives.NewFrictionDetector(primStore)
-	go runPrimitiveConsolidation(workerCtx, primStore) //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
+	launchWorker(func() { runPrimitiveConsolidation(workerCtx, primStore) }) //nolint:contextcheck // workerCtx intentionally outlives ctx (cancelled on signal) so background schedulers keep running until stopWorker() during graceful shutdown
 
 	rt := &appRuntime{
 		client:            protectedClient,
@@ -802,6 +837,11 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	// logged, never fatal (a shutdown never blocks on a failed close).
 	rt.closeFn = func(shutdownCtx context.Context) {
 		stopWorker()
+		// Join the background workers before closing the stores they touch: a
+		// worker still mid-operation when a store closes panics ("DB Closed"). The
+		// wait is bounded by shutdownCtx so a stuck worker never blocks teardown
+		// forever — on timeout we close best-effort, exactly as before this join.
+		waitWorkers(shutdownCtx, &workerWG)
 		closeMCP()
 		if cerr := wm.Close(); cerr != nil {
 			slog.Error("working memory close failed", "err", cerr)
