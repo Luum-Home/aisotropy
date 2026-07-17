@@ -415,3 +415,27 @@ func TestZeroValueStoreWritable(t *testing.T) {
 		t.Fatalf("RecordFriction on zero-value Store: %v", err)
 	}
 }
+
+// TestFrictionDetectorStore exposes the read side of the self-improvement loop:
+// the detector must hand back the exact Store it writes friction into, so the
+// request path can read rewritten primitives from it. A nil detector yields nil.
+func TestFrictionDetectorStore(t *testing.T) {
+	store := NewStore()
+	d := NewFrictionDetector(store)
+	if d.Store() != store {
+		t.Fatal("Store() must return the same store the detector records into")
+	}
+
+	// The store handed back reflects friction the detector recorded through it.
+	if _, err := d.Observe("acme", "alice", "write_tasks", SignalUserCorrection); err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	if p, ok := d.Store().Get("acme", "alice", "write_tasks"); !ok || p.FrictionScore <= 0 {
+		t.Fatalf("Store() view did not reflect recorded friction: p=%+v ok=%v", p, ok)
+	}
+
+	var nilDetector *FrictionDetector
+	if nilDetector.Store() != nil {
+		t.Fatal("nil detector must return a nil store")
+	}
+}

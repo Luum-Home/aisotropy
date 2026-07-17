@@ -270,6 +270,20 @@ func (d *FrictionDetector) Observe(tenant, user, name string, signal FrictionSig
 	return d.store.RecordFriction(tenant, user, name, signal.weight())
 }
 
+// Store returns the Store this detector records friction into — the same Store
+// the sleep cycle rewrites via Consolidate. It exists to CLOSE THE READ SIDE of
+// the self-improvement loop: the request path (e.g. internal/api's agent route)
+// needs the store to read back the rewritten per-(tenant, user) primitive
+// guidance and overlay it on the base tool metadata the model is shown. Without
+// this accessor the loop is open — friction is written and primitives rewritten,
+// but nothing reads the improved metadata back. Returns nil if d is nil.
+func (d *FrictionDetector) Store() *Store {
+	if d == nil {
+		return nil
+	}
+	return d.store
+}
+
 // Rewriter revises a Primitive that has accrued friction, producing the
 // version that should replace it in the Store. Implementations should be
 // pure with respect to their input (aside from timestamps): given the same

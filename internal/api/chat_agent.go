@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -89,7 +90,26 @@ func (f frictionExecutor) Execute(ctx context.Context, name string, args map[str
 // (or rejected when BlockInjection is enabled). The agent route does not run the
 // output guardrail — its response is a structured list of tool decisions, not
 // free-form model prose. A nil guard disables guardrails entirely.
-func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, typed *TypedToolExecutor, detector *primitives.FrictionDetector, tracer oteltrace.TracerProvider, maxSteps int, guard *Guard) {
+//
+// store is the OPTIONAL per-(tenant, user) primitives.Store that CLOSES THE READ
+// SIDE of the behavioral self-improvement loop (Phase 6). It is variadic purely
+// so the wiring in aisotropy/app.go is an additive one-argument handoff: at most
+// one store is expected, and omitting it (or passing nil) is nil-safe — the tool
+// guidance the model sees is then byte-for-byte the base registry metadata,
+// exactly as before this seam existed. When a store IS supplied, the friction-
+// rewritten primitive for each permitted tool (its improved Description and
+// accumulated corrective Examples) is overlaid on the base tool metadata for THIS
+// request's (tenant, user) before the tools are presented to the model — so the
+// LLM finally sees the improved guidance the sleep cycle produced. See
+// overlayRegistry for the literal (non-templated) overlay mechanism and its
+// strict (tenant, user) isolation.
+func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, typed *TypedToolExecutor, detector *primitives.FrictionDetector, tracer oteltrace.TracerProvider, maxSteps int, guard *Guard, store ...*primitives.Store) {
+	// Resolve the optional store: at most one is meaningful; a nil or omitted
+	// store leaves the read side of the loop closed-off (current behavior).
+	var primStore *primitives.Store
+	if len(store) > 0 {
+		primStore = store[len(store)-1]
+	}
 	huma.Register(api, huma.Operation{
 		OperationID: "chat-agent",
 		Method:      httpMethodPost,
@@ -140,15 +160,27 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 		// scopes are the fallback. Both dispatch paths below share this authority.
 		scopes := effectiveScopes(ctx, in.Body.Scopes)
 
+		// CLOSE THE READ SIDE of the self-improvement loop: overlay the
+		// friction-rewritten primitive guidance for THIS (tenant, user) onto the
+		// tool metadata the model is about to see. Scope gating is untouched — the
+		// overlay copies each permitted tool (RequiredScope included), so both
+		// dispatch paths below gate exactly as before; only the Description text is
+		// augmented. With no store this is the original registry object, so the
+		// model sees byte-for-byte the same guidance as before this seam.
+		activeRegistry := registry
+		if primStore != nil {
+			activeRegistry = overlayRegistry(primStore, in.TenantID, in.UserID, registry, scopes)
+		}
+
 		var steps []AgentStep
 		if tc, ok := client.(llm.ToolCaller); ok {
-			steps, err = runNativeToolAgent(ctx, tc, tracer, registry, exec, typed, scopes, forwarded, maxSteps)
+			steps, err = runNativeToolAgent(ctx, tc, tracer, activeRegistry, exec, typed, scopes, forwarded, maxSteps)
 		} else {
 			// Fallback (no native tool-calling): the combined executor routes
 			// typed tools through the typed dispatcher (best-effort over the
 			// string map) and untyped tools through the friction-wrapped executor.
 			loopExec := agentloop.ToolExecutor(combinedMapExecutor{typed: typed, fallback: exec})
-			loop := &agentloop.Loop{Client: client, Registry: registry, Executor: loopExec, MaxSteps: maxSteps}
+			loop := &agentloop.Loop{Client: client, Registry: activeRegistry, Executor: loopExec, MaxSteps: maxSteps}
 			var loopSteps []agentloop.StepResult
 			loopSteps, err = loop.Run(ctx, scopes, forwarded)
 			steps = agentStepsFromLoop(loopSteps)
@@ -236,4 +268,57 @@ func runNativeToolAgent(ctx context.Context, tc llm.ToolCaller, tracer oteltrace
 		steps = append(steps, AgentStep{Tool: ts.Tool, Args: ts.Args, Result: ts.Result})
 	}
 	return steps, nil
+}
+
+// overlayRegistry returns a registry whose tools carry the per-(tenant, user)
+// friction-rewritten primitive guidance overlaid on top of the base tool
+// metadata — the read side of the self-improvement loop that internal/primitives
+// writes and the sleep cycle rewrites. It starts from base.Permitted(scopes) (so
+// scope gating is applied exactly once, upstream) and, for each permitted tool,
+// reads store.Get(tenant, user, tool.Name); when a primitive exists, its improved
+// Description and accumulated Examples are appended to the tool's Description via
+// overlayDescription. Every returned tool keeps its Name, RequiredScope and
+// Parameters, so a subsequent Permitted(scopes)/PromptFragment(scopes) on the
+// returned registry gates and renders identically to the base — only the
+// Description text differs.
+//
+// Isolation (constitutional gate): the ONLY store read is
+// store.Get(tenant, user, ·) for the request's own identity. A primitive
+// rewritten for a different (tenant, user) is never keyed here, so user A's
+// guidance can never surface in user B's tool metadata.
+func overlayRegistry(store *primitives.Store, tenant, user string, base *tools.Registry, scopes []string) *tools.Registry {
+	permitted := base.Permitted(scopes)
+	overlaid := make([]tools.Tool, len(permitted))
+	for i, t := range permitted {
+		overlaid[i] = t
+		p, ok := store.Get(tenant, user, t.Name)
+		if !ok {
+			continue
+		}
+		overlaid[i].Description = overlayDescription(t.Description, p)
+	}
+	return tools.NewRegistry(overlaid...)
+}
+
+// overlayDescription composes the guidance string the model sees for one tool:
+// the base Description, then the primitive's improved Description (if any, and if
+// it is not already exactly the base), then each accumulated corrective Example,
+// joined by newlines. It is a LITERAL append — no templating, no placeholder
+// substitution — so the text the sleep cycle wrote is exactly the text the model
+// reads. An empty primitive (friction recorded but not yet consolidated: empty
+// Description, no Examples) contributes nothing, so the result equals the base.
+func overlayDescription(base string, p primitives.Primitive) string {
+	parts := make([]string, 0, 2+len(p.Examples))
+	if base != "" {
+		parts = append(parts, base)
+	}
+	if p.Description != "" && p.Description != base {
+		parts = append(parts, p.Description)
+	}
+	for _, ex := range p.Examples {
+		if ex != "" {
+			parts = append(parts, ex)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
