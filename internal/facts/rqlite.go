@@ -41,20 +41,47 @@ func OpenRqlite(connURL string) (*RqliteStore, error) {
 	return s, nil
 }
 
-// migrate applies the canonical schema. rqlite runs the statements of one
-// request inside a transaction, so a partial schema can't be left behind.
+// migrate applies the canonical schema, idempotently, across re-boots.
+//
+// rqlite runs the statements of ONE request inside a single transaction, so a
+// failure in any statement aborts the whole request and surfaces at the request
+// level (the WriteContext error) — NOT per-statement. The canonical schema's
+// only non-idempotent statement is the `ALTER TABLE facts ADD COLUMN`, which
+// errors "duplicate column name" on every boot after the first. Bundling it with
+// the rest (the old behaviour) meant that expected error aborted the entire
+// migration at the request level, where the per-statement duplicate-column guard
+// could never see it — so every re-boot against a networked rqlite failed.
+//
+// Fix: run each statement in its own request, in schema order, tolerating the
+// duplicate-column error at BOTH the request and per-statement level. Every
+// statement is individually idempotent (`CREATE ... IF NOT EXISTS`, or the
+// guarded ADD COLUMN), so dropping the single-transaction bundling is safe: a
+// crash mid-migration leaves an incomplete-but-valid schema that the next boot
+// completes (self-healing), rather than a corrupt partial state.
 func (s *RqliteStore) migrate(ctx context.Context) error {
-	results, err := s.conn.WriteContext(ctx, schemaStatements)
+	for _, stmt := range schemaStatements {
+		if err := s.execToleratingDupColumn(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// execToleratingDupColumn runs one schema statement as its own rqlite request
+// and treats a duplicate-column error — the expected result of the idempotent
+// `ALTER TABLE ADD COLUMN` re-running on an already-migrated store — as success,
+// whether rqlite reports it as a transaction-aborting request-level error or
+// per-statement. Any other error is a real migration failure.
+func (s *RqliteStore) execToleratingDupColumn(ctx context.Context, stmt string) error {
+	results, err := s.conn.WriteContext(ctx, []string{stmt})
 	if err != nil {
+		if isDuplicateColumnErr(err) {
+			return nil
+		}
 		return fmt.Errorf("facts: rqlite migrate: %w", err)
 	}
 	for _, r := range results {
-		if r.Err != nil {
-			if isDuplicateColumnErr(r.Err) {
-				// Idempotent ALTER ADD COLUMN fts_content re-run on an
-				// already-migrated store; a duplicate column is expected.
-				continue
-			}
+		if r.Err != nil && !isDuplicateColumnErr(r.Err) {
 			return fmt.Errorf("facts: rqlite migrate statement: %w", r.Err)
 		}
 	}
