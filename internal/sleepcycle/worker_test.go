@@ -89,6 +89,89 @@ func TestParseSummaryIgnoresLeadingLogLines(t *testing.T) {
 	}
 }
 
+// TestParseSummaryNoiseFields covers the extended contract: a summary carrying
+// noise_dropped + dropped_ids decodes fully, AND an older summary WITHOUT
+// noise_dropped decodes it to 0 (additive, backward-compatible).
+func TestParseSummaryNoiseFields(t *testing.T) {
+	got, err := parseSummary(`{"rows_in":4,"rows_out":2,"dropped":2,"noise_dropped":1,"dropped_ids":["n","dup"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RowsIn != 4 || got.RowsOut != 2 || got.Dropped != 2 || got.NoiseDropped != 1 {
+		t.Fatalf("summary = %+v", got)
+	}
+	if len(got.DroppedIDs) != 2 || got.DroppedIDs[0] != "n" || got.DroppedIDs[1] != "dup" {
+		t.Fatalf("dropped_ids = %v", got.DroppedIDs)
+	}
+
+	// Pre-noise worker output: noise_dropped absent → zero-valued, no error.
+	old, err := parseSummary(`{"rows_in":3,"rows_out":2,"dropped":1,"dropped_ids":["a"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.NoiseDropped != 0 {
+		t.Fatalf("legacy summary NoiseDropped = %d, want 0", old.NoiseDropped)
+	}
+}
+
+// argCapturingStub writes an executable script that records its full argv to
+// argsFile (one arg per line), touches the --output path so the caller's
+// os.Stat succeeds, and emits a valid summary. It lets a dep-free test assert
+// exactly which flags the Worker passes to the subprocess.
+func argCapturingStub(t *testing.T, argsFile string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "argstub.sh")
+	script := "#!/bin/bash\n" +
+		"printf '%s\\n' \"$@\" > '" + argsFile + "'\n" +
+		"out=\"\"\n" +
+		"while [ $# -gt 0 ]; do case \"$1\" in --output) out=\"$2\"; shift 2;; *) shift;; esac; done\n" +
+		": > \"$out\"\n" +
+		"echo '{\"rows_in\":1,\"rows_out\":1,\"dropped\":0,\"noise_dropped\":0,\"dropped_ids\":[]}'\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write arg stub: %v", err)
+	}
+	return path
+}
+
+func TestRunPassesMinImportanceFlag(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args")
+	stub := argCapturingStub(t, argsFile)
+	out := filepath.Join(t.TempDir(), "o.parquet")
+
+	// MinImportance > 0 → the flag and its value are forwarded to the worker.
+	w := Worker{BinaryPath: stub, MinImportance: 0.5}
+	if _, err := w.Run(context.Background(), "in.ndjson", out); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "--min-importance") || !strings.Contains(string(args), "0.5") {
+		t.Fatalf("argv missing --min-importance 0.5:\n%s", args)
+	}
+}
+
+func TestRunOmitsMinImportanceFlagWhenDisabled(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args")
+	stub := argCapturingStub(t, argsFile)
+	out := filepath.Join(t.TempDir(), "o.parquet")
+
+	// Zero value (and any <= 0) omits the flag entirely — the historical
+	// dedup-only argv, byte-for-byte.
+	w := Worker{BinaryPath: stub} // MinImportance defaults to 0
+	if _, err := w.Run(context.Background(), "in.ndjson", out); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(args), "--min-importance") {
+		t.Fatalf("argv must not carry --min-importance when disabled:\n%s", args)
+	}
+}
+
 func TestWriteNDJSONRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "facts.ndjson")
 	recs := []Record{

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,8 +21,15 @@ type Summary struct {
 	RowsIn  int `json:"rows_in"`
 	RowsOut int `json:"rows_out"`
 	Dropped int `json:"dropped"`
-	// DroppedIDs are the ids of the non-canonical duplicate rows the dedup
-	// removed, so the coordinator can delete exactly those from the live store.
+	// NoiseDropped is the sub-count of Dropped removed by the low-signal noise
+	// prune (importance below the worker's floor) rather than by deduplication;
+	// dedup-dropped = Dropped - NoiseDropped. Zero when the noise pass is
+	// disabled (the default). Additive to the pre-noise contract: an older
+	// worker that never emits it decodes to 0.
+	NoiseDropped int `json:"noise_dropped"`
+	// DroppedIDs are the ids of every row the worker removed — noise-pruned OR
+	// de-duplicated — so the coordinator can delete exactly those from the live
+	// store.
 	DroppedIDs []string `json:"dropped_ids"`
 }
 
@@ -36,6 +44,12 @@ type Worker struct {
 	// InitialBackoff is the first retry delay; it doubles each attempt.
 	// <= 0 defaults to defaultInitialBackoff.
 	InitialBackoff time.Duration
+	// MinImportance is the low-signal noise floor passed to the worker as
+	// --min-importance: facts below it are pruned as noise before dedup. <= 0
+	// (the zero value) omits the flag entirely, so the worker runs dedup-only —
+	// the historical, byte-for-byte-compatible default. The wiring
+	// (aisotropy/app.go) owns whether to set a non-zero floor.
+	MinImportance float64
 	// Tracer emits one span per Run. nil uses a no-op tracer.
 	Tracer trace.Tracer
 }
@@ -112,7 +126,13 @@ func (w Worker) Run(ctx context.Context, inputPath, outputPath string) (Summary,
 // runOnce spawns the worker once. A non-zero exit becomes an error carrying the
 // worker's stderr; ctx cancellation kills the subprocess (CommandContext).
 func (w Worker) runOnce(ctx context.Context, inputPath, outputPath string) (Summary, error) {
-	cmd := exec.CommandContext(ctx, w.BinaryPath, "--input", inputPath, "--output", outputPath)
+	args := []string{"--input", inputPath, "--output", outputPath}
+	// Only pass the noise floor when explicitly enabled, so the default argv is
+	// unchanged from the dedup-only contract.
+	if w.MinImportance > 0 {
+		args = append(args, "--min-importance", strconv.FormatFloat(w.MinImportance, 'g', -1, 64))
+	}
+	cmd := exec.CommandContext(ctx, w.BinaryPath, args...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
