@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -16,6 +18,24 @@ import (
 // non-positive limit. It matches the "~10-15 messages" window described in
 // docs/architecture/memory-tiers.md -> "Working memory".
 const defaultMaxActiveMessages = 12
+
+// defaultMaxMessageValueBytes caps the byte length of a single message's
+// Content BEFORE it is JSON-encoded and handed to BadgerDB. It is a
+// conservative guard (48 KiB) sitting well under BadgerDB's ~64 KiB per-value
+// ceiling — the ValueThreshold configured in tuneForWorkingMemory, above which
+// an InMemory-mode Set is rejected outright and an on-disk Set spills to the
+// value log. A model that echoes a large hydrated prompt back can produce a
+// Content field past that ceiling; without this guard the Append transaction
+// FAILS and (because Append's error is only logged, never surfaced) the turn is
+// silently dropped — silent data loss. Capping the value truncates the tail
+// instead, so the write always succeeds.
+//
+// HONEST SCOPE: this is a truncation GUARD, not the smart fix. It kills the
+// silent failure by bounding the value, at the cost of dropping the tail of a
+// pathologically large message. The better follow-on is summarize-before-persist
+// (condense an oversized message rather than cut it) — tracked as future work in
+// docs/architecture/memory-tiers.md; this guard is the safe floor beneath it.
+const defaultMaxMessageValueBytes = 48 << 10 // 48 KiB
 
 // WorkingMemory is the L1/working-memory tier of Aisotropy's memory
 // hierarchy: the active chat buffer plus its condensed summary, backed by an
@@ -35,7 +55,13 @@ const defaultMaxActiveMessages = 12
 type WorkingMemory struct {
 	db                *badger.DB
 	maxActiveMessages int
-	summarizer        Summarizer
+	// maxMessageValueBytes caps a single message's Content byte length before
+	// it is persisted (see capMessageContent + defaultMaxMessageValueBytes). It
+	// is a configurable field so a deployment with a different BadgerDB
+	// ValueThreshold can tune it; NewWorkingMemory seeds it with the
+	// conservative default.
+	maxMessageValueBytes int
+	summarizer           Summarizer
 
 	// mu guards inFlight and closed below. It is never held across a
 	// BadgerDB transaction or a Summarizer.Condense call.
@@ -76,13 +102,14 @@ func NewWorkingMemory(db *badger.DB, maxActiveMessages int, summarizer Summarize
 	}
 	shutdownCtx, cancel := context.WithCancel(context.Background())
 	return &WorkingMemory{
-		db:                db,
-		maxActiveMessages: maxActiveMessages,
-		summarizer:        summarizer,
-		inFlight:          make(map[string]struct{}),
-		pending:           make(map[string]struct{}),
-		shutdownCtx:       shutdownCtx,
-		shutdownCancel:    cancel,
+		db:                   db,
+		maxActiveMessages:    maxActiveMessages,
+		maxMessageValueBytes: defaultMaxMessageValueBytes,
+		summarizer:           summarizer,
+		inFlight:             make(map[string]struct{}),
+		pending:              make(map[string]struct{}),
+		shutdownCtx:          shutdownCtx,
+		shutdownCancel:       cancel,
 	}
 }
 
@@ -230,6 +257,25 @@ func (w *WorkingMemory) Append(ctx context.Context, key Key, msg Message) error 
 	}
 	if msg.Timestamp.IsZero() {
 		msg.Timestamp = time.Now().UTC()
+	}
+
+	// Per-value size guard (done BEFORE the transaction so it logs once, never
+	// per retry): a message whose Content exceeds the cap is truncated on a rune
+	// boundary so the encoded value stays comfortably under BadgerDB's per-value
+	// ceiling. Without this an oversized value makes the Set below FAIL, and
+	// because Append's error is only logged upstream the whole turn would be
+	// silently dropped. Truncating keeps the write successful; we WARN (identity
+	// + sizes only, never the content) so the truncation is observable, not
+	// silent.
+	if capped, over, truncated := capMessageContent(msg.Content, w.maxMessageValueBytes); truncated {
+		msg.Content = capped
+		slog.Warn("working memory: message content truncated to per-value cap before persist",
+			"tenant", key.Tenant,
+			"user", key.User,
+			"session", key.Session,
+			"cap_bytes", w.maxMessageValueBytes,
+			"over_bytes", over,
+		)
 	}
 
 	chatPrefix := key.chatPrefix()
@@ -613,6 +659,33 @@ func decodeMessages(txn *badger.Txn, keys [][]byte) ([]Message, error) {
 		}
 	}
 	return out, nil
+}
+
+// capMessageContent bounds content to at most maxBytes bytes, truncating on a
+// UTF-8 rune boundary (never splitting a multi-byte rune) and appending a
+// human-readable marker noting how many bytes overflowed the cap. It reports
+// truncated=false and returns content unchanged when it already fits, so a
+// normal message is preserved byte-for-byte. When it does truncate, the
+// returned string is content[:cut] + marker, where cut is at or below maxBytes;
+// the appended marker is a few dozen bytes, so the result still sits far under
+// BadgerDB's ~64 KiB per-value ceiling given a conservative maxBytes (48 KiB).
+// over is len(content)-maxBytes, i.e. how far the ORIGINAL content ran past the
+// cap. A non-positive maxBytes disables the guard (returns content untouched).
+func capMessageContent(content string, maxBytes int) (capped string, over int, truncated bool) {
+	if maxBytes <= 0 || len(content) <= maxBytes {
+		return content, 0, false
+	}
+	over = len(content) - maxBytes
+	// Back cut down from maxBytes to the nearest rune boundary so content[:cut]
+	// contains only whole runes — utf8.RuneStart(content[cut]) is true exactly
+	// when content[cut] is not a UTF-8 continuation byte, i.e. content[:cut]
+	// ends on a rune boundary.
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(content[cut]) {
+		cut--
+	}
+	marker := fmt.Sprintf(" …[truncated: %d bytes over cap]", over)
+	return content[:cut] + marker, over, true
 }
 
 // nextSeq allocates the next monotonic sequence number for a session's
