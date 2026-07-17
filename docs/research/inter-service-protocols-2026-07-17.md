@@ -55,8 +55,12 @@ Caddy does not) cannot collect the event stream and deliver it as one delayed du
 header makes the stream survive an operator who forgets. Graceful shutdown waits
 `shutdownTimeout = 10s` for in-flight requests, "mainly open SSE streams" (`app.go:52`).
 
+> **Update (2026-07-17, post-report):** the recommendation below was implemented — the
+> `:443 ssl; http2 on;` SSE block is now **ACTIVE** in the reference `deploy/proxy/nginx.conf`.
+> The `:80`-only analysis in this section is the pre-fix baseline that motivated the change.
+
 **Verified edge fact (load-bearing for §5.1):** the reference `deploy/proxy/nginx.conf`
-client-facing server **listens on `:80` HTTP/1.1** by default; `http2 on` appears **only in the
+client-facing server **listened on `:80` HTTP/1.1** at report time; `http2 on` appeared **only in a
 commented-out `:443 ssl` block** (`deploy/proxy/nginx.conf:42, 79-86`). So out of the box the
 browser-facing edge is **HTTP/1.1**, which means the **6-SSE-connections-per-domain cap applies
 today** unless the operator enables the TLS/HTTP-2 block. The HTTP/2 recommendation below is
