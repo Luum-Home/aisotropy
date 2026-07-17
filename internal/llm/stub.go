@@ -17,8 +17,9 @@ const stubProviderName = "stub"
 // word-by-word token stream deterministically derived from the received
 // prompt. It exists so the full SSE pipeline (HTTP handler -> token channel
 // -> per-event flush -> ctx cancellation) can be verified without needing
-// ANTHROPIC_API_KEY — it is the path exercised in this development/CI
-// environment.
+// any LLM provider key (the runtime is provider-agnostic, ADR-0009:
+// OPENROUTER_API_KEY > OPENAI_API_KEY > ANTHROPIC_API_KEY > this stub) — it is
+// the path exercised in this development/CI environment.
 type StubClient struct {
 	// Delay is the pause between emitted tokens (simulates real streaming
 	// latency). Defaults to 15ms.
@@ -179,7 +180,7 @@ func buildStubWords(system, prompt string) []string {
 	reply := fmt.Sprintf(
 		"stub-llm: received your message \"%s\" (system=%q). "+
 			"This is a word-by-word echo to verify SSE streaming "+
-			"end-to-end without needing ANTHROPIC_API_KEY.",
+			"end-to-end without needing any LLM provider key.",
 		prompt, system,
 	)
 
