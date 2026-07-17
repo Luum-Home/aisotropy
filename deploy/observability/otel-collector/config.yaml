@@ -1,0 +1,115 @@
+# OpenTelemetry Collector — aisotropy day-2 observability edge.
+#
+# WHAT THIS DOES (and, honestly, what it cannot):
+#
+#   aisotropyd emits OTLP TRACES only (gen_ai `chat` / `chat.tools` spans —
+#   internal/llm/otel.go). It exposes NO Prometheus /metrics endpoint. So the
+#   RED metrics (Rate, Errors, Duration) an operator needs are DERIVED here,
+#   from those spans, by two contrib connectors:
+#
+#     - spanmetrics  -> request rate + latency histogram + error count,
+#                       dimensioned by tenant_id / model / operation / status.
+#     - sum          -> per-tenant token totals, read off the span attributes
+#                       gen_ai.usage.input_tokens / gen_ai.usage.output_tokens
+#                       (REAL provider-reported counts; a span without usage
+#                       simply does not contribute — never a fabricated number).
+#
+#   The derived metrics are exposed on :8889/metrics for Prometheus to scrape.
+#
+# COVERAGE LIMIT (do not overclaim): these spans cover the LLM CALL PATH, not
+# the full HTTP request. A request rejected BEFORE the LLM call (quota 429,
+# circuit-breaker open, guardrail block) may never open a gen_ai span, so it is
+# invisible here. Those signals live in the access-audit log (ADR-0047) and
+# slog today — see deploy/observability/README.md "Residual gaps" and the
+# optional Loki overlay note.
+#
+# Image: otel/opentelemetry-collector-contrib (Apache-2.0). The `spanmetrics`
+# and `sum` connectors ship in contrib, NOT in the core collector.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+  # Guard against a runaway span flood starving the collector.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+connectors:
+  # Spans -> RED metrics. Dimensions become Prometheus labels (dots sanitized
+  # to underscores: gen_ai.system -> gen_ai_system). span.name and status.code
+  # are always emitted by the connector.
+  spanmetrics:
+    namespace: aisotropy.spanmetrics
+    histogram:
+      unit: ms
+      explicit:
+        buckets:
+          [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s, 10s, 30s]
+    dimensions:
+      - name: tenant_id
+      - name: gen_ai.system
+      - name: gen_ai.request.model
+      - name: gen_ai.operation.name
+    exemplars:
+      enabled: true
+    metrics_flush_interval: 15s
+
+  # Spans -> summed token counters, keyed per tenant + model. `conditions`
+  # gate on the attribute being present so no-usage spans are skipped rather
+  # than counted as zero.
+  sum:
+    spans:
+      aisotropy.tokens.output_total:
+        source_attribute: gen_ai.usage.output_tokens
+        conditions:
+          - 'attributes["gen_ai.usage.output_tokens"] != nil'
+        attributes:
+          - key: tenant_id
+          - key: gen_ai.request.model
+      aisotropy.tokens.input_total:
+        source_attribute: gen_ai.usage.input_tokens
+        conditions:
+          - 'attributes["gen_ai.usage.input_tokens"] != nil'
+        attributes:
+          - key: tenant_id
+          - key: gen_ai.request.model
+
+exporters:
+  # Prometheus scrape target for the derived metrics.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+    enable_open_metrics: true
+  # Raw spans to stdout — cheap operator sanity check ("are traces arriving?").
+  # For a real trace store, add a `otlp/tempo` exporter to a Grafana Tempo (or
+  # any OTLP-compatible) backend and append it to the traces pipeline below.
+  debug:
+    verbosity: normal
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    # Traces fan out to the two connectors (which re-emit as metrics) and to
+    # the debug exporter. Add your trace store exporter here when you have one.
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [spanmetrics, sum, debug]
+    # The connectors act as receivers for the derived metrics.
+    metrics:
+      receivers: [spanmetrics, sum]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]

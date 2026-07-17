@@ -1,0 +1,88 @@
+# Prometheus scrape + rule config for the aisotropy observability stack.
+#
+# Scrape sources:
+#   1. otel-collector:8889  -> RED metrics + token sums DERIVED from gen_ai
+#                              spans (the only source of request rate/latency/
+#                              errors — aisotropyd has no /metrics endpoint).
+#   2. blackbox-exporter    -> /healthz (liveness) + /health (readiness) probes.
+#   3. json-exporter        -> /health per-tier readiness (always on) and,
+#                              opt-in, /costs per-tenant cost (needs ops token).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    stack: aisotropy
+
+rule_files:
+  - /etc/prometheus/rules/aisotropy-slo.rules.yml
+  - /etc/prometheus/rules/aisotropy-alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # ---- 1. Derived RED metrics + token sums from the collector -------------
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # Collector's own internal telemetry (queue depth, refused spans, etc.).
+  - job_name: otel-collector-internal
+    static_configs:
+      - targets: ["otel-collector:8888"]
+
+  # ---- 2. Liveness / readiness probes via blackbox ------------------------
+  - job_name: blackbox-http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://aisotropyd:8080/healthz
+          - http://aisotropyd:8080/health
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # ---- 3a. Per-tier readiness from /health via json-exporter (no auth) -----
+  - job_name: json-health-tiers
+    metrics_path: /probe
+    params:
+      module: [health_tiers]
+    static_configs:
+      - targets: ["http://aisotropyd:8080/health"]
+    relabel_configs:
+      - source_labels: [__param_target]
+        target_label: __param_target
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: json-exporter:7979
+
+  # ---- 3b. Per-tenant cost from /costs (OPT-IN — needs ops token) ----------
+  # Enable only after rendering json-exporter/config.yml with a real
+  # AISOTROPY_OPS_TOKEN (see that file's header). Then uncomment:
+  #
+  # - job_name: json-tenant-costs
+  #   scrape_interval: 60s
+  #   metrics_path: /probe
+  #   params:
+  #     module: [tenant_costs]
+  #   static_configs:
+  #     - targets: ["http://aisotropyd:8080/costs"]
+  #   relabel_configs:
+  #     - source_labels: [__address__]
+  #       target_label: __param_target
+  #     - source_labels: [__param_target]
+  #       target_label: instance
+  #     - target_label: __address__
+  #       replacement: json-exporter:7979

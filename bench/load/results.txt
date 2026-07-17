@@ -1,0 +1,77 @@
+================================================================================
+aisotropy FULL-RUNTIME multi-tenant LOAD TEST
+================================================================================
+Harness : bench/load (embeds aisotropy.App in-process, drives real loopback HTTP)
+Model   : keyless stub, Delay=1ns  => numbers are RUNTIME overhead, NOT model latency
+Runtime : go go1.26.5  |  GOMAXPROCS=12  |  duration/scenario=4s
+Host    : darwin/arm64  |  12 CPU
+Started : 2026-07-17T16:41:01-03:00
+
+Metric legend: thr=req/s, p50/p95/p99=combined request latency, TTFT=stream time-to
+-first-token, gopeak=peak goroutines under load (server+workers), heap=peak HeapAlloc.
+
+--------------------------------------------------------------------------------
+SCENARIO A: Tenant-cardinality sweep — throughput & latency as N tenants grows
+  Fixed concurrency=64, 50/50 chat+stream, in-memory tiers. Isolates how memory-tier
+  cardinality (distinct working-memory buffers = N*users) affects hydration cost.
+--------------------------------------------------------------------------------
+
+  scenario              thr/s     reqs     err%      p50      p95      p99  TTFTp99  gobase   gopk  goset heapMB    429s
+  N=10 tenants            220     1088     0.00  89.79ms 1120.49ms 1992.82ms 854.27ms      28    767    217  175.4       0
+  N=100 tenants          1049     4393     0.00  31.01ms 208.40ms 373.35ms 336.79ms      28   2076    217  129.1       0
+  N=1000 tenants         3874    15619     0.00  11.16ms  48.68ms  76.67ms  74.96ms      28    811    217  134.4       0
+
+--------------------------------------------------------------------------------
+SCENARIO B: Concurrency ramp — find the breaking point
+  Fixed N=100 tenants, in-memory tiers, 50/50 mix. Ramp concurrent workers until
+  p99 latency or error rate blows up. Breaking point = first level where errors>1%
+  OR p99 exceeds 10x the lowest-concurrency p99.
+--------------------------------------------------------------------------------
+
+  scenario              thr/s     reqs     err%      p50      p95      p99  TTFTp99  gobase   gopk  goset heapMB    429s
+  conc=16                1048     4365     0.00   7.10ms  50.83ms 137.02ms 111.21ms      28    488     73  134.2       0
+  conc=64                1008     4380     0.00  27.21ms 222.10ms 403.63ms 365.11ms      28    866    220  132.9       0
+  conc=256               1091     5059     0.00  96.84ms 842.07ms 1478.82ms 1449.45ms      28   2247    841  170.9       0
+  conc=512                960     5741     0.00 162.46ms 1989.50ms 3153.84ms 3084.40ms      28   4482   1609  190.7       0
+  conc=1024               988     6483     0.00 359.68ms 3381.41ms 4613.23ms 4698.74ms      28   7368   3145  268.3       0
+
+  BREAKING POINT: conc=256 — err=0.00%, p99=1478.82ms (vs baseline p99=137.02ms at conc=16).
+
+--------------------------------------------------------------------------------
+SCENARIO C: Pre-spend quota gate under saturation
+  One app with a TIGHT per-tenant token bucket (5/sec, burst 5). Hammer a single
+  tenant with 64 concurrent /chat writers for the duration and confirm the gate
+  rejects with a clean HTTP 429 BEFORE any model spend, while a second, un-hammered
+  tenant keeps getting 200s (the bucket is per-tenant, not global).
+--------------------------------------------------------------------------------
+  hammered tenant: 275302 requests -> 25 OK(200), 275277 rejected(429), 0 errors
+  control tenant 'calm' (single request): HTTP 200
+  VERDICT [PASS]: quota gate rejects over-budget traffic with clean 429s (no 5xx), pre-spend, and leaves other tenants unaffected
+  note: OK count (25) tracks bucket refill (~burst 5 + 5/s * 4s); the rest are gated 429 BEFORE any model spend.
+
+--------------------------------------------------------------------------------
+SCENARIO D: BadgerDB working-memory write contention (in-mem vs on-disk)
+  Writer-heavy (/chat only) load, N=50 tenants, concurrency=64. Compare the default
+  in-memory BadgerDB against an on-disk store (AISOTROPY_DATA_DIR). The delta is the
+  cost of durable working-memory writes under concurrency.
+--------------------------------------------------------------------------------
+
+  scenario              thr/s     reqs     err%      p50      p95      p99  TTFTp99  gobase   gopk  goset heapMB    429s
+  in-memory Badger       1219     5051     0.00  23.76ms 198.94ms 367.64ms        -      28   1242    220  125.3       0
+  on-disk Badger         1281     5271     0.00  31.75ms 136.23ms 180.52ms        -      30   1410    222  132.4       0
+
+--------------------------------------------------------------------------------
+SCENARIO E: Cross-tenant isolation holds under concurrent load
+  Seed a distinct secret marker per tenant into a DELIBERATELY SHARED session id,
+  then run 64 concurrent workers streaming neutral reads across tenants. Each response
+  must contain ONLY its own tenant's marker (positive control: hydration is live) and
+  NEVER another tenant's marker (negative: the isolation gate holds under concurrency).
+--------------------------------------------------------------------------------
+  290 interleaved streamed reads across 10 tenants sharing session "shared-session" (0 stream errors)
+  positive control: 290 reads hydrated their OWN tenant's marker (0 misses)
+  cross-tenant leaks detected: 0
+  VERDICT [PASS]: isolation gate holds under concurrency: every response carried only its own tenant's marker, never another's, while hydration stayed live
+
+================================================================================
+Finished: 2026-07-17T16:42:00-03:00
+================================================================================

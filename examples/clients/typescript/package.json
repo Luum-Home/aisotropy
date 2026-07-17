@@ -1,0 +1,20 @@
+{
+  "name": "aisotropy-client-ts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Typed TypeScript client for aisotropyd generated from /openapi.json (openapi-typescript + openapi-fetch, both MIT).",
+  "type": "module",
+  "scripts": {
+    "generate": "openapi-typescript ../openapi.json -o ./src/schema.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "@types/node": "22.19.1",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0"
+  }
+}

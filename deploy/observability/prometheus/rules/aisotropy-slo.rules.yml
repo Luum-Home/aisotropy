@@ -1,0 +1,86 @@
+# Recording rules — SLIs for the aisotropy LLM serving path.
+#
+# SOURCE: all series here are DERIVED by the OTel Collector's spanmetrics
+# connector from gen_ai spans (internal/llm/otel.go). Metric/label names assume
+# the collector config in ../../otel-collector/config.yaml (namespace
+# `aisotropy.spanmetrics`, sanitized to `aisotropy_spanmetrics_*`). status_code
+# label values follow OTel span-status semantics: STATUS_CODE_OK /
+# STATUS_CODE_ERROR / STATUS_CODE_UNSET.
+#
+# SCOPE HONESTY: these SLIs measure the LLM CALL, not the whole HTTP request.
+# A request rejected before the model call (quota 429, breaker open, guardrail
+# block) is not counted here — see runbooks.md and the audit log (ADR-0047).
+
+groups:
+  - name: aisotropy.sli.recording
+    interval: 15s
+    rules:
+      # ---- Traffic --------------------------------------------------------
+      - record: aisotropy:llm_requests:rate5m
+        expr: sum by (tenant_id) (rate(aisotropy_spanmetrics_calls_total[5m]))
+
+      - record: aisotropy:llm_requests:fleet:rate5m
+        expr: sum(rate(aisotropy_spanmetrics_calls_total[5m]))
+
+      # ---- Errors (per tenant) -------------------------------------------
+      - record: aisotropy:llm_error_ratio:5m
+        expr: |
+          sum by (tenant_id) (rate(aisotropy_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m]))
+          /
+          clamp_min(sum by (tenant_id) (rate(aisotropy_spanmetrics_calls_total[5m])), 1e-9)
+
+      # ---- Errors (fleet, multi-window for burn-rate alerting) ------------
+      - record: aisotropy:llm_error_ratio:fleet:5m
+        expr: |
+          sum(rate(aisotropy_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m]))
+          /
+          clamp_min(sum(rate(aisotropy_spanmetrics_calls_total[5m])), 1e-9)
+      - record: aisotropy:llm_error_ratio:fleet:30m
+        expr: |
+          sum(rate(aisotropy_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[30m]))
+          /
+          clamp_min(sum(rate(aisotropy_spanmetrics_calls_total[30m])), 1e-9)
+      - record: aisotropy:llm_error_ratio:fleet:1h
+        expr: |
+          sum(rate(aisotropy_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[1h]))
+          /
+          clamp_min(sum(rate(aisotropy_spanmetrics_calls_total[1h])), 1e-9)
+      - record: aisotropy:llm_error_ratio:fleet:6h
+        expr: |
+          sum(rate(aisotropy_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[6h]))
+          /
+          clamp_min(sum(rate(aisotropy_spanmetrics_calls_total[6h])), 1e-9)
+
+      # ---- Latency (per tenant) ------------------------------------------
+      # duration histogram is in milliseconds (collector unit: ms).
+      - record: aisotropy:llm_latency_p95_ms:5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, tenant_id) (rate(aisotropy_spanmetrics_duration_milliseconds_bucket[5m]))
+          )
+      - record: aisotropy:llm_latency_p99_ms:5m
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, tenant_id) (rate(aisotropy_spanmetrics_duration_milliseconds_bucket[5m]))
+          )
+      - record: aisotropy:llm_latency_p95_ms:fleet:5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(aisotropy_spanmetrics_duration_milliseconds_bucket[5m]))
+          )
+      - record: aisotropy:llm_latency_p99_ms:fleet:5m
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(aisotropy_spanmetrics_duration_milliseconds_bucket[5m]))
+          )
+
+      # ---- Token throughput (per tenant) ---------------------------------
+      # REAL provider-reported tokens summed by the collector `sum` connector.
+      - record: aisotropy:output_tokens:rate5m
+        expr: sum by (tenant_id) (rate(aisotropy_tokens_output_total[5m]))
+      - record: aisotropy:input_tokens:rate5m
+        expr: sum by (tenant_id) (rate(aisotropy_tokens_input_total[5m]))

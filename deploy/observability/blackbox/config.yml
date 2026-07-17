@@ -1,0 +1,22 @@
+# Blackbox exporter (prometheus/blackbox-exporter, Apache-2.0).
+#
+# Turns the two aisotropyd health endpoints into up/down probe metrics that
+# Prometheus can alert on WITHOUT parsing JSON:
+#
+#   /healthz  liveness  -> 200 while the process is up.
+#   /health   readiness -> 200 when every tier probe is OK,
+#                          503 when ANY tier is degraded (internal/health).
+#
+# Because /health returns 503 on degraded, the default http_2xx module already
+# yields probe_success=0 on degradation — that IS the readiness-degraded signal
+# (see prometheus/rules/aisotropy-alerts.yml -> AisotropyReadinessDegraded).
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: [200]
+      follow_redirects: false
+      preferred_ip_protocol: ip4

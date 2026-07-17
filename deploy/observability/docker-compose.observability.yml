@@ -1,0 +1,122 @@
+# Aisotropy day-2 observability stack (operator-run, OPTIONAL).
+#
+# Boots the operator-facing layer on top of a running aisotropyd:
+#   otel-collector   OTLP receiver -> spanmetrics/sum connectors -> Prometheus  (Apache-2.0)
+#   prometheus       metrics store + SLO recording/alerting rules              (Apache-2.0)
+#   alertmanager     alert routing (null receiver by default)                  (Apache-2.0)
+#   blackbox-exporter /healthz + /health probes                               (Apache-2.0)
+#   json-exporter    /health per-tier + (opt-in) /costs -> metrics            (Apache-2.0)
+#   grafana          dashboards-as-code                                        (AGPL-3.0 *)
+#
+# * LICENSE NOTE (read deploy/observability/README.md "Licensing"): Grafana core
+#   is AGPL-3.0, which the repo license gate BLOCKS for a code DEPENDENCY. Here
+#   Grafana is a SEPARATE, OPERATOR-RUN service consumed only over its HTTP UI —
+#   it is NOT linked into or shipped with aisotropy code, so it falls under the
+#   license-policy.md "Exceptions" clause (separate service, unmodified, public
+#   API, documented). A permissive swap (Perses, Apache-2.0) is described in the
+#   README. Every OTHER service here is Apache-2.0.
+#
+# HOW aisotropyd CONNECTS:
+#   Point the runtime at the collector's OTLP/HTTP endpoint before it starts:
+#     OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+#   (or :4317 for gRPC via OTEL_EXPORTER_OTLP_TRACES_ENDPOINT). Unset -> the
+#   tracer is a no-op and NO metrics are derived (see README + otel.go).
+#
+# NETWORKING: this stack joins the EXTERNAL network created by the root
+# docker-compose.yml (project name `aisotropy` -> network `aisotropy_default`),
+# so `otel-collector`, `aisotropyd`, `blackbox-exporter`, etc. resolve each
+# other by name. Bring the runtime up first:
+#     docker compose up -d                                   # root stack
+#     docker compose -f deploy/observability/docker-compose.observability.yml up -d
+# Standalone (aisotropyd on the host, not in compose): drop the external network
+# block below, and replace `aisotropyd:8080` targets with `host.docker.internal:8080`.
+
+name: aisotropy-observability
+
+networks:
+  default:
+    name: aisotropy_default
+    external: true
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.119.0 # >=0.119: bundles the `sum` connector (token totals)
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC (aisotropyd -> collector)
+      - "4318:4318" # OTLP HTTP (aisotropyd -> collector)
+      - "8889:8889" # Prometheus scrape (derived metrics)
+      - "8888:8888" # collector self-telemetry
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-collector
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.26.0
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/blackbox/config.yml"
+    volumes:
+      - ./blackbox/config.yml:/etc/blackbox/config.yml:ro
+    ports:
+      - "9115:9115"
+
+  json-exporter:
+    image: quay.io/prometheuscommunity/json-exporter:v0.7.0
+    restart: unless-stopped
+    command:
+      - "--config.file=/config.yml"
+    volumes:
+      - ./json-exporter/config.yml:/config.yml:ro
+    ports:
+      - "7979:7979"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    environment:
+      # LOCAL-ONLY defaults — override for anything reachable.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus

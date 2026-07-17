@@ -1,0 +1,5 @@
+# Runtime deps of the generated aisotropy_client (openapi-python-client 0.29.0, MIT).
+# Pin ranges match the generator's emitted metadata.
+httpx>=0.23.0,<0.29.0
+attrs>=22.2.0
+python-dateutil>=2.8.0,<3.0.0

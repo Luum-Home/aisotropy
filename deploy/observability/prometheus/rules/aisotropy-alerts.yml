@@ -1,0 +1,204 @@
+# Alerting rules for the aisotropy runtime.
+#
+# SLO TARGETS (see docs/operations/slo.md — single source of truth):
+#   Availability (LLM serving path): 99.5%  -> error budget 0.5%
+#   Latency:  p95 < 3000 ms,  p99 < 8000 ms  (streaming path INCLUDES model time)
+#
+# Burn-rate thresholds use the Google SRE multi-window method:
+#   factor * (1 - SLO), with SLO=0.995 -> (1-SLO)=0.005
+#     critical: 14.4x -> 0.072   (burns ~2% of a 30d budget in 1h)
+#     warning:   6.0x -> 0.030   (burns ~5% of a 30d budget in 6h)
+
+groups:
+  # ---- Availability (error-budget burn) ---------------------------------
+  - name: aisotropy.availability
+    rules:
+      - alert: AisotropyErrorBudgetBurnCritical
+        expr: |
+          aisotropy:llm_error_ratio:fleet:1h > 0.072
+          and
+          aisotropy:llm_error_ratio:fleet:5m > 0.072
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "Fast error-budget burn (>14.4x) on the LLM serving path"
+          description: >
+            Fleet gen_ai error ratio is above 7.2% over both 1h and 5m windows.
+            At this rate ~2% of the 30-day availability budget is consumed per
+            hour. Runbook: docs/operations/runbooks.md#high-error-rate
+          dashboard: "Aisotropy / Overview"
+
+      - alert: AisotropyErrorBudgetBurnWarning
+        expr: |
+          aisotropy:llm_error_ratio:fleet:6h > 0.030
+          and
+          aisotropy:llm_error_ratio:fleet:30m > 0.030
+        for: 15m
+        labels:
+          severity: warning
+          slo: availability
+        annotations:
+          summary: "Sustained error-budget burn (>6x) on the LLM serving path"
+          description: >
+            Fleet gen_ai error ratio is above 3% over both 6h and 30m windows.
+            Runbook: docs/operations/runbooks.md#high-error-rate
+          dashboard: "Aisotropy / Overview"
+
+      - alert: AisotropyTenantErrorRateHigh
+        expr: aisotropy:llm_error_ratio:5m > 0.10
+        for: 10m
+        labels:
+          severity: warning
+          slo: availability
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} error ratio > 10%"
+          description: >
+            A single tenant is seeing >10% gen_ai errors over 5m while the fleet
+            may look healthy — check for a poison prompt, a scope/tool issue, or
+            a tenant-specific circuit-breaker trip.
+            Runbook: docs/operations/runbooks.md#tenant-reports-errors
+
+  # ---- Latency ----------------------------------------------------------
+  - name: aisotropy.latency
+    rules:
+      - alert: AisotropyLatencyP95High
+        expr: aisotropy:llm_latency_p95_ms:fleet:5m > 3000
+        for: 10m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "Fleet p95 LLM latency > 3s"
+          description: >
+            p95 gen_ai call duration exceeded the 3000ms objective for 10m.
+            Note this span covers the model call end-to-end (TTFT + generation).
+            Runbook: docs/operations/runbooks.md#latency-spike
+          dashboard: "Aisotropy / Overview"
+
+      - alert: AisotropyLatencyP99High
+        expr: aisotropy:llm_latency_p99_ms:fleet:5m > 8000
+        for: 10m
+        labels:
+          severity: critical
+          slo: latency
+        annotations:
+          summary: "Fleet p99 LLM latency > 8s"
+          description: >
+            p99 gen_ai call duration exceeded the 8000ms objective for 10m.
+            Runbook: docs/operations/runbooks.md#latency-spike
+          dashboard: "Aisotropy / Overview"
+
+  # ---- Liveness / readiness --------------------------------------------
+  - name: aisotropy.health
+    rules:
+      - alert: AisotropyLivenessDown
+        expr: probe_success{instance="http://aisotropyd:8080/healthz"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "aisotropyd liveness probe failing (/healthz)"
+          description: >
+            The process is not answering /healthz — it is down or unreachable
+            from the observability network.
+            Runbook: docs/operations/runbooks.md#liveness-down
+
+      - alert: AisotropyReadinessDegraded
+        expr: probe_success{instance="http://aisotropyd:8080/health"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "aisotropyd readiness degraded (/health returns 503)"
+          description: >
+            /health returned non-200: at least one memory tier probe is
+            degraded. Identify the tier below (AisotropyTierDegraded) or via
+            `curl -s :8080/health | jq`.
+            Runbook: docs/operations/runbooks.md#tier-degraded
+
+      - alert: AisotropyTierDegraded
+        # Per-tier verdict from json-exporter (status rides as a label).
+        expr: aisotropy_health_tier{status="degraded"} == 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Memory tier '{{ $labels.tier }}' is degraded"
+          description: >
+            The {{ $labels.tier }} tier probe on /health is failing. This gates
+            request readiness. Runbook: docs/operations/runbooks.md#tier-degraded
+
+  # ---- Traffic / pipeline sanity ---------------------------------------
+  - name: aisotropy.pipeline
+    rules:
+      - alert: AisotropyNoServingTraffic
+        # Process is live but zero gen_ai spans for 15m. Either genuinely idle,
+        # or the trace pipeline is broken (OTEL endpoint unset / collector down).
+        expr: |
+          (sum(rate(aisotropy_spanmetrics_calls_total[15m])) == 0
+           or absent(aisotropy_spanmetrics_calls_total))
+          and on() probe_success{instance="http://aisotropyd:8080/healthz"} == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No gen_ai spans for 15m while the process is live"
+          description: >
+            Either no chat traffic, or traces are not reaching the collector.
+            Verify OTEL_EXPORTER_OTLP_ENDPOINT on aisotropyd and the collector's
+            receiver. Runbook: docs/operations/runbooks.md#no-traffic
+
+      - alert: AisotropyCollectorRefusingSpans
+        expr: rate(otelcol_receiver_refused_spans[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OTel Collector is refusing spans"
+          description: >
+            The collector dropped spans (backpressure or memory limiter).
+            Telemetry is being lost. Runbook: docs/operations/runbooks.md#no-traffic
+
+  # ---- Cost / token spend ----------------------------------------------
+  - name: aisotropy.cost
+    rules:
+      # Token-spend spike works out of the box (real token sums from spans).
+      - alert: AisotropyTokenSpendSpike
+        expr: |
+          aisotropy:output_tokens:rate5m
+          > 3 * avg_over_time(aisotropy:output_tokens:rate5m[1h] offset 1h)
+          and aisotropy:output_tokens:rate5m > 50
+        for: 10m
+        labels:
+          severity: warning
+          slo: cost
+        annotations:
+          summary: "Output-token spend for tenant {{ $labels.tenant_id }} spiked 3x"
+          description: >
+            Per-tenant output-token rate is >3x its trailing-hour baseline.
+            Possible runaway loop, abuse, or a new heavy workload.
+            Runbook: docs/operations/runbooks.md#cost-anomaly
+
+      # Authoritative USD cost spike — requires the OPT-IN /costs scrape
+      # (see prometheus.yml job_name: json-tenant-costs). Uncomment once wired.
+      # - alert: AisotropyCostSpikeUSD
+      #   expr: increase(aisotropy_tenant_cost_usd[1h]) > 10
+      #   for: 5m
+      #   labels:
+      #     severity: warning
+      #     slo: cost
+      #   annotations:
+      #     summary: "Tenant {{ $labels.tenant_id }} accrued >$10 in 1h"
+      #     description: "Runbook: docs/operations/runbooks.md#cost-anomaly"
+
+  # ---- Quota / circuit-breaker (SIGNAL GAP — see notes) -----------------
+  # HONEST GAP: quota-exhaustion (429), rate-limit rejections and circuit-breaker
+  # trips are NOT exported as metrics today (no counter in internal/memory/quota.go
+  # or internal/llm/breaker.go, and a pre-LLM rejection may open no gen_ai span).
+  # There is therefore no reliable Prometheus alert for them yet. Detect via the
+  # access-audit log instead (ADR-0047): status codes 429 (quota/rate-limit) and
+  # 5xx (breaker open). See runbooks.md#quota-breaker. When a
+  # `aisotropy_quota_rejections_total` / `aisotropy_breaker_state` metric is
+  # added to the runtime, add alerts here.

@@ -1,0 +1,89 @@
+{
+  "uid": "aisotropy-reliability",
+  "title": "Aisotropy / Reliability (health, tiers, guardrails)",
+  "tags": ["aisotropy", "sre", "reliability"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Liveness (/healthz)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [ { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } } ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "expr": "probe_success{instance=\"http://aisotropyd:8080/healthz\"}", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Readiness (/health)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [ { "type": "value", "options": { "0": { "text": "DEGRADED", "color": "red" }, "1": { "text": "READY", "color": "green" } } } ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "expr": "probe_success{instance=\"http://aisotropyd:8080/health\"}", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Per-tier readiness (status as label)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "aisotropy_health_tier", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Per-tier probe latency (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "aisotropy_health_tier", "legendFormat": "{{tier}}", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "OTel Collector: refused spans/s",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(otelcol_receiver_refused_spans[5m])", "legendFormat": "refused", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "text",
+      "title": "Signal gaps (circuit breaker / rate limit / guardrail)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "options": {
+        "mode": "markdown",
+        "content": "These controls have **no dedicated metric today**:\n\n- **Circuit breaker** (`internal/llm/breaker.go`) — trips fail requests fast; visible as errored gen_ai spans (Overview -> Errors) and as 5xx in the access-audit log.\n- **Rate limiter / quota** (`internal/memory/quota.go`) — rejections return HTTP 429; visible **only** in the access-audit log (ADR-0047).\n- **Guardrails** (`internal/guardrails`) — hits/blocks emit slog, not a counter.\n\nUntil counters are added to the runtime, detect these via the audit log (see `docs/operations/runbooks.md#quota-breaker` and `#guardrail-flood`) or ship logs to Loki (optional overlay)."
+      }
+    }
+  ]
+}

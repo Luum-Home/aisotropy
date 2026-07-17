@@ -1,0 +1,63 @@
+# JSON exporter (prometheus-community/json_exporter, Apache-2.0).
+#
+# Bridges aisotropyd's JSON operator endpoints into Prometheus metrics — the
+# two signals that are NOT in the trace stream:
+#
+#   health_tiers  <- GET /health  (per-tier readiness; no auth)
+#   tenant_costs  <- GET /costs    (authoritative per-tenant cost meter snapshot;
+#                                   ops-token gated)
+#
+# IMPORTANT — the /costs JSON keys are Go STRUCT FIELD NAMES, not snake_case:
+# internal/costmeter.TenantStats has no json tags, so it marshals as
+# {"TenantID":...,"Requests":...,"InputTokens":...,"OutputTokens":...,"CostUSD":...}.
+# The JSONPaths below use those exact capitalized keys.
+
+modules:
+  # ---- GET /health : per-tier readiness (no credential) -------------------
+  health_tiers:
+    metrics:
+      # One series per tier probe. `status` (ok|degraded) rides as a LABEL —
+      # json_exporter cannot turn a string into a numeric value, so the numeric
+      # payload is latency_ms and the verdict is expressed via the label. An
+      # alert on aisotropy_health_tier{status="degraded"} then fires per tier.
+      - name: aisotropy_health_tier
+        type: object
+        help: "Per-tier readiness from GET /health; status is a label (ok|degraded)."
+        path: '{ .checks[*] }'
+        labels:
+          tier: '{ .name }'
+          status: '{ .status }'
+        values:
+          latency_ms: '{ .latency_ms }'
+      # Aggregate verdict as a label on a constant 1 series.
+      - name: aisotropy_health_overall
+        type: object
+        help: "Aggregate readiness verdict from GET /health; status is a label."
+        path: '{ . }'
+        labels:
+          status: '{ .status }'
+        values:
+          info: '1'
+
+  # ---- GET /costs : authoritative per-tenant cost meter (ops-token gated) --
+  # DISABLED BY DEFAULT in prometheus.yml. /costs requires
+  #   Authorization: Bearer $AISOTROPY_OPS_TOKEN
+  # json_exporter does NOT expand environment variables in this file, so do NOT
+  # commit a real token here. To enable: render this file with the token via
+  #   AISOTROPY_OPS_TOKEN=... envsubst < config.yml > config.rendered.yml
+  # (or mount a rendered copy), then uncomment the tenant_costs scrape job.
+  tenant_costs:
+    headers:
+      Authorization: "Bearer REPLACE_WITH_AISOTROPY_OPS_TOKEN"
+    metrics:
+      - name: aisotropy_tenant
+        type: object
+        help: "Per-tenant cumulative usage from GET /costs (authoritative cost meter)."
+        path: '{ [*] }'
+        labels:
+          tenant_id: '{ .TenantID }'
+        values:
+          cost_usd: '{ .CostUSD }'
+          requests: '{ .Requests }'
+          input_tokens: '{ .InputTokens }'
+          output_tokens: '{ .OutputTokens }'

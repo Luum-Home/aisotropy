@@ -1,0 +1,67 @@
+{
+  "uid": "aisotropy-cost",
+  "title": "Aisotropy / Cost & Token Spend",
+  "tags": ["aisotropy", "sre", "cost"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Sources",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Token spend** (below) is REAL: provider-reported `gen_ai.usage.*_tokens`, summed by the collector — always available. **USD cost** panels require the OPT-IN `/costs` scrape (needs `AISOTROPY_OPS_TOKEN`; see `prometheus.yml` job `json-tenant-costs`). Until wired, use tokens as the proxy and `/costs` (curl) as the authoritative snapshot."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Output tokens/s per tenant",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "aisotropy:output_tokens:rate5m", "legendFormat": "{{tenant_id}}", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Input tokens/s per tenant",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "aisotropy:input_tokens:rate5m", "legendFormat": "{{tenant_id}}", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Cumulative output tokens by tenant + model",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (tenant_id, gen_ai_request_model) (aisotropy_tokens_output_total)", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "USD cost per tenant (OPT-IN /costs scrape)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "description": "Empty until the json-tenant-costs scrape is enabled with an ops token. Authoritative source is aisotropyd's in-process cost meter (internal/costmeter).",
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (tenant_id) (aisotropy_tenant_cost_usd)", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    }
+  ]
+}

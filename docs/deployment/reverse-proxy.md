@@ -94,6 +94,46 @@ The Caddy equivalent is `flush_interval -1` on the `reverse_proxy` block. And be
 `X-Accel-Buffering: no` itself, ingress-nginx honors it per response even without the annotation — the
 annotation is belt to the header's suspenders.
 
+## Cross-origin browser clients (CORS) — `AISOTROPY_CORS_ALLOWED_ORIGINS`
+
+A browser UI served from a **different origin** than the API (e.g. the reference
+[`examples/clients/chat-ui.html`](../../examples/clients/) opened from `http://localhost:5173`
+while aisotropyd runs on `:8080`) cannot read the API's responses unless aisotropyd returns CORS
+headers — otherwise every `fetch` fails with a bare *"Failed to fetch"*, before any status is seen.
+
+aisotropyd ships an **opt-in, exact-origin-allowlist** CORS middleware
+([`aisotropy/cors.go`](../../aisotropy/cors.go)), wired as the **outermost** router middleware so a
+browser preflight is answered before the `/v1` auth gate and the header lands on **every** response,
+**including the SSE streams**.
+
+| `AISOTROPY_CORS_ALLOWED_ORIGINS` | Behavior |
+|---|---|
+| **unset / blank** (default) | **No CORS headers emitted** — same-origin only. Secure default. |
+| `https://app.example.com,http://localhost:5173` | For a request whose `Origin` **exactly matches** an entry, that origin is echoed back in `Access-Control-Allow-Origin`; an origin not on the list gets **no** CORS header (the browser blocks it). |
+
+The value is a **comma-separated list of exact origins** (scheme + host + optional port). It matters
+that this is an **allowlist, never `*`**: aisotropyd is a **multi-tenant, bearer-authenticated** API,
+and a wildcard would let any web page drive it with a victim's token. The middleware:
+
+- echoes the request `Origin` **only** when it is on the allowlist — never `*`;
+- allows the methods/headers the API actually needs — `GET, POST, OPTIONS` and
+  `Content-Type, Authorization, Last-Event-ID` (the last for SSE stream resume);
+- answers the preflight `OPTIONS` with `204` and an `Access-Control-Max-Age`, short-circuiting before
+  auth;
+- does **not** send `Access-Control-Allow-Credentials`: the API authenticates via the `Authorization`
+  bearer header (which the client sets explicitly and does not require credentials mode), so cookies
+  are never in scope.
+
+```bash
+# Allow the local dev UI and the deployed app origin:
+export AISOTROPY_CORS_ALLOWED_ORIGINS="http://localhost:5173,https://app.example.com"
+```
+
+Note the division of labor with the reverse proxy: a proxy can also inject CORS headers, but doing it
+in aisotropyd keeps the allowlist next to the auth model and guarantees the header is present on the
+SSE routes even when the proxy is a pass-through. If your proxy already adds CORS headers, leave
+`AISOTROPY_CORS_ALLOWED_ORIGINS` unset to avoid duplicate `Access-Control-Allow-Origin` headers.
+
 ## The before/after finding (why the middleware exists)
 
 The header is not cosmetic. **Before** the `sseAntiBuffering` middleware, the native `/chat/stream`

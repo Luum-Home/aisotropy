@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>aisotropyd — reference chat UI</title>
+<!--
+  Minimal, dependency-free reference for "how a front-end consumes aisotropyd".
+  Single static file: open it directly in a browser, no build step, no framework.
+
+  It streams a chat over SSE (POST .../chat/stream, text/event-stream) using the
+  Fetch + ReadableStream API — the same transport the TS/Python clients use. Tenant
+  and user live in the URL path (the isolation boundary); the bearer token is an
+  optional field (leave blank against a NoAuth dev server).
+
+  CORS: a browser on a different origin than the server needs the server to send
+  CORS headers. For a purely local demo, serve this file from the SAME origin, e.g.
+  put it behind aisotropyd's host, or run: python3 -m http.server and point Base URL
+  at a same-origin reverse proxy. Against 127.0.0.1 with the file opened via
+  file://, most browsers allow the fetch to localhost; if blocked, use a proxy.
+-->
+<style>
+  :root { color-scheme: light dark; --gap: 12px; }
+  * { box-sizing: border-box; }
+  body {
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    margin: 0; padding: var(--gap);
+    display: flex; flex-direction: column; gap: var(--gap);
+    height: 100vh; max-width: 820px; margin-inline: auto;
+  }
+  h1 { font-size: 18px; margin: 0; }
+  .config { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+  label { display: flex; flex-direction: column; font-size: 12px; opacity: .8; gap: 2px; }
+  input {
+    font: inherit; padding: 6px 8px; border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-radius: 6px; background: transparent; color: inherit;
+  }
+  #log {
+    flex: 1; overflow-y: auto; border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+    border-radius: 8px; padding: var(--gap); display: flex; flex-direction: column; gap: 10px;
+  }
+  .msg { padding: 8px 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
+  .user { align-self: flex-end; background: color-mix(in srgb, dodgerblue 22%, transparent); }
+  .agent { align-self: flex-start; background: color-mix(in srgb, currentColor 8%, transparent); }
+  .meta { font-size: 11px; opacity: .6; }
+  .err { color: crimson; }
+  form.composer { display: flex; gap: 8px; }
+  form.composer input { flex: 1; }
+  button {
+    font: inherit; padding: 6px 16px; border-radius: 6px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+    background: color-mix(in srgb, currentColor 10%, transparent); color: inherit;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+  <h1>aisotropyd — reference chat UI <span class="meta">(SSE streaming, no framework)</span></h1>
+
+  <div class="config">
+    <label>Base URL
+      <input id="baseUrl" value="http://127.0.0.1:8080" />
+    </label>
+    <label>Tenant ID
+      <input id="tenant" value="acme" />
+    </label>
+    <label>User ID
+      <input id="user" value="alice" />
+    </label>
+    <label>Bearer token (blank = NoAuth dev)
+      <input id="token" type="password" placeholder="optional" />
+    </label>
+    <label>Product ID
+      <input id="productId" value="analytics-v1" />
+    </label>
+    <label>Session ID
+      <input id="sessionId" value="session-42" />
+    </label>
+  </div>
+
+  <div id="log" aria-live="polite"></div>
+
+  <form class="composer" id="composer">
+    <input id="prompt" placeholder="Type a message…" autocomplete="off" maxlength="2000" required />
+    <button type="submit" id="sendBtn">Send</button>
+    <button type="button" id="stopBtn" disabled>Stop</button>
+  </form>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const log = $("log");
+let inFlight = null; // AbortController for the active stream
+
+function addMessage(cls, text) {
+  const el = document.createElement("div");
+  el.className = "msg " + cls;
+  el.textContent = text;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+
+// Parse an SSE frame ("event: X\n data: {...}") into {name, data}.
+function parseFrame(raw) {
+  let name = "message";
+  const dataLines = [];
+  for (const line of raw.split("\n")) {
+    if (line.startsWith(":")) continue; // comment / heartbeat
+    if (line.startsWith("event:")) name = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+  }
+  return { name, data: dataLines.join("\n") };
+}
+
+async function streamChat({ baseUrl, tenant, user, token, body }, onToken, onDone, onError) {
+  const url = `${baseUrl}/v1/tenant/${encodeURIComponent(tenant)}` +
+              `/user/${encodeURIComponent(user)}/chat/stream`;
+  const controller = new AbortController();
+  inFlight = controller;
+
+  const headers = { "content-type": "application/json", "accept": "text/event-stream" };
+  if (token) headers["authorization"] = "Bearer " + token;
+
+  const res = await fetch(url, {
+    method: "POST", headers, body: JSON.stringify(body), signal: controller.signal,
+  });
+
+  if (!res.ok || !res.body) {
+    let detail = res.statusText;
+    try {
+      const e = await res.json(); // RFC-7807 problem+json (ErrorModel)
+      detail = `${e.status ?? res.status} ${e.title ?? ""} — ${e.detail ?? ""}`.trim();
+    } catch { /* not JSON */ }
+    onError(detail);
+    return;
+  }
+
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += value;
+    let sep;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const frame = parseFrame(buffer.slice(0, sep));
+      buffer = buffer.slice(sep + 2);
+      if (!frame.data) continue;
+      const payload = JSON.parse(frame.data);
+      if (frame.name === "token") onToken(payload.text);
+      else if (frame.name === "done") onDone(payload);
+      else if (frame.name === "error") onError(payload.message);
+    }
+  }
+}
+
+function setBusy(busy) {
+  $("sendBtn").disabled = busy;
+  $("stopBtn").disabled = !busy;
+}
+
+$("composer").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const prompt = $("prompt").value.trim();
+  if (!prompt) return;
+
+  addMessage("user", prompt);
+  $("prompt").value = "";
+  setBusy(true);
+
+  const agentEl = addMessage("agent", "");
+  const cfg = {
+    baseUrl: $("baseUrl").value.replace(/\/+$/, ""),
+    tenant: $("tenant").value,
+    user: $("user").value,
+    token: $("token").value,
+    body: {
+      prompt,
+      product_id: $("productId").value,
+      session_id: $("sessionId").value,
+    },
+  };
+
+  try {
+    await streamChat(
+      cfg,
+      (text) => { agentEl.textContent += text; log.scrollTop = log.scrollHeight; },
+      (done) => { addMessage("meta", `done — served by tenant=${done.tenant_id}`); },
+      (msg) => { agentEl.classList.add("err"); agentEl.textContent += `\n[error] ${msg}`; },
+    );
+  } catch (err) {
+    if (err.name === "AbortError") agentEl.textContent += "\n[stopped]";
+    else { agentEl.classList.add("err"); agentEl.textContent += `\n[error] ${err.message}`; }
+  } finally {
+    setBusy(false);
+    inFlight = null;
+  }
+});
+
+$("stopBtn").addEventListener("click", () => {
+  if (inFlight) inFlight.abort(); // cancels the fetch → runtime stops the LLM call
+});
+</script>
+</body>
+</html>

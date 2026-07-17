@@ -1,0 +1,131 @@
+{
+  "uid": "aisotropy-overview",
+  "title": "Aisotropy / Overview (RED + SLO)",
+  "tags": ["aisotropy", "sre", "red"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+        "query": "label_values(aisotropy_spanmetrics_calls_total, tenant_id)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Fleet request rate (req/s)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "aisotropy:llm_requests:fleet:rate5m", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Fleet error ratio (5m)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.03 }, { "color": "red", "value": 0.072 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "expr": "aisotropy:llm_error_ratio:fleet:5m", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Fleet p95 latency (ms)",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 3000 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "expr": "aisotropy:llm_latency_p95_ms:fleet:5m", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Fleet p99 latency (ms)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 8000 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "expr": "aisotropy:llm_latency_p99_ms:fleet:5m", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Request rate per tenant (req/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (tenant_id) (rate(aisotropy_spanmetrics_calls_total{tenant_id=~\"$tenant\"}[5m]))", "legendFormat": "{{tenant_id}}", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Error ratio per tenant",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "aisotropy:llm_error_ratio:5m{tenant_id=~\"$tenant\"}", "legendFormat": "{{tenant_id}}", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "p95 latency per tenant (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "aisotropy:llm_latency_p95_ms:5m{tenant_id=~\"$tenant\"}", "legendFormat": "{{tenant_id}}", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Errors by model + status",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (gen_ai_request_model, status_code) (rate(aisotropy_spanmetrics_calls_total{status_code=\"STATUS_CODE_ERROR\"}[5m]))", "legendFormat": "{{gen_ai_request_model}} / {{status_code}}", "datasource": { "type": "prometheus", "uid": "aisotropy-prometheus" } }
+      ]
+    }
+  ]
+}

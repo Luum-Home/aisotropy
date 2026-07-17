@@ -1,0 +1,7 @@
+# Build artifacts — regenerate with the steps in ../../docs/guides/client-sdks.md.
+# The generated CODE (typescript/src/schema.ts, python/aisotropy_client/) IS committed;
+# only the heavy, reproducible install/venv dirs are ignored.
+typescript/node_modules/
+python/.gen-venv/
+python/.run-venv/
+python/**/__pycache__/
