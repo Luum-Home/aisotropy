@@ -57,6 +57,32 @@ ping** and reports the result honestly (it never fabricates success).
 pytest tests/ -q                          # 21 passed — isolation + strengths as executable tests
 ```
 
+### Offline smoke in Docker (containerized, still no server, no key)
+
+```bash
+bash docker/run.sh                        # build + run the OFFLINE smoke in a clean container
+```
+
+`docker/run.sh` builds `docker/Dockerfile` (Python 3.13-slim, real
+`letta-client==1.12.1` installed fresh from `requirements.txt`), then runs the
+adversarial isolation assertion **inside the container** — both `scripts/smoke.py`
+(exit 0 = positive control held + org-wide leak demonstrated) and
+`pytest tests/test_isolation.py` (7 passed) — with `--network=none`, no LLM key and
+no Letta server. It asserts both pass and removes the image on exit. If the Docker
+daemon is absent it prints `SKIP` and exits 0 (this repo's honesty gate — CI never
+fails merely because Docker is missing).
+
+**What this proves — and what it does NOT.** It proves the arena is self-contained
+and reproducible: it runs end-to-end on a bare Python 3.13 base (deps install
+cleanly, the real Letta Pydantic types import, the isolation matrix executes), not
+just on the host `.venv`. It does **NOT** run a live Letta server: the block/passage
+data plane exercised in-container is this arena's **labelled behavioral simulation**
+of the server plane (real SDK types + the real, documented server filter contract, a
+deterministic responder instead of the LLM — see "What is real here vs. what is
+simulated" above). A **live-server** containerized smoke additionally needs a running
+`letta server` + Postgres + a provider key (the "Live serve" path below), which is
+out of scope for an offline, keyless run and is deliberately **not faked** here.
+
 ## Live serve (needs a real Letta server)
 
 ```bash

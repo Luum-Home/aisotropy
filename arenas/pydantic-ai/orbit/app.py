@@ -73,7 +73,7 @@ stores: dict[tuple[str, str], Deps] = {}
 def get_store(tenant_id: str, user_id: str) -> Deps:
     key = (tenant_id, user_id)
     if key not in stores:
-        stores[key] = Deps(tenant_id=tenant_id, user_id=user_id)
+        stores[key] = Deps(tenant_id=tenant_id, user_id=user_id, session_id="")
     return stores[key]
 
 
@@ -99,8 +99,9 @@ async def chat(tenant_id: str, user_id: str, req: ChatRequest):
         store.memory[key] = []
     store.memory[key].append(msg)
 
-    # Run the agent
-    result = agent.run_sync(req.prompt, deps=store)
+    # Run the agent (async: we're already inside the event loop, so `await
+    # agent.run(...)` — NOT run_sync, which would deadlock the running loop).
+    result = await agent.run(req.prompt, deps=store)
 
     return ChatResponse(
         reply=result.output,
@@ -124,7 +125,7 @@ async def chat_stream(tenant_id: str, user_id: str, req: ChatRequest):
 
     async def event_stream():
         yield f"data: {{\"type\": \"start\", \"tenant_id\": \"{tenant_id}\"}}\n\n"
-        result = agent.run_sync(req.prompt, deps=store)
+        result = await agent.run(req.prompt, deps=store)
         yield f"data: {{\"type\": \"message\", \"reply\": \"{result.output}\"}}\n\n"
         yield f"data: {{\"type\": \"done\"}}\n\n"
 

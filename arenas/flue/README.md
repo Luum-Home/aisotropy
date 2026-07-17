@@ -67,6 +67,30 @@ Both smokes boot a fake `openai-completions` model + a built Flue Node server (`
 real subprocesses and drive them over HTTP. `flue build --target node` compiles the app to
 `dist/server.mjs` via Flue's Vite/rolldown pipeline.
 
+### Docker lane (containerized build + boot, same isolation proof)
+
+An **additive** Docker smoke lives in `docker/` — the native `pnpm` smokes above are unchanged. It
+proves the exact same runtime inside a stock `node:22` container:
+
+```bash
+bash docker/run.sh        # skips cleanly (exit 0) if Docker is unavailable — never fakes a pass
+```
+
+`docker/run.sh` builds the image (`docker/Dockerfile`: `pnpm install` + `flue build --target node`),
+boots the container, waits for `GET /health`, then drives the **isolation** smoke
+(`docker/smoke-http.mjs`) against the containerized server over its published HTTP port — write a
+secret as one instance, assert cross-tenant / cross-user / **cross-product** isolation plus the
+route-guard 401s — and tears the container and image down afterward. The container is self-contained
+and offline: it runs *both* the deterministic fake model (`scripts/fake-model.mjs`, on `:4117`) and
+the Flue server (on `:8080`), so no API key and no runtime network are needed.
+
+Why a plain Node image suffices: Flue's file-backed durable store uses Node's **built-in**
+`node:sqlite` (`DatabaseSync`) — there is no `better-sqlite3`, no native addon, no compiler in the
+image. Image size ≈ **316 MB** (`node:22-bookworm-slim` + the installed dep tree). Note: pnpm 11
+flags the unused optional build scripts (`sharp`/`workerd`/…) as `ERR_PNPM_IGNORED_BUILDS`; the
+Dockerfile tolerates that non-fatal notice and invokes the Flue CLI binary directly (not `pnpm run`,
+which would re-raise it). The host still needs `node` + `curl` to run the driver/readiness poll.
+
 ### Smoke 1 — durable execution → crash-safe conversation memory (exit 0)
 
 ```
@@ -193,6 +217,8 @@ Core `@flue/*` are Apache-2.0. Full table in `FEATURES.md`.
 
 - `README.md` (this file), `FEATURES.md` (41-feature classification + license scan), `DX-NOTES.md`.
 - `src/` (real Orbit app), `scripts/{smoke,isolation,fake-model,lib}.mjs` (run-verified, offline).
+- `docker/{Dockerfile,run.sh,smoke-http.mjs}` — additive containerized build+boot lane driving the
+  isolation smoke against the container over HTTP (run-verified; skips cleanly without Docker).
 
 See [`../ARENA-SPEC-v2.md`](../ARENA-SPEC-v2.md) for the full aisotropy feature catalog and
 [`../README.md`](../README.md) for the 7-arena isolation matrix this extends to an 8th framework.

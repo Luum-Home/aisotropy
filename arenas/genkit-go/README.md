@@ -79,6 +79,36 @@ curl -sN -X POST localhost:4116/v1/tenant/acme/user/alice/chat/stream \
 The live server namespaces the store key as `tenant:user:session` — the *correct* convention. It
 is still only a convention: nothing in Genkit forces or checks it (see the smoke for the leak).
 
+## Containerized smoke (Docker)
+
+Proves the real Genkit build boots and isolates **as a production container**, not just as a local
+`go run`. The server is packaged like a real Go service — multi-stage build → static `CGO_ENABLED=0`
+binary on `gcr.io/distroless/static-debian12:nonroot`, with `GENKIT_ENV=prod` baked in so no
+dev-mode Reflection server starts. The dotprompt files are compiled into the binary via `go:embed`,
+so the runtime image is **just the binary (~5 MB)**.
+
+```bash
+cd arenas/genkit-go
+bash docker/run.sh
+```
+
+`docker/run.sh` builds [`docker/Dockerfile`](docker/Dockerfile), runs the container (publishing
+`:4116` to an ephemeral host port), waits for `/healthz`, then drives the isolation assertion
+against the **containerized** server over HTTP:
+
+1. **Seed** — `acme/alice` (session `s1`) stores a random `SECRET:` marker.
+2. **Positive control** — `acme/alice` re-reads session `s1` → **must** replay the secret (the real
+   Genkit generate pipeline works inside the container).
+3. **Cross-tenant probe** — a *different* tenant reusing the same `session_id` → **must NOT** see
+   the secret. The server's `tenant:user:session_id` key namespacing makes the key differ, so the
+   read is isolated. (This is the *correct-convention* path; the framework does not **enforce** it —
+   the [native smoke](scripts/smoke.go) drives the convention leak that namespacing avoids.)
+
+It exits `0` only if the image built, the container became ready, and both assertions held; it
+**skips cleanly** (exit `0`, no fake pass) when Docker is not installed or its daemon is
+unreachable, and always removes its container on exit. This complements — does not replace — the
+native `go run ./scripts/` and `go test ./orbit/` smokes above.
+
 ## What Genkit Go does genuinely well
 
 This arena's core claim is narrow — *isolation-by-default* — and it would be a strawman to leave it

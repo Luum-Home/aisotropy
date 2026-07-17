@@ -92,6 +92,48 @@ POST .../product/productX/chat  Authorization: Bearer tok:acme|alice|productX  -
 SQLite; the sibling productY and cross-tenant globex objects each start at `hydrated:0` —
 each has its own empty SQLite.
 
+## Containerized smoke (Docker — optional, run-verified)
+
+```bash
+./docker/run.sh        # builds docker/Dockerfile, boots wrangler dev inside a
+                       # node container, drives the per-DO isolation smoke over
+                       # HTTP against it, asserts, cleans up. SKIPs if docker absent.
+```
+
+**Feasibility verdict: YES — it containerizes, and the full DO smoke RAN in a container.**
+This was not a given. Cloudflare Agents are **Durable Objects on `workerd`**, not a generic
+Linux container process, and `wrangler` embeds a platform-specific `workerd` binary — so the
+image cannot reuse the host `node_modules` (that carries `@cloudflare/workerd-darwin-*`); it
+runs a **fresh Linux install** to pull `@cloudflare/workerd-linux-*`, on a **glibc** base
+(Debian, not Alpine — `workerd` does not link musl cleanly). With that, `wrangler dev` boots
+real `workerd` + real Durable Objects (binding shows `Mode: local`) inside the container, and
+`docker/run.sh` drives the same isolation matrix the native `pnpm dev` path proves — over HTTP
+against the containerized instance. Actual output:
+
+```
+==> Waiting for the DO-backed endpoint to come up ...
+    ready after 4s
+  PASS: productX turn 1 -> hydrated:0
+  PASS: productX turn 2 -> hydrated:2 (per-object memory persisted)
+  PASS: productY (different object) -> hydrated:0 (isolated)
+  PASS: globex/productX (different tenant) -> hydrated:0 (isolated)
+  PASS: productY response has its own identity, no productX bleed-through
+  PASS: must-agree bind rejects wrong-product token -> HTTP 403
+  PASS: self-consistent verified request -> HTTP 200
+CONTAINERIZED DO SMOKE: PASS — real workerd + Durable Objects + per-object
+SQLite isolation verified over HTTP against the container.
+```
+
+**Honest scope of what the container proves (and does NOT).** The container reproduces the
+**local-fidelity** runtime — `workerd`/`miniflare` with real DOs and real embedded SQLite,
+exactly what the native `pnpm smoke`/`pnpm dev` use — just as a reproducible image instead of
+on the host. It does **not**, and *cannot*, reproduce Cloudflare's production edge: global
+Durable Object uniqueness and rented durability are **platform** properties that live only on
+Cloudflare, not in any self-hosted container (see the **Sovereignty caveat** below). So the
+Docker path adds reproducibility and CI portability for the isolation smoke; it does **not**
+turn the rented-platform guarantee into a self-hostable one. That boundary is the arena's
+central honest caveat, and containerizing the local runtime does not erase it.
+
 ## Architecture (what maps to what)
 
 | Orbit concept | Cloudflare Agents mechanism |
@@ -219,6 +261,7 @@ convention. On raw storage isolation, Cloudflare wins outright.
 | Install | `pnpm install` |
 | Smoke (offline, workerd) | `pnpm smoke` |
 | Live serve (local DOs) | `pnpm dev` |
+| Containerized DO smoke (Docker, optional) | `./docker/run.sh` |
 | License scan | `./scripts/license_scan.sh` |
 
 ## Sources

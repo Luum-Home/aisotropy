@@ -29,6 +29,26 @@ Runs the isolation matrix on LangGraph's in-memory `Store` — Part A reproduces
 short-prefix bug, Part B closes it with an identity-bound (`@auth.on.store()`-style) layer. No LLM
 API key needed.
 
+## Containerized smoke (Docker)
+
+```bash
+bash docker/run.sh
+```
+
+Proves the framework's minimal app boots and serves HTTP **inside a container** with the keyless
+stub, then drives the isolation assertion over real HTTP against that container: a secret is written
+as tenant A, and a cross-tenant read as tenant B must **not** see it. The script builds the image
+(`docker/Dockerfile`, Python 3.13 + `langgraph 1.2.9`), runs it, waits for `/healthz`, asserts, and
+cleans up the container and image on exit. If Docker is absent it **skips cleanly** (exit 0 with a
+message) — it never fakes a pass.
+
+This is **additive** — the offline `scripts/smoke.py` above still runs and still proves both postures
+at the store layer. The serve path wires the Part B "correct posture" (identity-bound namespaces via
+the memory endpoints in `orbit/server.py`), so what the HTTP smoke proves is the **enforced-correct**
+posture: a cross-tenant read is structurally blocked through the endpoint. The Part A naive-config
+bug is reproduced by the offline smoke, not exposed over HTTP (the server never offers the
+under-scoped query).
+
 ## Live serve
 
 ```bash

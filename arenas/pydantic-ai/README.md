@@ -33,6 +33,25 @@ constructs a Pydantic AI `Agent` backed by `TestModel` to confirm the installed 
 structured-output wiring boots. Exits 0 when the positive control and the correct-scoping control
 pass. This is a DIY/out-of-scope classification for the framework, not a leak in it.
 
+## Docker smoke (deployment realism, offline stub)
+
+```bash
+bash docker/run.sh
+```
+
+Builds a minimal `python:3.13-slim` image of the orbit app (`docker/Dockerfile`), runs it as a
+**container** serving `orbit.app` on `:4110` with the **keyless `TestModel` stub** (no API key),
+waits for HTTP readiness, then drives the isolation/smoke assertion against the **containerized**
+server over real HTTP: tenant A writes a unique secret marker, a positive-control read by tenant A
+sees it, and a **cross-tenant read by tenant B does NOT** — the app's `get_store()` keys on the
+`(tenant_id, user_id)` taken from the URL path, so tenant B gets a separate store. The script
+asserts the result, prints `PASS`, and **cleans up the container and image**. It **SKIPs cleanly
+(exit 0 with a `SKIP:` message)** when docker is unavailable — it never fakes a pass. This
+complements the offline `scripts/smoke.py` (which classifies the framework's *no isolation layer*
+property in-process) by proving the same minimal app also boots and serves path-scoped separation
+when containerized. First build pulls the base image + `pydantic-ai` and can take a few minutes;
+`KEEP_IMAGE=1` retains the image for faster reruns, `HOST_PORT=<n>` remaps the published port.
+
 ## Live serve
 
 ```bash

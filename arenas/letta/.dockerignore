@@ -1,0 +1,10 @@
+# Build context = arena root (arenas/letta/). Keep the image small and the build
+# reproducible: never ship the 54M host virtualenv or Python caches into the image
+# (the container installs letta-client==1.12.1 fresh from requirements.txt).
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+.git/

@@ -1,0 +1,10 @@
+# Keep the build context small: never upload the host's installed/built trees.
+# The image rebuilds node_modules + .output from scratch inside the builder stage.
+# (BuildKit reads <dockerfile-path>.dockerignore in preference to a context-root
+# .dockerignore, so this lives beside the Dockerfile and touches only docker/.)
+node_modules
+.output
+.eve
+.nitro
+.data
+*.log

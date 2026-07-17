@@ -224,6 +224,38 @@ Offline, no server, no LLM key:
 `POST /v1/chat-messages` agent turn. The live code path exists in `orbit/agent.py`
 and activates only when `DIFY_API_URL`/`DIFY_API_KEY` point at a real server.
 
+## Containerized simulation (Docker) — the labelled SIMULATION, NOT real Dify
+
+```bash
+bash docker/run.sh        # builds a small Python image, runs the sim in-container, asserts pass, cleans up
+```
+
+**Read the scope honestly.** `docker/` containerizes **the arena's offline, labelled
+SIMULATION of Dify's data plane** — Dify's real multi-tenant schema (`App.tenant_id`,
+`Conversation` app_id-only, `Dataset`/`DocumentSegment.tenant_id`) transcribed into
+Dify's **own ORM (SQLAlchemy 2.0)** in `orbit/`, exercised over in-memory SQLite by
+`tests/` + `scripts/smoke.py` + `scripts/product_isolation_demo.py`. It proves that
+simulation **boots and passes in a clean, keyless, network-free container** (`--network
+none`, non-root UID, no API key). It does **NOT** run real Dify.
+
+**Real Dify is out of scope offline, on purpose.** Dify has **no in-process/embeddable
+Python library**; it is a **multi-container server platform** (Flask API + Celery worker
++ web console + Postgres + Redis + a code sandbox + a vector DB) that only runs an agent
+turn via a live `POST /v1/chat-messages` needing the whole stack **plus a model-provider
+key**. On top of that, Dify's **modified-Apache-2.0 LICENSE §1a forbids operating it
+multi-tenant** without a commercial license (the governing finding above). So real Dify
+stays **source-verified, NOT executed** — `docker/run.sh` deliberately does **not** stand
+up or fake the platform, and **SKIPS cleanly (exit 0)** when Docker is unavailable.
+
+| Piece | In the container? |
+|---|---|
+| `orbit/` transcribed schema + `store.py` filter contract (SQLAlchemy 2.0, Dify's real ORM) | **Yes — runs** |
+| `pytest tests/` (9 isolation invariants) + `smoke.py` + `product_isolation_demo.py` | **Yes — runs, asserted pass on the host** |
+| Real Dify API / worker / Postgres / Redis / vector DB, a live agent turn | **No — multi-container platform, source-verified-not-executed, license-restricted** |
+
+- Image: `python:3.12-slim` + `requirements.txt` (SQLAlchemy, pytest, pip-licenses), ~261 MB, non-root, `--network none`.
+- `bash docker/run.sh` → **exit 0**: build → in-container `9 passed` + smoke positive-control + shared-schema cross-read reproduced + missing-product-axis finding → host assertions pass → image/container removed.
+
 ## Adversarial isolation result
 
 **Shared-schema convention, honestly bounded — a reproduced developer-bug, not a Dify

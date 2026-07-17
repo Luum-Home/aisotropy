@@ -135,6 +135,43 @@ To use a real Gemini model instead of the fake one, swap `orbit.NewFakeModel()`
 in `orbit/orbit.go` for `gemini.NewModel(ctx, "gemini-flash-latest", &genai.ClientConfig{APIKey: ...})`
 and set `GOOGLE_API_KEY`.
 
+## Containerized smoke (Docker, production-shaped image)
+
+The native smoke above proves the real ADK stack in-process. `docker/` proves
+the **same minimal app runs CONTAINERIZED** as a production-shaped Go image —
+multi-stage build → static, CGO-free binary on
+`gcr.io/distroless/static-debian12:nonroot` (no shell, no libc) — and re-runs the
+core isolation assertion end-to-end over HTTP against that container:
+
+```bash
+bash docker/run.sh
+```
+
+It builds the image (`docker/Dockerfile`), starts the container, waits for
+`/healthz`, then drives the assertion against the containerized server:
+tenant A (`acme/alice`) writes a secret MEMO over the composite key; the
+positive control (`acme/alice`) reads it back; and a cross-tenant probe
+(`globex/alice`, same session id) **must not** see it — the server composes the
+ADK userID as `tenant|user`, so a different tenant path is a different
+`(appName, userID, sessionID)` key and a clean miss. On success it prints
+`PASS` and the image size, then removes the container. **If Docker is absent or
+its daemon is unreachable, the script SKIPs cleanly (exit 0) — it never fakes a
+pass.**
+
+Run-verified: `PASS`, single-platform image **~6.4 MB** (`docker image ls`
+reports ~28 MB because it counts the multi-arch + attestation manifests
+BuildKit attaches). Caveat: the **build stage must be Go 1.25+**
+(`golang:1.25-bookworm`) because `adk/v2`'s `go.mod` declares `go 1.25.0`; a 1.24
+base fails with `go.mod requires go >= 1.25.0`. The runtime image carries only
+the static binary — the Go toolchain never ships.
+
+Build the image manually (context is the arena root, not `docker/`):
+
+```bash
+docker build -f docker/Dockerfile -t adk-go-arena:smoke .
+docker run --rm -p 4114:4114 adk-go-arena:smoke
+```
+
 ## Isolation model — three native slots, four axes, one residual
 
 **Real composite-key construction; the honest gap is arity, not scoping.**

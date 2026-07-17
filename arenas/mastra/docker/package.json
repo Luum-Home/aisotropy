@@ -1,0 +1,15 @@
+{
+  "name": "mastra-arena-docker",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Containerized minimal Mastra arena server (mock model, real @mastra/memory)",
+  "type": "module",
+  "scripts": {
+    "serve": "node server.mjs"
+  },
+  "dependencies": {
+    "@mastra/core": "1.51.0",
+    "@mastra/memory": "1.23.0",
+    "@mastra/libsql": "1.16.0"
+  }
+}

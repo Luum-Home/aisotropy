@@ -78,6 +78,28 @@ curl -s -X POST http://localhost:4113/v1/tenant/acme/user/alice/chat \
   -d '{"prompt":"how do I reset my password?","session_id":"s1","note":"prefers email"}'
 ```
 
+## Containerized smoke (Docker — additive, native tests stay)
+
+The native `go test`/`smoke.go` above run in-process. `docker/` additionally proves the **same
+minimal app works packaged as a production Go image** — multi-stage build → static, CGO-free binary
+→ `gcr.io/distroless/static-debian12:nonroot` (no shell, no libc, non-root UID 65532), serving HTTP
+on `:4113`.
+
+```bash
+bash docker/run.sh
+```
+
+One command: builds `docker/Dockerfile`, runs the container (publishes `:4113`), waits for
+`GET /healthz`, then drives the tenant-isolation assertion **against the containerized server over
+HTTP** — seeds `secret-A` as tenant `acme`, reads it back (must see it), then cross-reads the **same
+`session_id` as tenant `globex`** (must **not** see it, because the server composes the
+working-memory key from the path `tenant_id` — the "correct path" isolation below). It asserts,
+prints the image size, and cleans up (container always; image unless `KEEP_IMAGE=1`). If Docker is
+unavailable the script **skips cleanly (exit 0)** — it never fakes a pass.
+
+Run-verified: image **≈26 MB** (distroless static), health OK, tenant A sees its secret, tenant B
+does not. Env knobs: `HOST_PORT` (default 4113), `IMAGE`, `KEEP_IMAGE`.
+
 ## Isolation model — **None** (real proof)
 
 Eino is an orchestration library, not a multi-tenant runtime — the same category as LangGraph or

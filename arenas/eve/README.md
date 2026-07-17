@@ -76,6 +76,31 @@ node scripts/smoke.mjs
 > `eve build` (rolldown/Nitro, "Server built in ~410ms", 5.74 MB) → `node scripts/smoke.mjs`
 > (**6/6 PASS, exit 0**), all on the fetched Node 24.10.0. Pastes below are from that run.
 
+### Docker smoke (additive — the native path above is unchanged)
+
+The same 6/6 smoke also runs against a **containerized** eve server, so it needs no host Node 24:
+
+```bash
+bash docker/run.sh
+```
+
+It (1) `docker build`s `docker/Dockerfile` — a Node 24 builder that does the real
+`npm install` + `eve build`, and a Node 24 runtime stage that boots
+`.output/server/index.mjs` with the offline mock model on **:4117**; (2) runs the container
+and waits for `GET /eve/v1/health` on the host-published port; (3) drives the arena's own
+`scripts/smoke.mjs` (the typed `eve/client`) **inside** the container against that server —
+asserting the isolation/product story (correct composite key `${t}:${u}:${p}` partitions
+products; the naive key that drops the product segment collides, and that collision is caught);
+(4) tears down the container and image. It **skips cleanly (exit 0) when Docker is absent** —
+never fakes a pass.
+
+> **Verified here (2026-07-17):** `bash docker/run.sh` → build (real `npm install` + `eve build`,
+> 5.74 MB server) → container boot on :4117 → `docker exec … node scripts/smoke.mjs`
+> (**6/6 PASS**) → clean teardown. Image on-disk **~458 MB** (`node:24-bookworm-slim` base +
+> the `eve`/`ai`/`zod` tree). The smoke is driven on Node 24 inside the container because eve's
+> CLI hard-requires Node ≥ 24; the compiled server itself is self-contained. Files:
+> `docker/Dockerfile`, `docker/run.sh`.
+
 ### Pasted output — `eve build` (real Nitro compile)
 
 ```

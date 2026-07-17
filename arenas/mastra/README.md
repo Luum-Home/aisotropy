@@ -36,6 +36,41 @@ curl -X POST http://localhost:4111/v1/tenant/acme/user/alice/chat \
   -d '{"prompt":"hello","session_id":"s1"}'
 ```
 
+## Docker smoke (containerized, offline)
+
+Proves the framework's minimal app works **containerized** — a real Mastra `Agent` on
+an offline AI-SDK v5 mock model (no API key) plus real `@mastra/memory` (`LibSQLStore`),
+served over HTTP — and drives the isolation assertion against that running container:
+
+```bash
+bash docker/run.sh
+```
+
+One command does the whole closed loop: `docker build` → `docker run` (port 4111) →
+wait for `/healthz` → drive the smoke over HTTP → assert → remove the container.
+
+What it asserts against the containerized server (`docker/server.mjs`):
+
+- `mock_model.chat` — `POST /chat` returns a deterministic reply with **no key** (the
+  minimal app boots and serves a model response).
+- `positive_control` — secret-A stored as **tenant A** (`POST /remember`) is returned
+  by tenant A's own recall (`GET /recall?tenant=tenantA&thread=shared`).
+- `isolation.cross_tenant_read` — a **cross-tenant** recall
+  (`?tenant=tenantB&thread=shared`) does **NOT** see secret-A: Mastra's
+  thread↔resource ownership guard refuses the read
+  (`Thread ... is for resource tenantA but resource tenantB was queried`), surfaced
+  as `{"isolated":true}`. This is the HTTP-served analogue of `npm run smoke` /
+  `npm run product-isolation`, run against the real framework inside the container.
+
+If Docker is not installed (or the daemon is down), `run.sh` **skips cleanly**
+(exit 0, no fake pass) and points you at the native `npm run smoke`.
+
+**Caveats (honest):** the image is `node:22-slim` + the pinned Mastra deps (`docker/package.json`,
+installed with `--omit=dev`) ≈ **~740 MB**; a cold `docker build` is ~60–75 s (base pull +
+`npm install` of ~267 packages), ~35 s warm (cached base layer). `docker/` is self-contained
+and declares its own pinned deps — it does not reuse the arena root's ad-hoc, undeclared
+`node_modules`. The container keeps memory on-disk via `LibSQLStore` (`AISOTROPY_DATA_DIR=/app/data`).
+
 ## What Mastra does genuinely well (run-verified)
 
 Mastra is a **TypeScript-native agent framework**, and on the axes it is built for it is excellent —

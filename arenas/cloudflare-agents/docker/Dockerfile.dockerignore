@@ -1,0 +1,6 @@
+# Never ship the host install into the image: it carries the darwin workerd
+# binary, which cannot run on Linux. The image installs its own Linux-native deps.
+node_modules
+.wrangler
+dist
+*.log
