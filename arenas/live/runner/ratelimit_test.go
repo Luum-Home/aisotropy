@@ -20,22 +20,32 @@ func TestRateLimiter_Disabled(t *testing.T) {
 	rl := newRateLimiter(0)
 	rl.wait()
 	rl.wait()
+	rl.observe(true, true)   // must not panic or change anything when disabled
+	rl.observe(false, false) // ditto
 
 	var nilRL *rateLimiter
-	nilRL.wait() // must not panic
+	nilRL.wait()              // must not panic
+	nilRL.observe(true, true) // must not panic
 
 	if len(slept) != 0 {
 		t.Errorf("disabled limiter slept %v, want no sleeps", slept)
 	}
+	if rl.rate != 0 {
+		t.Errorf("disabled limiter rate = %v, want 0", rl.rate)
+	}
 }
 
 // TestRateLimiter_PacesSuccessiveCalls drives a frozen clock so the reservation
-// spacing is deterministic: with a 100ms interval (10/s), the first call fires
-// immediately and each subsequent call reserves one interval further out.
+// spacing is deterministic. newRateLimiter(10) caps at 10/s but STARTS at half
+// the ceiling (5/s -> 200ms interval); with no observe() calls the rate stays
+// there, so each successive call reserves one 200ms interval further out.
 func TestRateLimiter_PacesSuccessiveCalls(t *testing.T) {
-	rl := newRateLimiter(10) // 10/s -> 100ms interval
-	if rl.interval != 100*time.Millisecond {
-		t.Fatalf("interval = %s, want 100ms", rl.interval)
+	rl := newRateLimiter(10) // ceiling 10/s; starts at 5/s -> 200ms interval
+	if rl.rate != 5 {
+		t.Fatalf("start rate = %v, want 5 (half the 10/s ceiling)", rl.rate)
+	}
+	if rl.intervalLocked() != 200*time.Millisecond {
+		t.Fatalf("interval = %s, want 200ms", rl.intervalLocked())
 	}
 
 	base := time.Unix(1_700_000_000, 0)
@@ -45,11 +55,11 @@ func TestRateLimiter_PacesSuccessiveCalls(t *testing.T) {
 	rateSleep = func(d time.Duration) { sleeps = append(sleeps, d) }
 	defer func() { rateNow, rateSleep = origNow, origSleep }()
 
-	rl.wait() // slot=base,        sleep 0   (skipped)
-	rl.wait() // slot=base+100ms,  sleep 100ms
+	rl.wait() // slot=base,        sleep 0     (skipped)
 	rl.wait() // slot=base+200ms,  sleep 200ms
+	rl.wait() // slot=base+400ms,  sleep 400ms
 
-	want := []time.Duration{100 * time.Millisecond, 200 * time.Millisecond}
+	want := []time.Duration{200 * time.Millisecond, 400 * time.Millisecond}
 	if len(sleeps) != len(want) {
 		t.Fatalf("sleeps = %v, want %v", sleeps, want)
 	}
@@ -58,8 +68,49 @@ func TestRateLimiter_PacesSuccessiveCalls(t *testing.T) {
 			t.Errorf("sleeps[%d] = %s, want %s", i, sleeps[i], want[i])
 		}
 	}
-	if rl.next != base.Add(300*time.Millisecond) {
-		t.Errorf("rl.next = %s, want base+300ms", rl.next.Sub(base))
+	if rl.next != base.Add(600*time.Millisecond) {
+		t.Errorf("rl.next = %s, want base+600ms", rl.next.Sub(base))
+	}
+}
+
+// TestRateLimiter_AdaptiveBackoff is the AIMD proof: a 429 halves the admitted
+// rate (floored at minRate), a clean-success streak nudges it back up (capped at
+// the ceiling), and a non-429 failure leaves the rate alone. This is what lets
+// the limiter self-tune UNDER the real free-tier limit without knowing it.
+func TestRateLimiter_AdaptiveBackoff(t *testing.T) {
+	rl := newRateLimiter(8) // ceiling 8, start 4, inc 1, streakN 8, minRate 0.8
+	if rl.rate != 4 {
+		t.Fatalf("start rate = %v, want 4 (half the 8/s ceiling)", rl.rate)
+	}
+	if rl.minRate != 0.8 {
+		t.Fatalf("minRate = %v, want 0.8", rl.minRate)
+	}
+
+	rl.observe(true, true) // 429 -> halve: 4 -> 2
+	if rl.rate != 2 {
+		t.Errorf("after 429 rate = %v, want 2", rl.rate)
+	}
+	rl.observe(true, false) // non-429 failure -> unchanged
+	if rl.rate != 2 {
+		t.Errorf("after non-429 failure rate = %v, want 2 (unchanged)", rl.rate)
+	}
+	for i := 0; i < 8; i++ { // a streak of 8 clean successes -> +inc: 2 -> 3
+		rl.observe(false, false)
+	}
+	if rl.rate != 3 {
+		t.Errorf("after 8-success streak rate = %v, want 3", rl.rate)
+	}
+	for i := 0; i < 8*20; i++ { // many successes -> capped at the ceiling
+		rl.observe(false, false)
+	}
+	if rl.rate != 8 {
+		t.Errorf("rate = %v, want capped at ceiling 8", rl.rate)
+	}
+	for i := 0; i < 50; i++ { // many 429s -> floored at minRate, never below
+		rl.observe(true, true)
+	}
+	if rl.rate != rl.minRate {
+		t.Errorf("rate = %v, want floored at minRate %v", rl.rate, rl.minRate)
 	}
 }
 
@@ -67,11 +118,17 @@ func TestRateLimiter_PacesSuccessiveCalls(t *testing.T) {
 // (sub-millisecond) interval — the acquire path must be race-free (run under
 // `go test -race`). Each waiter reserves a distinct slot under the mutex.
 func TestRateLimiter_ConcurrentNoRace(t *testing.T) {
-	rl := newRateLimiter(100000) // 10µs interval — tiny real sleeps, no test drag
+	rl := newRateLimiter(100000) // tiny real sleeps, no test drag
 	var wg sync.WaitGroup
 	for i := 0; i < 32; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); rl.wait() }()
+		go func(i int) {
+			defer wg.Done()
+			rl.wait()
+			// Interleave observe() so -race also covers the AIMD mutations,
+			// not just wait()'s reservation path.
+			rl.observe(i%5 == 0, i%5 == 0)
+		}(i)
 	}
 	wg.Wait()
 }

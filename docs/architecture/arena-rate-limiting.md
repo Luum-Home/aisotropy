@@ -27,7 +27,7 @@ another billable 429.
 
 ## The two levers (both in `arenas/live/runner/main.go`)
 
-### 1. Client-side global pacing — `-rps`
+### 1. Client-side global ADAPTIVE pacing — `-rps`
 
 `-rps N` installs a process-**global** `rateLimiter` (a reservation-style token
 bucket) that every billable model call passes through in `runAdapterRetry`
@@ -36,19 +36,38 @@ agnes endpoint's rate limit — is itself global: all `-concurrency` framework
 goroutines draw from one upstream quota, so one shared pacer is the correct
 model (mirrors the existing process-global `retrySleep`).
 
-- `newRateLimiter(rps)` → `interval = 1s / rps`; `rps<=0` disables it (a nil /
-  zero-interval limiter's `wait()` is an immediate no-op — exact old behavior,
-  the default).
-- `wait()` reserves the next evenly-spaced slot **under a mutex** but sleeps
-  **outside** it, so N concurrent callers each get a distinct, monotonically
-  increasing slot without serializing on the lock while they wait. Four
-  frameworks therefore interleave their calls at one bounded aggregate rate
-  instead of bursting all four at once.
-- Sizing: pick `-rps` at or under the free-tier ceiling. `-rps 1.5` is the
-  recommended starting point for `-concurrency 4`; it smooths the bursts (many
-  frameworks finishing a fast call and all firing the next in the same instant)
-  that trip the limit, while the ~10–25s per-call latency keeps the real
-  in-flight count modest.
+**Why fixed pacing isn't enough.** A single `-rps` number is a *guess* at the
+free-tier ceiling. Empirically `-rps 1.5` still tripped the limit **3×** in one
+run — it *reacts* to the limit (retry) instead of *avoiding* it. To truly avoid
+crossing the limit you must not need to know it, because it's undocumented and
+can shift. So the limiter is **adaptive (AIMD — additive-increase /
+multiplicative-decrease)**, the same control law TCP uses to find a link's
+capacity without being told it:
+
+- **`observe(failed, rateLimited)`** feeds every call's outcome back:
+  - a **429** → the admitted rate is **halved** (down to a floor `minRate =
+    rps/10`, ≥0.1/s). Because the limiter is global, one 429 seen by *any*
+    framework slows down *all* of them — the coordination the shared limit needs.
+  - a **non-429 failure** (502/timeout) → rate unchanged (a downstream error is
+    no reason to speed up).
+  - a **clean success** → extends a streak; every 8 in a row, the rate steps up
+    additively (`+rps/8`) toward the ceiling.
+- It **starts at half the `-rps` ceiling** and climbs, so it approaches the real
+  limit **from below** — minimizing the warm-up overshoot a start-at-ceiling
+  policy would eat before it learns.
+- `wait()` reserves the next slot at the *current* adaptive rate **under a
+  mutex** but sleeps **outside** it, so N concurrent callers each get a distinct,
+  monotonically increasing slot without serializing on the lock while they wait.
+- `rps<=0` disables it entirely (a nil / zero-rate limiter's `wait()`/`observe()`
+  are immediate no-ops — exact old behavior, the default).
+
+**Net effect vs. fixed pacing:** a fixed 1.5/s keeps tripping the limit all run
+long (it never learns → 3 scattered 429s). The adaptive limiter eats at most a
+couple of 429s while converging, then **backs off and stays under the ceiling
+for the rest of the run** — approaching zero 429s in steady state, which is the
+actual "avoid the limit" goal. `-rps` is now a **ceiling** (the fastest it may
+ever go), not a fixed rate: set it generously (e.g. `-rps 3`) and let AIMD find
+the safe rate underneath.
 
 ### 2. Rate-limit-aware backoff — `retryBackoff(attempt, rateLimited)`
 
@@ -69,18 +88,20 @@ the duration into a negative/tiny value (the cap dominates well before then).
 ## Recommended recipe for a clean concurrent sweep
 
 ```bash
-# parallel but paced + patient — stays under the free-tier limit, rides out
-# any residual 429 with the long backoff
-go run ./arenas/live/runner -concurrency 4 -rps 1.5 -retry 4
+# parallel but ADAPTIVELY paced + patient — self-tunes under the free-tier
+# limit, rides out any convergence-phase 429 with the long backoff
+go run ./arenas/live/runner -concurrency 4 -rps 3 -retry 4
 ```
 
 - `-concurrency 4` — parallel across frameworks (each framework internally
   sequential and race-free; see the merge-by-slot design in
   `runCorrectnessPass`).
-- `-rps 1.5` — global pacing so the aggregate call rate stays under the
-  free-tier ceiling.
-- `-retry 4` — enough attempts that a call briefly caught by a closing throttle
-  window rides the 3s/6s/12s/24s backoff to success instead of failing the cell.
+- `-rps 3` — the pacing **ceiling** (fastest allowed). The adaptive limiter
+  starts at 1.5/s and backs off on any 429, converging to whatever the free tier
+  actually allows — so the exact number is a cap, not a guess that must be right.
+- `-retry 4` — enough attempts that a call caught during convergence (or a
+  closing throttle window) rides the 3s/6s/12s/24s backoff to success instead of
+  failing the cell.
 
 The RESULTS.md header records the `-rps` value so a paced run is never mistaken
 for an unpaced one.
@@ -101,9 +122,10 @@ for an unpaced one.
 ## Tests
 
 `arenas/live/runner/ratelimit_test.go` (all under `go test -race`):
-- `TestRateLimiter_Disabled` — `-rps 0` and a nil receiver are no-ops.
-- `TestRateLimiter_PacesSuccessiveCalls` — frozen-clock reservation spacing.
-- `TestRateLimiter_ConcurrentNoRace` — many concurrent waiters, race-free.
+- `TestRateLimiter_Disabled` — `-rps 0` and a nil receiver are no-ops (wait + observe).
+- `TestRateLimiter_PacesSuccessiveCalls` — frozen-clock reservation spacing (starts at half the ceiling).
+- `TestRateLimiter_AdaptiveBackoff` — AIMD: 429 halves the rate (floored), a success streak steps it up (capped), a non-429 failure leaves it alone.
+- `TestRateLimiter_ConcurrentNoRace` — many concurrent waiters + observers, race-free.
 - `TestRetryBackoff_Schedules` — both schedules + the overflow clamp.
 - `TestIsRateLimited_Classification` — 429 vs generic-transient split.
 - `TestRunAdapterRetry_RateLimitedUsesLongBackoff` — a persistent 429 rides the

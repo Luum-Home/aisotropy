@@ -477,44 +477,125 @@ var rateSleep = time.Sleep
 // deterministically instead of sleeping in real wall-clock.
 var rateNow = time.Now
 
-// rateLimiter is a reservation-style token bucket: each caller atomically
-// reserves the NEXT evenly-spaced slot and blocks until it is due. Reserving
-// under the mutex (but sleeping OUTSIDE it) means N concurrent callers each get
-// a distinct, monotonically increasing slot without serializing on the lock
-// while they wait — so a -concurrency 4 sweep interleaves its four frameworks'
-// calls at one bounded aggregate rate rather than bursting all four at once.
+// rateLimiter is a reservation-style token bucket with ADAPTIVE (AIMD) pacing.
+// Each caller atomically reserves the NEXT evenly-spaced slot and blocks until
+// it is due; reserving under the mutex but sleeping OUTSIDE it means N
+// concurrent callers each get a distinct, monotonically increasing slot without
+// serializing on the lock while they wait — so a -concurrency 4 sweep
+// interleaves its four frameworks' calls at one bounded aggregate rate rather
+// than bursting all four at once.
+//
+// The admitted rate self-tunes to stay UNDER the real agnes free-tier limit
+// without needing to know it (a fixed -rps guess can't — 1.5/s still tripped the
+// limit 3× in one run). observe() feeds each call's outcome back: a 429
+// multiplicatively HALVES the rate (down to a floor), a run of clean successes
+// additively nudges it back up (toward the -rps ceiling). Because the limiter is
+// process-global, a 429 seen by ANY framework slows down ALL of them — the
+// coordination the shared upstream limit requires. It starts BELOW the ceiling
+// (approaching the limit from below) so warm-up overshoot — the few 429s a
+// start-at-ceiling policy eats before it learns — is minimized.
 type rateLimiter struct {
 	mu       sync.Mutex
-	interval time.Duration // min gap between successive calls; 0 = disabled
-	next     time.Time     // earliest instant the next reserved slot may fire
+	rate     float64   // current admitted calls/sec; 0 = disabled
+	maxRate  float64   // ceiling (from -rps); rate never rises above this
+	minRate  float64   // floor; rate never drops below this
+	inc      float64   // additive rate bump per clean-success streak
+	streakN  int       // clean successes required before one additive bump
+	okStreak int       // consecutive clean successes since the last change
+	next     time.Time // earliest instant the next reserved slot may fire
 }
 
-// newRateLimiter builds a limiter admitting at most rps calls/sec on aggregate.
-// rps<=0 yields a disabled limiter whose wait() is an immediate no-op.
+// newRateLimiter builds an adaptive limiter whose admitted rate is capped at
+// `rps` calls/sec (the ceiling). It STARTS at half the ceiling and climbs on
+// sustained success, so it approaches the upstream limit from below. rps<=0
+// yields a disabled limiter whose wait()/observe() are immediate no-ops.
 func newRateLimiter(rps float64) *rateLimiter {
 	rl := &rateLimiter{}
-	if rps > 0 {
-		rl.interval = time.Duration(float64(time.Second) / rps)
+	if rps <= 0 {
+		return rl // disabled
+	}
+	rl.maxRate = rps
+	rl.minRate = rps / 10
+	if rl.minRate < 0.1 {
+		rl.minRate = 0.1 // ~6s/call floor — below this the free tier is unusable anyway
+	}
+	if rl.minRate > rps {
+		rl.minRate = rps
+	}
+	rl.inc = rps / 8
+	rl.streakN = 8
+	rl.rate = rps / 2 // start below the ceiling; climb toward it on success
+	if rl.rate < rl.minRate {
+		rl.rate = rl.minRate
 	}
 	return rl
 }
 
+// intervalLocked returns the current min gap between calls. Caller holds rl.mu
+// and rl.rate>0 is guaranteed (enabled).
+func (rl *rateLimiter) intervalLocked() time.Duration {
+	return time.Duration(float64(time.Second) / rl.rate)
+}
+
 // wait reserves this caller's slot and blocks until it is due. Concurrent-safe;
-// a disabled limiter (interval==0, or a nil receiver) returns immediately.
+// a disabled limiter (rate==0, or a nil receiver) returns immediately.
 func (rl *rateLimiter) wait() {
-	if rl == nil || rl.interval == 0 {
+	if rl == nil {
 		return
 	}
 	rl.mu.Lock()
+	if rl.rate <= 0 { // disabled
+		rl.mu.Unlock()
+		return
+	}
 	now := rateNow()
 	slot := rl.next
 	if slot.Before(now) {
 		slot = now
 	}
-	rl.next = slot.Add(rl.interval)
+	rl.next = slot.Add(rl.intervalLocked())
 	rl.mu.Unlock()
 	if d := slot.Sub(now); d > 0 {
 		rateSleep(d)
+	}
+}
+
+// observe feeds a call's outcome back into the AIMD controller:
+//   - rateLimited (a 429): multiplicatively HALVE the admitted rate (floored at
+//     minRate) so the whole run immediately backs off below the upstream limit.
+//   - failed but NOT a 429 (a 502/timeout): leave the rate unchanged and reset
+//     the success streak — a downstream error is no reason to speed up.
+//   - clean success: extend the streak; every streakN in a row, additively bump
+//     the rate by inc toward maxRate.
+//
+// Concurrent-safe; a disabled limiter (or nil receiver) is a no-op.
+func (rl *rateLimiter) observe(failed, rateLimited bool) {
+	if rl == nil {
+		return
+	}
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if rl.rate <= 0 { // disabled
+		return
+	}
+	switch {
+	case rateLimited:
+		rl.rate /= 2
+		if rl.rate < rl.minRate {
+			rl.rate = rl.minRate
+		}
+		rl.okStreak = 0
+	case failed:
+		rl.okStreak = 0 // neutral: neither speed up nor slow down
+	default:
+		rl.okStreak++
+		if rl.okStreak >= rl.streakN {
+			rl.rate += rl.inc
+			if rl.rate > rl.maxRate {
+				rl.rate = rl.maxRate
+			}
+			rl.okStreak = 0
+		}
 	}
 }
 
@@ -620,13 +701,16 @@ func runAdapterRetry(script string, in adapterInput, timeout time.Duration, retr
 		modelRateLimiter.wait()
 		res = runAdapter(script, in, timeout)
 		budget.add(1)
+		rateLimited := isRateLimited(res)
+		// Feed the outcome to the adaptive pacer: a 429 slows the WHOLE run
+		// down (below the upstream limit); a clean success lets it climb back.
+		modelRateLimiter.observe(res.failed(), rateLimited)
 		if !res.failed() || !isTransientFailure(res) {
 			return res
 		}
 		if attempt >= retries {
 			return res // exhausted retries; last (still-transient) failure stands
 		}
-		rateLimited := isRateLimited(res)
 		backoff := retryBackoff(attempt, rateLimited)
 		reason := "transient"
 		if rateLimited {
