@@ -21,8 +21,10 @@ type reportData struct {
 	BenchIters  int
 	ColdProbes  int
 	JudgeOn     bool
-	Concurrency int     // -concurrency the correctness/quality pass ran under (1 = sequential)
-	RPS         float64 // -rps client-side global model-call pacing (0 = off)
+	Concurrency int      // -concurrency the correctness/quality pass ran under (1 = sequential)
+	RPS         float64  // -rps client-side global model-call pacing (0 = off)
+	Lane        string   // "real" | "stub" — which model lane this run scored (ARENA_STUB)
+	LaneLeaks   []string // frameworks that reported the REAL model during a STUB run (should be empty)
 	Records     []record
 	Benches     []benchCell
 	IsoRecords  []isoRecord
@@ -174,6 +176,25 @@ tags: [arenas, live, results, agnes, quality, latency, cold-start, ttft, tokens,
 		fmt.Fprintf(b, "> **New dimensions:** %s (scoped-memory & isolation, crash recovery, observability capability)\n", strings.Join(rep.Dimensions, ", "))
 	}
 	b.WriteString("\n")
+
+	// LANE label + leak guard (P0 reporting discipline): a run is scored either
+	// against the REAL model or the offline STUB, and a file must state which so
+	// a stub run's numbers are never misread as a real-quality signal, and so a
+	// real-vs-stub cross-comparison is impossible to make silently.
+	switch rep.Lane {
+	case "stub":
+		b.WriteString("> **⚠️ LANE: STUB (offline wiring/smoke).** Every row was scored against each\n")
+		b.WriteString("> framework's OFFLINE stub (mock model + in-process stores), NOT the real model.\n")
+		b.WriteString("> These numbers prove the integration path RUNS — they are **not** a quality signal\n")
+		b.WriteString("> and MUST NOT be compared against any real-lane run. See\n")
+		b.WriteString("> `docs/architecture/arena-infrastructure-parity.md`.\n\n")
+		if len(rep.LaneLeaks) > 0 {
+			fmt.Fprintf(b, "> **🚨 LANE LEAK — this stub run is NOT trustworthy.** These framework(s) reported the REAL model `%s` during a STUB run (they called the real provider — billable, quota-burning, and their rows here are real-lane numbers mixed into a stub table): **%s**. Fix the adapter's stub offline path before trusting this file.\n\n",
+				model, strings.Join(rep.LaneLeaks, ", "))
+		}
+	default:
+		b.WriteString("> **LANE: REAL** — every row is a real `" + model + "` call; the quality numbers are the live signal.\n\n")
+	}
 
 	b.WriteString("> **The model is real and identical for every row.** Because every framework calls the\n")
 	b.WriteString("> same `" + model + "` with the same credentials, a difference in a column is a property of\n")

@@ -181,6 +181,29 @@ func main() {
 		records = runCorrectnessPass(frameworks, modes, tasks, rag, *maxTasks, judge, callBudget, *concurrency, *retry)
 	}
 
+	// ---- lane label + leak guard (P0 reporting discipline) -----------------
+	// A run scores either the REAL model or the offline STUB. Record which, and
+	// in a stub run assert NO adapter secretly called the real model — the exact
+	// failure that made aisotropy's "stub" run agnes-2.0-flash for ~20s/call,
+	// burning billable free-tier quota (see docs/architecture/arena-
+	// infrastructure-parity.md). Deterministic: a pure scan of reported models.
+	lane := "real"
+	if os.Getenv("ARENA_STUB") == "1" {
+		lane = "stub"
+	}
+	var laneLeaks []string
+	if lane == "stub" {
+		laneLeaks = laneLeakFrameworks(records, modelName())
+		if len(laneLeaks) > 0 {
+			logf("WARNING: LANE LEAK — %d framework(s) reported the REAL model %q during a STUB run (called the real provider, billable/quota-burning): %s. A stub run must be fully offline — fix the adapter's stub path.",
+				len(laneLeaks), modelName(), strings.Join(laneLeaks, ", "))
+		} else {
+			logf("lane=stub: verified offline — no framework reported the real model")
+		}
+	} else {
+		logf("lane=real: scoring against the real model %q", modelName())
+	}
+
 	// ---- pass 2: benchmarks (native + docker) ------------------------------
 	var benches []benchCell
 	if !*skipBench && len(benchModes) > 0 {
@@ -208,6 +231,8 @@ func main() {
 		JudgeOn:     judge != nil,
 		Concurrency: *concurrency,
 		RPS:         *rps,
+		Lane:        lane,
+		LaneLeaks:   laneLeaks,
 		Records:     records,
 		Benches:     benches,
 		IsoRecords:  isoRecs,
@@ -1039,6 +1064,37 @@ func intersect(want, allowed []string) []string {
 			seen[w] = true
 		}
 	}
+	return out
+}
+
+// laneLeakFrameworks returns the distinct frameworks whose correctness records
+// reported the REAL provider model during a STUB run — an adapter that was
+// supposed to be offline but actually called the real model (billable, quota-
+// burning). This is the guard that would have caught aisotropy's stub calling
+// agnes-2.0-flash. Deterministic: a pure, case-insensitive scan of the records'
+// reported model names against the configured real model. Stub adapters report
+// mock/stub model names (e.g. "mock-llm", "stub"), which never contain the real
+// model string, so a match is an unambiguous leak.
+func laneLeakFrameworks(records []record, realModel string) []string {
+	real := strings.ToLower(strings.TrimSpace(realModel))
+	if real == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range records {
+		m := strings.ToLower(strings.TrimSpace(r.Out.Model))
+		if m == "" {
+			continue
+		}
+		if m == real || strings.Contains(m, real) {
+			if !seen[r.Framework] {
+				seen[r.Framework] = true
+				out = append(out, r.Framework)
+			}
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 
