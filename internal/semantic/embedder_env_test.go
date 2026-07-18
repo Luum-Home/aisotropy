@@ -103,6 +103,30 @@ func TestEmbedDimFromEnv(t *testing.T) {
 	}
 }
 
+// TestLocalEmbedderFromEnv_ConstructorErrorsFallThrough covers
+// localEmbedderFromEnv's NewLocalEmbedder/NewDaemonEmbedder error branches.
+// EmbedderFromEnv itself can never reach them (it only calls
+// localEmbedderFromEnv with the non-empty bin it just read from
+// AISOTROPY_EMBED_BIN, and dim/modelDir are validated the same way), so this
+// calls the unexported function directly with an empty bin — a legitimate
+// white-box way to exercise the constructor's own defensive validation
+// failure without a real broken environment.
+func TestLocalEmbedderFromEnv_ConstructorErrorsFallThrough(t *testing.T) {
+	clearEmbedEnv(t)
+	t.Setenv("AISOTROPY_EMBED_MODEL_DIR", t.TempDir())
+	t.Setenv("AISOTROPY_EMBED_DIM", "4")
+
+	t.Setenv("AISOTROPY_EMBED_MODE", "subprocess")
+	if emb := localEmbedderFromEnv(""); emb != nil {
+		t.Fatalf("subprocess mode: expected nil on NewLocalEmbedder validation failure, got %v", emb)
+	}
+
+	t.Setenv("AISOTROPY_EMBED_MODE", "")
+	if emb := localEmbedderFromEnv(""); emb != nil {
+		t.Fatalf("daemon mode: expected nil on NewDaemonEmbedder validation failure, got %v", emb)
+	}
+}
+
 func TestNewLocalEmbedder_Validation(t *testing.T) {
 	if _, err := NewLocalEmbedder(LocalEmbedderConfig{ModelDir: "m", Dimension: 8}); err == nil {
 		t.Fatalf("empty BinPath should error")

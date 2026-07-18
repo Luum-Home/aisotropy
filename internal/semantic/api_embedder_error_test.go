@@ -68,6 +68,23 @@ func TestAPIEmbedderOutOfRangeIndexIsError(t *testing.T) {
 	}
 }
 
+// TestAPIEmbedderBuildRequestErrorIsWrapped verifies that a baseURL which
+// fails http.NewRequestWithContext's URL validation (a raw ASCII control
+// character, here DEL/0x7f) surfaces as a wrapped "build embed request"
+// error rather than a panic. NewAPIEmbedder only validates BaseURL is
+// non-empty, not that it parses as a URL, so this is a legitimately reachable
+// failure — unlike the json.Marshal error two lines above it in Embed, which
+// cannot fail for an embedRequest of plain strings.
+func TestAPIEmbedderBuildRequestErrorIsWrapped(t *testing.T) {
+	emb, err := NewAPIEmbedder(APIEmbedderConfig{BaseURL: "http://example.com/\x7f", Dimension: 3})
+	if err != nil {
+		t.Fatalf("NewAPIEmbedder: %v", err)
+	}
+	if _, err := emb.Embed(context.Background(), []string{"x"}); err == nil {
+		t.Fatal("Embed: expected a build-request error for an invalid URL, got nil")
+	}
+}
+
 // TestAPIEmbedderDuplicateIndexIsError verifies alignEmbeddings rejects a
 // response that fills the same Index twice (and therefore leaves another
 // position empty) even though the Data count matches the input count.

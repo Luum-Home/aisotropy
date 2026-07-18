@@ -299,6 +299,26 @@ func TestE5PrefixesEnabledEnvOverride(t *testing.T) {
 	}
 }
 
+// TestEmbedRoleString covers EmbedRole.String's three named cases plus the
+// default fallback for any other value (a defensive branch for a future role
+// added without updating String).
+func TestEmbedRoleString(t *testing.T) {
+	cases := []struct {
+		r    EmbedRole
+		want string
+	}{
+		{RoleQuery, "query"},
+		{RolePassage, "passage"},
+		{RoleUnspecified, "unspecified"},
+		{EmbedRole(99), "unspecified"},
+	}
+	for _, c := range cases {
+		if got := c.r.String(); got != c.want {
+			t.Errorf("EmbedRole(%d).String() = %q, want %q", c.r, got, c.want)
+		}
+	}
+}
+
 // readRequests parses an NDJSON request file into localEmbedRequest rows.
 func readRequests(t *testing.T, path string) []localEmbedRequest {
 	t.Helper()

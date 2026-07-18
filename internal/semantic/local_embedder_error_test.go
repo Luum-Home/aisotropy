@@ -81,6 +81,38 @@ func TestLocalEmbedderMissingVectorIsError(t *testing.T) {
 	}
 }
 
+// TestLocalEmbedderWriteRequestInputCreateTempError verifies writeRequest's
+// (and, transitively, EmbedForRole's) error branch when the input NDJSON temp
+// file cannot be created: pointing TMPDIR at a nonexistent directory forces
+// os.CreateTemp("", ...) to fail deterministically.
+func TestLocalEmbedderWriteRequestInputCreateTempError(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
+	e, err := NewLocalEmbedder(LocalEmbedderConfig{BinPath: "x", ModelDir: "y", Dimension: 3})
+	if err != nil {
+		t.Fatalf("NewLocalEmbedder: %v", err)
+	}
+	if _, _, _, err := e.writeRequest([]string{"a"}, ""); err == nil {
+		t.Fatal("writeRequest: expected a create-input-temp-file error, got nil")
+	}
+	// EmbedForRole must propagate writeRequest's error rather than swallow it.
+	if _, err := e.Embed(context.Background(), []string{"a"}); err == nil {
+		t.Fatal("Embed: expected writeRequest's error to propagate, got nil")
+	}
+}
+
+// TestLocalEmbedderScanTooLongIsError verifies readResults' sc.Err() branch: a
+// single output line longer than the scanner's 16MB max token size is a
+// returned "scan embed output" error, not a silent truncation or hang.
+func TestLocalEmbedderScanTooLongIsError(t *testing.T) {
+	huge := strings.Repeat("a", 17*1024*1024) // exceeds the 16MB scanner buffer cap
+	bin := writeRawOutputLocalBin(t, huge)
+	e, _ := NewLocalEmbedder(LocalEmbedderConfig{BinPath: bin, ModelDir: t.TempDir(), Dimension: 3})
+	_, err := e.Embed(context.Background(), []string{"x"})
+	if err == nil || !strings.Contains(err.Error(), "scan embed output") {
+		t.Fatalf("Embed with an oversized output line: got %v, want a scan-embed-output error", err)
+	}
+}
+
 // TestLocalEmbedderBlankLinesAreSkipped verifies readResults tolerates blank
 // lines in the NDJSON output (the empty-line continue) while still aligning the
 // real rows.

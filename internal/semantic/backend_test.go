@@ -299,6 +299,78 @@ func TestVectorBackendStore_DeleteBySource(t *testing.T) {
 	}
 }
 
+// TestVectorBackendStore_EraseScope proves EraseScope (the sealed decorator's
+// GDPR Art.17 primitive over a community VectorBackend) removes every point
+// in sc's namespace, leaves other scopes untouched, and is idempotent.
+func TestVectorBackendStore_EraseScope(t *testing.T) {
+	b := newFakeVectorBackend()
+	s := NewVectorBackendStore(b, 3)
+	eraser, ok := s.(ScopeEraser)
+	if !ok {
+		t.Fatalf("scopedVectorStore must implement ScopeEraser")
+	}
+	sc := Scope{tenant: "acme", user: "alice"}
+	other := Scope{tenant: "acme", user: "bob"}
+	ctx := context.Background()
+
+	if err := s.Upsert(ctx, sc, []Point{
+		{ID: "a1", TenantID: "acme", UserID: "alice", Kind: KindFact, Vector: vec3(1, 0, 0)},
+		{ID: "a2", TenantID: "acme", UserID: "alice", Kind: KindTurn, Vector: vec3(0, 1, 0)},
+	}); err != nil {
+		t.Fatalf("Upsert alice: %v", err)
+	}
+	if err := s.Upsert(ctx, other, []Point{{ID: "b1", TenantID: "acme", UserID: "bob", Kind: KindFact, Vector: vec3(0, 0, 1)}}); err != nil {
+		t.Fatalf("Upsert bob: %v", err)
+	}
+
+	n, err := eraser.EraseScope(ctx, sc)
+	if err != nil {
+		t.Fatalf("EraseScope: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("EraseScope removed %d, want 2", n)
+	}
+	if got, _ := s.Search(ctx, sc, vec3(1, 0, 0), 10); len(got) != 0 {
+		t.Fatalf("alice should be empty after erase, got %d: %+v", len(got), got)
+	}
+	if got, _ := s.Search(ctx, other, vec3(0, 0, 1), 10); len(got) != 1 {
+		t.Fatalf("bob should be untouched by alice's erase, got %d", len(got))
+	}
+
+	// Idempotent: a second erase of an already-empty scope removes nothing.
+	if n, err := eraser.EraseScope(ctx, sc); err != nil || n != 0 {
+		t.Fatalf("second EraseScope = (%d,%v), want (0,nil)", n, err)
+	}
+}
+
+// TestVectorBackendStore_EraseScopeErrors covers EraseScope's Scan and Delete
+// error-propagation branches, mirroring the other maintenance-op error tests.
+func TestVectorBackendStore_EraseScopeErrors(t *testing.T) {
+	sc := Scope{tenant: "acme", user: "alice"}
+	ctx := context.Background()
+	sentinel := errors.New("erase boom")
+
+	t.Run("scan error", func(t *testing.T) {
+		b := newFakeVectorBackend()
+		b.scanErr = sentinel
+		s := NewVectorBackendStore(b, 3).(ScopeEraser)
+		if _, err := s.EraseScope(ctx, sc); !errors.Is(err, sentinel) {
+			t.Fatalf("got %v", err)
+		}
+	})
+	t.Run("delete error", func(t *testing.T) {
+		b := newFakeVectorBackend()
+		s := NewVectorBackendStore(b, 3)
+		if err := s.Upsert(ctx, sc, []Point{{ID: "x", TenantID: "acme", UserID: "alice", Kind: KindFact, Vector: vec3(1, 0, 0)}}); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+		b.deleteErr = sentinel
+		if _, err := s.(ScopeEraser).EraseScope(ctx, sc); !errors.Is(err, sentinel) {
+			t.Fatalf("got %v", err)
+		}
+	})
+}
+
 func TestVectorBackendStore_PruneTurns(t *testing.T) {
 	b := newFakeVectorBackend()
 	s := NewVectorBackendStore(b, 3)

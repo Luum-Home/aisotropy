@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestNewDaemonEmbedderValidation verifies the required-field checks reject a
@@ -105,6 +106,81 @@ func TestDaemonEmbedderDuplicateRowIDIsError(t *testing.T) {
 
 	if _, err := e.Embed(context.Background(), []string{"a", "b"}); err == nil {
 		t.Fatal("Embed: expected a duplicate row-id error, got nil")
+	}
+}
+
+// TestDaemonEmbedderCancelledContextBeforeStart verifies EmbedForRole checks
+// ctx before touching the daemon (locking the mutex, spawning a process): a
+// pre-cancelled ctx fails fast without ever needing a working binary.
+func TestDaemonEmbedderCancelledContextBeforeStart(t *testing.T) {
+	e, err := NewDaemonEmbedder(DaemonEmbedderConfig{BinPath: "/does/not/matter", ModelDir: t.TempDir(), Dimension: 4})
+	if err != nil {
+		t.Fatalf("NewDaemonEmbedder: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = e.Embed(ctx, []string{"x"})
+	if err == nil || !strings.Contains(err.Error(), "cancelled before start") {
+		t.Fatalf("Embed with pre-cancelled ctx: got %v, want a cancelled-before-start error", err)
+	}
+}
+
+// TestDaemonEmbedderStdinWriteErrorTearsDown verifies that once the daemon
+// process has exited (closing its stdin read end), the next write attempt
+// surfaces a "write daemon request" error and the fault kills/clears the
+// daemon (killLocked) so the FOLLOWING Embed call respawns cleanly rather
+// than reusing the broken pipe.
+func TestDaemonEmbedderStdinWriteErrorTearsDown(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake sh daemon is POSIX-only")
+	}
+	script := "#!/bin/sh\nexit 0\n"
+	path := filepath.Join(t.TempDir(), "exit-immediately.sh")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil { //nolint:gosec // test helper
+		t.Fatalf("write fake daemon: %v", err)
+	}
+	e := mustDaemon(t, path, 4)
+	defer func() { _ = e.Close() }()
+
+	// Force-spawn the process directly (bypassing Embed's ctx check) and give
+	// it time to exit and close its stdin read end, so the next Write
+	// deterministically fails rather than racing the process's own exit.
+	e.mu.Lock()
+	if _, err := e.ensureProcLocked(); err != nil {
+		e.mu.Unlock()
+		t.Fatalf("ensureProcLocked: %v", err)
+	}
+	e.mu.Unlock()
+	time.Sleep(300 * time.Millisecond)
+
+	_, err := e.Embed(context.Background(), []string{"a"})
+	if err == nil || !strings.Contains(err.Error(), "write daemon request") {
+		t.Fatalf("Embed against an exited daemon: got %v, want a write-daemon-request error", err)
+	}
+
+	// The fault must have cleared e.proc (killLocked), so the NEXT call
+	// respawns instead of reusing the dead process.
+	e.mu.Lock()
+	stillSet := e.proc != nil
+	e.mu.Unlock()
+	if stillSet {
+		t.Fatal("daemon proc was not cleared after a write error")
+	}
+}
+
+// TestDaemonEmbedderScanTooLongIsError verifies exchangeLocked's
+// p.stdout.Err() branch: a single response line longer than the scanner's max
+// token size (16MB) is a returned "scan daemon response"-style error, not a
+// silent truncation or hang.
+func TestDaemonEmbedderScanTooLongIsError(t *testing.T) {
+	huge := strings.Repeat("a", 17*1024*1024) // exceeds the 16MB scanner buffer cap
+	bin := writeRawDaemon(t, huge)
+	e := mustDaemon(t, bin, 4)
+	defer func() { _ = e.Close() }()
+
+	_, err := e.Embed(context.Background(), []string{"x"})
+	if err == nil || !strings.Contains(err.Error(), "read daemon response") {
+		t.Fatalf("Embed with an oversized daemon line: got %v, want a read-daemon-response error", err)
 	}
 }
 
