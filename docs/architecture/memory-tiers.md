@@ -31,7 +31,9 @@ round-trip to an external Redis.
 
 **Token optimization — Summary Buffer:** when the conversation exceeds N messages, an asynchronous
 goroutine condenses the oldest ones into a "session state" paragraph and removes them from the
-active buffer. The window Gollem sees **never grows indefinitely**. This is pure
+active buffer, so the working-memory window aisotropy hydrates into each prompt **never grows
+indefinitely** — Gollem is handed an already-capped prompt per call and keeps no cross-request window
+of its own (each reflection/agent run is a fresh, stateless `Agent[T]`). This is pure
 [context engineering](../vision/principles.md#2-context-engineering--prompt-engineering).
 
 ## 2. Facts / episodic memory (Engram-style)

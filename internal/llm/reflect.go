@@ -5,37 +5,25 @@ import (
 	"fmt"
 )
 
-// Reflection loop (output repair) — Phase 1.
+// Reflection loop (output repair) — the homegrown FALLBACK.
 //
-// docs/components/gollem-orchestrator.md describes this mechanism as
-// Gollem's responsibility (github.com/fugue-labs/gollem): force structured
-// output against the Go struct and retry with the exact typing error if
-// validation fails, up to N bounded attempts.
+// The PRIMARY reflection path is now Gollem, and it shipped: GollemReflect
+// (gollem.go) mounts core.Agent[T] + core.RunWithReflection[T] +
+// core.WithMaxRetries[T], and ReflectAuto (reflect_auto.go) makes it the
+// default. The fail-closed HTTP wiring (internal/api/chat.go) surfaces a 502 on
+// retry exhaustion — never a silent unstructured fallback — which is exactly the
+// constitutional structured-output gate. See ADR-0008 (Phase-2 outcome) and the
+// gollem-exploitation audit (reflection slice), which verified this reuse is
+// correct, not a reinvention.
 //
-// TODO(phase-2): replace this homegrown loop with real Gollem. The API was
-// investigated with `go doc` (package github.com/fugue-labs/gollem/core,
-// v0.5.1) and the exact primitive the docs describe exists:
-//
-//	func RunWithReflection[T any](
-//	    ctx context.Context, agent *Agent[T], prompt string,
-//	    validator func(ctx context.Context, output T) (feedback string, err error),
-//	    opts ...ReflectOption,
-//	) (*ReflectResult[T], error)
-//
-// It was not integrated in this phase because it additionally requires
-// wrapping Client (this package) behind the core.Model interface
-// (Request/RequestStream/ModelName) and building an Agent[T] with its own
-// schema derivation — non-trivial overhead for a walking skeleton that, in
-// this environment, cannot even exercise the real Anthropic provider
-// (ANTHROPIC_API_KEY is missing). Priority is given to making it compile and
-// the SSE work (see the task instructions); Gollem remains a Phase 2 upgrade
-// over this same Reflect/GenerateFunc/ValidateFunc interface, which already
-// models the same contract (generate -> validate -> retry with the exact
-// error).
-//
-// This minimal loop is functionally equivalent for the current use case:
-// generic over T, an explicit retry cap (never infinite), and feedback =
-// the exact validation error from the previous iteration.
+// This Reflect[T] is the DEMOTED, intentionally-kept fallback: ReflectAuto routes
+// here only when the gollem path errors for a non-ctx reason. It models the same
+// contract as core.RunWithReflection — generate -> validate -> retry with the
+// exact typing error, up to N bounded attempts — generic over T with an explicit
+// retry cap (never infinite), feedback = the previous iteration's validation
+// error. It is kept because it carries no gollem dependency and no core.Model
+// wrapping requirement, so it still works when the gollem path cannot be
+// constructed.
 
 // GenerateFunc produces a raw response for a given prompt. feedback, if not
 // empty, is the validation error from the previous iteration — it is

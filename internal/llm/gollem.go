@@ -450,6 +450,13 @@ func toModelResponse(raw string, usage *Usage, params *core.ModelRequestParamete
 
 	if usage != nil {
 		resp.Usage = core.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens}
+		// Carry reasoning tokens (ADR-0061) through gollem's own convention —
+		// core.Usage.Details["reasoning_tokens"] — so they are not dropped when a
+		// gollem-side consumer (e.g. a CostTracker) reads ModelResponse.Usage.
+		// gollem-exploitation audit (control-gates slice) flagged this drop.
+		if usage.ReasoningTokens > 0 {
+			resp.Usage.Details = map[string]int{"reasoning_tokens": usage.ReasoningTokens}
+		}
 	}
 
 	return resp
