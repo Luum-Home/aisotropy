@@ -28,22 +28,34 @@ if [[ -z "${OPENAI_API_KEY:-}" && -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-for var in OPENAI_API_KEY OPENAI_BASE_URL OPENAI_MODEL; do
-  if [ -z "${!var:-}" ]; then
-    echo "aisotropy-live-arena: required env var $var is not set" >&2
-    exit 1
-  fi
-done
-
-FORCE_BUILD=0
-if [ "${1:-}" = "--build" ]; then
-  FORCE_BUILD=1
+# ARENA_STUB=1 swaps aisotropy's real agnes provider client for its own keyless
+# internal/llm.StubClient (see newAgnesClient in agnes_client.go). That
+# short-circuit does NOT clear OPENAI_API_KEY/OPENAI_BASE_URL/OPENAI_MODEL
+# (clearBackendTierEnv only clears the memory/RAG-tier vars), so if a real key
+# is still present in the container's env, aisotropy's OWN llm.FromEnv()
+# fallback (triggered because newApp omits WithLLM when agnes is nil) will
+# pick up that ambient key and call the REAL provider instead of the stub —
+# a silent "looks offline, isn't" failure mode. So under ARENA_STUB=1 this
+# script (a) skips the required-credential precondition below and (b) never
+# forwards the provider vars into the container, mirroring run.sh's own
+# documented offline invocation (env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY
+# -u OPENROUTER_API_KEY ARENA_STUB=1 ./adapter-bin — see README.md).
+if [ -z "${ARENA_STUB:-}" ]; then
+  for var in OPENAI_API_KEY OPENAI_BASE_URL OPENAI_MODEL; do
+    if [ -z "${!var:-}" ]; then
+      echo "aisotropy-live-arena: required env var $var is not set" >&2
+      exit 1
+    fi
+  done
 fi
 
-if [ "$FORCE_BUILD" = "1" ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "aisotropy-live-arena: building $IMAGE (context: repo root) ..." >&2
-  docker build -t "$IMAGE" -f "$SCRIPT_DIR/Dockerfile" "$REPO_ROOT" >&2
-fi
+# Always build: Docker's own layer cache makes a no-op rebuild cheap when
+# nothing changed, but gating on "does the tag exist" (the previous behavior)
+# let a STALE image silently run old code after a source edit -- a false
+# "it works" for whatever was baked in at the last explicit --build. --build
+# is kept as a no-op flag for backward-compatible invocations.
+echo "aisotropy-live-arena: building $IMAGE (context: repo root) ..." >&2
+docker build -t "$IMAGE" -f "$SCRIPT_DIR/Dockerfile" "$REPO_ROOT" >&2
 
 # host.docker.internal resolves on Docker Desktop and, via --add-host, on Linux.
 # The agnes key is passed by NAME only (-e OPENAI_API_KEY) so its value is taken
@@ -53,11 +65,18 @@ fi
 # (which points them at localhost, unreachable from inside the container). A
 # CONTAINER-scoped override knob is provided for a differently-wired CI. The
 # non-host knobs (model, dim, collection) DO inherit sane defaults.
+DOCKER_CRED_FLAGS=(-e OPENAI_API_KEY -e OPENAI_BASE_URL -e OPENAI_MODEL)
+if [ -n "${ARENA_STUB:-}" ]; then
+  # Never forward the provider vars under the stub toggle — see the comment
+  # above the precondition check for why an ambient key would otherwise defeat
+  # the offline guarantee via llm.FromEnv()'s fallback.
+  DOCKER_CRED_FLAGS=()
+fi
+
 docker run --rm -i \
   --add-host=host.docker.internal:host-gateway \
-  -e OPENAI_API_KEY \
-  -e OPENAI_BASE_URL \
-  -e OPENAI_MODEL \
+  "${DOCKER_CRED_FLAGS[@]}" \
+  -e ARENA_STUB="${ARENA_STUB:-}" \
   -e AISOTROPY_EMBED_URL="${DOCKER_EMBED_URL:-http://host.docker.internal:8899}" \
   -e AISOTROPY_EMBED_MODEL="${AISOTROPY_EMBED_MODEL:-multilingual-e5-small-query}" \
   -e AISOTROPY_EMBED_DIM="${AISOTROPY_EMBED_DIM:-384}" \

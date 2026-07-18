@@ -2,52 +2,148 @@
   "framework": "aisotropy",
   "dimensions": {
     "crash_recovery": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "infeasible:ARENA_STUB=1 clears AISOTROPY_DATA_DIR in-process (clearBackendTierEnv, app.go) before every newApp call, forcing an in-memory-only BadgerDB per process; crash_recovery structurally requires cross-process ON-DISK persistence (process A's committed turn surviving into a fresh process B), which the offline stub toggle cannot provide by design -- verified resumed=false precrash_fact_recalled=false state_lost=true even for a clean sequential producer-then-resumer run with no kill involved, so the SIGKILL-timing question never arises: the two stub processes never share state regardless of when/whether a kill lands",
+        "docker": "infeasible:same in-process AISOTROPY_DATA_DIR-clearing as native (clearBackendTierEnv fires regardless of execution form) -- verified across two --rm containers sharing a bind-mounted /data host volume: resumed=false precrash_fact_recalled=false state_lost=true with no kill involved, confirming the incompatibility is the stub toggle's in-memory semantics, not container lifecycle or timing",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
     },
     "isolation_leak": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
     },
     "memory": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
     },
     "memory_scoped": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
     },
     "middleware": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
     },
     "observability": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
     },
     "qa": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
     },
     "rag": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
     },
     "stream": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
     },
     "structured": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "fail",
+        "docker": "fail",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
     },
     "tools": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "fail",
+        "docker": "fail",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
     },
     "wasm_tool": {
-      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
-      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "pass"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "pass"
+      }
     }
   }
 }
