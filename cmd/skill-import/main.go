@@ -33,6 +33,7 @@ package main
 import (
 	"fmt"
 	"go/format"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,8 +95,15 @@ type refSpec struct {
 }
 
 func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run implements the CLI: it parses args, dispatches to preview/generate mode,
+// and returns the process exit code. Extracted from main so tests can drive the
+// whole command with fake args and capture stdout/stderr, instead of exercising
+// only the unreachable-from-tests os.Exit-wrapped entry point.
+func run(args []string, stdout, stderr io.Writer) int {
 	var outDir string
-	args := os.Args[1:]
 	// Minimal flag handling so `-out <dir> <skill>` and `<skill>` both work
 	// without pulling the whole flag package's usage noise into a two-mode tool.
 	var positional []string
@@ -103,8 +111,8 @@ func main() {
 		switch {
 		case args[i] == "-out" || args[i] == "--out":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "skill-import: -out requires a directory argument")
-				os.Exit(2)
+				fmt.Fprintln(stderr, "skill-import: -out requires a directory argument")
+				return 2
 			}
 			outDir = args[i+1]
 			i++
@@ -117,25 +125,26 @@ func main() {
 		}
 	}
 	if len(positional) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: skill-import [-out <dir>] <skill-dir>")
-		os.Exit(2)
+		fmt.Fprintln(stderr, "usage: skill-import [-out <dir>] <skill-dir>")
+		return 2
 	}
 
 	skillDir := positional[0]
 	if outDir == "" {
-		if err := runPreview(skillDir); err != nil {
-			fmt.Fprintf(os.Stderr, "skill-import: %v\n", err)
-			os.Exit(1)
+		if err := runPreview(stdout, skillDir); err != nil {
+			fmt.Fprintf(stderr, "skill-import: %v\n", err)
+			return 1
 		}
-		return
+		return 0
 	}
-	if err := runGenerate(skillDir, outDir); err != nil {
-		fmt.Fprintf(os.Stderr, "skill-import: %v\n", err)
-		os.Exit(1)
+	if err := runGenerate(stdout, skillDir, outDir); err != nil {
+		fmt.Fprintf(stderr, "skill-import: %v\n", err)
+		return 1
 	}
+	return 0
 }
 
-func runPreview(dir string) error {
+func runPreview(w io.Writer, dir string) error {
 	fm, body, err := parseSkill(filepath.Join(dir, "SKILL.md"))
 	if err != nil {
 		return err
@@ -144,7 +153,7 @@ func runPreview(dir string) error {
 
 	var b strings.Builder
 	writeReport(&b, dir, fm, body)
-	fmt.Print(b.String())
+	fmt.Fprint(w, b.String())
 	return nil
 }
 
@@ -330,7 +339,7 @@ func writeWiring(b *strings.Builder, dir string, fm frontMatter, body string) {
 
 // runGenerate writes a compilable Go consumer module for the skill under outDir,
 // then runs `go mod tidy` so the module resolves its dependencies and builds.
-func runGenerate(skillDir, outDir string) error {
+func runGenerate(w io.Writer, skillDir, outDir string) error {
 	fm, body, err := parseSkill(filepath.Join(skillDir, "SKILL.md"))
 	if err != nil {
 		return err
@@ -419,7 +428,7 @@ func runGenerate(skillDir, outDir string) error {
 	}
 	written = append(written, "go.sum")
 
-	printGenerateReport(outDir, fm, written)
+	printGenerateReport(w, outDir, fm, written)
 	return nil
 }
 
@@ -639,13 +648,13 @@ func generateKnowledgeGo(m aisotropyManifest) ([]byte, error) {
 	return format.Source([]byte(b.String()))
 }
 
-func printGenerateReport(outDir string, fm frontMatter, written []string) {
+func printGenerateReport(w io.Writer, outDir string, fm frontMatter, written []string) {
 	m := fm.Metadata.Aisotropy
 	sort.Strings(written)
-	fmt.Printf("skill-import: generated a compilable consumer module for %q\n\n", fm.Name)
-	fmt.Printf("  out dir:  %s\n", outDir)
-	fmt.Printf("  module:   skillimport/%s\n", sanitizeModuleSegment(fm.Name))
-	fmt.Printf("  persona:  WithPersona(%q, {BasePrompt: <literal SKILL.md instructions>})\n", m.PersonaProductID)
+	fmt.Fprintf(w, "skill-import: generated a compilable consumer module for %q\n\n", fm.Name)
+	fmt.Fprintf(w, "  out dir:  %s\n", outDir)
+	fmt.Fprintf(w, "  module:   skillimport/%s\n", sanitizeModuleSegment(fm.Name))
+	fmt.Fprintf(w, "  persona:  WithPersona(%q, {BasePrompt: <literal SKILL.md instructions>})\n", m.PersonaProductID)
 	typed, mcp := 0, 0
 	for _, s := range m.Scripts {
 		if s.MapTo == "typed-tool" {
@@ -654,14 +663,14 @@ func printGenerateReport(outDir string, fm frontMatter, written []string) {
 			mcp++
 		}
 	}
-	fmt.Printf("  tools:    %d typed (scope=%q, exec bridge) + %d MCP (operator-supplied)\n", typed, m.RequiredScope, mcp)
-	fmt.Printf("  refs:     %d ingested-knowledge doc(s)\n\n", len(m.References))
-	fmt.Println("  files:")
+	fmt.Fprintf(w, "  tools:    %d typed (scope=%q, exec bridge) + %d MCP (operator-supplied)\n", typed, m.RequiredScope, mcp)
+	fmt.Fprintf(w, "  refs:     %d ingested-knowledge doc(s)\n\n", len(m.References))
+	fmt.Fprintln(w, "  files:")
 	for _, f := range written {
-		fmt.Printf("    %s\n", f)
+		fmt.Fprintf(w, "    %s\n", f)
 	}
-	fmt.Printf("\n  verify:  (cd %s && go build ./...)\n", outDir)
-	fmt.Println("  review:  the persona string + every exec bridge before running (supply-chain gate).")
+	fmt.Fprintf(w, "\n  verify:  (cd %s && go build ./...)\n", outDir)
+	fmt.Fprintln(w, "  review:  the persona string + every exec bridge before running (supply-chain gate).")
 }
 
 // ---------------------------------------------------------------------------
