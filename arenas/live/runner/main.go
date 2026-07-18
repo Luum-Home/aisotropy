@@ -54,11 +54,13 @@ func main() {
 	maxTasks := flag.Int("max-tasks", 0, "cap tasks per correctness mode (0 = all; bounds real spend on a re-run)")
 	concurrency := flag.Int("concurrency", 4, "max frameworks to run concurrently during the correctness/quality pass (1 = fully sequential, exact old behavior; the benchmark pass always stays sequential/uncontended)")
 	retry := flag.Int("retry", 1, "max retries per adapter invocation (correctness/quality pass) on a TRANSIENT failure — timeout/deadline/connection-reset/EOF or a 429/500/502/503/'unavailable' adapter error; a deterministic adapter/contract error never retries. 0 = no retry, exact old behavior")
-	skipJudge := flag.Bool("skip-judge", false, "skip the LLM-as-judge scoring pass")
+	llmJudge := flag.Bool("llm-judge", false, "OPT-IN, default OFF: run the SECONDARY LLM-as-judge scoring pass (agnes judging agnes — a same-family judge that scores generously and non-discriminatingly; see docs/architecture/arena-deterministic-judging.md). The PRIMARY score is always the deterministic arenas/live/runner/scoring pass and needs no flag.")
+	skipJudge := flag.Bool("skip-judge", false, "force the LLM-as-judge pass off even if -llm-judge is set (kept for backward compatibility; -llm-judge already defaults to off)")
 	skipBench := flag.Bool("skip-bench", false, "skip the benchmark pass entirely")
 	skipCorrect := flag.Bool("skip-correctness", false, "skip the correctness/quality pass entirely")
 	skipDims := flag.Bool("skip-dimensions", false, "skip the new-dimensions pass (scoped-memory, isolation, crash, observability)")
 	skipMatrixGate := flag.Bool("skip-matrix-gate", false, "skip the full-matrix completeness gate over arenas/live/<fw>/matrix.json (still renders the matrix section)")
+	skipDeterminismGate := flag.Bool("skip-determinism-gate", false, "skip the scripts/arena-determinism-guard.sh purity+reproducibility gate over arenas/live/runner/scoring (the PRIMARY score's enforcement gate — see .claude/rules/arena-deterministic-judging.md)")
 	flag.Parse()
 
 	if *nativeOnly && *dockerOnly {
@@ -85,6 +87,20 @@ func main() {
 	repoRoot := filepath.Dir(filepath.Dir(*liveDir))
 	if n := loadDotEnv(filepath.Join(repoRoot, ".env")); n > 0 {
 		logf("loaded %d var(s) from %s/.env (values not logged)", n, repoRoot)
+	}
+
+	// ---- determinism gate: is the PRIMARY scorer pure + reproducible? ------
+	// Enforces .claude/rules/arena-deterministic-judging.md: the arena's
+	// primary score is deterministic-by-construction, and that claim is
+	// backed by an executable gate, not a comment. Runs BEFORE any billable
+	// model call — a broken/impure scorer should fail fast, not after
+	// spending real agnes calls.
+	if !*skipDeterminismGate {
+		if err := runDeterminismGate(repoRoot); err != nil {
+			fatal("determinism gate: %v", err)
+		}
+	} else {
+		logf("WARNING: -skip-determinism-gate set — the primary scorer's purity/reproducibility was NOT verified this run")
 	}
 
 	modes := intersect(splitCSV(*modesFlag), allModes)
@@ -135,12 +151,18 @@ func main() {
 		logf("WARNING: -skip-matrix-gate set — pending/invalid cells will render in RESULTS.md but did not fail the run")
 	}
 
+	// The LLM-judge is SECONDARY and OPT-IN: it runs only when -llm-judge is
+	// explicitly passed (default false) AND -skip-judge was not also passed.
+	// The PRIMARY score (arenas/live/runner/scoring, always computed in
+	// scoreRecord) needs no flag at all.
 	var judge *judgeClient
-	if !*skipJudge {
+	if *llmJudge && !*skipJudge {
 		judge, err = newJudgeClient()
 		if err != nil {
 			logf("WARNING: judge disabled: %v", err)
 		}
+	} else {
+		logf("LLM-judge OFF (secondary, opt-in — pass -llm-judge to enable). Primary score: deterministic (arenas/live/runner/scoring).")
 	}
 
 	callBudget := &callCounter{}
@@ -366,7 +388,7 @@ func runAdapter(script string, in adapterInput, timeout time.Duration) execResul
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), frameworkCollectionEnv(script)...)
 
 	start := time.Now()
 	runErr := cmd.Run()
@@ -532,7 +554,7 @@ func execStdin(script string, stdin []byte, timeout time.Duration) (stdout []byt
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), frameworkCollectionEnv(script)...)
 
 	err := cmd.Run()
 	exitCode = 0
@@ -629,6 +651,78 @@ func maxRSSKB(ps *os.ProcessState) int64 {
 		return m / 1024
 	}
 	return m
+}
+
+// ---- Qdrant collision fix ----------------------------------------------------
+
+// aisotropyFrameworkName is excluded from the collection override below: it
+// does not read the shared, statically pre-populated `arena_rag` corpus at
+// all — it self-ingests the Nimbus-Rail corpus into its OWN tiered memory at
+// runtime (POST /v1/.../knowledge, see arenas/live/aisotropy/README.md
+// "rag" mode + rag_backends.go) into its already-unique "aisotropy_arena"
+// collection. Overriding it here would just rename an already-unique,
+// self-managed collection for no benefit.
+const aisotropyFrameworkName = "aisotropy"
+
+// frameworkCollectionEnv returns environment overrides that give this
+// framework's Qdrant collection a UNIQUE per-framework name
+// (arena_rag_<fw>), preventing cross-framework vector bleed when multiple
+// adapters point at one real, shared Qdrant instance (a fairness bug: 6
+// adapters — eino, genkit-go, langgraph, llamaindex, ai-sdk, mastra —
+// defaulted to the SAME "arena_rag" collection; two of them (genkit-go,
+// pydantic-ai) did not even honor the env var until this change, see
+// docs/architecture/arena-deterministic-judging.md "collision fix").
+// Appended AFTER os.Environ() so it wins over any inherited
+// QDRANT_COLLECTION/ARENA_COLLECTION — exec.Cmd documents that when Env
+// contains duplicate keys, only the LAST value for each key is used.
+// Derived from the script's parent directory name (every adapter script
+// lives at arenas/live/<fw>/run[-docker].sh), so no caller needs to thread
+// the framework name through. Both env var names are set because adapters
+// are inconsistent about which one they read: eino/langgraph/ai-sdk/mastra/
+// genkit-go/pydantic-ai read QDRANT_COLLECTION; llamaindex reads
+// ARENA_COLLECTION (arenas/live/llamaindex/adapter.py).
+//
+// OPERATIONAL NOTE: each arena_rag_<fw> collection must be SEEDED with the
+// Nimbus-Rail corpus before a real (non-stub) RAG sweep — see
+// arenas/live/_shared/populate-qdrant.py, which now seeds one collection per
+// discovered adapter (not just the single legacy "arena_rag").
+func frameworkCollectionEnv(script string) []string {
+	fw := filepath.Base(filepath.Dir(script))
+	if fw == "" || fw == "." || fw == string(filepath.Separator) || fw == aisotropyFrameworkName {
+		return nil
+	}
+	coll := "arena_rag_" + strings.ReplaceAll(fw, "-", "_")
+	return []string{
+		"QDRANT_COLLECTION=" + coll,
+		"ARENA_COLLECTION=" + coll,
+	}
+}
+
+// ---- determinism gate --------------------------------------------------------
+
+// runDeterminismGate runs scripts/arena-determinism-guard.sh — the
+// executable proof that arenas/live/runner/scoring (the arena's PRIMARY
+// score) is pure (no LLM/network/randomness/wall-clock dependency) and
+// reproducible (byte-identical scores across repeated runs). Mirrors
+// gateMatrices' shape: a hard failure here stops the run before any
+// billable model call is made. A missing guard script is a hard error, not
+// a silent skip — the gate existing is the whole point.
+func runDeterminismGate(repoRoot string) error {
+	script := filepath.Join(repoRoot, "scripts", "arena-determinism-guard.sh")
+	if !fileExists(script) {
+		return fmt.Errorf("guard script not found: %s (see .claude/rules/arena-deterministic-judging.md)", script)
+	}
+	cmd := exec.Command("bash", script)
+	cmd.Dir = repoRoot
+	cmd.Env = os.Environ()
+	cmd.Stdout = os.Stderr // gate output is progress/diagnostic, not the report
+	cmd.Stderr = os.Stderr
+	logf("[gate] running %s ...", script)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("scripts/arena-determinism-guard.sh failed (%v) — the primary scorer is not verified pure/reproducible; fix it before running the arena (see output above)", err)
+	}
+	logf("[gate] determinism gate PASSED")
+	return nil
 }
 
 // ---- small helpers ----------------------------------------------------------

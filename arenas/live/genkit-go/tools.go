@@ -106,7 +106,7 @@ func executeRealTool(ctx context.Context, rc *runCtx, name string, args map[stri
 		if err != nil {
 			return nil, fmt.Errorf("corpus_lookup: embed: %w", err)
 		}
-		docs, err := searchQdrant(ctx, rc.qdrantURL, ragCollection, vec, 3)
+		docs, err := searchQdrant(ctx, rc.qdrantURL, ragCollectionName(), vec, 3)
 		if err != nil {
 			return nil, fmt.Errorf("corpus_lookup: qdrant: %w", err)
 		}

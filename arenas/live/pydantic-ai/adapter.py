@@ -85,6 +85,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
 
@@ -237,7 +238,8 @@ async def mode_rag(payload: dict) -> dict:
 
     log(f"rag: embedding query (len={len(query)}) via e5 server")
     vector = embed_query_vector(query)
-    log(f"rag: searching qdrant collection=arena_rag top_k={top_k}")
+    collection = os.environ.get("QDRANT_COLLECTION", "arena_rag")
+    log(f"rag: searching qdrant collection={collection} top_k={top_k}")
     retrieved = qdrant_search(vector, top_k=top_k)
     log(f"rag: retrieved {len(retrieved)} passages, top1={retrieved[0]['doc_id'] if retrieved else None!r}")
 

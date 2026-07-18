@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"aisotropy-live-runner/scoring"
 )
 
 // reportData is everything writeResults needs to render RESULTS.md.
@@ -33,6 +35,13 @@ type reportData struct {
 type modeAgg struct {
 	runs, errors int
 
+	// PRIMARY: the deterministic score (arenas/live/runner/scoring), always
+	// computed — no LLM, no network, no randomness.
+	detN      int     // records with a deterministic score computed
+	detPassN  int     // of those, how many Pass
+	detValSum float64 // sum of Score.Value, for an average
+
+	// SECONDARY, opt-in (-llm-judge): agnes-as-judge scores.
 	corrSum, helpSum, faithSum, judged int
 
 	latSum int64
@@ -83,6 +92,11 @@ func writeResults(path string, rep reportData) error {
 			a.outSum += r.SumOut
 			a.tokN++
 		}
+		a.detN++
+		a.detValSum += r.Det.Value
+		if r.Det.Pass {
+			a.detPassN++
+		}
 		if r.Correctness > 0 {
 			a.corrSum += r.Correctness
 			a.helpSum += r.Helpfulness
@@ -125,6 +139,7 @@ func writeResults(path string, rep reportData) error {
 	writeHeader(&b, rep)
 	writeMatrixSection(&b, rep)
 	writeQualityTable(&b, rep, aggs, get)
+	writeJudgeSection(&b, rep, get)
 	writeScopedIsolationTable(&b, rep)
 	writeCrashTable(&b, rep)
 	writeObservabilityTable(&b, rep)
@@ -165,39 +180,50 @@ tags: [arenas, live, results, agnes, quality, latency, cold-start, ttft, tokens,
 	b.WriteString("> (which holds the model constant as a keyless stub to measure framework *overhead*, and is\n")
 	b.WriteString("> explicit that its quality table is *documented, not executed*).\n\n")
 
+	b.WriteString("> **✅ Primary score: deterministic, by construction.** The Correctness / quality table below\n")
+	b.WriteString("> is scored by `arenas/live/runner/scoring` — a pure, unit-tested, reproducible function per\n")
+	b.WriteString("> dimension (exact/containment match for QA & memory, hit@1 + trap-refusal for RAG, exact\n")
+	b.WriteString("> tool-name+numeric-result match for tools, JSON-object validity for structured, TTFT-measured\n")
+	b.WriteString("> for stream). No LLM, no network call, no randomness, no wall-clock decision — the SAME\n")
+	b.WriteString("> input always produces the SAME score, enforced by `scripts/arena-determinism-guard.sh`.\n")
+	b.WriteString("> See `docs/architecture/arena-deterministic-judging.md`.\n\n")
+
 	if rep.JudgeOn {
-		b.WriteString("> **⚠️ Self-judge caveat.** Correctness / helpfulness / faithfulness are scored by an\n")
-		b.WriteString("> **LLM-as-judge on the same model family as the contestants** (`" + model + "` judging `" + model + "`\n")
-		b.WriteString("> outputs). A model tends to rate its own family generously and cannot catch errors it would\n")
-		b.WriteString("> itself make, so these scores are a **relative, directional** signal — **not** an absolute\n")
-		b.WriteString("> measure of truth. The judge runs over agnes's Chat Completions endpoint (`/chat/completions`);\n")
-		b.WriteString("> agnes does **not** support the Responses API. Latency, cold-start, TTFT, tokens and footprint\n")
-		b.WriteString("> are objective measurements and carry no such caveat.\n\n")
+		b.WriteString("> **⚠️ Secondary, opt-in: self-judge caveat.** This run also enabled `-llm-judge`. Its\n")
+		b.WriteString("> Correctness / helpfulness / faithfulness scores (rendered in their own section below,\n")
+		b.WriteString("> NOT in the primary table) come from an **LLM-as-judge on the same model family as the\n")
+		b.WriteString("> contestants** (`" + model + "` judging `" + model + "` outputs) — a same-family judge rates\n")
+		b.WriteString("> its own family generously and non-discriminatingly and cannot catch errors it would\n")
+		b.WriteString("> itself make. Treat it as a relative, directional signal, never as ground truth, and never\n")
+		b.WriteString("> as the deciding number over the primary deterministic table.\n\n")
 	} else {
-		b.WriteString("> _Judge pass skipped (`-skip-judge`): quality columns are blank; latency, tokens, cold-start,\n")
-		b.WriteString("> TTFT, footprint and the objective per-mode signals (retrieval hit@1, trap-refusal, tool\n")
-		b.WriteString("> execution, structured-validity) are still real measurements._\n\n")
+		b.WriteString("> _Secondary LLM-judge pass: OFF (default — pass `-llm-judge` to opt in). The primary\n")
+		b.WriteString("> deterministic table below, latency, tokens, cold-start, TTFT and footprint are all real,\n")
+		b.WriteString("> unaffected measurements regardless of this flag._\n\n")
 	}
 }
 
+// writeQualityTable renders the PRIMARY, deterministic correctness/quality
+// table (arenas/live/runner/scoring) — always computed, no LLM/network/
+// randomness. See docs/architecture/arena-deterministic-judging.md.
 func writeQualityTable(b *strings.Builder, rep reportData, aggs map[string]*modeAgg, get func(fw, mode string) *modeAgg) {
-	b.WriteString("## Correctness / quality — per framework × per mode\n\n")
-	b.WriteString("Quality axes are 1–5 (LLM-judged, higher is better), averaged over the judged tasks of\n")
-	b.WriteString("that mode. The **Mode signal** column is the objective, un-judged metric for the mode\n")
-	b.WriteString("(rag: retrieval hit@1 on the gold doc + trap-refusal; tools: real tool execution + numeric\n")
+	b.WriteString("## Correctness / quality — per framework × per mode (PRIMARY, deterministic)\n\n")
+	b.WriteString("**Deterministic score** is `pass/total` from `arenas/live/runner/scoring` — pure,\n")
+	b.WriteString("reproducible, mode-specific correctness (see the primary-score note above). The **Mode\n")
+	b.WriteString("signal** column restates the same underlying measurement in mode-specific units (rag:\n")
+	b.WriteString("retrieval hit@1 on the gold doc + trap-refusal; tools: real tool execution + numeric\n")
 	b.WriteString("correctness; structured: schema-valid JSON; stream: mean TTFT). Latency is end-to-end\n")
 	b.WriteString("wall-clock (native, correctness pass) including the real model round-trip(s).\n\n")
 	if rep.Concurrency > 1 {
-		fmt.Fprintf(b, "_Ran under `-concurrency %d`: up to %d frameworks' correctness/quality sweeps (incl.\n", rep.Concurrency, rep.Concurrency)
-		b.WriteString("their LLM-judge calls) executed concurrently, so per-item latency in this pass reflects\n")
-		b.WriteString("mild host contention — a directional signal, not a clean isolated p50. The benchmark\n")
-		b.WriteString("pass below always stays sequential/uncontended and remains the p50/p95 source of truth\n")
-		b.WriteString("for latency._\n\n")
+		fmt.Fprintf(b, "_Ran under `-concurrency %d`: up to %d frameworks' correctness/quality sweeps executed\n", rep.Concurrency, rep.Concurrency)
+		b.WriteString("concurrently, so per-item latency in this pass reflects mild host contention — a\n")
+		b.WriteString("directional signal, not a clean isolated p50. The benchmark pass below always stays\n")
+		b.WriteString("sequential/uncontended and remains the p50/p95 source of truth for latency._\n\n")
 	} else {
 		b.WriteString("_Ran under `-concurrency 1` (fully sequential) — latency in this pass is uncontended._\n\n")
 	}
-	b.WriteString("| Framework | Mode | Correctness | Helpfulness | Faithfulness | Mode signal | Avg latency (ms) | Runs | Err |\n")
-	b.WriteString("|---|---|---:|---:|---:|---|---:|---:|---:|\n")
+	b.WriteString("| Framework | Mode | Deterministic score | Avg value | Mode signal | Avg latency (ms) | Runs | Err |\n")
+	b.WriteString("|---|---|---:|---:|---|---:|---:|---:|\n")
 
 	for _, fw := range rep.Frameworks {
 		for _, mode := range rep.Modes {
@@ -205,14 +231,59 @@ func writeQualityTable(b *strings.Builder, rep reportData, aggs map[string]*mode
 			if a.runs == 0 {
 				continue
 			}
-			fmt.Fprintf(b, "| %s | %s | %s | %s | %s | %s | %s | %d | %d |\n",
+			fmt.Fprintf(b, "| %s | %s | %s | %s | %s | %s | %d | %d |\n",
+				fw, mode,
+				detScoreCell(a),
+				fmt1(avg2(a.detValSum, a.detN)),
+				modeSignal(mode, a),
+				fmtLatency(a.latSum, a.latN),
+				a.runs, a.errors,
+			)
+		}
+	}
+	b.WriteString("\n")
+}
+
+// detScoreCell renders the primary deterministic pass/total cell, e.g. "4/5 ✓".
+func detScoreCell(a *modeAgg) string {
+	if a.detN == 0 {
+		return sigUnknown
+	}
+	glyph := sigFail
+	if a.detPassN == a.detN {
+		glyph = sigPass
+	}
+	return fmt.Sprintf("%d/%d %s", a.detPassN, a.detN, glyph)
+}
+
+// writeJudgeSection renders the SECONDARY, opt-in LLM-as-judge table. Only
+// emitted when the judge actually ran this run (-llm-judge); otherwise a
+// one-line note explains it is off by default, so the report never silently
+// omits an explanation for a blank section.
+func writeJudgeSection(b *strings.Builder, rep reportData, get func(fw, mode string) *modeAgg) {
+	b.WriteString("## LLM-as-judge — SECONDARY, opt-in (`-llm-judge`)\n\n")
+	if !rep.JudgeOn {
+		b.WriteString("_Skipped this run (default: off). Pass `-llm-judge` to enable — see the self-judge\n")
+		b.WriteString("caveat above. The primary deterministic table above is unaffected either way._\n\n")
+		return
+	}
+	b.WriteString("Quality axes are 1–5 (LLM-judged, higher is better), averaged over the judged tasks of\n")
+	b.WriteString("that mode. **Treat as a relative, directional signal — not ground truth** (see the\n")
+	b.WriteString("self-judge caveat above); the primary score is the deterministic table above.\n\n")
+	b.WriteString("| Framework | Mode | Correctness | Helpfulness | Faithfulness | Judged runs |\n")
+	b.WriteString("|---|---|---:|---:|---:|---:|\n")
+	for _, fw := range rep.Frameworks {
+		for _, mode := range rep.Modes {
+			a := get(fw, mode)
+			if a.judged == 0 {
+				continue
+			}
+			fmt.Fprintf(b, "| %s | %s | %s | %s | %s | %d |\n",
 				fw, mode,
 				fmt1(avg(a.corrSum, a.judged)),
 				fmt1(avg(a.helpSum, a.judged)),
 				fmt1(avg(a.faithSum, a.judged)),
-				modeSignal(mode, a),
-				fmtLatency(a.latSum, a.latN),
-				a.runs, a.errors,
+				a.judged,
 			)
 		}
 	}
@@ -560,8 +631,11 @@ func writePerItemDetail(b *strings.Builder, records []record) {
 		return
 	}
 	b.WriteString("## Per-item detail\n\n")
-	b.WriteString("| Framework | Mode | Item | Kind | Latency (ms) | In tok | Out tok | Corr | Help | Faith | Signal | Error |\n")
-	b.WriteString("|---|---|---|---|---:|---:|---:|---:|---:|---:|---|---|\n")
+	b.WriteString("**Det** is the PRIMARY deterministic pass/fail (`arenas/live/runner/scoring`) with its\n")
+	b.WriteString("one-line reason; **Corr/Help/Faith** are the SECONDARY, opt-in LLM-judge axes (blank\n")
+	b.WriteString("unless `-llm-judge` was passed this run).\n\n")
+	b.WriteString("| Framework | Mode | Item | Kind | Latency (ms) | In tok | Out tok | Det | Det detail | Corr | Help | Faith | Signal | Error |\n")
+	b.WriteString("|---|---|---|---|---:|---:|---:|:--:|---|---:|---:|---:|---|---|\n")
 	for _, r := range records {
 		errCell := "—"
 		if r.RunErr != "" {
@@ -569,13 +643,25 @@ func writePerItemDetail(b *strings.Builder, records []record) {
 		} else if r.Out.Error != "" {
 			errCell = "adapter: " + tail(r.Out.Error, 70)
 		}
-		fmt.Fprintf(b, "| %s | %s | %s | %s | %d | %s | %s | %s | %s | %s | %s | %s |\n",
+		fmt.Fprintf(b, "| %s | %s | %s | %s | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
 			r.Framework, r.Mode, r.ID, r.Kind, r.WallMs,
 			tokCell(r.SumIn, r.HasTok), tokCell(r.SumOut, r.HasTok),
+			detGlyph(r.Det), tail(r.Det.Detail, 60),
 			scoreCell(r.Correctness), scoreCell(r.Helpfulness), scoreCell(r.Faithfulness),
 			itemSignal(r), errCell)
 	}
 	b.WriteString("\n")
+}
+
+// detGlyph renders the per-item primary deterministic pass/fail glyph.
+func detGlyph(sc scoring.Score) string {
+	if sc.Detail == "" {
+		return sigUnknown
+	}
+	if sc.Pass {
+		return sigPass
+	}
+	return sigFail
 }
 
 func itemSignal(r record) string {
@@ -615,11 +701,14 @@ func itemSignal(r record) string {
 
 func writeNotes(b *strings.Builder, rep reportData) {
 	b.WriteString("## Notes\n\n")
-	b.WriteString("- **Self-judge bias (repeat).** The correctness/helpfulness/faithfulness scores come from\n")
-	b.WriteString("  an LLM-as-judge on the same model family as the contestants; treat them as a relative,\n")
-	b.WriteString("  directional signal, not ground truth. The objective per-mode signals (retrieval hit@1,\n")
-	b.WriteString("  trap-refusal, tool execution + numeric correctness, structured-validity, TTFT) and every\n")
-	b.WriteString("  benchmark number are not judged and carry no such caveat.\n")
+	b.WriteString("- **Primary score is deterministic (repeat).** The Correctness/quality table's\n")
+	b.WriteString("  \"Deterministic score\" column comes from `arenas/live/runner/scoring` — a pure,\n")
+	b.WriteString("  unit-tested, reproducible function per dimension, gated by\n")
+	b.WriteString("  `scripts/arena-determinism-guard.sh`. No LLM, no network call, no randomness.\n")
+	b.WriteString("- **Self-judge bias (secondary, opt-in only).** The `-llm-judge` Correctness/helpfulness/\n")
+	b.WriteString("  faithfulness scores (own section above, OFF by default) come from an LLM-as-judge on the\n")
+	b.WriteString("  same model family as the contestants; treat them as a relative, directional signal, not\n")
+	b.WriteString("  ground truth, and never as the deciding number over the primary deterministic table.\n")
 	b.WriteString("- **agnes is Chat-Completions-only.** The judge and every adapter reach agnes over\n")
 	b.WriteString("  `/chat/completions`; agnes does **not** implement the OpenAI Responses API.\n")
 	b.WriteString("- **structured mode is best-effort.** agnes's function-calling / `response_format` support is\n")
@@ -661,8 +750,10 @@ func writeNotes(b *strings.Builder, rep reportData) {
 		b.WriteString("  telemetry flag ALONE emits **0 spans** until `registerTelemetry`/an OTel SDK is wired\n")
 		b.WriteString("  (a real gotcha). Read the table's two axes together, not the arena span count alone.\n")
 	}
-	fmt.Fprintf(b, "- **Reproduce.** `cd arenas/live/runner && go run . -frameworks %s -modes %s -dimensions %s -bench-iters %d`.\n",
+	fmt.Fprintf(b, "- **Reproduce.** `cd arenas/live/runner && go run . -frameworks %s -modes %s -dimensions %s -bench-iters %d`\n",
 		strings.Join(rep.Frameworks, ","), strings.Join(rep.Modes, ","), strings.Join(dimsOrAll(rep.Dimensions), ","), rep.BenchIters)
+	b.WriteString("  (add `-llm-judge` to also run the secondary, opt-in LLM-judge pass; the primary\n")
+	b.WriteString("  deterministic table runs by default and needs no flag).\n")
 }
 
 // ---- cell formatters --------------------------------------------------------
@@ -721,4 +812,13 @@ func avg(sum, count int) float64 {
 		return math.NaN()
 	}
 	return float64(sum) / float64(count)
+}
+
+// avg2 is avg for a float64 sum (the deterministic score's Value, which is
+// itself a float in [0,1]).
+func avg2(sum float64, count int) float64 {
+	if count == 0 {
+		return math.NaN()
+	}
+	return sum / float64(count)
 }

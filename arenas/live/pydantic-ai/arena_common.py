@@ -166,8 +166,16 @@ def embed_query_vector(text: str) -> list[float]:
     return list(resp.data[0].embedding)
 
 
-def qdrant_search(vector: list[float], top_k: int = 3, collection: str = "arena_rag") -> list[dict]:
+def qdrant_search(
+    vector: list[float], top_k: int = 3, collection: str = os.environ.get("QDRANT_COLLECTION", "arena_rag")
+) -> list[dict]:
     """Real top-k retrieval against the REAL Qdrant `arena_rag` collection via qdrant-client.
+
+    `collection` defaults to $QDRANT_COLLECTION (falling back to "arena_rag" when unset). The
+    live-arena runner (arenas/live/runner/main.go frameworkCollectionEnv) ALWAYS sets
+    QDRANT_COLLECTION to a unique arena_rag_<framework> value per adapter, so multiple adapters
+    sharing one real Qdrant instance never read/write each other's vectors. The "arena_rag"
+    fallback only applies to a standalone `bash run.sh` invocation outside the runner.
 
     Returns a list of {doc_id, title, text, score} dicts, highest score first.
 

@@ -11,7 +11,22 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 )
 
-const ragCollection = "arena_rag"
+// defaultRagCollection is used only when QDRANT_COLLECTION is unset. The
+// live-arena runner (arenas/live/runner/main.go frameworkCollectionEnv)
+// ALWAYS sets QDRANT_COLLECTION to a unique arena_rag_<framework> value per
+// adapter, to prevent cross-framework vector bleed when multiple adapters
+// share one real Qdrant instance — this const is only the standalone-run
+// fallback (e.g. a manual `bash run.sh` outside the runner).
+const defaultRagCollection = "arena_rag"
+
+// ragCollectionName resolves the collection to search: QDRANT_COLLECTION if
+// set (the runner always sets it), else defaultRagCollection.
+func ragCollectionName() string {
+	if c := os.Getenv("QDRANT_COLLECTION"); c != "" {
+		return c
+	}
+	return defaultRagCollection
+}
 
 // ragFlowInput/ragFlowOutput are the typed contract for the Genkit flow
 // defined by runRAG below.
@@ -57,6 +72,7 @@ func runRAG(rc *runCtx, out *arenaOutput) error {
 		return fmt.Errorf("rag: embed query: %w", err)
 	}
 
+	ragCollection := ragCollectionName()
 	fmt.Fprintf(os.Stderr, "PROGRESS: rag: searching qdrant collection %q (top_k=%d)\n", ragCollection, topK)
 	docs, err := searchQdrant(rc.ctx, rc.qdrantURL, ragCollection, vec, topK)
 	if err != nil {

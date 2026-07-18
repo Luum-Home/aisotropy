@@ -7,28 +7,36 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 	"time"
+
+	"aisotropy-live-runner/scoring"
 )
 
-// scoreRecord fills a successful record's mode-specific correctness signals and,
-// where a reference answer exists, its LLM-judge scores. It only runs on records
-// that did not fail (guaranteed by the caller).
+// scoreRecord fills a successful record's scores. The DETERMINISTIC score
+// (rec.Det, arenas/live/runner/scoring) is the PRIMARY signal and is ALWAYS
+// computed — pure, reproducible, no LLM/network/randomness — regardless of
+// whether the LLM-judge is enabled. The LLM-judge scores (Correctness/
+// Helpfulness/Faithfulness) are SECONDARY and only computed when judge!=nil
+// (opt-in via -llm-judge; see main.go and
+// docs/architecture/arena-deterministic-judging.md). It only runs on
+// records that did not fail (guaranteed by the caller).
 func scoreRecord(rec *record, it workItem, judge *judgeClient, budget *callCounter) {
+	rec.Det = scoreDeterministic(rec, it)
+
 	switch it.Kind {
 	case "rag_grounded":
-		rec.RetrievalHit = retrievalHit(rec.Out.Retrieved, it.SupportingDocs)
+		rec.RetrievalHit = rec.Det.Pass
 		judgeInto(rec, it, judge, budget)
 	case "rag_trap":
-		rec.TrapRefused = looksLikeRefusal(rec.Out.Reply)
+		rec.TrapRefused = rec.Det.Pass
 		// The trap "reference" is meta-text describing correct-refusal behavior,
 		// so a factual judge pass is not meaningful here — the metric is refusal.
 	case "tools":
-		rec.ToolExecuted = toolExecuted(rec.Out.ToolCalls)
-		rec.AnswerCorrect = numberPresent(rec.Out.Reply, it.ExpectedNumber)
+		rec.ToolExecuted = scoring.ToolExecuted(toScoringCalls(rec.Out.ToolCalls))
+		rec.AnswerCorrect = rec.Det.Pass
 	case "structured":
-		rec.StructuredOK = rec.Out.Structured != nil
+		rec.StructuredOK = rec.Det.Pass
 		judgeInto(rec, it, judge, budget)
 	case "stream":
 		rec.TTFTMs = rec.Out.TTFTMs
@@ -36,6 +44,49 @@ func scoreRecord(rec *record, it workItem, judge *judgeClient, budget *callCount
 	default: // qa, memory
 		judgeInto(rec, it, judge, budget)
 	}
+}
+
+// scoreDeterministic computes the PRIMARY, deterministic per-dimension score
+// by dispatching to arenas/live/runner/scoring — the pure, reproducible,
+// LLM-free scorer. This is the single place the runner maps its own
+// record/workItem shapes onto the scoring package's plain input types; the
+// scoring package itself has no knowledge of the runner's types.
+func scoreDeterministic(rec *record, it workItem) scoring.Score {
+	switch it.Kind {
+	case "rag_grounded":
+		return scoring.ScoreRAG(topDocID(rec.Out.Retrieved), it.SupportingDocs, rec.Out.Reply, false)
+	case "rag_trap":
+		return scoring.ScoreRAG("", nil, rec.Out.Reply, true)
+	case "tools":
+		return scoring.ScoreToolsNumeric(toScoringCalls(rec.Out.ToolCalls), rec.Out.Reply, it.ExpectedNumber)
+	case "structured":
+		return scoring.ScoreStructured(rec.Out.Structured)
+	case "stream":
+		return scoring.ScoreStream(rec.Out.TTFTMs)
+	case "memory":
+		return scoring.ScoreMemory(rec.Out.Reply, it.Reference)
+	default: // "qa"
+		return scoring.ScoreQA(rec.Out.Reply, it.Reference)
+	}
+}
+
+// toScoringCalls converts the runner's own toolCall shape into the scoring
+// package's dependency-free ToolCall view.
+func toScoringCalls(calls []toolCall) []scoring.ToolCall {
+	out := make([]scoring.ToolCall, len(calls))
+	for i, c := range calls {
+		out[i] = scoring.ToolCall{Name: c.Name, Arguments: c.Arguments, Executed: strings.TrimSpace(c.Result) != ""}
+	}
+	return out
+}
+
+// topDocID returns the top retrieved doc's ID (hit@1 candidate), or "" when
+// nothing was retrieved.
+func topDocID(docs []retrievedDoc) string {
+	if len(docs) == 0 {
+		return ""
+	}
+	return docs[0].DocID
 }
 
 func judgeInto(rec *record, it workItem, judge *judgeClient, budget *callCounter) {
@@ -58,46 +109,12 @@ func judgeInto(rec *record, it workItem, judge *judgeClient, budget *callCounter
 	rec.JudgeNote = sc.Rationale
 }
 
-// retrievalHit is hit@1: the top retrieved doc is one of the gold docs.
-func retrievalHit(docs []retrievedDoc, gold []string) bool {
-	if len(docs) == 0 || len(gold) == 0 {
-		return false
-	}
-	top := strings.TrimSpace(docs[0].DocID)
-	for _, g := range gold {
-		if strings.EqualFold(strings.TrimSpace(g), top) {
-			return true
-		}
-	}
-	return false
-}
-
-var refusalRe = regexp.MustCompile(`(?i)(don't know|do not know|not available|no information|not in the (source|corpus|context|documents)|isn't in|is not in|cannot find|can't find|couldn't find|unable to|does not (state|mention|contain|say|specify|provide)|doesn't (state|mention|contain|say|specify|provide)|no mention|not mentioned|not provided|not specified|not stated|no such|not found|i (do not|don't) have)`)
-
-func looksLikeRefusal(reply string) bool {
-	return refusalRe.MatchString(reply)
-}
-
-func toolExecuted(calls []toolCall) bool {
-	for _, c := range calls {
-		if strings.TrimSpace(c.Result) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// numberPresent reports whether the expected number appears in the reply, after
-// stripping thousands separators from both sides (so "4,183" matches "4183").
-func numberPresent(reply, expected string) bool {
-	if expected == "" {
-		return false
-	}
-	norm := func(s string) string { return strings.ReplaceAll(s, ",", "") }
-	return strings.Contains(norm(reply), norm(expected))
-}
-
 // ---- LLM-as-judge (agnes, /chat/completions — NOT the Responses API) --------
+//
+// SECONDARY, opt-in (-llm-judge), caveated. The deterministic scorer above
+// (arenas/live/runner/scoring) is the arena's PRIMARY score; this judge
+// exists only as an additional, clearly-labeled directional signal — see
+// docs/architecture/arena-deterministic-judging.md.
 
 type judgeClient struct {
 	apiKey  string

@@ -10,7 +10,9 @@ here is stubbed or mocked:
 - a **real** RAG corpus about a fictional company (**Nimbus Rail**) the base chat
   model cannot already know, so a framework only answers correctly if its retrieval
   actually works;
-- a **real** Qdrant collection (`arena_rag`) populated with those docs' embeddings;
+- a **real** Qdrant collection per framework (`arena_rag_<framework>`) populated
+  with those docs' embeddings — one collection per adapter, so frameworks never
+  bleed into each other's vectors (see §3);
 - a **real** question set including trap questions to catch hallucination.
 
 The shared **chat** model for the arena is `agnes-2.0-flash` (OpenAI-compatible,
@@ -100,27 +102,42 @@ framework without working retrieval must hallucinate or refuse, and one with rea
 retrieval answers correctly. Each file's first line is a `# Title`; the whole file
 is the passage.
 
-## 3. The Qdrant collection (`arena_rag`)
+## 3. The Qdrant collection(s) (`arena_rag_<framework>`, one per adapter)
 
 | Property | Value |
 |---|---|
-| Name | `arena_rag` |
+| Name | `arena_rag_<framework>` (e.g. `arena_rag_eino`, `arena_rag_langgraph`) — see below |
 | Vector size | 384 |
 | Distance | Cosine |
 | Points | one per corpus doc (22) |
 | Payload | `{ "doc_id": "NN-slug.md", "title": "...", "text": "full passage" }` |
 
-Qdrant runs locally at `http://localhost:6333` (REST) / `6334` (gRPC). Populate it
-(idempotent — only ever touches `arena_rag`, never other collections):
+**Collision fix (fairness).** The live-arena runner (`arenas/live/runner/main.go`
+`frameworkCollectionEnv`) sets a UNIQUE `QDRANT_COLLECTION` per framework —
+`arena_rag_<framework>` — so multiple adapters sharing one real Qdrant instance
+never read/write each other's vectors (6 adapters previously defaulted to the
+SAME literal `arena_rag` collection). The aisotropy reference adapter is exempt:
+it self-ingests the corpus into its own tiered memory at runtime rather than
+reading a pre-populated collection (see `arenas/live/aisotropy/README.md`).
+
+Qdrant runs locally at `http://localhost:6333` (REST) / `6334` (gRPC). Populate
+it (idempotent — only ever touches the collection(s) it targets, never others):
 
 ```bash
 python3 populate-qdrant.py        # needs the embed server running
+# default (no override): seeds arena_rag_<fw> for EVERY discovered adapter
+# under arenas/live/*/run.sh (matching what the runner actually points each
+# adapter at) — ai-sdk, eino, genkit-go, langgraph, llamaindex, mastra,
+# pydantic-ai. The corpus is embedded ONCE and reused across collections.
+
+ARENA_COLLECTION=arena_rag python3 populate-qdrant.py   # legacy/manual/smoke-test
+# mode: seeds exactly the ONE named collection (also honors QDRANT_COLLECTION).
 ```
 
-Verify:
+Verify (per collection, e.g. eino):
 
 ```bash
-curl -s localhost:6333/collections/arena_rag | python3 -m json.tool
+curl -s localhost:6333/collections/arena_rag_eino | python3 -m json.tool
 # result.points_count == 22
 ```
 

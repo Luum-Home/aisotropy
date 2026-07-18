@@ -1,6 +1,10 @@
 package main
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"aisotropy-live-runner/scoring"
+)
 
 // ---- multi-mode adapter contract (stdin) -----------------------------------
 //
@@ -128,7 +132,14 @@ type record struct {
 
 	RunErr string // runner-side failure (adapter crash / timeout / bad JSON)
 
-	// judged quality (0 = not judged)
+	// Det is the PRIMARY, always-computed deterministic score
+	// (arenas/live/runner/scoring) — pure, reproducible, no LLM/network/
+	// randomness. See docs/architecture/arena-deterministic-judging.md.
+	Det scoring.Score
+
+	// judged quality (0 = not judged) — SECONDARY, opt-in (-llm-judge), and
+	// caveated: an LLM-as-judge on the same model family as the contestants.
+	// See writeHeader's self-judge caveat in results.go.
 	Correctness  int
 	Helpfulness  int
 	Faithfulness int
