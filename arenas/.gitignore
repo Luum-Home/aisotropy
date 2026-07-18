@@ -38,3 +38,7 @@ dist/
 /live/aisotropy/adapter-bin
 /live/runner/runner
 /live/*/adapter-bin
+
+# arena runner compiled binary
+aisotropy-live-runner
+arenas/live/runner/aisotropy-live-runner
