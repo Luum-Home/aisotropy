@@ -44,6 +44,19 @@
 //	             captured in-process via a loopback-only OTLP/HTTP receiver this
 //	             adapter stands up itself (no external collector), across one
 //	             representative App.Turn call (see mode_observability.go).
+//	middleware — aisotropy's NATIVE, bounded model-middleware seam
+//	             (aisotropy.WithModelMiddleware, ADR-0062): a registered
+//	             ModelMiddleware transforms the system prompt INBOUND and wraps
+//	             the token stream OUTBOUND, running strictly INSIDE the
+//	             constitutional pre-spend quota gate and circuit breaker (see
+//	             mode_middleware.go).
+//
+// ARENA_STUB=1 swaps aisotropy's real agnes provider client for its OWN
+// keyless internal/llm.StubClient (no OPENAI_API_KEY needed) and clears the
+// real-backend-tier env vars run.sh exports, so EVERY mode above runs fully
+// offline against aisotropy's bare-binary in-process defaults (see
+// newAgnesClient in agnes_client.go and stubMode/clearBackendTierEnv in
+// app.go).
 //
 // The API key is read from OPENAI_API_KEY and never printed, logged, or embedded.
 package main
@@ -86,6 +99,12 @@ const (
 	// modeObservability measures aisotropy's NATIVE OTel span emission for one
 	// representative turn, in-process — see mode_observability.go.
 	modeObservability = "observability"
+
+	// modeMiddleware drives one turn through aisotropy's NATIVE, bounded
+	// model-middleware seam (aisotropy.WithModelMiddleware, ADR-0062) and
+	// reports whether the inbound (system-prompt transform) and outbound
+	// (token-stream wrap) hooks genuinely fired — see mode_middleware.go.
+	modeMiddleware = "middleware"
 )
 
 // ---- Request contract (stdin) ----
@@ -188,6 +207,11 @@ func modelName() string {
 	if m := os.Getenv("OPENAI_MODEL"); m != "" {
 		return m
 	}
+	if stubMode() {
+		// Honest label: ARENA_STUB=1 never calls agnes-2.0-flash at all — the
+		// model actually answering is aisotropy's native internal/llm.StubClient.
+		return "aisotropy-stub"
+	}
 	return "agnes-2.0-flash"
 }
 
@@ -213,30 +237,47 @@ func emit(r result) {
 	fmt.Println(string(b))
 }
 
-// emitFinal writes the final stdout JSON object. mode=observability does NOT
-// use the shared `result` envelope (see mode_observability.go's
-// observabilityOutput doc comment) — runObservability stashes its own
-// *observabilityOutput in out.Structured, which is encoded here instead of
-// out itself, matching the sibling eino/genkit-go observability adapters.
+// emitFinal writes the final stdout JSON object. mode=observability and
+// mode=middleware do NOT use the shared `result` envelope (see
+// mode_observability.go's observabilityOutput and mode_middleware.go's
+// middlewareOutput doc comments) — each stashes its own distinct output type
+// in out.Structured, encoded here instead of out itself, matching the
+// sibling eino/genkit-go observability/middleware adapters.
 func emitFinal(out *result) {
-	if out.Mode != modeObservability {
+	switch out.Mode {
+	case modeObservability:
+		obs, ok := out.Structured.(*observabilityOutput)
+		if !ok {
+			// dispatch failed before reaching runObservability (e.g. bad stdin
+			// JSON) — still emit a valid observability-shaped envelope rather
+			// than the generic one.
+			obs = &observabilityOutput{Framework: frameworkName, Mode: modeObservability, Error: out.Error}
+		}
+		b, err := json.Marshal(obs)
+		if err != nil {
+			fmt.Printf(`{"framework":%q,"mode":%q,"otel_supported":false,"span_count":0,"span_names":[],"span_timings_ms":{},"logs_structured":false,"log_sample":"","notes":"","error":"marshal observability result: %s"}`+"\n",
+				frameworkName, modeObservability, err.Error())
+			return
+		}
+		fmt.Println(string(b))
+	case modeMiddleware:
+		mw, ok := out.Structured.(*middlewareOutput)
+		if !ok {
+			// dispatch failed before reaching runMiddleware (e.g. bad stdin
+			// JSON) — still emit a valid middleware-shaped envelope rather
+			// than the generic one.
+			mw = &middlewareOutput{Framework: frameworkName, Mode: modeMiddleware, Error: out.Error}
+		}
+		b, err := json.Marshal(mw)
+		if err != nil {
+			fmt.Printf(`{"framework":%q,"mode":%q,"text":"","middleware":null,"error":"marshal middleware result: %s"}`+"\n",
+				frameworkName, modeMiddleware, err.Error())
+			return
+		}
+		fmt.Println(string(b))
+	default:
 		emit(*out)
-		return
 	}
-	obs, ok := out.Structured.(*observabilityOutput)
-	if !ok {
-		// dispatch failed before reaching runObservability (e.g. bad stdin
-		// JSON) — still emit a valid observability-shaped envelope rather than
-		// the generic one.
-		obs = &observabilityOutput{Framework: frameworkName, Mode: modeObservability, Error: out.Error}
-	}
-	b, err := json.Marshal(obs)
-	if err != nil {
-		fmt.Printf(`{"framework":%q,"mode":%q,"otel_supported":false,"span_count":0,"span_names":[],"span_timings_ms":{},"logs_structured":false,"log_sample":"","notes":"","error":"marshal observability result: %s"}`+"\n",
-			frameworkName, modeObservability, err.Error())
-		return
-	}
-	fmt.Println(string(b))
 }
 
 func main() {
@@ -303,8 +344,10 @@ func dispatch(req *request, out *result) error {
 		err = runCrashRecovery(req, out)
 	case modeObservability:
 		err = runObservability(req, out)
+	case modeMiddleware:
+		err = runMiddleware(req, out)
 	default:
-		return fmt.Errorf("unknown mode %q (want one of qa|rag|tools|memory|structured|stream|wasm_tool|memory_scoped|isolation_leak|crash_recovery|observability)", req.Mode)
+		return fmt.Errorf("unknown mode %q (want one of qa|rag|tools|memory|structured|stream|wasm_tool|memory_scoped|isolation_leak|crash_recovery|observability|middleware)", req.Mode)
 	}
 	if out.LatencyMs == 0 {
 		out.LatencyMs = time.Since(start).Milliseconds()

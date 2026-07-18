@@ -41,6 +41,7 @@ logged, or baked into the image.
 | `isolation_leak` | **Real** constitutional isolation gate: a secret seeded by tenant A is **never** surfaced to a probe issued as tenant B (`leak_detected=false`) — the key prefix + ctx-scoped facts/semantic filters bound hydration to the probing identity. | `App.Turn` (probe as a different tenant) |
 | `crash_recovery` | **Real** durability: a multi-turn conversation persisted to on-disk BadgerDB survives a hard `kill -9` mid-turn; a **fresh process** re-opens the store and recalls the pre-crash fact (`resumed`/`precrash_fact_recalled=true`, `state_lost=false`). | `App.Turn` + on-disk BadgerDB (`AISOTROPY_DATA_DIR`) across a SIGKILL |
 | `observability` | **Real** measurement of aisotropy's NATIVE OpenTelemetry span emission (`internal/llm/otel.go`, ADR-0010) for one representative turn — no bridge, no auto-instrumentation, captured in-process (no external collector). Distinct stdout contract, see below. | `App.Turn` + an in-process OTLP/HTTP receiver this adapter stands up itself |
+| `middleware` | **Real**, BOUNDED model-middleware seam (`aisotropy.WithModelMiddleware`, ADR-0062): a registered `ModelMiddleware` mutates the system prompt INBOUND and wraps the token stream OUTBOUND, running at a FIXED INNER decorator slot — strictly inside the constitutional pre-spend quota gate and circuit breaker. Distinct stdout contract, see below. | `App.Turn` over an `aisotropy.WithModelMiddleware`-wrapped `App` |
 
 ### How the native tool-execution path is wired (`tools`)
 
@@ -222,6 +223,60 @@ Verified run (real agnes, real backend tiers): `otel_supported=true`,
 `logs_structured=true` with a real captured `log_sample` — a genuine
 `slog`-emitted WARN about working-memory encryption-at-rest, not a canned string.
 
+### The bounded model-middleware seam (`middleware`)
+
+`middleware` mode exercises aisotropy's own, just-shipped extension point —
+`aisotropy.WithModelMiddleware` (ADR-0062, `docs/decisions/0062-bounded-model-middleware.md`,
+committed `bc2d0b0`) — rather than a hand-rolled client wrapper. It is the safe,
+bounded counterpart to Vercel AI SDK's `wrapLanguageModel`: a naïve "wrap the whole
+client" middleware could sit *outside* the constitutional pre-spend quota gate or
+the circuit breaker; `WithModelMiddleware` cannot, by construction, because the
+runtime installs it at a FIXED INNER slot of the LLM client decorator chain
+(`internal/llm/middleware.go`):
+
+```
+handler quota.Allow (pre-spend gate)      <- ALWAYS outermost, runtime-owned
+  circuitClient (breaker)                 <- runtime-owned
+    otelClient / costTracker              <- runtime-owned
+      [ user ModelMiddleware chain ]      <- mode_middleware.go's arenaMiddleware sits HERE
+        base provider client (StreamChat)
+```
+
+`mode_middleware.go`'s `arenaMiddleware` implements `aisotropy.ModelMiddleware`
+(`WrapStream(ctx, system, prompt, next)`) with two genuine, observable transforms:
+
+- **INBOUND**: appends the sentinel `"\n[ARENA_MW]"` to `system` before ever calling
+  `next` — the mutated value, not a discarded copy, is what the wrapped client (and
+  ultimately agnes) actually receives.
+- **OUTBOUND**: relays every `Token` from `next`'s returned channel through the
+  middleware's own goroutine before handing it to the caller, so the middleware
+  genuinely sits in the response data path (not an untouched channel alias).
+
+`runMiddleware` builds an `App` via `newApp(agnes, req.System,
+aisotropy.WithModelMiddleware(mw))` and drives one `App.Turn`, then reports the
+middleware's own invocation counters:
+
+```json
+{"framework":"aisotropy","mode":"middleware","text":"OK",
+ "middleware":{"mechanism":"aisotropy.WithModelMiddleware","inbound_fired":true,
+ "outbound_fired":true,"invocations":1,"supported":true}}
+```
+
+**Honest differentiator (gate-bounded, not just wired):** a real run's stderr log
+(`test-env.sh`-style `PROGRESS` lines) shows the chat request completing through the
+full pipeline — `chat request tenant_id=… lang=en llm=agnes:agnes-2.0-flash` then
+`chat request completed … backend=gollem attempts=1` — **before** `arenaMiddleware`
+reports its own `fired` counters, because the quota/breaker decorators sit
+*outside* the middleware in the chain: the middleware physically cannot run until
+those gates have already let the call through, and the breaker/cost/OTel
+decorators still see every token the middleware relays or synthesizes. None of the
+other framework adapters in this arena have a middleware seam with this
+structural guarantee — theirs wrap the model client (or the whole request) with no
+runtime-enforced position relative to their own quota/rate-limit logic.
+
+Verified run (real agnes, real backend tiers, via `run.sh`): `inbound_fired=true`,
+`outbound_fired=true`, `invocations=1`, `text="OK"`.
+
 ## Real backends (env-configurable)
 
 `run.sh` wires the real tiers (defaults target the local live-arena infra;
@@ -237,6 +292,58 @@ Verified run (real agnes, real backend tiers): `otel_supported=true`,
 
 The arena uses its OWN 384-dim Qdrant collection (`aisotropy_arena`) so it never
 clobbers a pre-existing `aisotropy_knowledge` collection of a different dimension.
+
+## Offline stub toggle (`ARENA_STUB=1`)
+
+`ARENA_STUB=1` swaps aisotropy's REAL agnes provider client for its OWN **native**
+keyless stub — `internal/llm.StubClient` (`internal/llm/stub.go`) — instead of a
+hand-rolled fake this adapter invents. `llm.FromEnv()`
+(`internal/llm/registry.go`, precedence `OPENROUTER_API_KEY` >
+`OPENAI_API_KEY` > `ANTHROPIC_API_KEY` > stub) already falls back to it whenever
+every provider key is unset; `newAgnesClient()` (`agnes_client.go`) is the single
+choke point every one of the adapter's 11 `agnes, err := newAgnesClient()` call
+sites already goes through, so **no mode file needed to change** for this toggle
+to apply uniformly:
+
+- `stubMode()` (`app.go`) reads `ARENA_STUB=1`.
+- `newAgnesClient()` short-circuits: instead of erroring on a missing
+  `OPENAI_API_KEY`, it calls `clearBackendTierEnv()` (unsets
+  `AISOTROPY_EMBED_URL`/`QDRANT_HOST`/`QDRANT_PORT`/`RQLITE_URL`/`AISOTROPY_DATA_DIR`
+  and siblings **in-process**, regardless of what `run.sh` already exported into
+  this process's environment) and returns `(nil, nil)`.
+- `newApp` / `setUsage` (`app.go`) are nil-safe: a `nil` `agnes` means `newApp`
+  omits `WithLLM` entirely, so `aisotropy.New()` resolves its LLM client via its
+  own `llm.FromEnv()` — the keyless stub — and the bare-binary in-process memory
+  tiers (in-process cosine semantic tier, in-process SQLite+FTS5 facts tier,
+  in-memory BadgerDB working memory) take over from the real networked ones.
+
+What the stub path exercises: the FULL in-process pipeline (identity→ctx,
+quota gate, guardrails, gateway model selection, in-process memory hydration,
+outbox persist, fail-closed reflection) minus the network hop to a real LLM
+provider and the real rqlite/Qdrant/e5 services — `StubClient` echoes a
+deterministic, word-by-word reply derived from the prompt and attaches a
+deterministic fake `Usage`, so the SSE/streaming/OTel/cost-tracker wiring still
+runs end to end offline. Because `WithModelMiddleware` wraps the base client
+*before* `WithLLM`'s choice of provider is even consulted, `middleware` mode's
+`inbound_fired`/`outbound_fired` accounting is identical whether the base client
+is real agnes or the stub — verified below.
+
+```bash
+# offline qa (no OPENAI_API_KEY/ANTHROPIC_API_KEY/OPENROUTER_API_KEY needed,
+# no network call of any kind — verified against bogus unreachable
+# AISOTROPY_EMBED_URL/QDRANT_HOST/RQLITE_URL values pre-set in the environment,
+# which clearBackendTierEnv() strips before the App boots)
+env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u OPENROUTER_API_KEY ARENA_STUB=1 \
+  ./adapter-bin <<< '{"mode":"qa","messages":[{"role":"user","content":"Say OK."}]}'
+# -> {"framework":"aisotropy","mode":"qa","model":"aisotropy-stub", ...,"error":""}
+
+# offline middleware — same inbound_fired/outbound_fired=true against the stub
+env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u OPENROUTER_API_KEY ARENA_STUB=1 \
+  ./adapter-bin <<< '{"mode":"middleware","messages":[{"role":"user","content":"Say OK."}]}'
+# -> {"framework":"aisotropy","mode":"middleware","text":"stub-llm structured reply for …",
+#     "middleware":{"mechanism":"aisotropy.WithModelMiddleware","inbound_fired":true,
+#     "outbound_fired":true,"invocations":1,"supported":true}}
+```
 
 ## Usage
 
@@ -259,6 +366,10 @@ bash test-crash.sh
 
 # observability (native OTel span capture; runnable bare, no stdin fields required)
 echo '{"mode":"observability"}' | bash run.sh
+
+# middleware (real bounded aisotropy.WithModelMiddleware seam, ADR-0062)
+echo '{"mode":"middleware","system":"You are a rail assistant.","messages":[{"role":"user","content":"Say OK."}]}' \
+  | bash run.sh
 ```
 
 ## Known upstream issue worked around (rqlite migration idempotency)
@@ -293,6 +404,7 @@ to the container's `RQLITE_URL`.
 | `mode_scoped.go` | `memory_scoped` + `isolation_leak` — by-construction tenant isolation via `App.Turn` (working-memory key prefix + ctx-scoped tiers). |
 | `mode_crash.go` | `crash_recovery` — on-disk BadgerDB durability across a real `kill -9` (producer / resumer). |
 | `mode_observability.go` | `observability` — captures aisotropy's native OTel span emission via an in-process OTLP/HTTP receiver + structured-log capture (distinct stdout contract). |
+| `mode_middleware.go` | `middleware` — drives one turn through the real, bounded `aisotropy.WithModelMiddleware` seam (ADR-0062), reporting inbound/outbound firing (distinct stdout contract). |
 | `rag_backends.go` | Corpus loader + e5 query embed + Qdrant REST mirror of aisotropy's retrieval. |
 | `server_boot.go` | Boots `App.Run` on an ephemeral loopback port (tools/stream/structured). |
 | `calc.go` | Host-side arithmetic evaluator (tools mode). |

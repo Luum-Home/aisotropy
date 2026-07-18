@@ -54,7 +54,23 @@ type agnesClient struct {
 
 // newAgnesClient builds the client from OPENAI_* env. The key is read from the
 // environment and never logged or embedded in error strings.
+//
+// ARENA_STUB=1 (stubMode, app.go) short-circuits this entirely: it clears the
+// real-backend-tier env vars this process may have inherited from run.sh
+// (clearBackendTierEnv) and returns (nil, nil) instead of erroring on a
+// missing OPENAI_API_KEY. Every mode's call site already does
+// `agnes, err := newAgnesClient(); if err != nil { return err }` followed by
+// `newApp(agnes, ...)` / `setUsage(out, agnes)` — both nil-safe (app.go) — so
+// a nil, nil-error return here is a normal, successful "run offline" signal
+// that needs no change at any of the 11 call sites: newApp then omits
+// WithLLM entirely, so aisotropy.New() falls back to its own env-driven
+// llm.FromEnv(), which (with every provider key unset) resolves to
+// aisotropy's NATIVE keyless stub client.
 func newAgnesClient() (*agnesClient, error) {
+	if stubMode() {
+		clearBackendTierEnv()
+		return nil, nil
+	}
 	key := os.Getenv("OPENAI_API_KEY")
 	if key == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
