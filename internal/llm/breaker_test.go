@@ -43,6 +43,60 @@ func (f *flakyClient) StreamChat(_ context.Context, _, _ string) (<-chan Token, 
 	return ch, nil
 }
 
+// TestWithCircuitBreaker_DefaultsThresholdAndCooldown proves an invalid
+// threshold (<1) and cooldown (<=0) fall back to the documented defaults (5
+// and 30s) rather than propagating a nonsensical zero/negative breaker
+// configuration.
+func TestWithCircuitBreaker_DefaultsThresholdAndCooldown(t *testing.T) {
+	fc := &flakyClient{}
+	cb := WithCircuitBreaker(fc, 0, 0).(*circuitClient)
+	if cb.threshold != 5 {
+		t.Fatalf("threshold = %d, want default 5", cb.threshold)
+	}
+	if cb.cooldown != 30*time.Second {
+		t.Fatalf("cooldown = %v, want default 30s", cb.cooldown)
+	}
+
+	fc2 := &flakyClient{}
+	cb2 := WithCircuitBreaker(fc2, -3, -time.Second).(*circuitClient)
+	if cb2.threshold != 5 {
+		t.Fatalf("negative threshold = %d, want default 5", cb2.threshold)
+	}
+	if cb2.cooldown != 30*time.Second {
+		t.Fatalf("negative cooldown = %v, want default 30s", cb2.cooldown)
+	}
+}
+
+// TestCircuitToolCaller_FailsFastWhenOpen proves circuitToolCaller.CallTools
+// fails fast with ErrCircuitOpen (without ever reaching the inner ToolCaller)
+// once the shared breaker has tripped open — mirroring StreamChat's fail-fast
+// behavior for the native tool-calling path.
+func TestCircuitToolCaller_FailsFastWhenOpen(t *testing.T) {
+	inner := &fakeToolCaller{Client: NewStubClient(), script: []ToolCallResult{{Message: "a"}}}
+	wrapped := WithCircuitBreaker(inner, 1, time.Minute)
+	tc, ok := wrapped.(ToolCaller)
+	if !ok {
+		t.Fatal("WithCircuitBreaker did not preserve the inner ToolCaller")
+	}
+	cb := wrapped.(*circuitToolCaller)
+	base := time.Now()
+	cb.now = func() time.Time { return base }
+
+	// Trip the breaker directly via record (threshold=1): no real failing
+	// CallTools call needed to set up the "open" precondition.
+	cb.record(false)
+	if cb.state != circuitOpen {
+		t.Fatalf("breaker state = %v, want circuitOpen after one recorded failure at threshold 1", cb.state)
+	}
+
+	if _, err := tc.CallTools(context.Background(), "sys", "prompt", nil); !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("CallTools while open = %v, want ErrCircuitOpen", err)
+	}
+	if inner.turn != 0 {
+		t.Fatalf("inner ToolCaller was called (turn=%d) despite the breaker being open", inner.turn)
+	}
+}
+
 func TestCircuitBreakerOpensAndRecovers(t *testing.T) {
 	fc := &flakyClient{fail: true}
 	cb := WithCircuitBreaker(fc, 3, time.Minute).(*circuitClient)

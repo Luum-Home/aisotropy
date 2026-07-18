@@ -129,6 +129,8 @@ func (f *fakeRqlite) handleExecute(w http.ResponseWriter, r *http.Request) {
 			results = append(results, map[string]any{"rows_affected": f.applySupersede(args)})
 		case deleteSQL:
 			results = append(results, map[string]any{"rows_affected": f.applyDelete(args)})
+		case eraseScopeSQL:
+			results = append(results, map[string]any{"rows_affected": f.applyEraseScope(args)})
 		default:
 			// Schema/DDL statements: acknowledge with an empty result.
 			results = append(results, map[string]any{})
@@ -249,6 +251,22 @@ func (f *fakeRqlite) applyDelete(args []any) int {
 	}
 	delete(f.rows, id)
 	return 1
+}
+
+// applyEraseScope implements eraseScopeSQL: args = tenant, user. It removes
+// EVERY row (current and superseded) for that (tenant,user), mirroring the
+// real `DELETE FROM facts WHERE tenant_id = ? AND user_id = ?`.
+func (f *fakeRqlite) applyEraseScope(args []any) int {
+	tenant := args[0].(string)
+	user := args[1].(string)
+	n := 0
+	for id, row := range f.rows {
+		if row.tenant == tenant && row.user == user {
+			delete(f.rows, id)
+			n++
+		}
+	}
+	return n
 }
 
 // searchRows implements searchSQL scope + FTS filtering: args = match, tenant, user, pool.
@@ -516,6 +534,65 @@ func TestRqlite_TransportErrors(t *testing.T) {
 			t.Fatalf("expected transport error")
 		}
 	})
+	t.Run("erase scope http 500", func(t *testing.T) {
+		f := newFakeRqlite(t)
+		st := openFake(t, f)
+		f.forceStatus = http.StatusInternalServerError
+		if _, err := st.EraseScope(ctx, sc); err == nil {
+			t.Fatalf("expected transport error")
+		}
+	})
+}
+
+// TestRqlite_EraseScope proves the networked store's EraseScope removes every
+// row — current and superseded — for the (tenant,user) scope, leaves other
+// subjects untouched, and is idempotent.
+func TestRqlite_EraseScope(t *testing.T) {
+	f := newFakeRqlite(t)
+	st := openFake(t, f)
+	ctx := context.Background()
+	alice := Scope{tenant: "acme", user: "alice"}
+	bob := Scope{tenant: "acme", user: "bob"}
+
+	if err := st.Save(ctx, alice, Fact{ID: "a1", TenantID: "acme", UserID: "alice", Content: "first espresso"}); err != nil {
+		t.Fatalf("Save a1: %v", err)
+	}
+	if err := st.Supersede(ctx, alice, "a1", Fact{ID: "a2", TenantID: "acme", UserID: "alice", Content: "second cortado"}); err != nil {
+		t.Fatalf("Supersede: %v", err)
+	}
+	if err := st.Save(ctx, bob, Fact{ID: "b1", TenantID: "acme", UserID: "bob", Content: "bob espresso"}); err != nil {
+		t.Fatalf("Save b1: %v", err)
+	}
+
+	n, err := st.EraseScope(ctx, alice)
+	if err != nil {
+		t.Fatalf("EraseScope: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("EraseScope removed %d, want 2 (current a2 + superseded a1)", n)
+	}
+
+	all, err := st.ExportAll(ctx)
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+	if len(all) != 1 || all[0].ID != "b1" {
+		t.Fatalf("expected only bob's fact to remain, got %+v", all)
+	}
+
+	// Idempotent: erasing again removes nothing.
+	if n, err := st.EraseScope(ctx, alice); err != nil || n != 0 {
+		t.Fatalf("second EraseScope = (%d,%v), want (0,nil)", n, err)
+	}
+}
+
+func TestRqlite_EraseScopeResultError(t *testing.T) {
+	f := newFakeRqlite(t)
+	st := openFake(t, f)
+	f.resultError = "disk full"
+	if _, err := st.EraseScope(context.Background(), Scope{tenant: "acme", user: "alice"}); err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("expected per-result error, got %v", err)
+	}
 }
 
 func TestRqlite_SaveResultError(t *testing.T) {

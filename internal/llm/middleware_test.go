@@ -134,6 +134,22 @@ func (f *failingMiddleware) WrapStream(_ context.Context, _, _ string, next Stre
 	return nil, f.err
 }
 
+// TestMiddlewareClientNameForwardsToInner proves middlewareClient.Name()
+// forwards to the wrapped client's own Name() (used for provider-tagged
+// logging/metrics), rather than fabricating a "middleware" identity that
+// would hide which base provider is actually running.
+func TestMiddlewareClientNameForwardsToInner(t *testing.T) {
+	base := &recordingClient{}
+	wrapped := WithModelMiddleware(base, &passthroughMiddleware{})
+	named, ok := wrapped.(interface{ Name() string })
+	if !ok {
+		t.Fatal("wrapped client does not expose Name()")
+	}
+	if got, want := named.Name(), base.Name(); got != want {
+		t.Fatalf("middlewareClient.Name() = %q, want %q (forwarded from the inner client)", got, want)
+	}
+}
+
 // --- invariant 5: backward-compatible ----------------------------------------
 
 // TestWithModelMiddlewareNoneRegisteredIsIdentity proves that with no

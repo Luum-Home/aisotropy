@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -193,3 +194,94 @@ var errStreamFailed = &streamError{"simulated mid-stream failure"}
 type streamError struct{ msg string }
 
 func (e *streamError) Error() string { return e.msg }
+
+// erroringToolCaller is a minimal Client+ToolCaller whose CallTools always
+// fails, so otelToolCaller.CallTools' error-recording branch (span.RecordError
+// + codes.Error) can be driven without a real provider failure.
+type erroringToolCaller struct{}
+
+func (e *erroringToolCaller) Name() string { return "erroring-tools:model-x" }
+
+func (e *erroringToolCaller) StreamChat(ctx context.Context, _, _ string) (<-chan Token, error) {
+	out := make(chan Token, 1)
+	out <- Token{Done: true}
+	close(out)
+	return out, nil
+}
+
+func (e *erroringToolCaller) CallTools(_ context.Context, _, _ string, _ []ToolSpec) (ToolCallResult, error) {
+	return ToolCallResult{}, errToolCallFailed
+}
+
+var errToolCallFailed = &streamError{"simulated tool-call failure"}
+
+var _ ToolCaller = (*erroringToolCaller)(nil)
+
+// TestWithOTel_CallToolsRecordsErrorOnSpan proves otelToolCaller.CallTools
+// records a failing inner ToolCaller's error onto the span (codes.Error +
+// RecordError), mirroring StreamChat's error-marking behavior, and that the
+// error is still propagated to the caller unchanged.
+func TestWithOTel_CallToolsRecordsErrorOnSpan(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	tracer := tp.Tracer("test")
+
+	inner := &erroringToolCaller{}
+	wrapped := WithOTel(inner, tracer)
+	tc, ok := wrapped.(ToolCaller)
+	if !ok {
+		t.Fatal("WithOTel did not preserve the inner ToolCaller")
+	}
+
+	ctx := WithTenant(context.Background(), "acme")
+	ctx = WithUser(ctx, "alice")
+	if _, err := tc.CallTools(ctx, "sys", "prompt", nil); !errors.Is(err, errToolCallFailed) {
+		t.Fatalf("CallTools error = %v, want %v", err, errToolCallFailed)
+	}
+
+	ended := recorder.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("expected exactly 1 recorded span, got %d", len(ended))
+	}
+	if ended[0].Status().Code.String() != "Error" {
+		t.Errorf("span status = %v, want Error", ended[0].Status().Code)
+	}
+	if ended[0].Name() != spanNameChatTools {
+		t.Errorf("span name = %q, want %q", ended[0].Name(), spanNameChatTools)
+	}
+	attrs := ended[0].Attributes()
+	if model, ok := attrValue(attrs, attrGenAIRequestModel); !ok || model.AsString() != "model-x" {
+		t.Errorf("gen_ai.request.model = %v (ok=%v), want %q", model, ok, "model-x")
+	}
+	if tenant, ok := attrValue(attrs, attrTenantID); !ok || tenant.AsString() != "acme" {
+		t.Errorf("tenant_id = %v (ok=%v), want %q", tenant, ok, "acme")
+	}
+	if user, ok := attrValue(attrs, attrUserID); !ok || user.AsString() != "alice" {
+		t.Errorf("user_id = %v (ok=%v), want %q", user, ok, "alice")
+	}
+}
+
+// TestNewTracerProvider_DefaultIsNoOp proves that with neither
+// OTEL_EXPORTER_OTLP_ENDPOINT nor OTEL_EXPORTER_OTLP_TRACES_ENDPOINT set,
+// NewTracerProvider returns a no-op provider/tracer (no collector required)
+// and a shutdown func that succeeds trivially.
+func TestNewTracerProvider_DefaultIsNoOp(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
+
+	shutdown, tracer, provider := NewTracerProvider(context.Background())
+	if tracer == nil || provider == nil {
+		t.Fatal("expected a non-nil no-op tracer/provider")
+	}
+	// A no-op tracer must not panic and must not require a live collector.
+	client := WithOTel(&StubClient{}, tracer)
+	tokens, err := client.StreamChat(context.Background(), "sys", "prompt")
+	if err != nil {
+		t.Fatalf("StreamChat with no-op tracer: %v", err)
+	}
+	drainTokens(tokens)
+
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatalf("no-op shutdown returned error: %v", err)
+	}
+}

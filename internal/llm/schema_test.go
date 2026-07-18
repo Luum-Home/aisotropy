@@ -121,6 +121,54 @@ func TestCompileSchema_EnforcesConstraints(t *testing.T) {
 	}
 }
 
+// TestCompileSchema_ErrorBranches drives each of CompileSchema's three
+// distinct error returns — malformed JSON (UnmarshalJSON), a document that
+// fails meta-schema validation (AddResource), and an unresolvable $ref
+// (Compile) — so a schema degrade-to-decode-only caller (internal/api's
+// typed_tools.go/mcp_tools.go) is proven to actually see an error on each of
+// these malformed-schema shapes, not just the happy path.
+func TestCompileSchema_ErrorBranches(t *testing.T) {
+	t.Run("malformed JSON fails to unmarshal", func(t *testing.T) {
+		_, err := CompileSchema(json.RawMessage(`{not valid json`))
+		if err == nil {
+			t.Fatal("expected an UnmarshalJSON error for malformed JSON")
+		}
+	})
+	t.Run("document fails meta-schema validation at AddResource", func(t *testing.T) {
+		// "type" must be a string (or array of strings); a number fails the
+		// JSON Schema meta-schema itself, which AddResource validates against
+		// before Compile ever runs.
+		_, err := CompileSchema(json.RawMessage(`{"type": 123}`))
+		if err == nil {
+			t.Fatal("expected an AddResource meta-schema validation error")
+		}
+	})
+	t.Run("unresolvable $ref fails at Compile", func(t *testing.T) {
+		_, err := CompileSchema(json.RawMessage(`{"type":"object","properties":{"a":{"$ref":"#/nonexistent"}}}`))
+		if err == nil {
+			t.Fatal("expected a Compile error for an unresolvable $ref")
+		}
+	})
+}
+
+// TestSchemaValidator_ValidateMalformedJSON proves Validate itself returns an
+// error (rather than panicking or silently accepting) when handed raw
+// arguments that are not valid JSON at all — distinct from a well-formed but
+// schema-violating payload (covered by TestCompileSchema_EnforcesConstraints).
+func TestSchemaValidator_ValidateMalformedJSON(t *testing.T) {
+	schema, err := SchemaFor[weatherArgs]()
+	if err != nil {
+		t.Fatalf("SchemaFor: %v", err)
+	}
+	v, err := CompileSchema(schema)
+	if err != nil {
+		t.Fatalf("CompileSchema: %v", err)
+	}
+	if err := v.Validate(json.RawMessage(`{not valid json`)); err == nil {
+		t.Fatal("expected Validate to error on malformed JSON arguments")
+	}
+}
+
 // TestCompileSchema_EmptyIsNoOp verifies an empty schema yields a nil validator
 // whose Validate is a no-op (an untyped tool is unaffected).
 func TestCompileSchema_EmptyIsNoOp(t *testing.T) {

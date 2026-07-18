@@ -99,6 +99,58 @@ func TestRegistryFromEnv_OnlyAnthropic_DefaultsToAnthropic(t *testing.T) {
 	}
 }
 
+// TestRegistryFromEnv_ReasoningOnEnablesEveryPrimaryClient proves that with
+// AISOTROPY_REASONING set, RegistryFromEnv calls EnableReasoning on every
+// primary provider client it constructs (openrouter, openai, anthropic) —
+// not just one — covering the reasoningOn branch for all three providers.
+func TestRegistryFromEnv_ReasoningOnEnablesEveryPrimaryClient(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv("OPENROUTER_API_KEY", "or-key")
+	t.Setenv("OPENAI_API_KEY", "oa-key")
+	t.Setenv("ANTHROPIC_API_KEY", "an-key")
+	t.Setenv("AISOTROPY_REASONING", "on")
+	t.Setenv("AISOTROPY_REASONING_EFFORT", "high")
+
+	reg := RegistryFromEnv()
+
+	orClient, ok := reg.Get(providerOpenRouter)
+	if !ok {
+		t.Fatal("openrouter client missing")
+	}
+	if or, ok := orClient.(*OpenAICompatClient); !ok || !or.reasoning || or.reasoningEffort != ReasoningEffortHigh {
+		t.Fatalf("openrouter client reasoning not enabled at high effort: %+v", orClient)
+	}
+
+	oaClient, ok := reg.Get(providerOpenAI)
+	if !ok {
+		t.Fatal("openai client missing")
+	}
+	if oa, ok := oaClient.(*OpenAICompatClient); !ok || !oa.reasoning || oa.reasoningEffort != ReasoningEffortHigh {
+		t.Fatalf("openai client reasoning not enabled at high effort: %+v", oaClient)
+	}
+
+	anClient, ok := reg.Get(providerAnthropic)
+	if !ok {
+		t.Fatal("anthropic client missing")
+	}
+	if an, ok := anClient.(*AnthropicClient); !ok || !an.reasoning || an.reasoningEffort != ReasoningEffortHigh {
+		t.Fatalf("anthropic client reasoning not enabled at high effort: %+v", anClient)
+	}
+}
+
+// TestRegistryDefault_PanicsWhenEmpty proves Default() panics on a Registry
+// built via NewRegistry with nothing ever Register()ed — the documented
+// escape hatch a RegistryFromEnv-built registry never hits (it always
+// registers at least "stub").
+func TestRegistryDefault_PanicsWhenEmpty(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected Default() to panic on an empty registry")
+		}
+	}()
+	NewRegistry().Default()
+}
+
 func TestRegistry_RegisterGetNamesDefault(t *testing.T) {
 	reg := NewRegistry()
 

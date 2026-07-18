@@ -3,8 +3,10 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -153,6 +155,7 @@ func TestExtractJSONObject(t *testing.T) {
 		{"with nested braces", `{"a":{"b":1}}`, `{"a":{"b":1}}`},
 		{"with braces inside a string", `{"reply":"has } a brace"}`, `{"reply":"has } a brace"}`},
 		{"no json", "there is nothing here", "there is nothing here"},
+		{"unterminated object", `{"reply":"unterminated`, `{"reply":"unterminated`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -368,6 +371,77 @@ func TestReflectAutoDefaultsToGollem(t *testing.T) {
 	}
 }
 
+// TestReflectAutoFallsBackToOwnAfterGollemGuardrailFailure exercises the
+// branch reflect_auto.go's ReflectAuto documents but no test previously
+// drove: Gollem is used (the default backend), GollemReflect fails for a
+// reason UNRELATED to ctx cancellation (here: the ADR-0010 max-prompt-length
+// input guardrail rejecting an oversized prompt before any model call), and
+// ReflectAuto falls back to the homegrown Reflect[T] loop — which has no such
+// guardrail — and succeeds. This proves the fallback is real: gerr != nil AND
+// ctx.Err() == nil.
+func TestReflectAutoFallsBackToOwnAfterGollemGuardrailFailure(t *testing.T) {
+	// Longer than gollemMaxPromptChars (100_000): trips Gollem's input
+	// guardrail deterministically, with zero model calls spent on the Gollem
+	// attempt (the guardrail runs before the agent loop).
+	prompt := strings.Repeat("a", 100_001)
+
+	client := &fakeClient{responses: []string{`{"reply":"fallback-ok"}`}}
+	decode := func(raw string) (gollemTestOutput, error) {
+		var out gollemTestOutput
+		if err := json.Unmarshal([]byte(raw), &out); err != nil {
+			return gollemTestOutput{}, err
+		}
+		return out, nil
+	}
+
+	out, attempts, backend, _, err := ReflectAuto[gollemTestOutput](context.Background(), client, "system", prompt, decode, nil, 3)
+	if err != nil {
+		t.Fatalf("ReflectAuto returned unexpected error: %v", err)
+	}
+	if backend != ReflectionBackendOwn {
+		t.Fatalf("backend = %q, want %q (fallback must have engaged after the Gollem guardrail rejection)", backend, ReflectionBackendOwn)
+	}
+	if out.Reply != "fallback-ok" {
+		t.Fatalf("Reply = %q, want %q", out.Reply, "fallback-ok")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1 (the homegrown loop succeeded on its first try)", attempts)
+	}
+	// The guardrail rejection spent zero Gollem model calls; the single
+	// StreamChat call recorded is the homegrown fallback's own attempt.
+	if client.calls != 1 {
+		t.Fatalf("client.calls = %d, want 1 (guardrail must reject before any model call, and the fallback makes exactly one)", client.calls)
+	}
+}
+
+// TestReflectAutoDoesNotFallBackOnCtxCancellation proves the OTHER half of
+// ReflectAuto's fallback branch: when GollemReflect fails because ctx was
+// already cancelled, ReflectAuto returns that error immediately WITHOUT
+// retrying via the homegrown backend (retrying would just cut at the same
+// point, per the function's own doc) — the backend reported is still Gollem,
+// and the client is never invoked via the fallback path.
+func TestReflectAutoDoesNotFallBackOnCtxCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before ReflectAuto ever runs
+
+	client := &fakeClient{responses: []string{`{"reply":"should not be reached"}`}}
+	decode := func(raw string) (gollemTestOutput, error) {
+		var out gollemTestOutput
+		if err := json.Unmarshal([]byte(raw), &out); err != nil {
+			return gollemTestOutput{}, err
+		}
+		return out, nil
+	}
+
+	_, _, backend, _, err := ReflectAuto[gollemTestOutput](ctx, client, "system", "hello", decode, nil, 3)
+	if err == nil {
+		t.Fatal("expected ReflectAuto to return an error for an already-cancelled ctx")
+	}
+	if backend != ReflectionBackendGollem {
+		t.Fatalf("backend = %q, want %q (no fallback attempt on ctx cancellation)", backend, ReflectionBackendGollem)
+	}
+}
+
 // usageFakeClient is fakeClient (above) extended to also carry a distinct
 // llm.Usage per canned response, so a test can force >1 StreamChat call and
 // assert that the per-call Usage values are actually SUMMED, not just the
@@ -467,5 +541,227 @@ func TestReflectAuto_AggregatesUsageAcrossRetries(t *testing.T) {
 	if usage.OutputTokens != wantOutput {
 		t.Fatalf("usage.OutputTokens = %d, expected %d (sum of both iterations' usage, not just the last)",
 			usage.OutputTokens, wantOutput)
+	}
+}
+
+// TestGollemModelRequest_NoTools_GenerateFullErrorPropagates proves Request's
+// plain (non-tool) path wraps a failing generateFull call with the model
+// name, rather than swallowing the error or panicking on a nil response.
+func TestGollemModelRequest_NoTools_GenerateFullErrorPropagates(t *testing.T) {
+	m := NewGollemModel(&flakyClient{fail: true})
+	_, err := m.Request(context.Background(), nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected Request to propagate the generateFull error")
+	}
+	if !strings.Contains(err.Error(), "gollem model") {
+		t.Fatalf("err = %v, want it to identify the gollem model", err)
+	}
+}
+
+// TestGollemModelRequestWithTools_CallToolsErrorPropagates proves
+// requestWithTools wraps a failing ToolCaller.CallTools call with the model
+// name and "(tool calling)" marker, distinct from the plain-path wrapping
+// above.
+func TestGollemModelRequestWithTools_CallToolsErrorPropagates(t *testing.T) {
+	tc := &fakeToolCaller{Client: NewStubClient(), err: errors.New("provider tool-call failure")}
+	m := NewGollemModel(tc)
+	params := &core.ModelRequestParameters{
+		FunctionTools: []core.ToolDefinition{{Name: "greet", Description: "greet someone"}},
+	}
+	_, err := m.Request(context.Background(), nil, nil, params)
+	if err == nil {
+		t.Fatal("expected Request to propagate the CallTools error")
+	}
+	if !strings.Contains(err.Error(), "tool calling") {
+		t.Fatalf("err = %v, want it to identify the tool-calling path", err)
+	}
+}
+
+// TestGollemModelRequestWithTools_PrefersRawArgsOverFlattenedArgs proves a
+// ToolCall carrying RawArgs (the model's exact JSON, ADR-0016 lever #1) wins
+// over the flattened string-map Args — the branch that preserves nested/typed
+// argument structure a flattened map would drop.
+func TestGollemModelRequestWithTools_PrefersRawArgsOverFlattenedArgs(t *testing.T) {
+	tc := &fakeToolCaller{
+		Client: NewStubClient(),
+		script: []ToolCallResult{{Calls: []ToolCall{{
+			Name:    "greet",
+			Args:    map[string]string{"who": "flattened"}, // must be ignored
+			RawArgs: json.RawMessage(`{"who":{"nested":"value"}}`),
+		}}}},
+	}
+	m := NewGollemModel(tc)
+	params := &core.ModelRequestParameters{
+		FunctionTools: []core.ToolDefinition{{Name: "greet"}},
+	}
+	resp, err := m.Request(context.Background(), nil, nil, params)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	calls := resp.ToolCalls()
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1", len(calls))
+	}
+	if calls[0].ArgsJSON != `{"who":{"nested":"value"}}` {
+		t.Fatalf("ArgsJSON = %q, want the RawArgs JSON preferred over the flattened Args map", calls[0].ArgsJSON)
+	}
+}
+
+// errReasoningToolCaller is a ReasoningToolCaller whose CallToolsReasoning
+// always fails, so callToolsMaybeReasoning's error-propagation branch (the
+// reasoning-carry path, distinct from plain CallTools' error path already
+// covered by TestGollemModelRequestWithTools_CallToolsErrorPropagates) can be
+// driven directly.
+type errReasoningToolCaller struct {
+	Client
+}
+
+func (e *errReasoningToolCaller) CallTools(ctx context.Context, system, prompt string, tools []ToolSpec) (ToolCallResult, error) {
+	res, _, err := e.CallToolsReasoning(ctx, system, prompt, tools, ReasoningState{})
+	return res, err
+}
+
+func (e *errReasoningToolCaller) CallToolsReasoning(context.Context, string, string, []ToolSpec, ReasoningState) (ToolCallResult, ReasoningState, error) {
+	return ToolCallResult{}, ReasoningState{}, errors.New("reasoning tool-call failure")
+}
+
+var _ ReasoningToolCaller = (*errReasoningToolCaller)(nil)
+
+// TestCallToolsMaybeReasoning_PropagatesReasoningError proves that when a
+// request-local reasoning accumulator is present AND the client implements
+// ReasoningToolCaller, an error from CallToolsReasoning propagates (and the
+// accumulator is left untouched) rather than being masked or causing a panic
+// on the *m.reasoningAcc = next assignment.
+func TestCallToolsMaybeReasoning_PropagatesReasoningError(t *testing.T) {
+	var acc ReasoningState
+	m := NewGollemModel(&errReasoningToolCaller{Client: NewStubClient()}).withReasoningAccumulator(&acc)
+
+	_, err := m.callToolsMaybeReasoning(context.Background(), &errReasoningToolCaller{Client: NewStubClient()}, "sys", "prompt", nil)
+	if err == nil {
+		t.Fatal("expected callToolsMaybeReasoning to propagate the CallToolsReasoning error")
+	}
+	if !acc.IsEmpty() {
+		t.Fatalf("accumulator = %+v, want untouched on error", acc)
+	}
+}
+
+// --- generateFull direct unit tests -----------------------------------------
+
+// TestGenerateFull_StreamChatError proves generateFull propagates an error
+// from the initial Client.StreamChat call unchanged (the earliest possible
+// failure point — before any token is ever read).
+func TestGenerateFull_StreamChatError(t *testing.T) {
+	fc := &flakyClient{fail: true}
+	_, usage, err := generateFull(context.Background(), fc, "sys", "prompt")
+	if err == nil {
+		t.Fatal("expected an error from a failing StreamChat")
+	}
+	if usage != nil {
+		t.Fatalf("usage = %+v, want nil on a StreamChat error", usage)
+	}
+}
+
+// TestGenerateFull_TokenErrorMidStream proves a mid-stream Token.Err aborts
+// generateFull immediately with that error, discarding any partial text
+// already accumulated (the caller cannot trust a partial structured-output
+// response).
+func TestGenerateFull_TokenErrorMidStream(t *testing.T) {
+	client := &erroringClient{}
+	_, _, err := generateFull(context.Background(), client, "sys", "prompt")
+	if !errors.Is(err, errStreamFailed) {
+		t.Fatalf("err = %v, want %v", err, errStreamFailed)
+	}
+}
+
+// blockingNoTokenClient's StreamChat returns an open channel that never sends
+// anything and is never closed within the test's lifetime — used to force
+// generateFull's ctx.Done() select branch to be the ONLY ready case,
+// deterministically (no race against a competing token arriving at the same
+// time).
+type blockingNoTokenClient struct{}
+
+func (blockingNoTokenClient) Name() string { return "blocking-no-token" }
+
+func (blockingNoTokenClient) StreamChat(context.Context, string, string) (<-chan Token, error) {
+	return make(chan Token), nil // never sent to, never closed
+}
+
+// TestGenerateFull_CtxCancelledMidStream proves generateFull returns
+// ctx.Err() (not a hang, not a Token-shaped error) when ctx is cancelled
+// while waiting on the token channel with nothing yet received.
+func TestGenerateFull_CtxCancelledMidStream(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, _, err := generateFull(ctx, blockingNoTokenClient{}, "sys", "prompt")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+// --- buildGollemPrompt / writeLine / outputInstruction direct unit tests ---
+
+// TestBuildGollemPrompt_IncludesPreviousModelResponseText proves a prior
+// core.ModelResponse's text content (a previous turn's answer) is folded into
+// the flattened prompt body — the "[previous model response]" branch
+// buildGollemPrompt's ModelResponse case handles, distinct from the
+// ModelRequest parts branches every other buildGollemPrompt test exercises.
+func TestBuildGollemPrompt_IncludesPreviousModelResponseText(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.UserPromptPart{Content: "what's the weather"},
+		}},
+		*core.TextResponse("it is sunny"),
+	}
+	_, prompt := buildGollemPrompt(messages, nil)
+	if !strings.Contains(prompt, "[previous model response] it is sunny") {
+		t.Fatalf("prompt = %q, want it to include the previous model response text", prompt)
+	}
+}
+
+// TestWriteLine_EmptyStringIsNoOp proves writeLine leaves the builder
+// untouched (no stray leading newline) when handed an empty string — the
+// short-circuit every call site relies on to skip absent message parts.
+func TestWriteLine_EmptyStringIsNoOp(t *testing.T) {
+	var b strings.Builder
+	writeLine(&b, "first")
+	writeLine(&b, "") // must be a no-op, not an empty extra line
+	writeLine(&b, "second")
+	if got, want := b.String(), "first\nsecond"; got != want {
+		t.Fatalf("writeLine sequence = %q, want %q", got, want)
+	}
+}
+
+// TestOutputInstruction_NilParamsAndOutputObject covers outputInstruction's
+// two branches no other test drives directly: nil params (no instruction at
+// all — the plain-text/no-structured-output case) and the OutputObject path
+// (native/prompted structured output with no synthetic output tool).
+func TestOutputInstruction_NilParamsAndOutputObject(t *testing.T) {
+	if got := outputInstruction(nil); got != "" {
+		t.Fatalf("outputInstruction(nil) = %q, want \"\"", got)
+	}
+
+	params := &core.ModelRequestParameters{
+		OutputObject: &core.OutputObjectDefinition{
+			Name:       "answer",
+			JSONSchema: core.Schema{"type": "object"},
+		},
+	}
+	got := outputInstruction(params)
+	if !strings.Contains(got, `"type": "object"`) {
+		t.Fatalf("outputInstruction(OutputObject) = %q, want it to embed the OutputObject's JSONSchema", got)
+	}
+}
+
+// --- toModelResponse direct unit test ---------------------------------------
+
+// TestToModelResponse_CarriesReasoningTokens proves a non-zero
+// Usage.ReasoningTokens (ADR-0061) is folded into
+// core.ModelResponse.Usage.Details["reasoning_tokens"], so a CostTracker
+// reading ModelResponse.Usage does not silently drop reasoning-token spend.
+func TestToModelResponse_CarriesReasoningTokens(t *testing.T) {
+	usage := &Usage{InputTokens: 10, OutputTokens: 5, ReasoningTokens: 7}
+	resp := toModelResponse(`{"reply":"ok"}`, usage, nil)
+	if resp.Usage.Details == nil || resp.Usage.Details["reasoning_tokens"] != 7 {
+		t.Fatalf("Usage.Details = %+v, want reasoning_tokens=7", resp.Usage.Details)
 	}
 }

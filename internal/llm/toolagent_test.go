@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/fugue-labs/gollem/core"
@@ -19,10 +21,14 @@ type fakeToolCaller struct {
 	script    []ToolCallResult
 	turn      int
 	lastSpecs []ToolSpec
+	err       error // when set, CallTools always fails with this error
 }
 
 func (f *fakeToolCaller) CallTools(_ context.Context, _, _ string, specs []ToolSpec) (ToolCallResult, error) {
 	f.lastSpecs = specs
+	if f.err != nil {
+		return ToolCallResult{}, f.err
+	}
 	if f.turn < len(f.script) {
 		r := f.script[f.turn]
 		f.turn++
@@ -187,6 +193,66 @@ func TestRunToolAgent_UnofferedToolNeverExecutes(t *testing.T) {
 	}
 }
 
+// TestRunToolAgent_ExecErrorReachesHandler proves a tool executor's error
+// (exec returning a non-nil error) is actually surfaced to the agent's tool
+// handler (RunToolAgentWithOutput's `if eerr != nil { return nil, eerr }`
+// branch) rather than that error path going untested — Gollem's own retry
+// machinery absorbs it into a corrective turn, which is why the run still
+// completes without a top-level error, but the exec failure itself must have
+// been invoked and observed.
+func TestRunToolAgent_ExecErrorReachesHandler(t *testing.T) {
+	tc := &fakeToolCaller{
+		Client: NewStubClient(),
+		script: []ToolCallResult{
+			{Calls: []ToolCall{{Name: "greet", Args: map[string]string{"who": "world"}}}},
+			{Message: "done"},
+		},
+	}
+	var execCalls int
+	exec := func(_ context.Context, _ string, _ string) (string, error) {
+		execCalls++
+		return "", errors.New("exec boom")
+	}
+
+	steps, err := RunToolAgent(context.Background(), tc, nil, "sys", "prompt",
+		[]ToolSpec{{Name: "greet"}}, exec, 3)
+	if err != nil {
+		t.Fatalf("RunToolAgent: %v", err)
+	}
+	if execCalls == 0 {
+		t.Fatal("expected exec to be invoked at least once")
+	}
+	// The failing exec call records no ToolStep (the handler returns before
+	// appending to steps on error).
+	if len(steps) != 0 {
+		t.Fatalf("steps = %+v, want none recorded for a failing exec call", steps)
+	}
+}
+
+// TestRunToolAgentWithOutput_NonGuardrailErrorPropagates proves that an
+// agent.Run error NOT attributable to the max-tool-steps guardrail (here: the
+// ADR-0010 max-prompt-length input guardrail rejecting an oversized prompt)
+// propagates as RunToolAgentWithOutput's own error return — the "any other
+// error... propagates" branch, distinct from TestRunToolAgent_MaxStepsGraceful's
+// graceful-stop branch.
+func TestRunToolAgentWithOutput_NonGuardrailErrorPropagates(t *testing.T) {
+	tc := &fakeToolCaller{Client: NewStubClient(), script: []ToolCallResult{{Message: "done"}}}
+	exec := func(_ context.Context, _ string, _ string) (string, error) { return "", nil }
+
+	bigPrompt := strings.Repeat("a", 100_001) // exceeds gollemMaxPromptChars
+	steps, out, err := RunToolAgentWithOutput(context.Background(), tc, nil, "sys", bigPrompt,
+		[]ToolSpec{{Name: "greet"}}, exec, 3)
+	if err == nil {
+		t.Fatal("expected a non-nil error for a guardrail rejection unrelated to max-tool-steps")
+	}
+	if len(steps) != 0 {
+		t.Fatalf("steps = %+v, want none", steps)
+	}
+	if out != "" {
+		t.Fatalf("out = %q, want empty on error", out)
+	}
+}
+
 // TestRunToolAgent_MaxStepsGraceful: a provider that always calls a tool never
 // converges; the max-tool-steps guardrail must stop it GRACEFULLY — RunToolAgent
 // returns the steps taken so far with a NIL error (so the endpoint yields partial
@@ -208,4 +274,28 @@ func TestRunToolAgent_MaxStepsGraceful(t *testing.T) {
 	if len(steps) == 0 {
 		t.Fatal("expected partial steps recorded before the max-steps stop")
 	}
+}
+
+// TestDecodeToolArgs covers decodeToolArgs' remaining branches: malformed
+// JSON (propagates the json.Unmarshal error) and a non-string scalar value
+// (stringified via fmt.Sprintf so the caller still gets a usable string arg).
+func TestDecodeToolArgs(t *testing.T) {
+	t.Run("malformed JSON propagates the unmarshal error", func(t *testing.T) {
+		_, err := decodeToolArgs(`{not valid json`)
+		if err == nil {
+			t.Fatal("expected an error for malformed tool-args JSON")
+		}
+	})
+	t.Run("non-string values are stringified", func(t *testing.T) {
+		args, err := decodeToolArgs(`{"count":3,"ok":true}`)
+		if err != nil {
+			t.Fatalf("decodeToolArgs: %v", err)
+		}
+		if args["count"] != "3" {
+			t.Fatalf("args[count] = %q, want %q", args["count"], "3")
+		}
+		if args["ok"] != "true" {
+			t.Fatalf("args[ok] = %q, want %q", args["ok"], "true")
+		}
+	})
 }

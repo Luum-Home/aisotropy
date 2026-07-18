@@ -39,6 +39,33 @@ func TestReasoningState_ValueSemantics(t *testing.T) {
 	}
 }
 
+// TestStepDownReasoningEffort_UnrecognizedValueIsUnchanged proves the
+// defensive fallback in stepDownReasoningEffort: a value not present on the
+// ladder (unreachable via the public ReasoningEffortForPressure path, which
+// always normalizes first) is returned unchanged rather than panicking or
+// defaulting to some other rung.
+func TestStepDownReasoningEffort_UnrecognizedValueIsUnchanged(t *testing.T) {
+	if got := stepDownReasoningEffort("not-a-real-effort-level"); got != "not-a-real-effort-level" {
+		t.Fatalf("stepDownReasoningEffort(unrecognized) = %q, want it unchanged", got)
+	}
+}
+
+// TestReasoningState_ReasoningText_JoinsMultipleThinkingBlocks proves that
+// TWO consecutive non-empty thinking blocks are newline-joined (not just
+// concatenated) — the thinking-case's own "already have content" branch,
+// distinct from the mixed thinking+text case TestReasoningState_
+// ReasoningText_SkipsRedacted exercises.
+func TestReasoningState_ReasoningText_JoinsMultipleThinkingBlocks(t *testing.T) {
+	s := ReasoningState{Blocks: []ReasoningBlock{
+		newThinkingBlock("first thought", "sig-1"),
+		newThinkingBlock("second thought", "sig-2"),
+	}}
+	got := s.ReasoningText()
+	if got != "first thought\nsecond thought" {
+		t.Fatalf("ReasoningText = %q, want newline-joined thinking blocks", got)
+	}
+}
+
 func TestReasoningState_ReasoningText_SkipsRedacted(t *testing.T) {
 	s := ReasoningState{Blocks: []ReasoningBlock{
 		newThinkingBlock("signed thoughts", "sig"),

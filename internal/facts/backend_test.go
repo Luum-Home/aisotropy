@@ -462,6 +462,71 @@ func TestDocBackendStore_BackendErrorsPropagate(t *testing.T) {
 			t.Fatalf("got %v", err)
 		}
 	})
+	t.Run("erase scope scan error", func(t *testing.T) {
+		b := newFakeDocBackend()
+		b.scanErr = sentinel
+		if _, err := newDocStore(b, time.Now()).EraseScope(ctx, sc); !errors.Is(err, sentinel) {
+			t.Fatalf("got %v", err)
+		}
+	})
+	t.Run("erase scope delete error", func(t *testing.T) {
+		b := newFakeDocBackend()
+		store := newDocStore(b, time.Now())
+		if err := store.Save(ctx, sc, Fact{ID: "f", TenantID: "acme", UserID: "alice", Content: "c"}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		b.delErr = sentinel
+		if _, err := store.EraseScope(ctx, sc); !errors.Is(err, sentinel) {
+			t.Fatalf("got %v", err)
+		}
+	})
+}
+
+// TestDocBackendStore_EraseScope proves EraseScope removes every document
+// (current and superseded) in sc's namespace, is a no-op when the namespace is
+// empty, leaves other scopes untouched, and is idempotent.
+func TestDocBackendStore_EraseScope(t *testing.T) {
+	b := newFakeDocBackend()
+	store := newDocStore(b, time.Now())
+	ctx := context.Background()
+	alice := Scope{tenant: "acme", user: "alice"}
+	bob := Scope{tenant: "acme", user: "bob"}
+
+	// Empty namespace: no-op, zero rows.
+	if n, err := store.EraseScope(ctx, alice); err != nil || n != 0 {
+		t.Fatalf("EraseScope on empty namespace = (%d,%v), want (0,nil)", n, err)
+	}
+
+	if err := store.Save(ctx, alice, Fact{ID: "a1", TenantID: "acme", UserID: "alice", Content: "first"}); err != nil {
+		t.Fatalf("Save a1: %v", err)
+	}
+	if err := store.Supersede(ctx, alice, "a1", Fact{ID: "a2", TenantID: "acme", UserID: "alice", Content: "second"}); err != nil {
+		t.Fatalf("Supersede: %v", err)
+	}
+	if err := store.Save(ctx, bob, Fact{ID: "b1", TenantID: "acme", UserID: "bob", Content: "bob content"}); err != nil {
+		t.Fatalf("Save b1: %v", err)
+	}
+
+	n, err := store.EraseScope(ctx, alice)
+	if err != nil {
+		t.Fatalf("EraseScope: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("EraseScope removed %d, want 2 (current a2 + superseded a1)", n)
+	}
+
+	all, err := store.ExportAll(ctx)
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+	if len(all) != 1 || all[0].ID != "b1" {
+		t.Fatalf("expected only bob's fact to remain, got %+v", all)
+	}
+
+	// Idempotent: erasing again removes nothing.
+	if n, err := store.EraseScope(ctx, alice); err != nil || n != 0 {
+		t.Fatalf("second EraseScope = (%d,%v), want (0,nil)", n, err)
+	}
 }
 
 func TestCombineDocScore(t *testing.T) {

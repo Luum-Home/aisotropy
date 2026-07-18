@@ -457,4 +457,75 @@ func TestRoutingStore_UseAfterClose(t *testing.T) {
 	if _, err := rs.ExportAll(ctx); !errors.Is(err, ErrRoutingStoreClosed) {
 		t.Fatalf("ExportAll after Close = %v, want ErrRoutingStoreClosed", err)
 	}
+	if _, err := rs.EraseScope(ctx, sc); !errors.Is(err, ErrRoutingStoreClosed) {
+		t.Fatalf("EraseScope after Close = %v, want ErrRoutingStoreClosed", err)
+	}
+}
+
+// noEraserStore implements facts.Store but deliberately NOT facts.ScopeEraser,
+// so RoutingStore.EraseScope's type-assertion failure branch can be driven
+// without a real misconfigured backend.
+type noEraserStore struct{ Store }
+
+func noEraserFactory(resource string) (Store, error) {
+	s, err := OpenSQLite(":memory:")
+	if err != nil {
+		return nil, err
+	}
+	return noEraserStore{Store: s}, nil
+}
+
+// TestRoutingStore_EraseScope proves EraseScope dispatches subject erasure to
+// the physical store for the scope's tenant tier, and that a routed store
+// which does not implement ScopeEraser fails loudly instead of silently
+// skipping the erase.
+func TestRoutingStore_EraseScope(t *testing.T) {
+	router := fakeRouter{dedicated: map[string]bool{"dedicated-a": true}}
+	rs, err := NewRoutingStore(router, "facts", []string{"dedicated-a"}, memoryFactory)
+	if err != nil {
+		t.Fatalf("NewRoutingStore: %v", err)
+	}
+	defer rs.Close()
+
+	ctx := context.Background()
+	sharedSc := mustScope(t, "shared-a", "user-1")
+	dedicatedSc := mustScope(t, "dedicated-a", "user-2")
+
+	if err := rs.Save(ctx, sharedSc, fact(sharedSc, "f-shared", "shared content")); err != nil {
+		t.Fatalf("Save shared: %v", err)
+	}
+	if err := rs.Save(ctx, dedicatedSc, fact(dedicatedSc, "f-dedicated", "dedicated content")); err != nil {
+		t.Fatalf("Save dedicated: %v", err)
+	}
+
+	// Erasing the dedicated tenant only removes its own row.
+	n, err := rs.EraseScope(ctx, dedicatedSc)
+	if err != nil {
+		t.Fatalf("EraseScope dedicated: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("EraseScope dedicated removed %d, want 1", n)
+	}
+
+	all, err := rs.ExportAll(ctx)
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+	if len(all) != 1 || all[0].ID != "f-shared" {
+		t.Fatalf("expected only f-shared to remain, got %+v", all)
+	}
+}
+
+func TestRoutingStore_EraseScopeNotAnEraser(t *testing.T) {
+	router := fakeRouter{}
+	rs, err := NewRoutingStore(router, "facts", nil, noEraserFactory)
+	if err != nil {
+		t.Fatalf("NewRoutingStore: %v", err)
+	}
+	defer rs.Close()
+
+	sc := mustScope(t, "shared-a", "user-1")
+	if _, err := rs.EraseScope(context.Background(), sc); err == nil {
+		t.Fatalf("expected an error when the routed store does not implement ScopeEraser")
+	}
 }

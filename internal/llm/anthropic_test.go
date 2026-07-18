@@ -12,6 +12,92 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
+// TestAnthropicThinkingBudget covers every anthropicThinkingBudget branch:
+// high/medium/low map to their fixed budgets, and anything else (including
+// "off") maps to 0 (no thinking).
+func TestAnthropicThinkingBudget(t *testing.T) {
+	cases := []struct {
+		effort string
+		want   int64
+	}{
+		{ReasoningEffortHigh, 8192},
+		{ReasoningEffortMedium, 4096},
+		{ReasoningEffortLow, 1024},
+		{ReasoningEffortOff, 0},
+		{"garbage", 0},
+	}
+	for _, tc := range cases {
+		if got := anthropicThinkingBudget(tc.effort); got != tc.want {
+			t.Errorf("anthropicThinkingBudget(%q) = %d, want %d", tc.effort, got, tc.want)
+		}
+	}
+}
+
+// TestAnthropicEnableReasoning_BumpsMaxTokensAboveBudget proves EnableReasoning
+// raises maxTokens only when it would otherwise leave no room for the answer
+// after the thinking budget (maxTokens <= budget), and leaves an already
+// sufficient maxTokens untouched.
+func TestAnthropicEnableReasoning_BumpsMaxTokensAboveBudget(t *testing.T) {
+	t.Run("high effort bumps a too-small maxTokens", func(t *testing.T) {
+		c := newTestAnthropicClient("http://unused", "")
+		c.maxTokens = 1024 // default; <= the 8192 high-effort budget
+		c.EnableReasoning(ReasoningEffortHigh)
+		if !c.reasoning || c.reasoningEffort != ReasoningEffortHigh {
+			t.Fatalf("expected reasoning enabled at high effort, got reasoning=%v effort=%q", c.reasoning, c.reasoningEffort)
+		}
+		if want := int64(8192 + 1024); c.maxTokens != want {
+			t.Fatalf("maxTokens = %d, want %d (budget + headroom)", c.maxTokens, want)
+		}
+	})
+
+	t.Run("already-sufficient maxTokens is left untouched", func(t *testing.T) {
+		c := newTestAnthropicClient("http://unused", "")
+		c.maxTokens = 20000 // already well above the 1024 low-effort budget
+		c.EnableReasoning(ReasoningEffortLow)
+		if c.maxTokens != 20000 {
+			t.Fatalf("maxTokens = %d, want unchanged 20000", c.maxTokens)
+		}
+	})
+
+	t.Run("off disables reasoning without touching maxTokens", func(t *testing.T) {
+		c := newTestAnthropicClient("http://unused", "")
+		c.maxTokens = 1024
+		c.reasoning = true
+		c.reasoningEffort = ReasoningEffortHigh
+		c.EnableReasoning(ReasoningEffortOff)
+		if c.reasoning {
+			t.Fatal("expected reasoning disabled after EnableReasoning(off)")
+		}
+		if c.maxTokens != 1024 {
+			t.Fatalf("maxTokens = %d, want unchanged 1024 on the off path", c.maxTokens)
+		}
+	})
+}
+
+// TestBuildAnthropicThinkingBlocks_RedactedBlockRoundTrips proves a redacted
+// (encrypted) prior thinking block re-materializes as a native
+// RedactedThinkingBlock — never decoded, opaque payload preserved — alongside
+// a signed thinking block in the same prior state.
+func TestBuildAnthropicThinkingBlocks_RedactedBlockRoundTrips(t *testing.T) {
+	prior := ReasoningState{Blocks: []ReasoningBlock{
+		newThinkingBlock("visible thoughts", "sig-1"),
+		newRedactedThinkingBlock("OPAQUE-ENCRYPTED-PAYLOAD"),
+	}}
+	blocks := buildAnthropicThinkingBlocks(prior)
+	if len(blocks) != 2 {
+		t.Fatalf("buildAnthropicThinkingBlocks returned %d blocks, want 2", len(blocks))
+	}
+	if blocks[0].OfThinking == nil {
+		t.Fatalf("blocks[0] is not a thinking block: %+v", blocks[0])
+	}
+	if blocks[1].OfRedactedThinking == nil {
+		t.Fatalf("blocks[1] is not a redacted-thinking block: %+v", blocks[1])
+	}
+	if blocks[1].OfRedactedThinking.Data != "OPAQUE-ENCRYPTED-PAYLOAD" {
+		t.Fatalf("redacted block data = %q, want the opaque payload preserved verbatim", blocks[1].OfRedactedThinking.Data)
+	}
+}
+
 // newTestAnthropicClient builds an AnthropicClient whose underlying SDK client
 // points at a test server instead of the real api.anthropic.com. The struct's
 // fields are unexported but reachable from an in-package (_test.go) test, which

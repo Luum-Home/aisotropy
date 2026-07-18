@@ -69,6 +69,15 @@ func TestSQLiteDeleteBeginError(t *testing.T) {
 	}
 }
 
+func TestSQLiteEraseScopeDBError(t *testing.T) {
+	s := openClosedSQLite(t)
+	sc := mustScope(t, "acme", "alice")
+	_, err := s.EraseScope(context.Background(), sc)
+	if err == nil || !strings.Contains(err.Error(), "facts: erase scope") {
+		t.Fatalf("EraseScope on a closed DB = %v, want a wrapped erase-scope error", err)
+	}
+}
+
 // TestSQLiteDeleteEmptyIDs covers the len(ids)==0 short-circuit: an empty id
 // slice is a no-op success and must not even open a transaction.
 func TestSQLiteDeleteEmptyIDs(t *testing.T) {

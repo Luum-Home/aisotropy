@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +75,30 @@ func TestReflectExhaustsRetries(t *testing.T) {
 	_, err := Reflect(context.Background(), gen, validate, "hello", 2)
 	if err == nil {
 		t.Fatal("expected error after exhausting retries")
+	}
+}
+
+// TestReflectPropagatesGenerateError verifies that when gen itself fails
+// (e.g. the underlying provider call errors, not a validation failure),
+// Reflect returns immediately with a wrapped "reflect: generate attempt N"
+// error instead of treating a generation failure as an empty response to
+// retry against.
+func TestReflectPropagatesGenerateError(t *testing.T) {
+	wantErr := errors.New("provider unavailable")
+	gen := func(_ context.Context, _, _ string) (string, error) {
+		return "", wantErr
+	}
+	validate := func(raw string) (reflectOutput, error) {
+		t.Fatal("validate must not be called when gen fails")
+		return reflectOutput{}, nil
+	}
+
+	_, err := Reflect(context.Background(), gen, validate, "hello", 2)
+	if err == nil || !errors.Is(err, wantErr) {
+		t.Fatalf("Reflect error = %v, want a wrapped %v", err, wantErr)
+	}
+	if !strings.Contains(err.Error(), "reflect: generate attempt 1") {
+		t.Fatalf("error = %q, want it to identify the failing attempt", err.Error())
 	}
 }
 

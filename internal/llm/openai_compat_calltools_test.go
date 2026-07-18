@@ -169,6 +169,67 @@ func TestCallTools_TransportError(t *testing.T) {
 	}
 }
 
+// TestCallToolsReasoning_ReturnsToolCallsAndReasoning covers CallToolsReasoning's
+// happy path: reasoning_effort is advertised in the request body, prior
+// text-kind reasoning is prepended to the prompt, and the response's own
+// reasoning field becomes the fresh returned ReasoningState.
+func TestCallToolsReasoning_ReturnsToolCallsAndReasoning(t *testing.T) {
+	resp := `{"choices":[{"message":{"content":"calling","reasoning":"thinking it through",
+		"tool_calls":[{"function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]}}]}`
+	var body string
+	srv := toolServer(t, http.StatusOK, resp, &body)
+	defer srv.Close()
+
+	c := NewOpenAICompatClient("test-key", "m", srv.URL, "test")
+	c.EnableReasoning(ReasoningEffortMedium)
+
+	prior := NewTextReasoningState("earlier train of thought")
+	res, next, err := c.CallToolsReasoning(context.Background(), "sys", "what's the weather",
+		[]ToolSpec{{Name: "get_weather"}}, prior)
+	if err != nil {
+		t.Fatalf("CallToolsReasoning: %v", err)
+	}
+	if res.Message != "calling" || len(res.Calls) != 1 {
+		t.Fatalf("res = %+v", res)
+	}
+	if next.ReasoningText() != "thinking it through" {
+		t.Fatalf("next.ReasoningText() = %q, want the response's reasoning", next.ReasoningText())
+	}
+	if !strings.Contains(body, `"reasoning_effort":"medium"`) {
+		t.Errorf("body missing reasoning_effort: %s", body)
+	}
+	if !strings.Contains(body, "earlier train of thought") {
+		t.Errorf("body missing prepended prior reasoning: %s", body)
+	}
+}
+
+// TestCallToolsReasoning_ErrorAndNoChoices covers CallToolsReasoning's two
+// non-happy branches: a failing sendToolCallRequest propagates its error, and
+// a well-formed but choice-less response yields an empty result/state pair.
+func TestCallToolsReasoning_ErrorAndNoChoices(t *testing.T) {
+	t.Run("transport/status error propagates", func(t *testing.T) {
+		srv := toolServer(t, http.StatusTooManyRequests, `{"error":"rate limited"}`, nil)
+		defer srv.Close()
+		c := NewOpenAICompatClient("test-key", "m", srv.URL, "test")
+		_, _, err := c.CallToolsReasoning(context.Background(), "s", "p", nil, ReasoningState{})
+		if err == nil {
+			t.Fatal("expected an error for status 429")
+		}
+	})
+	t.Run("no choices yields empty result and state", func(t *testing.T) {
+		srv := toolServer(t, http.StatusOK, `{"choices":[]}`, nil)
+		defer srv.Close()
+		c := NewOpenAICompatClient("test-key", "m", srv.URL, "test")
+		res, next, err := c.CallToolsReasoning(context.Background(), "s", "p", nil, ReasoningState{})
+		if err != nil {
+			t.Fatalf("CallToolsReasoning: %v", err)
+		}
+		if len(res.Calls) != 0 || res.Message != "" || !next.IsEmpty() {
+			t.Fatalf("res=%+v next=%+v, want both empty", res, next)
+		}
+	})
+}
+
 // TestParseToolArgs covers the arg-flattening helper directly across the shapes
 // it must handle: empty, malformed, empty-object, string passthrough, and
 // non-string re-encoding.
