@@ -37,37 +37,44 @@ goroutines draw from one upstream quota, so one shared pacer is the correct
 model (mirrors the existing process-global `retrySleep`).
 
 **Why fixed pacing isn't enough.** A single `-rps` number is a *guess* at the
-free-tier ceiling. Empirically `-rps 1.5` still tripped the limit **3×** in one
-run — it *reacts* to the limit (retry) instead of *avoiding* it. To truly avoid
-crossing the limit you must not need to know it, because it's undocumented and
-can shift. So the limiter is **adaptive (AIMD — additive-increase /
-multiplicative-decrease)**, the same control law TCP uses to find a link's
-capacity without being told it:
+free-tier ceiling. Empirically `-rps 1.5` (fixed) still tripped the limit **3×**
+in one run — it *reacts* (retry) instead of *avoiding*. To truly avoid crossing
+an *undocumented* limit you must not need to know it. So the limiter self-tunes.
+
+**Why plain AIMD isn't enough either.** The first cut used classic AIMD
+(additive-increase / multiplicative-decrease — TCP's law). But AIMD's job is
+throughput *maximization*: it deliberately **probes above** the limit to
+discover capacity, producing the familiar sawtooth. Measured with `-rps 3`:
+**~10 429s scattered evenly across the run**, each ridden out by retry but *none
+avoided* — worse than the fixed run. Wrong objective. Our objective is
+limit-*avoidance*.
+
+**The controller is asymmetric with a LEARNED ceiling.** It backs off hard and
+climbs back only up to a ceiling that *ratchets down* and never re-probes a
+known-bad rate — so it **latches** onto a safe rate and converges to zero:
 
 - **`observe(failed, rateLimited)`** feeds every call's outcome back:
-  - a **429** → the admitted rate is **halved** (down to a floor `minRate =
-    rps/10`, ≥0.1/s). Because the limiter is global, one 429 seen by *any*
-    framework slows down *all* of them — the coordination the shared limit needs.
-  - a **non-429 failure** (502/timeout) → rate unchanged (a downstream error is
-    no reason to speed up).
-  - a **clean success** → extends a streak; every 8 in a row, the rate steps up
-    additively (`+rps/8`) toward the ceiling.
-- It **starts at half the `-rps` ceiling** and climbs, so it approaches the real
-  limit **from below** — minimizing the warm-up overshoot a start-at-ceiling
-  policy would eat before it learns.
-- `wait()` reserves the next slot at the *current* adaptive rate **under a
-  mutex** but sleeps **outside** it, so N concurrent callers each get a distinct,
-  monotonically increasing slot without serializing on the lock while they wait.
-- `rps<=0` disables it entirely (a nil / zero-rate limiter's `wait()`/`observe()`
-  are immediate no-ops — exact old behavior, the default).
+  - a **429** → drop the **learned ceiling** to `0.75×` the rate that just broke
+    (ratchets down only, floored at `minRate = rps/10 ≥ 0.1/s`), then **halve**
+    the admitted rate. Global, so one 429 seen by *any* framework slows *all* of
+    them — the coordination the shared limit needs.
+  - a **non-429 failure** (502/timeout) → rate unchanged.
+  - a **clean success** → extends a streak; every 8 in a row, rate steps up
+    `+rps/8` but **capped by the learned ceiling**, never the hard `-rps` ceiling.
+- It **starts at a quarter of the `-rps` ceiling** and climbs, approaching the
+  limit **from well below** — minimal warm-up overshoot.
+- `wait()` reserves the next slot at the *current* rate **under a mutex** but
+  sleeps **outside** it, so N concurrent callers each get a distinct,
+  monotonically increasing slot without serializing on the lock.
+- `rps<=0` disables it (a nil / zero-rate limiter's `wait()`/`observe()` are
+  immediate no-ops — exact old behavior, the default).
 
-**Net effect vs. fixed pacing:** a fixed 1.5/s keeps tripping the limit all run
-long (it never learns → 3 scattered 429s). The adaptive limiter eats at most a
-couple of 429s while converging, then **backs off and stays under the ceiling
-for the rest of the run** — approaching zero 429s in steady state, which is the
-actual "avoid the limit" goal. `-rps` is now a **ceiling** (the fastest it may
-ever go), not a fixed rate: set it generously (e.g. `-rps 3`) and let AIMD find
-the safe rate underneath.
+**Net effect:** plain AIMD sawtooths (re-climbs to the ceiling, re-breaks,
+forever). The learned-ceiling controller eats **a few front-loaded 429s while it
+discovers the breaking point, then stays below it for the rest of the run** —
+converging to zero, which is the actual "avoid the limit" goal. `-rps` is an
+**upper bound**, not a fixed rate that must be guessed right: set it generously
+(e.g. `-rps 2`) and let the controller find the safe rate underneath.
 
 ### 2. Rate-limit-aware backoff — `retryBackoff(attempt, rateLimited)`
 
@@ -90,28 +97,50 @@ the duration into a negative/tiny value (the cap dominates well before then).
 ```bash
 # parallel but ADAPTIVELY paced + patient — self-tunes under the free-tier
 # limit, rides out any convergence-phase 429 with the long backoff
-go run ./arenas/live/runner -concurrency 4 -rps 3 -retry 4
+go run ./arenas/live/runner -concurrency 4 -rps 2 -retry 4
 ```
 
 - `-concurrency 4` — parallel across frameworks (each framework internally
   sequential and race-free; see the merge-by-slot design in
   `runCorrectnessPass`).
-- `-rps 3` — the pacing **ceiling** (fastest allowed). The adaptive limiter
-  starts at 1.5/s and backs off on any 429, converging to whatever the free tier
-  actually allows — so the exact number is a cap, not a guess that must be right.
-- `-retry 4` — enough attempts that a call caught during convergence (or a
-  closing throttle window) rides the 3s/6s/12s/24s backoff to success instead of
-  failing the cell.
+- `-rps 2` — the pacing **upper bound** (fastest allowed). The controller starts
+  at 0.5/s, and its learned ceiling ratchets down on any 429 to converge on
+  whatever the free tier actually allows — so the number is a cap, not a guess
+  that must be right.
+- `-retry 4` — enough attempts that a call caught during the (short) convergence
+  phase rides the 3s/6s/12s/24s backoff to success instead of failing the cell.
 
 The RESULTS.md header records the `-rps` value so a paced run is never mistaken
 for an unpaced one.
+
+## Uniformity / fairness (same treatment for every framework)
+
+Both levers live in the **runner**, not in any adapter — so they are applied
+**identically to all frameworks** (aisotropy and every competitor). The
+correctness/quality pass drives every framework through the *same*
+`runWorkItem → runAdapterRetry` path, which consults the *same* process-global
+`modelRateLimiter` and the *same* `-retry` policy. There is **no per-adapter
+pacing or retry**: no framework is sped up, slowed down, or given extra retries
+that another doesn't get. The limiter being global is also what makes the
+back-off fair — a 429 provoked by any one framework throttles the whole field
+equally, rather than penalizing the framework that happened to draw the slot.
+
+(Caveat worth knowing: an adapter's *own* SDK may retry a 429 internally before
+the runner ever sees it — that is outside the runner's control and differs by
+framework. The runner's global pacer still bounds how fast calls leave the host,
+but adapter-internal retries are a per-SDK behavior, not something the arena
+normalizes.)
 
 ## Scope / non-goals
 
 - The pacer gates the **correctness/quality pass** (the concurrent pass where
   the 429 storm occurred). The benchmark and new-dimension passes run
-  sequentially/uncontended by design, so they do not burst and are not paced —
-  pacing them would only slow them without preventing a real problem.
+  **sequentially/uncontended by design** — one call at a time, ~10–25s each, an
+  effective rate far below any free-tier limit (the same c=1 regime that was
+  always clean) — so they cannot burst and are deliberately **not** paced;
+  pacing them would only slow them and would also corrupt the p50/p95 latency
+  measurement (`runAdapter` times only `cmd.Run`, but a retry would still hide a
+  429 hole rather than measure it). This is uniform across frameworks too.
 - The definitive fix for *high*-concurrency throughput is an agnes **Token
   Plan** (a higher upstream limit). `-rps` + long 429 backoff make the free-tier
   usable under moderate concurrency; they do not raise the underlying ceiling.
@@ -123,8 +152,8 @@ for an unpaced one.
 
 `arenas/live/runner/ratelimit_test.go` (all under `go test -race`):
 - `TestRateLimiter_Disabled` — `-rps 0` and a nil receiver are no-ops (wait + observe).
-- `TestRateLimiter_PacesSuccessiveCalls` — frozen-clock reservation spacing (starts at half the ceiling).
-- `TestRateLimiter_AdaptiveBackoff` — AIMD: 429 halves the rate (floored), a success streak steps it up (capped), a non-429 failure leaves it alone.
+- `TestRateLimiter_PacesSuccessiveCalls` — frozen-clock reservation spacing (starts at a quarter of the ceiling).
+- `TestRateLimiter_AdaptiveBackoff` — learned ceiling: a 429 ratchets the ceiling down (0.75× the break) + halves the rate; a success streak re-climbs only to the learned ceiling (not the hard one); a non-429 failure leaves it alone; floors hold under many 429s.
 - `TestRateLimiter_ConcurrentNoRace` — many concurrent waiters + observers, race-free.
 - `TestRetryBackoff_Schedules` — both schedules + the overflow clamp.
 - `TestIsRateLimited_Classification` — 429 vs generic-transient split.

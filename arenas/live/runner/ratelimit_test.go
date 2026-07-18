@@ -36,16 +36,16 @@ func TestRateLimiter_Disabled(t *testing.T) {
 }
 
 // TestRateLimiter_PacesSuccessiveCalls drives a frozen clock so the reservation
-// spacing is deterministic. newRateLimiter(10) caps at 10/s but STARTS at half
-// the ceiling (5/s -> 200ms interval); with no observe() calls the rate stays
-// there, so each successive call reserves one 200ms interval further out.
+// spacing is deterministic. newRateLimiter(8) caps at 8/s but STARTS at a
+// quarter of the ceiling (2/s -> 500ms interval); with no observe() calls the
+// rate stays there, so each successive call reserves one 500ms interval further.
 func TestRateLimiter_PacesSuccessiveCalls(t *testing.T) {
-	rl := newRateLimiter(10) // ceiling 10/s; starts at 5/s -> 200ms interval
-	if rl.rate != 5 {
-		t.Fatalf("start rate = %v, want 5 (half the 10/s ceiling)", rl.rate)
+	rl := newRateLimiter(8) // ceiling 8/s; starts at 2/s -> 500ms interval
+	if rl.rate != 2 {
+		t.Fatalf("start rate = %v, want 2 (a quarter of the 8/s ceiling)", rl.rate)
 	}
-	if rl.intervalLocked() != 200*time.Millisecond {
-		t.Fatalf("interval = %s, want 200ms", rl.intervalLocked())
+	if rl.intervalLocked() != 500*time.Millisecond {
+		t.Fatalf("interval = %s, want 500ms", rl.intervalLocked())
 	}
 
 	base := time.Unix(1_700_000_000, 0)
@@ -56,10 +56,10 @@ func TestRateLimiter_PacesSuccessiveCalls(t *testing.T) {
 	defer func() { rateNow, rateSleep = origNow, origSleep }()
 
 	rl.wait() // slot=base,        sleep 0     (skipped)
-	rl.wait() // slot=base+200ms,  sleep 200ms
-	rl.wait() // slot=base+400ms,  sleep 400ms
+	rl.wait() // slot=base+500ms,  sleep 500ms
+	rl.wait() // slot=base+1000ms, sleep 1000ms
 
-	want := []time.Duration{200 * time.Millisecond, 400 * time.Millisecond}
+	want := []time.Duration{500 * time.Millisecond, 1000 * time.Millisecond}
 	if len(sleeps) != len(want) {
 		t.Fatalf("sleeps = %v, want %v", sleeps, want)
 	}
@@ -68,49 +68,78 @@ func TestRateLimiter_PacesSuccessiveCalls(t *testing.T) {
 			t.Errorf("sleeps[%d] = %s, want %s", i, sleeps[i], want[i])
 		}
 	}
-	if rl.next != base.Add(600*time.Millisecond) {
-		t.Errorf("rl.next = %s, want base+600ms", rl.next.Sub(base))
+	if rl.next != base.Add(1500*time.Millisecond) {
+		t.Errorf("rl.next = %s, want base+1500ms", rl.next.Sub(base))
 	}
 }
 
-// TestRateLimiter_AdaptiveBackoff is the AIMD proof: a 429 halves the admitted
-// rate (floored at minRate), a clean-success streak nudges it back up (capped at
-// the ceiling), and a non-429 failure leaves the rate alone. This is what lets
-// the limiter self-tune UNDER the real free-tier limit without knowing it.
+// TestRateLimiter_AdaptiveBackoff is the limit-avoidance proof: a 429 ratchets
+// the LEARNED ceiling down (to 0.75× the breaking rate) and halves the rate; a
+// success streak climbs back only up to that learned ceiling (NOT the hard
+// ceiling); a non-429 failure leaves the rate alone. This latching is what
+// converts plain-AIMD's sawtooth into convergence — the rate settles below the
+// breaking point and stops probing it.
 func TestRateLimiter_AdaptiveBackoff(t *testing.T) {
-	rl := newRateLimiter(8) // ceiling 8, start 4, inc 1, streakN 8, minRate 0.8
-	if rl.rate != 4 {
-		t.Fatalf("start rate = %v, want 4 (half the 8/s ceiling)", rl.rate)
+	rl := newRateLimiter(8) // hard ceiling 8, start 2 (8/4), inc 1, streakN 8, minRate 0.8
+	if rl.rate != 2 {
+		t.Fatalf("start rate = %v, want 2 (a quarter of the 8/s ceiling)", rl.rate)
+	}
+	if rl.softCeiling != 8 {
+		t.Fatalf("softCeiling = %v, want 8 (no knowledge yet = hard ceiling)", rl.softCeiling)
 	}
 	if rl.minRate != 0.8 {
 		t.Fatalf("minRate = %v, want 0.8", rl.minRate)
 	}
 
-	rl.observe(true, true) // 429 -> halve: 4 -> 2
-	if rl.rate != 2 {
-		t.Errorf("after 429 rate = %v, want 2", rl.rate)
+	// 429 at rate 2: learned ceiling -> 2*0.75 = 1.5; rate -> 1.
+	rl.observe(true, true)
+	if rl.rate != 1 {
+		t.Errorf("after 429 rate = %v, want 1", rl.rate)
 	}
-	rl.observe(true, false) // non-429 failure -> unchanged
-	if rl.rate != 2 {
-		t.Errorf("after non-429 failure rate = %v, want 2 (unchanged)", rl.rate)
+	if rl.softCeiling != 1.5 {
+		t.Errorf("after 429 softCeiling = %v, want 1.5", rl.softCeiling)
 	}
-	for i := 0; i < 8; i++ { // a streak of 8 clean successes -> +inc: 2 -> 3
+
+	// non-429 failure: rate unchanged.
+	rl.observe(true, false)
+	if rl.rate != 1 {
+		t.Errorf("after non-429 failure rate = %v, want 1 (unchanged)", rl.rate)
+	}
+
+	// A streak of 8 successes bumps by inc(1): 1 -> 2, but CAPPED at the learned
+	// ceiling 1.5 -> settles at 1.5 (not 2, and not the hard ceiling 8).
+	for i := 0; i < 8; i++ {
 		rl.observe(false, false)
 	}
-	if rl.rate != 3 {
-		t.Errorf("after 8-success streak rate = %v, want 3", rl.rate)
+	if rl.rate != 1.5 {
+		t.Errorf("after streak rate = %v, want 1.5 (capped by learned ceiling)", rl.rate)
 	}
-	for i := 0; i < 8*20; i++ { // many successes -> capped at the ceiling
+	for i := 0; i < 8*20; i++ { // many successes never exceed the learned ceiling
 		rl.observe(false, false)
 	}
-	if rl.rate != 8 {
-		t.Errorf("rate = %v, want capped at ceiling 8", rl.rate)
+	if rl.rate != 1.5 {
+		t.Errorf("rate = %v, want 1.5 (learned ceiling holds, never re-climbs to 8)", rl.rate)
 	}
-	for i := 0; i < 50; i++ { // many 429s -> floored at minRate, never below
+
+	// A second 429 at 1.5: learned ceiling -> 1.5*0.75 = 1.125; rate -> 0.75 but
+	// floored at minRate 0.8.
+	rl.observe(true, true)
+	if rl.softCeiling != 1.125 {
+		t.Errorf("after 2nd 429 softCeiling = %v, want 1.125", rl.softCeiling)
+	}
+	if rl.rate != rl.minRate {
+		t.Errorf("after 2nd 429 rate = %v, want floored at minRate %v", rl.rate, rl.minRate)
+	}
+
+	// Many 429s: rate and learned ceiling both floor at minRate, never below.
+	for i := 0; i < 50; i++ {
 		rl.observe(true, true)
 	}
 	if rl.rate != rl.minRate {
 		t.Errorf("rate = %v, want floored at minRate %v", rl.rate, rl.minRate)
+	}
+	if rl.softCeiling < rl.minRate {
+		t.Errorf("softCeiling = %v, want floored at minRate %v", rl.softCeiling, rl.minRate)
 	}
 }
 

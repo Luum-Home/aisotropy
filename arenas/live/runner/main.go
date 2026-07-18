@@ -54,7 +54,7 @@ func main() {
 	maxTasks := flag.Int("max-tasks", 0, "cap tasks per correctness mode (0 = all; bounds real spend on a re-run)")
 	concurrency := flag.Int("concurrency", 4, "max frameworks to run concurrently during the correctness/quality pass (1 = fully sequential, exact old behavior; the benchmark pass always stays sequential/uncontended)")
 	retry := flag.Int("retry", 1, "max retries per adapter invocation (correctness/quality pass) on a TRANSIENT failure — timeout/deadline/connection-reset/EOF or a 429/500/502/503/'unavailable' adapter error; a deterministic adapter/contract error never retries. 0 = no retry, exact old behavior")
-	rps := flag.Float64("rps", 0, "client-side GLOBAL rate limit in model calls/sec, shared across ALL concurrent framework goroutines (0 = disabled, exact old behavior). This is the client-side dual of the agnes FREE-TIER rate limit: with -concurrency>1, N frameworks otherwise burst their calls at once and blow the free-tier limit → a 429 storm (see docs/architecture/arena-rate-limiting.md). Sizing -rps at/under the free-tier ceiling paces the aggregate call rate so a parallel sweep stays clean. Recommended for -concurrency>1, e.g. -rps 1.5.")
+	rps := flag.Float64("rps", 0, "client-side GLOBAL model-call rate CEILING in calls/sec, shared across ALL concurrent framework goroutines (0 = disabled, exact old behavior). The client-side dual of the agnes FREE-TIER rate limit: with -concurrency>1, N frameworks otherwise burst their calls at once and blow the free-tier limit → a 429 storm. The pacer is ADAPTIVE and limit-AVOIDING (learned ceiling ratchets down on each 429 and never re-probes the known-bad rate; see docs/architecture/arena-rate-limiting.md), so this is an UPPER BOUND, not a fixed rate that must be guessed right — set it generously and let it self-tune below the real limit. Recommended for -concurrency>1, e.g. -rps 2.")
 	llmJudge := flag.Bool("llm-judge", false, "OPT-IN, default OFF: run the SECONDARY LLM-as-judge scoring pass (agnes judging agnes — a same-family judge that scores generously and non-discriminatingly; see docs/architecture/arena-deterministic-judging.md). The PRIMARY score is always the deterministic arenas/live/runner/scoring pass and needs no flag.")
 	skipJudge := flag.Bool("skip-judge", false, "force the LLM-as-judge pass off even if -llm-judge is set (kept for backward compatibility; -llm-judge already defaults to off)")
 	skipBench := flag.Bool("skip-bench", false, "skip the benchmark pass entirely")
@@ -487,34 +487,48 @@ var rateNow = time.Now
 //
 // The admitted rate self-tunes to stay UNDER the real agnes free-tier limit
 // without needing to know it (a fixed -rps guess can't — 1.5/s still tripped the
-// limit 3× in one run). observe() feeds each call's outcome back: a 429
-// multiplicatively HALVES the rate (down to a floor), a run of clean successes
-// additively nudges it back up (toward the -rps ceiling). Because the limiter is
-// process-global, a 429 seen by ANY framework slows down ALL of them — the
-// coordination the shared upstream limit requires. It starts BELOW the ceiling
-// (approaching the limit from below) so warm-up overshoot — the few 429s a
-// start-at-ceiling policy eats before it learns — is minimized.
+// limit 3× in one run). The control law is asymmetric on purpose, because the
+// goal is limit-AVOIDANCE, not throughput-maximization: plain AIMD sawtooths
+// (it re-climbs to the ceiling, re-breaks, forever — observed: ~10 scattered
+// 429s in one run, each ridden out but none AVOIDED). Instead, observe() feeds
+// each call's outcome back and maintains a LEARNED ceiling that only ever
+// ratchets DOWN:
+//   - a 429 → multiplicatively HALVE the rate (floored), AND drop the learned
+//     ceiling to safely below the rate that just broke, so growth never probes
+//     back up to a known-bad rate.
+//   - a clean-success streak → additively nudge the rate up, but capped by the
+//     LEARNED ceiling (not the -rps hard ceiling).
+//
+// The rate therefore LATCHES onto a safe value below the breaking point after a
+// few front-loaded 429s and then stays there — converging to zero. Because the
+// limiter is process-global, a 429 seen by ANY framework slows down ALL of them
+// (the coordination the shared upstream limit requires), and it starts well
+// below the ceiling so warm-up overshoot is minimal.
 type rateLimiter struct {
-	mu       sync.Mutex
-	rate     float64   // current admitted calls/sec; 0 = disabled
-	maxRate  float64   // ceiling (from -rps); rate never rises above this
-	minRate  float64   // floor; rate never drops below this
-	inc      float64   // additive rate bump per clean-success streak
-	streakN  int       // clean successes required before one additive bump
-	okStreak int       // consecutive clean successes since the last change
-	next     time.Time // earliest instant the next reserved slot may fire
+	mu          sync.Mutex
+	rate        float64   // current admitted calls/sec; 0 = disabled
+	maxRate     float64   // hard ceiling (from -rps); the learned ceiling never exceeds this
+	softCeiling float64   // LEARNED ceiling: ratchets down on each 429; growth is capped here
+	minRate     float64   // floor; rate never drops below this
+	inc         float64   // additive rate bump per clean-success streak
+	streakN     int       // clean successes required before one additive bump
+	okStreak    int       // consecutive clean successes since the last change
+	next        time.Time // earliest instant the next reserved slot may fire
 }
 
-// newRateLimiter builds an adaptive limiter whose admitted rate is capped at
-// `rps` calls/sec (the ceiling). It STARTS at half the ceiling and climbs on
-// sustained success, so it approaches the upstream limit from below. rps<=0
-// yields a disabled limiter whose wait()/observe() are immediate no-ops.
+// newRateLimiter builds an adaptive, limit-avoiding limiter whose admitted rate
+// is capped at `rps` calls/sec (the hard ceiling). It STARTS at a quarter of the
+// ceiling (conservative — approach the limit from well below) and climbs on
+// sustained success toward the LEARNED ceiling, which begins at the hard ceiling
+// and only ratchets down. rps<=0 yields a disabled limiter whose wait()/observe()
+// are immediate no-ops.
 func newRateLimiter(rps float64) *rateLimiter {
 	rl := &rateLimiter{}
 	if rps <= 0 {
 		return rl // disabled
 	}
 	rl.maxRate = rps
+	rl.softCeiling = rps // no knowledge yet → learned ceiling = hard ceiling
 	rl.minRate = rps / 10
 	if rl.minRate < 0.1 {
 		rl.minRate = 0.1 // ~6s/call floor — below this the free tier is unusable anyway
@@ -524,7 +538,7 @@ func newRateLimiter(rps float64) *rateLimiter {
 	}
 	rl.inc = rps / 8
 	rl.streakN = 8
-	rl.rate = rps / 2 // start below the ceiling; climb toward it on success
+	rl.rate = rps / 4 // start well below the ceiling; climb toward the learned ceiling on success
 	if rl.rate < rl.minRate {
 		rl.rate = rl.minRate
 	}
@@ -560,13 +574,16 @@ func (rl *rateLimiter) wait() {
 	}
 }
 
-// observe feeds a call's outcome back into the AIMD controller:
-//   - rateLimited (a 429): multiplicatively HALVE the admitted rate (floored at
-//     minRate) so the whole run immediately backs off below the upstream limit.
+// observe feeds a call's outcome back into the limit-avoiding controller:
+//   - rateLimited (a 429): ratchet the LEARNED ceiling down to 0.75× the rate
+//     that just broke (never up, floored at minRate), then multiplicatively
+//     HALVE the admitted rate (floored at minRate). The whole run backs off
+//     below the upstream limit AND never re-probes up to the known-bad rate.
 //   - failed but NOT a 429 (a 502/timeout): leave the rate unchanged and reset
 //     the success streak — a downstream error is no reason to speed up.
 //   - clean success: extend the streak; every streakN in a row, additively bump
-//     the rate by inc toward maxRate.
+//     the rate by inc but capped by the LEARNED ceiling (softCeiling), so the
+//     rate latches just under the breaking point instead of sawtoothing.
 //
 // Concurrent-safe; a disabled limiter (or nil receiver) is a no-op.
 func (rl *rateLimiter) observe(failed, rateLimited bool) {
@@ -580,6 +597,14 @@ func (rl *rateLimiter) observe(failed, rateLimited bool) {
 	}
 	switch {
 	case rateLimited:
+		// Learn: the current rate provoked a 429 → cap future growth safely
+		// below it. Ratchets DOWN only; each fresh 429 tightens it further.
+		if c := rl.rate * 0.75; c < rl.softCeiling {
+			rl.softCeiling = c
+		}
+		if rl.softCeiling < rl.minRate {
+			rl.softCeiling = rl.minRate
+		}
 		rl.rate /= 2
 		if rl.rate < rl.minRate {
 			rl.rate = rl.minRate
@@ -591,8 +616,8 @@ func (rl *rateLimiter) observe(failed, rateLimited bool) {
 		rl.okStreak++
 		if rl.okStreak >= rl.streakN {
 			rl.rate += rl.inc
-			if rl.rate > rl.maxRate {
-				rl.rate = rl.maxRate
+			if rl.rate > rl.softCeiling { // capped by the LEARNED ceiling, not maxRate
+				rl.rate = rl.softCeiling
 			}
 			rl.okStreak = 0
 		}
