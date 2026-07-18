@@ -184,3 +184,20 @@ func TestApp_IngestTenantFile_SharedBucket(t *testing.T) {
 		t.Fatalf("chunks ingested = %d, want >= 1", n)
 	}
 }
+
+// TestApp_IngestTenantFile_EmptyContentSurfaced covers IngestTenantFile's own
+// extractFileDocs-error branch (distinct from IngestFile's): a parseable-but-
+// textless document fails with ErrEmptyContent rather than silently ingesting
+// nothing into the tenant-shared bucket.
+func TestApp_IngestTenantFile_EmptyContentSurfaced(t *testing.T) {
+	a := New(WithLLM(llm.NewStubClient()))
+	defer a.Close()
+	ctx := context.Background()
+
+	_, err := a.IngestTenantFile(ctx, "acme", FileDocument{
+		ID: "blank", Data: []byte("    \n\t  "), ContentType: ingest.ContentTypePlain,
+	})
+	if !errors.Is(err, ErrEmptyContent) {
+		t.Fatalf("IngestTenantFile on textless input: err = %v, want wrapping ErrEmptyContent", err)
+	}
+}

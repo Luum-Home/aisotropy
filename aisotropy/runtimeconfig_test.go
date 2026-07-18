@@ -28,6 +28,7 @@ func isolateEnv(t *testing.T, keys ...string) {
 
 func ptrBool(b bool) *bool        { return &b }
 func ptrFloat(f float64) *float64 { return &f }
+func ptrInt(n int) *int           { return &n }
 
 const sampleRuntimeYAML = `
 addr: ":9191"
@@ -290,5 +291,111 @@ func TestApp_WithConfigFile_MalformedFailsBoot(t *testing.T) {
 	app := New(WithConfigFile(path))
 	if err := app.applyConfigFile(); err == nil {
 		t.Fatal("applyConfigFile(malformed) = nil, want a clear error")
+	}
+}
+
+// TestRuntimeConfig_EnvMap_IntAndDedicatedTenants covers envMap's setInt closure
+// (never exercised by the other tests, which only ever set string/float/bool
+// fields) and the DedicatedTenants>0 branch, by populating Burst, QdrantPort,
+// and DedicatedTenants directly and checking the materialized keys.
+func TestRuntimeConfig_EnvMap_IntAndDedicatedTenants(t *testing.T) {
+	c := RuntimeConfig{
+		Burst:            ptrInt(55),
+		QdrantPort:       ptrInt(6334),
+		DedicatedTenants: []string{"acme", "globex"},
+	}
+	m := c.envMap()
+	if m["AISOTROPY_BURST"] != "55" {
+		t.Errorf("AISOTROPY_BURST = %q, want \"55\"", m["AISOTROPY_BURST"])
+	}
+	if m["QDRANT_PORT"] != "6334" {
+		t.Errorf("QDRANT_PORT = %q, want \"6334\"", m["QDRANT_PORT"])
+	}
+	if m["AISOTROPY_DEDICATED_TENANTS"] != "acme,globex" {
+		t.Errorf("AISOTROPY_DEDICATED_TENANTS = %q, want \"acme,globex\"", m["AISOTROPY_DEDICATED_TENANTS"])
+	}
+}
+
+// TestRuntimeConfig_EnvMap_EmptyDedicatedTenantsOmitted covers the
+// DedicatedTenants==0 branch (the setStr call is skipped): an empty slice must
+// not materialize the key at all.
+func TestRuntimeConfig_EnvMap_EmptyDedicatedTenantsOmitted(t *testing.T) {
+	c := RuntimeConfig{}
+	m := c.envMap()
+	if _, ok := m["AISOTROPY_DEDICATED_TENANTS"]; ok {
+		t.Error("AISOTROPY_DEDICATED_TENANTS must be omitted when DedicatedTenants is empty")
+	}
+}
+
+// TestRuntimeConfig_Materialize_SetenvErrorSurfaces covers materialize's
+// os.Setenv-error branch: a value containing a NUL byte is rejected by the OS,
+// and materialize must return that error wrapped rather than silently
+// continuing (or panicking).
+func TestRuntimeConfig_Materialize_SetenvErrorSurfaces(t *testing.T) {
+	isolateEnv(t, "AISOTROPY_ADDR")
+	c := RuntimeConfig{Addr: "bad\x00value"}
+	if _, err := c.materialize(); err == nil {
+		t.Fatal("materialize with a NUL byte in a value must return an error, not silently set it")
+	}
+}
+
+// TestLoadAndMaterialize_MaterializeErrorSurfaces covers
+// LoadAndMaterializeRuntimeConfig's materialize-error propagation branch: a
+// well-formed file whose value cannot be set as an env var (NUL byte) makes
+// LoadAndMaterializeRuntimeConfig return that error rather than swallowing it.
+func TestLoadAndMaterialize_MaterializeErrorSurfaces(t *testing.T) {
+	isolateEnv(t, "AISOTROPY_ADDR")
+	path := writeTemp(t, "aisotropy.runtime.yaml", "addr: \"bad\\u0000value\"\n")
+	if _, err := LoadAndMaterializeRuntimeConfig(path); err == nil {
+		t.Fatal("LoadAndMaterializeRuntimeConfig must surface a materialize error (NUL byte value)")
+	}
+}
+
+// TestResolveConfigPath_EnvVarAndDefaultSearchPath covers resolveConfigPath's
+// two remaining branches: the AISOTROPY_CONFIG_FILE env var (with no explicit
+// path argument) and the default-search-paths fallback (a file present under
+// one of defaultConfigSearchPaths' relative names in the current directory).
+func TestResolveConfigPath_EnvVarAndDefaultSearchPath(t *testing.T) {
+	isolateEnv(t, configFileEnv)
+
+	t.Run("env var selects the path", func(t *testing.T) {
+		t.Setenv(configFileEnv, "/some/configured/path.yaml")
+		path, ok := resolveConfigPath("")
+		if !ok || path != "/some/configured/path.yaml" {
+			t.Fatalf("resolveConfigPath(\"\") = (%q,%v), want (/some/configured/path.yaml,true)", path, ok)
+		}
+	})
+
+	t.Run("default search path found on disk", func(t *testing.T) {
+		// resolveConfigPath probes RELATIVE paths, so run from a temp cwd.
+		dir := t.TempDir()
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Getwd: %v", err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatalf("Chdir: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+		want := defaultConfigSearchPaths[0]
+		if err := os.WriteFile(filepath.Join(dir, want), []byte("addr: \":1234\"\n"), 0o600); err != nil {
+			t.Fatalf("write default search path file: %v", err)
+		}
+
+		path, ok := resolveConfigPath("")
+		if !ok || path != want {
+			t.Fatalf("resolveConfigPath(\"\") = (%q,%v), want (%q,true)", path, ok, want)
+		}
+	})
+}
+
+// TestRedactSecretKeys covers both branches: a secret-bearing key name is
+// annotated "(secret)" while a non-secret key name passes through verbatim.
+func TestRedactSecretKeys(t *testing.T) {
+	got := redactSecretKeys([]string{"AISOTROPY_JWT_SECRET", "AISOTROPY_ADDR"})
+	want := []string{"AISOTROPY_JWT_SECRET (secret)", "AISOTROPY_ADDR"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("redactSecretKeys(...) = %v, want %v", got, want)
 	}
 }

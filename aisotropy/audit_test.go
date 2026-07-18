@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -140,4 +141,75 @@ func routes(events []audit.Event) []string {
 		out = append(out, e.Route)
 	}
 	return out
+}
+
+// recordingAuditSink is a minimal AuditSink a test can install via
+// WithAuditSink; closeErr lets a test force the Close() error branch Run's
+// shutdown defer must log rather than panic on.
+type recordingAuditSink struct {
+	closeErr error
+	records  int
+}
+
+func (s *recordingAuditSink) Record(audit.Event) { s.records++ }
+func (s *recordingAuditSink) Close() error       { return s.closeErr }
+
+// TestWithAuditSink_InstallsCustomSink covers WithAuditSink's non-nil branch: a
+// consumer-supplied sink wins over the env-driven default and observes the
+// requests Run serves.
+func TestWithAuditSink_InstallsCustomSink(t *testing.T) {
+	sink := &recordingAuditSink{}
+	addr := freeAddr(t)
+	app := New(WithAddr(addr), WithLLM(fastStub()), WithAuthenticator(NoAuth()), WithAuditSink(sink))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- app.Run(ctx) }()
+	waitForServer(t, "http://"+addr+"/healthz")
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+		"http://"+addr+"/v1/tenant/acme/user/alice/chat",
+		strings.NewReader(`{"prompt":"hi","product_id":"p1","session_id":"s1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /chat: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	cancel()
+	if rerr := <-errCh; rerr != nil {
+		t.Fatalf("Run returned error on shutdown: %v", rerr)
+	}
+	if sink.records == 0 {
+		t.Fatal("custom audit sink installed via WithAuditSink recorded nothing; the env-driven default must not have been used instead")
+	}
+}
+
+// TestWithAuditSink_NilIgnored covers WithAuditSink's nil-ignored branch: a nil
+// sink leaves the App on the env-driven default rather than crashing later.
+func TestWithAuditSink_NilIgnored(t *testing.T) {
+	app := New(WithLLM(fastStub()), WithAuditSink(nil))
+	if app.auditSink != nil {
+		t.Fatal("WithAuditSink(nil) must be a no-op, not install a nil sink")
+	}
+}
+
+// TestRun_AuditSinkCloseErrorLogged covers Run's shutdown-defer branch where
+// auditSink.Close() itself errors: Run must still return the (nil) shutdown
+// error rather than propagate the close failure, logging it instead.
+func TestRun_AuditSinkCloseErrorLogged(t *testing.T) {
+	sink := &recordingAuditSink{closeErr: errors.New("sink close boom")}
+	addr := freeAddr(t)
+	app := New(WithAddr(addr), WithLLM(fastStub()), WithAuthenticator(NoAuth()), WithAuditSink(sink))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- app.Run(ctx) }()
+	waitForServer(t, "http://"+addr+"/healthz")
+
+	cancel()
+	if rerr := <-errCh; rerr != nil {
+		t.Fatalf("Run returned error on shutdown: %v (a failed audit-sink close must only be logged)", rerr)
+	}
 }

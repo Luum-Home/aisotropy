@@ -161,6 +161,19 @@ func listedToolNames(t *testing.T, base, token string) []string {
 	return names
 }
 
+// TestWithMCPServe_DefaultPath covers WithMCPServe's empty-path default branch:
+// an empty path mounts at "/mcp" rather than leaving the spec unset or mounting
+// at an empty route.
+func TestWithMCPServe_DefaultPath(t *testing.T) {
+	app := New(WithLLM(fastStub()), WithMCPServe(""))
+	if app.mcpServe == nil {
+		t.Fatal("WithMCPServe(\"\") must still install a mcpServeSpec")
+	}
+	if app.mcpServe.path != "/mcp" {
+		t.Errorf("mcpServe.path = %q, want the default \"/mcp\"", app.mcpServe.path)
+	}
+}
+
 // TestMCPServe_ScopeGate proves the constitutional scope gate governs the serve
 // side: a served MCP client with scopes S sees ONLY tools.Registry.Permitted(S)
 // in tools/list, and a tools/call for a tool outside S is refused (never run).

@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -180,6 +181,25 @@ func TestAuthenticatorFromEnv_RS256StaticKeyFile(t *testing.T) {
 	tok := mintRS256(t, key, "", rsClaims())
 	if _, aerr := authr.Authenticate(context.Background(), fakeAuthRequest{authorization: "Bearer " + tok}); aerr != nil {
 		t.Fatalf("valid RS256 token rejected: %v", aerr)
+	}
+}
+
+// TestAuthenticatorFromEnv_RS256StaticKeyFile_ReadErrorSurfaces covers the
+// AISOTROPY_JWT_PUBLIC_KEY_FILE read-error branch: a path that cannot be read
+// (does not exist) surfaces a wrapped error naming the OS cause, never key
+// bytes, rather than a panic or a silent fallback.
+func TestAuthenticatorFromEnv_RS256StaticKeyFile_ReadErrorSurfaces(t *testing.T) {
+	t.Setenv("AISOTROPY_JWT_PUBLIC_KEY_FILE", filepath.Join(t.TempDir(), "does-not-exist.pem"))
+
+	_, mode, err := AuthenticatorFromEnv()
+	if err == nil {
+		t.Fatal("AuthenticatorFromEnv with an unreadable AISOTROPY_JWT_PUBLIC_KEY_FILE must return an error")
+	}
+	if mode != "jwt-rs256" {
+		t.Errorf("mode = %q, want jwt-rs256", mode)
+	}
+	if !strings.Contains(err.Error(), "AISOTROPY_JWT_PUBLIC_KEY_FILE") {
+		t.Errorf("error = %q, want it to name AISOTROPY_JWT_PUBLIC_KEY_FILE", err.Error())
 	}
 }
 

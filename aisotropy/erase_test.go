@@ -2,10 +2,14 @@ package aisotropy
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/memory"
+	"github.com/Luum-Home/aisotropy/internal/plugintest"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
 )
 
@@ -156,5 +160,100 @@ func TestEraseSubjectRejectsBlankIdentity(t *testing.T) {
 	// The real subject is untouched by the rejected calls (no wildcard delete).
 	if !factsHas(t, rt, "acme", "alice") || !wmHas(t, rt, "acme", "alice") {
 		t.Fatal("a rejected erase deleted real data — wildcard leak")
+	}
+}
+
+// TestEraseSubject_RuntimeBuildFailureSurfaces covers EraseSubject's
+// ensureRuntime-error branch: a data dir that is actually a file makes runtime
+// construction fail, and EraseSubject surfaces that error.
+func TestEraseSubject_RuntimeBuildFailureSurfaces(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	t.Setenv("AISOTROPY_DATA_DIR", f)
+
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9))
+	defer func() { _ = app.Close() }()
+
+	if _, err := app.EraseSubject(context.Background(), "acme", "alice"); err == nil {
+		t.Fatal("EraseSubject must surface the runtime build failure from a bad data dir")
+	}
+}
+
+// scanErrDocBackend is a facts.DocBackend whose Scan fails, so the sealed
+// store's EraseScope (which Scans the namespace before deleting) surfaces an
+// error rather than silently reporting zero erased.
+type scanErrDocBackend struct {
+	*plugintest.RefDocBackend
+}
+
+func (scanErrDocBackend) Scan(context.Context, string) ([]facts.BackendDoc, error) {
+	return nil, errors.New("facts scan backend down")
+}
+
+// TestEraseSubject_FactsEraseScopeErrorSurfaces covers EraseSubject's facts-tier
+// EraseScope-error branch: a cancelled ctx makes the facts tier's EraseScope
+// call fail (context canceled), and EraseSubject surfaces it wrapped rather than
+// silently returning a zero report.
+func TestEraseSubject_FactsEraseScopeErrorSurfaces(t *testing.T) {
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9))
+	defer closeApp(t, app)()
+
+	if _, err := app.ensureRuntime(); err != nil {
+		t.Fatalf("ensureRuntime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := app.EraseSubject(ctx, "acme", "alice"); err == nil {
+		t.Fatal("EraseSubject must surface a facts-tier EraseScope error")
+	}
+}
+
+// TestEraseSubject_FactsBackendScanErrorSurfaces is the WithFactsBackend
+// analogue: a community DocBackend whose Scan fails makes the sealed store's
+// EraseScope error, surfaced by EraseSubject.
+func TestEraseSubject_FactsBackendScanErrorSurfaces(t *testing.T) {
+	backend := scanErrDocBackend{RefDocBackend: plugintest.NewRefDocBackend()}
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9), WithFactsBackend(backend))
+	defer closeApp(t, app)()
+
+	if _, err := app.EraseSubject(context.Background(), "acme", "alice"); err == nil {
+		t.Fatal("EraseSubject must surface the facts backend Scan error")
+	}
+}
+
+// TestEraseSubject_SemanticEraseScopeErrorSurfaces covers EraseSubject's
+// semantic-tier EraseScope-error branch: a vector backend whose Scan fails
+// makes the sealed store's EraseScope error, surfaced rather than swallowed.
+func TestEraseSubject_SemanticEraseScopeErrorSurfaces(t *testing.T) {
+	backend := scanErrVectorBackend{RefVectorBackend: plugintest.NewRefVectorBackend()}
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9), WithVectorBackend(backend))
+	defer closeApp(t, app)()
+
+	if _, err := app.EraseSubject(context.Background(), "acme", "alice"); err == nil {
+		t.Fatal("EraseSubject must surface the semantic backend Scan error")
+	}
+}
+
+// TestEraseSubject_WorkingMemoryEraseErrorSurfaces covers EraseSubject's
+// working-memory EraseSubject-error branch: closing the working-memory store
+// before the call makes wm.EraseSubject fail (DB closed), which EraseSubject
+// must surface wrapped rather than silently reporting a zero count.
+func TestEraseSubject_WorkingMemoryEraseErrorSurfaces(t *testing.T) {
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9))
+	defer closeApp(t, app)()
+
+	rt, err := app.ensureRuntime()
+	if err != nil {
+		t.Fatalf("ensureRuntime: %v", err)
+	}
+	if err := rt.wm.Close(); err != nil {
+		t.Fatalf("wm.Close: %v", err)
+	}
+
+	if _, err := app.EraseSubject(context.Background(), "acme", "alice"); err == nil {
+		t.Fatal("EraseSubject must surface a working-memory erase error")
 	}
 }

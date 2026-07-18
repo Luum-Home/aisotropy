@@ -3,6 +3,8 @@ package aisotropy_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -212,4 +214,174 @@ func TestGraph_MultiTenantIdentity(t *testing.T) {
 	if observed["acme"] != "acme" || observed["globex"] != "globex" {
 		t.Fatalf("tenant identity not propagated to the tool executor: %+v", observed)
 	}
+}
+
+// TestGraphSpec_SetMaxNodes covers the node-count ceiling override: a graph
+// built with a lowered ceiling still builds and runs fine when its node count
+// stays within it.
+func TestGraphSpec_SetMaxNodes(t *testing.T) {
+	g, err := aisotropy.NewGraph().
+		AddNode(aisotropy.Node{
+			ID: "solo", System: "s",
+			Prompt: func(in aisotropy.GraphInput, _ map[string]aisotropy.EdgePayload) (string, error) {
+				return in.Prompt, nil
+			},
+		}).
+		SetEntry("solo").
+		SetMaxNodes(5).
+		Build()
+	if err != nil {
+		t.Fatalf("Build with SetMaxNodes(5): %v", err)
+	}
+
+	app := aisotropy.New(aisotropy.WithLLM(&scriptedToolClient{}), aisotropy.WithGraph("g", g))
+	t.Cleanup(func() { _ = app.Close() })
+
+	res, err := app.RunGraph(context.Background(), "g", aisotropy.GraphInput{Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("RunGraph: %v", err)
+	}
+	if strings.TrimSpace(res.Output) != "brief" {
+		t.Fatalf("graph Output = %q, want the stub's brief reply", res.Output)
+	}
+}
+
+// TestWithGraph_EmptyNameOrNilGraphIgnored covers WithGraph's no-op guard: an
+// empty name or a nil graph is silently ignored rather than mounted, so a later
+// RunGraph against that name still reports "no graph named".
+func TestWithGraph_EmptyNameOrNilGraphIgnored(t *testing.T) {
+	g, err := aisotropy.NewGraph().
+		AddNode(aisotropy.Node{ID: "n", System: "s"}).
+		SetEntry("n").
+		Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	app := aisotropy.New(
+		aisotropy.WithLLM(&scriptedToolClient{}),
+		aisotropy.WithGraph("", g),    // empty name: ignored
+		aisotropy.WithGraph("x", nil), // nil graph: ignored
+	)
+	t.Cleanup(func() { _ = app.Close() })
+
+	if _, err := app.RunGraph(context.Background(), "", aisotropy.GraphInput{Prompt: "hi"}); err == nil {
+		t.Fatal("RunGraph(\"\") should not find a graph mounted under an empty name")
+	}
+	if _, err := app.RunGraph(context.Background(), "x", aisotropy.GraphInput{Prompt: "hi"}); err == nil {
+		t.Fatal("RunGraph(\"x\") should not find a graph mounted via WithGraph(\"x\", nil)")
+	}
+}
+
+// TestWithGraphIdentity_InvalidIdentityErrors covers WithGraphIdentity's error
+// branch: an empty tenant fails the same identity validation the HTTP boundary
+// applies, returning an error rather than a silently unscoped ctx.
+func TestWithGraphIdentity_InvalidIdentityErrors(t *testing.T) {
+	if _, err := aisotropy.WithGraphIdentity(context.Background(), "", "alice"); err == nil {
+		t.Fatal("WithGraphIdentity with an empty tenant must return an error")
+	}
+	if _, err := aisotropy.WithGraphIdentity(context.Background(), "acme", "bad:user"); err == nil {
+		t.Fatal("WithGraphIdentity with a reserved-character user must return an error")
+	}
+}
+
+// TestRunGraph_RuntimeBuildFailureSurfaces covers RunGraph's ensureRuntime-error
+// branch: a data dir that is actually a file makes runtime construction fail,
+// and RunGraph surfaces that error rather than panicking or running anyway.
+func TestRunGraph_RuntimeBuildFailureSurfaces(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	t.Setenv("AISOTROPY_DATA_DIR", f)
+
+	g, err := aisotropy.NewGraph().
+		AddNode(aisotropy.Node{ID: "n", System: "s"}).
+		SetEntry("n").
+		Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	app := aisotropy.New(aisotropy.WithLLM(&scriptedToolClient{}), aisotropy.WithGraph("g", g))
+	t.Cleanup(func() { _ = app.Close() })
+
+	if _, err := app.RunGraph(context.Background(), "g", aisotropy.GraphInput{Prompt: "hi"}); err == nil {
+		t.Fatal("RunGraph must surface the runtime build failure from a bad data dir")
+	}
+}
+
+// TestGraph_EdgeMapTransformsAndFailsClosed covers toInternalEdge's Map
+// adaptation: a non-nil Edge.Map is invoked (its transformed payload reaches the
+// destination node), and a Map that returns an error fails that edge closed
+// (the destination never runs on a malformed input) rather than being ignored.
+func TestGraph_EdgeMapTransformsAndFailsClosed(t *testing.T) {
+	t.Run("Map transforms the payload", func(t *testing.T) {
+		src := aisotropy.Node{
+			ID: "src", System: "s",
+			Prompt: func(in aisotropy.GraphInput, _ map[string]aisotropy.EdgePayload) (string, error) {
+				return in.Prompt, nil
+			},
+		}
+		dst := aisotropy.Node{
+			ID: "dst", System: "fact-check", // scriptedToolClient replies APPROVED for "fact-check" systems
+			Prompt: func(_ aisotropy.GraphInput, from map[string]aisotropy.EdgePayload) (string, error) {
+				p, ok := from["src"]
+				if !ok || p.Text != "MAPPED" {
+					return "", fmt.Errorf("dst: expected mapped payload \"MAPPED\", got %+v (ok=%v)", p, ok)
+				}
+				return p.Text, nil
+			},
+		}
+		g, err := aisotropy.NewGraph().
+			AddNode(src).AddNode(dst).
+			AddEdge(aisotropy.Edge{From: "src", To: "dst", Map: func(nr aisotropy.NodeResult) (aisotropy.EdgePayload, error) {
+				return aisotropy.EdgePayload{Text: "MAPPED"}, nil
+			}}).
+			SetEntry("src").
+			Build()
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		app := aisotropy.New(aisotropy.WithLLM(&scriptedToolClient{}), aisotropy.WithGraph("g", g))
+		t.Cleanup(func() { _ = app.Close() })
+
+		res, err := app.RunGraph(context.Background(), "g", aisotropy.GraphInput{Prompt: "hi"})
+		if err != nil {
+			t.Fatalf("RunGraph: %v", err)
+		}
+		if strings.TrimSpace(res.Output) != "APPROVED" {
+			t.Fatalf("graph Output = %q, want APPROVED (dst only replies APPROVED when it received the mapped payload)", res.Output)
+		}
+	})
+
+	t.Run("Map error fails the edge closed", func(t *testing.T) {
+		src := aisotropy.Node{
+			ID: "src", System: "s",
+			Prompt: func(in aisotropy.GraphInput, _ map[string]aisotropy.EdgePayload) (string, error) {
+				return in.Prompt, nil
+			},
+		}
+		dst := aisotropy.Node{
+			ID: "dst", System: "d",
+			Prompt: func(_ aisotropy.GraphInput, from map[string]aisotropy.EdgePayload) (string, error) {
+				return "should never run", nil
+			},
+		}
+		g, err := aisotropy.NewGraph().
+			AddNode(src).AddNode(dst).
+			AddEdge(aisotropy.Edge{From: "src", To: "dst", Map: func(nr aisotropy.NodeResult) (aisotropy.EdgePayload, error) {
+				return aisotropy.EdgePayload{}, fmt.Errorf("map: deliberately refuses to transform")
+			}}).
+			SetEntry("src").
+			Build()
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		app := aisotropy.New(aisotropy.WithLLM(&scriptedToolClient{}), aisotropy.WithGraph("g", g))
+		t.Cleanup(func() { _ = app.Close() })
+
+		if _, err := app.RunGraph(context.Background(), "g", aisotropy.GraphInput{Prompt: "hi"}); err == nil {
+			t.Fatal("RunGraph must fail closed when an Edge.Map returns an error")
+		}
+	})
 }

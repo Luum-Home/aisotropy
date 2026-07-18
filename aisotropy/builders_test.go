@@ -64,6 +64,30 @@ func TestBuildModelGateway_ConsumerPolicyWinsToCheap(t *testing.T) {
 	}
 }
 
+// TestBuildModelGateway_RegistrationFailuresAreLoggedNotFatal covers the
+// defensive Register/SetDefault error branches: a nil primary client makes its
+// own Register call fail (Register rejects a nil client) and, since primary
+// never became the registered default, the trailing SetDefault(gwPrimary) also
+// fails — buildModelGateway must still return a non-nil, usable Gateway rather
+// than propagating either error (there is no error return to propagate to).
+func TestBuildModelGateway_RegistrationFailuresAreLoggedNotFatal(t *testing.T) {
+	cheap := tagClient{name: "cheap-client"}
+	gw := buildModelGateway(nil, cheap, 5.0, "vision-target", nil)
+	if gw == nil {
+		t.Fatal("buildModelGateway must return a non-nil Gateway even when primary registration fails")
+	}
+	// cheap registered fine and, since primary never registered, became the
+	// gateway's fallback default (the first successful Register wins the
+	// default) — a request with no routing signal still resolves to a client.
+	got, _, err := gw.Route(context.Background(), gateway.Request{Tenant: "acme"})
+	if err != nil {
+		t.Fatalf("Route after a primary registration failure: %v", err)
+	}
+	if got == nil {
+		t.Fatal("Route returned a nil client")
+	}
+}
+
 // TestBuildResponseCache covers both layers: a nil embedder yields an
 // exact-only cache; a real embedder adds the semantic (nearest-neighbor) layer.
 func TestBuildResponseCache(t *testing.T) {

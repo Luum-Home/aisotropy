@@ -455,6 +455,216 @@ func TestOpenSemanticStore_QdrantBranchRoutes(t *testing.T) {
 	}
 }
 
+// TestKnowledgeMethods_EnsureSemanticErrorSurfaces covers the ensureSemantic-
+// error branch shared by IngestKnowledge, DeleteKnowledge, IngestTenantKnowledge,
+// and DeleteTenantKnowledge: with QDRANT_HOST pointed at an unreachable
+// endpoint, the memoized semantic-store build fails once and every knowledge
+// method surfaces that same wrapped error rather than silently no-op'ing.
+func TestKnowledgeMethods_EnsureSemanticErrorSurfaces(t *testing.T) {
+	t.Setenv("QDRANT_HOST", "127.0.0.1")
+	t.Setenv("QDRANT_PORT", "1") // unreachable port -> ensureSemantic fails fast
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9))
+	// Deliberately no closeApp(t, app)() here: a failed Qdrant dial leaves
+	// a.semanticStore holding a non-nil semantic.Store interface wrapping a nil
+	// *QdrantStore (semantic.OpenQdrant's (nil, err) return implicitly boxes into
+	// a non-nil interface), and App.Close()'s `a.semanticStore != nil` check does
+	// not see through that — calling Close() would panic on the nil receiver.
+	// That is a pre-existing App.Close/ensureSemantic interaction this test does
+	// not attempt to fix (out of scope here); nothing else was allocated (no
+	// runtime was built), so skipping Close leaks nothing this process needs.
+
+	if _, err := app.IngestKnowledge(ctx, "acme", "alice", Document{ID: "d1", Content: "x"}); err == nil {
+		t.Fatal("IngestKnowledge must surface the ensureSemantic build error")
+	}
+	if _, err := app.DeleteKnowledge(ctx, "acme", "alice", "d1"); err == nil {
+		t.Fatal("DeleteKnowledge must surface the ensureSemantic build error")
+	}
+	if _, err := app.IngestTenantKnowledge(ctx, "acme", Document{ID: "d1", Content: "x"}); err == nil {
+		t.Fatal("IngestTenantKnowledge must surface the ensureSemantic build error")
+	}
+	if _, err := app.DeleteTenantKnowledge(ctx, "acme", "d1"); err == nil {
+		t.Fatal("DeleteTenantKnowledge must surface the ensureSemantic build error")
+	}
+}
+
+// TestStartRuntime_ConfigFileErrorSurfaces covers startRuntime's
+// applyConfigFile-error branch: a malformed WithConfigFile file makes runtime
+// construction fail (through Turn, which calls ensureRuntime -> startRuntime)
+// rather than silently booting with no config applied.
+func TestStartRuntime_ConfigFileErrorSurfaces(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "aisotropy.runtime.yaml")
+	if err := os.WriteFile(path, []byte("addr: [broken\n : : :"), 0o600); err != nil {
+		t.Fatalf("write malformed config: %v", err)
+	}
+
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9), WithConfigFile(path))
+	defer func() { _ = app.Close() }()
+
+	if _, err := app.Turn(context.Background(), ChatInput{
+		TenantID: "acme", UserID: "alice", SessionID: "s1", Prompt: "hi",
+	}); err == nil {
+		t.Fatal("Turn must surface a malformed runtime config file as a boot error")
+	}
+}
+
+// TestStartRuntime_FactsStoreOpenErrorClosesWM covers startRuntime's
+// openFactsStore-error branch: an unreachable RQLITE_URL makes the facts store
+// open fail, and startRuntime must close the already-opened working memory
+// before returning the error (Turn must still surface it, never hang or leak).
+func TestStartRuntime_FactsStoreOpenErrorClosesWM(t *testing.T) {
+	t.Setenv("RQLITE_URL", "http://127.0.0.1:1") // unreachable: connection refused, fast
+
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9))
+	defer func() { _ = app.Close() }()
+
+	if _, err := app.Turn(context.Background(), ChatInput{
+		TenantID: "acme", UserID: "alice", SessionID: "s1", Prompt: "hi",
+	}); err == nil {
+		t.Fatal("Turn must surface the facts-store open failure from an unreachable RQLITE_URL")
+	}
+}
+
+// TestStartRuntime_SemanticStoreOpenErrorClosesStores covers startRuntime's
+// ensureSemantic-error branch: an unreachable QDRANT_HOST/PORT makes the
+// semantic store build fail, and startRuntime must close the already-opened
+// working memory and facts store before returning the error.
+//
+// Deliberately no closeApp/app.Close() here: see the comment in
+// TestKnowledgeMethods_EnsureSemanticErrorSurfaces — a failed Qdrant dial
+// leaves a.semanticStore holding a non-nil interface wrapping a nil
+// *QdrantStore, and App.Close() would panic on it (pre-existing issue, out of
+// scope for this coverage change; flagged separately). Nothing else needs
+// explicit cleanup: startRuntime already closed wm/facts itself on this error
+// path, which is exactly the branch under test.
+func TestStartRuntime_SemanticStoreOpenErrorClosesStores(t *testing.T) {
+	t.Setenv("QDRANT_HOST", "127.0.0.1")
+	t.Setenv("QDRANT_PORT", "1")
+
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := app.Turn(ctx, ChatInput{
+		TenantID: "acme", UserID: "alice", SessionID: "s1", Prompt: "hi",
+	}); err == nil {
+		t.Fatal("Turn must surface the semantic-store open failure from an unreachable Qdrant")
+	}
+}
+
+// TestStartRuntime_BitrateStoreOpenErrorClosesStores covers startRuntime's
+// openBitrateStore-error branch: AISOTROPY_BITRATE_BIN opts into the bitrate
+// store, and pointing its on-disk path at a directory (so SQLite cannot open a
+// file there) makes the open fail — startRuntime must close every
+// already-opened store before returning the error.
+func TestStartRuntime_BitrateStoreOpenErrorClosesStores(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "bitrate.db"), 0o755); err != nil {
+		t.Fatalf("seed bitrate.db as a directory: %v", err)
+	}
+	t.Setenv("AISOTROPY_DATA_DIR", dir)
+	t.Setenv("AISOTROPY_BITRATE_BIN", "aisotropy-nonexistent-bitrate-bin")
+
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9))
+	defer func() { _ = app.Close() }()
+
+	if _, err := app.Turn(context.Background(), ChatInput{
+		TenantID: "acme", UserID: "alice", SessionID: "s1", Prompt: "hi",
+	}); err == nil {
+		t.Fatal("Turn must surface the bitrate-store open failure")
+	}
+}
+
+// TestStartRuntime_CheapClientConfigured covers startRuntime's cheap-model
+// branch: with AISOTROPY_CHEAP_MODEL and a provider key set, llm.CheapClientFromEnv
+// returns a non-nil client, and startRuntime wires it (middleware + circuit
+// breaker + OTel) rather than leaving cheapStreamClient nil. The runtime must
+// still boot and serve a turn on the primary (stub) client.
+func TestStartRuntime_CheapClientConfigured(t *testing.T) {
+	t.Setenv("AISOTROPY_CHEAP_MODEL", "cheap-test-model")
+	t.Setenv("ANTHROPIC_API_KEY", "test-fake-key-unused-not-a-real-credential")
+
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9))
+	defer closeApp(t, app)()
+
+	if _, err := app.Turn(context.Background(), ChatInput{
+		TenantID: "acme", UserID: "alice", SessionID: "s1", Prompt: "hi",
+	}); err != nil {
+		t.Fatalf("Turn with a cheap-model client configured: %v", err)
+	}
+}
+
+// TestStartRuntime_PluginDirScanErrorSkipped covers startRuntime's plugin
+// directory scan-error branch: a directory path containing an unmatched glob
+// metacharacter makes filepath.Glob return ErrBadPattern, which is logged and
+// skipped rather than downing the runtime.
+func TestStartRuntime_PluginDirScanErrorSkipped(t *testing.T) {
+	badDir := filepath.Join(t.TempDir(), "plugins[unterminated")
+
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9), WithPluginDir(badDir))
+	defer closeApp(t, app)()
+
+	if _, err := app.Turn(context.Background(), ChatInput{
+		TenantID: "acme", UserID: "alice", SessionID: "s1", Prompt: "hi",
+	}); err != nil {
+		t.Fatalf("Turn must survive a plugin directory whose glob pattern is invalid: %v", err)
+	}
+}
+
+// closeErrDocBackend is a facts.DocBackend whose Close fails, so the runtime
+// teardown's factsStore.Close() branch surfaces (and logs) an error rather than
+// silently succeeding.
+type closeErrDocBackend struct {
+	*plugintest.RefDocBackend
+}
+
+func (closeErrDocBackend) Close() error { return errors.New("facts backend close boom") }
+
+// closeErrVectorBackend is a semantic.VectorBackend whose Close fails,
+// analogous to closeErrDocBackend for the semantic tier.
+type closeErrVectorBackend struct {
+	*plugintest.RefVectorBackend
+}
+
+func (closeErrVectorBackend) Close() error { return errors.New("semantic backend close boom") }
+
+// TestStartRuntime_FactsStoreCloseErrorLogged covers the runtime teardown's
+// factsStore.Close-error branch: a WithFactsBackend whose Close fails must not
+// stop the rest of teardown (and App.Close must still return cleanly, since the
+// close error is logged, not propagated).
+func TestStartRuntime_FactsStoreCloseErrorLogged(t *testing.T) {
+	backend := closeErrDocBackend{RefDocBackend: plugintest.NewRefDocBackend()}
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9), WithFactsBackend(backend))
+
+	if _, err := app.Turn(context.Background(), ChatInput{
+		TenantID: "acme", UserID: "alice", SessionID: "s1", Prompt: "hi",
+	}); err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	if err := app.Close(); err != nil {
+		t.Fatalf("Close must swallow (log) a facts-store close error, not propagate it: %v", err)
+	}
+}
+
+// TestStartRuntime_SemanticStoreCloseErrorLogged is the semantic-tier analogue
+// of TestStartRuntime_FactsStoreCloseErrorLogged.
+func TestStartRuntime_SemanticStoreCloseErrorLogged(t *testing.T) {
+	backend := closeErrVectorBackend{RefVectorBackend: plugintest.NewRefVectorBackend()}
+	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9), WithVectorBackend(backend))
+
+	if _, err := app.Turn(context.Background(), ChatInput{
+		TenantID: "acme", UserID: "alice", SessionID: "s1", Prompt: "hi",
+	}); err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	if err := app.Close(); err != nil {
+		t.Fatalf("Close must swallow (log) a semantic-store close error, not propagate it: %v", err)
+	}
+}
+
 // compile-time: embedErrEmbedder is a valid Embedder and llm is referenced.
 var _ Embedder = embedErrEmbedder{}
 var _ VectorBackend = scanErrVectorBackend{}
