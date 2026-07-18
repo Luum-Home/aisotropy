@@ -56,10 +56,15 @@ Notes:
     backed up by this tool; it is rebuilt by re-embedding. See the DR runbook.
 `
 
+// osExit is a shim over os.Exit so tests can observe the process exit code
+// instead of terminating the test binary. Behavior-preserving: production
+// wiring is still exactly os.Exit.
+var osExit = os.Exit
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "aisotropy-backup: %v\n", err)
-		os.Exit(1)
+		osExit(1)
 	}
 }
 
