@@ -32,6 +32,13 @@
 // instances on ephemeral loopback ports and cancels each one before exiting; it
 // starts NO containers and never touches aisotropy-rqlite-1 / aisotropy-qdrant-1
 // or any other external service. Everything is in-process Go.
+//
+// TESTABILITY. main()'s body lives in run(args, stdout) so tests can drive the
+// full flag-parse -> scenario-sweep -> report flow with tiny durations instead
+// of os.Args/os.Exit. The request-driving logic (driveLoad, driveQuotaGate,
+// driveIsolationCheck) is decoupled from the real *http.Client behind the
+// httpDoer seam, so the concurrency + latency/percentile aggregation can be
+// exercised against a fake client with no real server involved.
 package main
 
 import (
@@ -58,20 +65,72 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/llm"
 )
 
+// defaultHealthTimeout is the production /healthz poll budget bootApp gives a
+// freshly booted App before declaring the boot failed. Threaded as a parameter
+// (rather than hardcoded in bootApp) so tests can shrink it and force the
+// failure branch to resolve in milliseconds instead of seconds.
+const defaultHealthTimeout = 10 * time.Second
+
 // ---------------------------------------------------------------------------
-// Configuration knobs (flags). Defaults run the full sweep in ~1 minute.
+// Configuration (flags)
 // ---------------------------------------------------------------------------
 
-var (
-	flagDur     = flag.Duration("dur", 4*time.Second, "sustained load duration per scenario")
-	flagQuick   = flag.Bool("quick", false, "quick smoke: shorter durations, smaller sweep")
-	flagUsers   = flag.Int("users", 8, "distinct users per tenant (working-memory session cardinality multiplier)")
-	flagOut     = flag.String("out", "results.txt", "results file path (relative to bench/load)")
-	flagMaxConc = flag.Int("maxconc", 1024, "cap on concurrency ramp (breaking-point sweep)")
-)
+// config holds the parsed CLI knobs. Defaults run the full sweep in ~1 minute.
+type config struct {
+	dur     time.Duration
+	quick   bool
+	users   int
+	out     string
+	maxConc int
+}
+
+// parseFlags parses args (typically os.Args[1:]) into a config using a fresh
+// FlagSet, so it can be called repeatedly (e.g. from tests) without colliding
+// with package-level flag.CommandLine state.
+func parseFlags(args []string) (*config, error) {
+	fs := flag.NewFlagSet("load", flag.ContinueOnError)
+	cfg := &config{}
+	fs.DurationVar(&cfg.dur, "dur", 4*time.Second, "sustained load duration per scenario")
+	fs.BoolVar(&cfg.quick, "quick", false, "quick smoke: shorter durations, smaller sweep")
+	fs.IntVar(&cfg.users, "users", 8, "distinct users per tenant (working-memory session cardinality multiplier)")
+	fs.StringVar(&cfg.out, "out", "results.txt", "results file path (relative to bench/load)")
+	fs.IntVar(&cfg.maxConc, "maxconc", 1024, "cap on concurrency ramp (breaking-point sweep)")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
 
 func main() {
-	flag.Parse()
+	if err := run(os.Args[1:], os.Stdout); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// resolveSweepConfig derives the per-scenario duration and sweep sizes from
+// cfg, applying the "quick" override. Extracted as a pure function (no I/O)
+// so the override logic is unit-testable without running the full scenario
+// sweep.
+func resolveSweepConfig(cfg *config) (dur time.Duration, tenantSweep, concRamp []int) {
+	dur = cfg.dur
+	tenantSweep = []int{10, 100, 1000}
+	concRamp = []int{16, 64, 256, 512, cfg.maxConc}
+	if cfg.quick {
+		dur = 2 * time.Second
+		tenantSweep = []int{10, 100}
+		concRamp = []int{16, 64, 256}
+	}
+	return dur, tenantSweep, concRamp
+}
+
+// run executes the full flag-parse -> scenario-sweep -> report flow, writing
+// the report to both stdout and the resolved results file. It returns an error
+// instead of calling log.Fatal so it can be exercised from tests.
+func run(args []string, stdout io.Writer) error {
+	cfg, err := parseFlags(args)
+	if err != nil {
+		return err
+	}
 	log.SetFlags(0)
 	rand.Seed(time.Now().UnixNano())
 
@@ -84,18 +143,11 @@ func main() {
 	// ERROR past that point — is covered in the README caveats.)
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError})))
 
-	dur := *flagDur
-	tenantSweep := []int{10, 100, 1000}
-	concRamp := []int{16, 64, 256, 512, *flagMaxConc}
-	if *flagQuick {
-		dur = 2 * time.Second
-		tenantSweep = []int{10, 100}
-		concRamp = []int{16, 64, 256}
-	}
+	dur, tenantSweep, concRamp := resolveSweepConfig(cfg)
 
 	// Resolve the output path relative to this source file's dir so it lands in
 	// bench/load/ regardless of cwd.
-	outPath := *flagOut
+	outPath := cfg.out
 	if !filepath.IsAbs(outPath) {
 		if wd, err := os.Getwd(); err == nil {
 			outPath = filepath.Join(wd, outPath)
@@ -103,10 +155,10 @@ func main() {
 	}
 	out, err := os.Create(outPath)
 	if err != nil {
-		log.Fatalf("create results file: %v", err)
+		return fmt.Errorf("create results file: %w", err)
 	}
 	defer func() { _ = out.Close() }()
-	rep := &reporter{w: io.MultiWriter(os.Stdout, out)}
+	rep := &reporter{w: io.MultiWriter(stdout, out)}
 
 	rep.header(dur)
 
@@ -116,7 +168,7 @@ func main() {
 		"cardinality (distinct working-memory buffers = N*users) affects hydration cost.")
 	var sweepRows []scenarioResult
 	for _, n := range tenantSweep {
-		r := runEmbedded(rep, embedCfg{tenants: n, users: *flagUsers, conc: 64, dur: dur, mix: mix5050, label: fmt.Sprintf("N=%d tenants", n)})
+		r := runEmbedded(rep, embedCfg{tenants: n, users: cfg.users, conc: 64, dur: dur, mix: mix5050, label: fmt.Sprintf("N=%d tenants", n)})
 		sweepRows = append(sweepRows, r)
 	}
 	rep.table(sweepRows)
@@ -128,7 +180,7 @@ func main() {
 		"OR p99 exceeds 10x the lowest-concurrency p99.")
 	var rampRows []scenarioResult
 	for _, c := range concRamp {
-		r := runEmbedded(rep, embedCfg{tenants: 100, users: *flagUsers, conc: c, dur: dur, mix: mix5050, label: fmt.Sprintf("conc=%d", c)})
+		r := runEmbedded(rep, embedCfg{tenants: 100, users: cfg.users, conc: c, dur: dur, mix: mix5050, label: fmt.Sprintf("conc=%d", c)})
 		rampRows = append(rampRows, r)
 	}
 	rep.table(rampRows)
@@ -148,8 +200,8 @@ func main() {
 		"in-memory BadgerDB against an on-disk store (AISOTROPY_DATA_DIR). The delta is the",
 		"cost of durable working-memory writes under concurrency.")
 	var badgerRows []scenarioResult
-	badgerRows = append(badgerRows, runEmbedded(rep, embedCfg{tenants: 50, users: *flagUsers, conc: 64, dur: dur, mix: mixChatOnly, label: "in-memory Badger"}))
-	badgerRows = append(badgerRows, runEmbeddedOnDisk(rep, embedCfg{tenants: 50, users: *flagUsers, conc: 64, dur: dur, mix: mixChatOnly, label: "on-disk Badger"}))
+	badgerRows = append(badgerRows, runEmbedded(rep, embedCfg{tenants: 50, users: cfg.users, conc: 64, dur: dur, mix: mixChatOnly, label: "in-memory Badger"}))
+	badgerRows = append(badgerRows, runEmbeddedOnDisk(rep, embedCfg{tenants: 50, users: cfg.users, conc: 64, dur: dur, mix: mixChatOnly, label: "on-disk Badger"}))
 	rep.table(badgerRows)
 
 	// --- Scenario E: cross-tenant isolation UNDER concurrent load -------------
@@ -162,6 +214,7 @@ func main() {
 
 	rep.footer()
 	log.Printf("\nWrote results to %s", outPath)
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -171,8 +224,11 @@ func main() {
 // bootApp starts an aisotropy.App on a free loopback port with the fast keyless
 // stub, NoAuth, and the given options. It returns the base URL, a shared HTTP
 // client tuned for keep-alive reuse, and a shutdown func that cancels Run and
-// waits for a clean return.
-func bootApp(conc int, extra ...aisotropy.Option) (base string, client *http.Client, shutdown func(), err error) {
+// waits for a clean return. healthTimeout bounds how long it waits for /healthz
+// to come up before declaring the boot failed (production callers pass
+// defaultHealthTimeout; tests can pass a short timeout to force the failure
+// branch quickly).
+func bootApp(conc int, healthTimeout time.Duration, extra ...aisotropy.Option) (base string, client *http.Client, shutdown func(), err error) {
 	addr, err := freeAddr()
 	if err != nil {
 		return "", nil, nil, err
@@ -201,7 +257,7 @@ func bootApp(conc int, extra ...aisotropy.Option) (base string, client *http.Cli
 			IdleConnTimeout:     90 * time.Second,
 		},
 	}
-	if err := waitForServer(client, base+"/healthz", 10*time.Second); err != nil {
+	if err := waitForServer(client, base+"/healthz", healthTimeout); err != nil {
 		cancel()
 		<-errCh
 		return "", nil, nil, err
@@ -247,6 +303,16 @@ func waitForServer(client *http.Client, url string, timeout time.Duration) error
 // ---------------------------------------------------------------------------
 // Load generation
 // ---------------------------------------------------------------------------
+
+// httpDoer is the minimal seam needed to drive HTTP requests: *http.Client
+// satisfies it directly. Request-driving + aggregation logic (driveLoad,
+// driveQuotaGate, driveIsolationCheck, and the do*/seed*/stream* helpers below)
+// depend on this interface instead of *http.Client so tests can inject a fake
+// implementation and exercise the concurrency/latency-aggregation logic without
+// a real server.
+type httpDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
 
 type reqMix int
 
@@ -297,7 +363,7 @@ func (r scenarioResult) errRate() float64 {
 }
 
 func runEmbedded(rep *reporter, cfg embedCfg) scenarioResult {
-	base, client, shutdown, err := bootApp(cfg.conc,
+	base, client, shutdown, err := bootApp(cfg.conc, defaultHealthTimeout,
 		aisotropy.WithRateLimit(1e9, 1e9)) // effectively unlimited: measure the runtime, not the gate
 	if err != nil {
 		rep.line("  boot FAILED for %s: %v", cfg.label, err)
@@ -325,7 +391,7 @@ func runEmbeddedOnDisk(rep *reporter, cfg embedCfg) scenarioResult {
 			_ = os.Unsetenv("AISOTROPY_DATA_DIR")
 		}
 	}()
-	base, client, shutdown, err := bootApp(cfg.conc, aisotropy.WithRateLimit(1e9, 1e9))
+	base, client, shutdown, err := bootApp(cfg.conc, defaultHealthTimeout, aisotropy.WithRateLimit(1e9, 1e9))
 	if err != nil {
 		rep.line("  boot FAILED for %s: %v", cfg.label, err)
 		return scenarioResult{label: cfg.label}
@@ -335,8 +401,10 @@ func runEmbeddedOnDisk(rep *reporter, cfg embedCfg) scenarioResult {
 }
 
 // driveLoad runs cfg.conc workers against base for cfg.dur, sampling runtime
-// stats throughout, and returns aggregated metrics.
-func driveLoad(rep *reporter, base string, client *http.Client, cfg embedCfg) scenarioResult {
+// stats throughout, and returns aggregated metrics. client only needs to
+// satisfy httpDoer, so tests can drive this with a fake in place of a real
+// *http.Client / server.
+func driveLoad(rep *reporter, base string, client httpDoer, cfg embedCfg) scenarioResult {
 	// Let goroutines from the boot settle, then read the server-only baseline.
 	time.Sleep(50 * time.Millisecond)
 	runtime.GC()
@@ -454,7 +522,7 @@ func driveLoad(rep *reporter, base string, client *http.Client, cfg embedCfg) sc
 }
 
 // doChat fires one non-streaming /chat and returns total latency + status.
-func doChat(client *http.Client, base, tenant, user, session string) (time.Duration, int, error) {
+func doChat(client httpDoer, base, tenant, user, session string) (time.Duration, int, error) {
 	body := chatBody("give a brief status update")
 	url := fmt.Sprintf("%s/v1/tenant/%s/user/%s/chat", base, tenant, user)
 	start := time.Now()
@@ -471,7 +539,7 @@ func doChat(client *http.Client, base, tenant, user, session string) (time.Durat
 
 // doStream fires one /chat/stream (SSE) and returns total latency, time-to-first
 // -token, and status.
-func doStream(client *http.Client, base, tenant, user, session string) (total, ttft time.Duration, status int, err error) {
+func doStream(client httpDoer, base, tenant, user, session string) (total, ttft time.Duration, status int, err error) {
 	body := chatBody("give a brief status update")
 	url := fmt.Sprintf("%s/v1/tenant/%s/user/%s/chat/stream", base, tenant, user)
 	start := time.Now()
@@ -506,13 +574,19 @@ func chatBody(prompt string) []byte {
 // ---------------------------------------------------------------------------
 
 func runQuotaGate(rep *reporter, dur time.Duration) {
-	base, client, shutdown, err := bootApp(64, aisotropy.WithRateLimit(5, 5))
+	base, client, shutdown, err := bootApp(64, defaultHealthTimeout, aisotropy.WithRateLimit(5, 5))
 	if err != nil {
 		rep.line("  boot FAILED: %v", err)
 		return
 	}
 	defer shutdown()
+	driveQuotaGate(rep, client, base, dur)
+}
 
+// driveQuotaGate hammers tenant "hammered" with 64 concurrent /chat writers for
+// dur and confirms a calm control tenant is unaffected. client only needs to
+// satisfy httpDoer so this can be driven against a fake in tests.
+func driveQuotaGate(rep *reporter, client httpDoer, base string, dur time.Duration) {
 	var hammered200, hammered429, hammeredErr int64
 	ctx, cancel := context.WithTimeout(context.Background(), dur)
 	defer cancel()
@@ -559,13 +633,21 @@ func runQuotaGate(rep *reporter, dur time.Duration) {
 // ---------------------------------------------------------------------------
 
 func runIsolationUnderLoad(rep *reporter, dur time.Duration) {
-	base, client, shutdown, err := bootApp(64, aisotropy.WithRateLimit(1e9, 1e9))
+	base, client, shutdown, err := bootApp(64, defaultHealthTimeout, aisotropy.WithRateLimit(1e9, 1e9))
 	if err != nil {
 		rep.line("  boot FAILED: %v", err)
 		return
 	}
 	defer shutdown()
+	driveIsolationCheck(rep, client, base, dur)
+}
 
+// driveIsolationCheck seeds a distinct secret marker per tenant into a shared
+// session id, then runs 64 concurrent workers streaming neutral reads across
+// tenants, checking that each response carries only its own tenant's marker.
+// client only needs to satisfy httpDoer so this can be driven against a fake in
+// tests.
+func driveIsolationCheck(rep *reporter, client httpDoer, base string, dur time.Duration) {
 	const nTenants = 10
 	const sharedSession = "shared-session" // deliberately reused across tenants
 	markers := make([]string, nTenants)
@@ -624,7 +706,7 @@ func runIsolationUnderLoad(rep *reporter, dur time.Duration) {
 
 func tenantName(i int) string { return fmt.Sprintf("isotenant%d", i) }
 
-func seedMarker(client *http.Client, base, tenant, session, marker string) error {
+func seedMarker(client httpDoer, base, tenant, session, marker string) error {
 	body := []byte(`{"prompt":"store this note verbatim: ` + marker + `","product_id":"iso","session_id":"` + session + `"}`)
 	url := fmt.Sprintf("%s/v1/tenant/%s/user/u0/chat", base, tenant)
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
@@ -641,7 +723,7 @@ func seedMarker(client *http.Client, base, tenant, session, marker string) error
 	return nil
 }
 
-func streamBody(client *http.Client, base, tenant, session, prompt string) (string, int, error) {
+func streamBody(client httpDoer, base, tenant, session, prompt string) (string, int, error) {
 	body := []byte(`{"prompt":"` + prompt + `","product_id":"iso","session_id":"` + session + `"}`)
 	url := fmt.Sprintf("%s/v1/tenant/%s/user/u0/chat/stream", base, tenant)
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
