@@ -160,6 +160,7 @@ constitutional license gate). No GPL/AGPL/SSPL/BSL.
 | `arenas/live/<fw>/run.sh` | A framework adapter honoring the contract. |
 | `arenas/live/runner/` | Discovers adapters, runs the suite, LLM-judges the replies, writes `RESULTS.md`. |
 | `arenas/live/RESULTS.md` | Generated: per-framework × per-dimension table + measured token spend. |
+| `arenas/live/_shared/mcp-server/` | Shared **extensibility** foundation: a real MCP stdio server every adapter can spawn — see below. |
 
 ## Task kinds in the suite
 
@@ -169,3 +170,33 @@ constitutional license gate). No GPL/AGPL/SSPL/BSL.
 | `multi_turn_memory` | Whether the framework carries a fact from an earlier turn. | LLM judge vs. `reference` (the fact must survive). |
 | `tool_calling` | Native tool selection: right tool, right arguments, single-shot. | `expected_tool` / `expected_args` vs. captured `tool_calls`. |
 | `token_efficiency` | Token spend for an equivalent answer across a multi-turn scenario. | Objective `input_tokens`+`output_tokens` (judge also checks the answer holds). |
+
+## Extensibility dimension — MCP tool loading (`_shared/mcp-server/`)
+
+A new arena dimension, alongside the per-adapter `mode` dispatch pattern used by
+`rag`/`tools`/`memory`/`structured`/`stream`/`memory_scoped`/`isolation_leak`/
+`crash_recovery`/`observability` (see e.g. `arenas/live/langgraph/modes/` or
+`arenas/live/aisotropy/README.md` §Modes for that pattern): **can a framework load an
+external extension at runtime and actually use it?**
+
+[Model Context Protocol](https://modelcontextprotocol.io) is the emerging
+cross-framework standard for exactly this, so it is the fair, comparable
+extensibility test. `arenas/live/_shared/mcp-server/` provides the **shared
+foundation** every adapter builds on — a real, minimal MCP stdio server (official
+`@modelcontextprotocol/sdk`, MIT) exposing one deterministic tool,
+`nimbus_status(line: string)`, tied to the existing Nimbus Rail corpus theme
+(`_shared/corpus/`). An `extensibility`-mode adapter spawns this server, connects as
+an MCP client using the framework's own MCP integration (LangGraph →
+`langchain-mcp-adapters`, LlamaIndex → `llama-index-tools-mcp`, Mastra → `@mastra/mcp`,
+AI SDK → `experimental_createMCPClient`, Genkit → its MCP plugin, Eino →
+`eino-ext/components/tool/mcp`, aisotropy → native MCP consumption or its declarative
+`aisotropy-plugin.yaml` manifest), lists the tools it discovers, invokes one inside a
+real agent turn against `agnes-2.0-flash`, and reports whether the tool's result was
+actually reflected in the final reply.
+
+The full contract — stdout envelope, the framework→MCP-client mapping table, and the
+PASS/FAIL scoring rule (`extension_loaded && tool_invoked && tool_result_used`) — is
+specified in `arenas/live/_shared/mcp-server/README.md` §2, so it is documented once
+and referenced rather than duplicated per adapter. Implementing the `extensibility`
+mode in each framework adapter is follow-up work; this shared server and its
+`smoke.sh` handshake proof are the foundation it builds on.
