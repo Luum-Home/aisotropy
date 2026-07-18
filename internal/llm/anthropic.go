@@ -20,6 +20,48 @@ type AnthropicClient struct {
 	client    anthropic.Client
 	model     anthropic.Model
 	maxTokens int64
+
+	// reasoning gates extended-thinking (ADR-0061): when false (the default) the
+	// request carries no Thinking param and the demux discards any thinking
+	// deltas, so the client behaves byte-for-byte as before. Set via
+	// EnableReasoning at composition when AISOTROPY_REASONING is on.
+	reasoning       bool
+	reasoningEffort string
+}
+
+// anthropicThinkingBudget maps a reasoning-effort level to Anthropic's
+// thinking `budget_tokens`. "off" (or reasoning disabled) yields 0 = no
+// thinking. The budget must be < MaxTokens; enableReasoning bumps maxTokens so
+// the answer still has room after the thinking budget.
+func anthropicThinkingBudget(effort string) int64 {
+	switch effort {
+	case ReasoningEffortHigh:
+		return 8192
+	case ReasoningEffortMedium:
+		return 4096
+	case ReasoningEffortLow:
+		return 1024
+	default: // off
+		return 0
+	}
+}
+
+// EnableReasoning turns on extended thinking at the given effort ("high" |
+// "medium" | "low" | "off"). It also raises maxTokens above the thinking budget
+// when needed (Anthropic requires MaxTokens > budget_tokens). "off" is a no-op
+// that leaves reasoning disabled. Called at composition (registry.go) only when
+// AISOTROPY_REASONING is set — reasoning stays OFF by default.
+func (a *AnthropicClient) EnableReasoning(effort string) {
+	effort = normalizeReasoningEffort(effort)
+	if effort == ReasoningEffortOff {
+		a.reasoning = false
+		return
+	}
+	a.reasoning = true
+	a.reasoningEffort = effort
+	if budget := anthropicThinkingBudget(effort); a.maxTokens <= budget {
+		a.maxTokens = budget + 1024 // leave room for the answer after thinking
+	}
 }
 
 // NewAnthropicClient creates an AnthropicClient with the given API key and
@@ -47,19 +89,42 @@ func (a *AnthropicClient) Name() string { return "anthropic:" + a.model }
 // receives the same ctx) and the producer goroutine immediately stops
 // consuming/emitting tokens.
 func (a *AnthropicClient) StreamChat(ctx context.Context, system, prompt string) (<-chan Token, error) {
+	return a.streamChat(ctx, system, prompt, ReasoningState{})
+}
+
+// streamChat is the shared body of StreamChat and (via a future native
+// tool-calling round-trip) the reasoning carry-forward path: it re-attaches any
+// prior signed thinking blocks natively (buildAnthropicThinkingBlocks) so the
+// signature survives, sets the Thinking request param when reasoning is on, and
+// demuxes thinking deltas onto Token.Reasoning. prior is empty on the ordinary
+// StreamChat path, so that path is unchanged.
+func (a *AnthropicClient) streamChat(ctx context.Context, system, prompt string, prior ReasoningState) (<-chan Token, error) {
+	// Re-attach prior signed thinking blocks as native content blocks BEFORE the
+	// user text, so Anthropic accepts continued reasoning (flattening to text
+	// would lose the signature — ADR-0061 Piece 2). Empty prior => just the user
+	// message, byte-for-byte as before.
+	blocks := buildAnthropicThinkingBlocks(prior)
+	blocks = append(blocks, anthropic.NewTextBlock(prompt))
+
 	params := anthropic.MessageNewParams{
 		Model:     a.model,
 		MaxTokens: a.maxTokens,
 		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
+			anthropic.NewUserMessage(blocks...),
 		},
 	}
 	if system != "" {
 		params.System = []anthropic.TextBlockParam{{Text: system}}
 	}
+	if a.reasoning {
+		if budget := anthropicThinkingBudget(a.reasoningEffort); budget > 0 {
+			params.Thinking = anthropic.ThinkingConfigParamOfEnabled(budget)
+		}
+	}
 
 	stream := a.client.Messages.NewStreaming(ctx, params)
 	out := make(chan Token)
+	reasoningEnabled := a.reasoning
 
 	go func() {
 		defer close(out)
@@ -73,7 +138,7 @@ func (a *AnthropicClient) StreamChat(ctx context.Context, system, prompt string)
 				return
 			}
 
-			text, emit := anthropicEventText(stream.Current(), &usage, &sawUsage)
+			tok, emit := anthropicEventToken(stream.Current(), &usage, &sawUsage, reasoningEnabled)
 			if !emit {
 				continue
 			}
@@ -81,7 +146,7 @@ func (a *AnthropicClient) StreamChat(ctx context.Context, system, prompt string)
 			select {
 			case <-ctx.Done():
 				return
-			case out <- Token{Text: text}:
+			case out <- tok:
 			}
 		}
 
@@ -91,32 +156,64 @@ func (a *AnthropicClient) StreamChat(ctx context.Context, system, prompt string)
 	return out, nil
 }
 
-// anthropicEventText processes one Anthropic stream event: it folds any
+// buildAnthropicThinkingBlocks re-materializes a prior ReasoningState's carried
+// blocks as native Anthropic content blocks (ADR-0061 Piece 2): a signed
+// thinking block round-trips verbatim via NewThinkingBlock (signature preserved
+// so Anthropic accepts continued reasoning); a redacted block round-trips via
+// NewRedactedThinkingBlock, never decoded. Text-kind blocks (from stateless
+// providers) are skipped here — they have no Anthropic-native form and are not
+// what Anthropic requires. An empty state yields nil (no blocks prepended).
+func buildAnthropicThinkingBlocks(prior ReasoningState) []anthropic.ContentBlockParamUnion {
+	if prior.IsEmpty() {
+		return nil
+	}
+	var blocks []anthropic.ContentBlockParamUnion
+	for _, b := range prior.Blocks {
+		switch b.kind {
+		case reasoningKindThinking:
+			blocks = append(blocks, anthropic.NewThinkingBlock(b.signature, b.thinking))
+		case reasoningKindRedacted:
+			blocks = append(blocks, anthropic.NewRedactedThinkingBlock(b.redacted))
+		}
+	}
+	return blocks
+}
+
+// anthropicEventToken processes one Anthropic stream event: it folds any
 // token-usage the event carries ("message_start" / "message_delta") into
-// usage/sawUsage, and — for a "content_block_delta" text event — returns the
-// text to emit. emit is false for every event that carries no emittable text
-// (usage-only events, non-text deltas, and any other event type).
-func anthropicEventText(event anthropic.MessageStreamEventUnion, usage *Usage, sawUsage *bool) (text string, emit bool) {
+// usage/sawUsage, returns a Token{Text} for a text delta, and — when reasoning
+// is enabled — a Token{Reasoning} for a thinking delta. emit is false for every
+// event that carries nothing to emit (usage-only events, non-text/non-thinking
+// deltas, thinking deltas while reasoning is off, and any other event type).
+// The signed thinking/redacted blocks needed for carry-forward are captured by
+// the caller's accumulator, not here (this function is stateless per event).
+func anthropicEventToken(event anthropic.MessageStreamEventUnion, usage *Usage, sawUsage *bool, reasoningEnabled bool) (tok Token, emit bool) {
 	switch event.Type {
 	case "message_start":
 		start := event.AsMessageStart()
 		usage.InputTokens = int(start.Message.Usage.InputTokens)
 		usage.OutputTokens = int(start.Message.Usage.OutputTokens)
 		*sawUsage = true
-		return "", false
+		return Token{}, false
 	case "message_delta":
 		delta := event.AsMessageDelta()
 		usage.OutputTokens = int(delta.Usage.OutputTokens)
 		*sawUsage = true
-		return "", false
+		return Token{}, false
 	case "content_block_delta":
 		delta := event.AsContentBlockDelta().Delta
-		if delta.Type != "text_delta" || delta.Text == "" {
-			return "", false
+		switch {
+		case delta.Type == "text_delta" && delta.Text != "":
+			return Token{Text: delta.Text}, true
+		case reasoningEnabled && delta.Type == "thinking_delta" && delta.Thinking != "":
+			// Reasoning delta: a SEPARATE channel from Text. It is streamed for
+			// display but NEVER accumulated into the answer (ADR-0061 Piece 1a).
+			return Token{Reasoning: delta.Thinking}, true
+		default:
+			return Token{}, false
 		}
-		return delta.Text, true
 	default:
-		return "", false
+		return Token{}, false
 	}
 }
 

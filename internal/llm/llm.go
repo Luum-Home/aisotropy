@@ -40,12 +40,30 @@ type Usage struct {
 	InputTokens int
 	// OutputTokens is the provider-reported completion/output token count.
 	OutputTokens int
+	// ReasoningTokens is the provider-reported reasoning ("thinking") token
+	// count, kept SEPARATE from OutputTokens for cost visibility (ADR-0061
+	// Piece 1b). Source varies by provider: OpenAI-compat reads
+	// completion_tokens_details.reasoning_tokens directly; Anthropic bills
+	// thinking INSIDE output_tokens and does not surface a separate streaming
+	// count here, so it stays 0 (no double count). It is 0 on every
+	// non-reasoning provider and with reasoning OFF (the default), so a
+	// text-only consumer is byte-for-byte unaffected.
+	ReasoningTokens int
 }
 
 // Token is an incremental fragment of the model's response.
 type Token struct {
 	// Text is the fragment's text (delta, not accumulated).
 	Text string
+	// Reasoning is the fragment's reasoning/"thinking" delta (delta, not
+	// accumulated), emitted by reasoning models (ADR-0061 Piece 1a). It is a
+	// SEPARATE channel from Text — never mixed in — so every existing consumer
+	// that appends only tok.Text is unaffected (zero-edit backward compat) and
+	// answer text never contains chain-of-thought. It is "" on non-reasoning
+	// providers, with reasoning OFF (the default), and on every answer-text
+	// token. A reasoning delta is a mid-stream token exactly like a text delta:
+	// Done/Err/Usage still land only on the terminal token.
+	Reasoning string
 	// Done indicates the stream finished normally (no more tokens).
 	Done bool
 	// Err, when non-nil, signals a mid-stream failure (e.g. a read error on the

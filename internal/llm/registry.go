@@ -134,18 +134,36 @@ func (r *Registry) DefaultName() string {
 func RegistryFromEnv() *Registry {
 	reg := NewRegistry()
 
+	// Reasoning-model support is OFF by default (ADR-0061): enable it on the
+	// PRIMARY provider clients only when AISOTROPY_REASONING is set. The cheap
+	// degrade client (CheapClientFromEnv) deliberately leaves reasoning off — the
+	// effort ladder sheds reasoning BEFORE dropping to the cheap model.
+	reasoningOn := ReasoningEnabledFromEnv()
+	effort := ReasoningEffortFromEnv()
+
 	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
-		reg.Register(providerOpenRouter, NewOpenRouterClient(key, firstNonEmpty(
-			os.Getenv("OPENROUTER_MODEL"), os.Getenv("AISOTROPY_MODEL"))))
+		c := NewOpenRouterClient(key, firstNonEmpty(
+			os.Getenv("OPENROUTER_MODEL"), os.Getenv("AISOTROPY_MODEL")))
+		if reasoningOn {
+			c.EnableReasoning(effort)
+		}
+		reg.Register(providerOpenRouter, c)
 	}
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-		reg.Register(providerOpenAI, NewOpenAICompatClient(key,
+		c := NewOpenAICompatClient(key,
 			firstNonEmpty(os.Getenv("OPENAI_MODEL"), os.Getenv("AISOTROPY_MODEL")),
-			os.Getenv("OPENAI_BASE_URL"), providerOpenAI))
+			os.Getenv("OPENAI_BASE_URL"), providerOpenAI)
+		if reasoningOn {
+			c.EnableReasoning(effort)
+		}
+		reg.Register(providerOpenAI, c)
 	}
 	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		reg.Register(providerAnthropic, NewAnthropicClient(key,
-			firstNonEmpty(os.Getenv("ANTHROPIC_MODEL"), DefaultAnthropicModel)))
+		c := NewAnthropicClient(key, firstNonEmpty(os.Getenv("ANTHROPIC_MODEL"), DefaultAnthropicModel))
+		if reasoningOn {
+			c.EnableReasoning(effort)
+		}
+		reg.Register(providerAnthropic, c)
 	}
 	// Always available: a keyless fallback so the SSE path is exercisable
 	// with zero credentials configured (dev/CI).

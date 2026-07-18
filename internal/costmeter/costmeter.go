@@ -31,6 +31,11 @@ type TenantStats struct {
 	InputTokens int64
 	// OutputTokens is the cumulative provider-reported output/completion token count.
 	OutputTokens int64
+	// ReasoningTokens is the cumulative provider-reported reasoning ("thinking")
+	// token count (ADR-0061), kept SEPARATE from OutputTokens so a tenant's spend
+	// on hidden chain-of-thought is visible in the /costs view rather than buried
+	// inside output tokens. 0 for every non-reasoning turn (the default).
+	ReasoningTokens int64
 	// CostUSD is the cumulative estimated cost in US dollars, as supplied by
 	// callers of Record (see EstimateCostUSD for a helper to compute it from a
 	// price table).
@@ -61,13 +66,24 @@ func New() *Meter {
 // docs/architecture/multi-tenancy.md; costmeter itself does not validate or
 // interpret it beyond using it as a map key.
 func (m *Meter) Record(tenant string, inputTokens, outputTokens int, costUSD float64) {
-	// A buggy upstream usage report must never decrement a tenant's running
-	// totals: clamp negative values to zero.
+	m.RecordUsage(tenant, inputTokens, outputTokens, 0, costUSD)
+}
+
+// RecordUsage is Record plus a reasoning-token count (ADR-0061). It accumulates
+// one completed LLM call's usage against tenant — request count, input, output,
+// reasoning, and cost. Record delegates here with reasoningTokens=0, so every
+// existing caller is unchanged (backward-compatible/additive); only the
+// reasoning path calls RecordUsage directly. Negative values are clamped to zero
+// (a buggy upstream usage report must never decrement a tenant's totals).
+func (m *Meter) RecordUsage(tenant string, inputTokens, outputTokens, reasoningTokens int, costUSD float64) {
 	if inputTokens < 0 {
 		inputTokens = 0
 	}
 	if outputTokens < 0 {
 		outputTokens = 0
+	}
+	if reasoningTokens < 0 {
+		reasoningTokens = 0
 	}
 	if costUSD < 0 {
 		costUSD = 0
@@ -83,6 +99,7 @@ func (m *Meter) Record(tenant string, inputTokens, outputTokens int, costUSD flo
 	stats.Requests++
 	stats.InputTokens += int64(inputTokens)
 	stats.OutputTokens += int64(outputTokens)
+	stats.ReasoningTokens += int64(reasoningTokens)
 	stats.CostUSD += costUSD
 }
 

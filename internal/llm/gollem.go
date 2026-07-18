@@ -73,11 +73,29 @@ import (
 // history is explicitly out of scope.
 type GollemModel struct {
 	client Client
+
+	// reasoningAcc, when non-nil, is a REQUEST-LOCAL reasoning carry-forward
+	// accumulator (ADR-0061 Piece 2). RunToolAgent creates one per run on its own
+	// goroutine and points this at it, so the prior reasoning is reinjected and
+	// the fresh reasoning captured across the run's tool-call steps — a stateless,
+	// provider-native carry. It is NEVER a shared/keyed map: two concurrent runs
+	// have two distinct GollemModels each pointing at their own stack-local
+	// ReasoningState, so tenants are structurally incapable of sharing reasoning.
+	// nil (the default, e.g. the GollemReflect path) means no reasoning carry.
+	reasoningAcc *ReasoningState
 }
 
 // NewGollemModel wraps client behind core.Model.
 func NewGollemModel(client Client) *GollemModel {
 	return &GollemModel{client: client}
+}
+
+// withReasoningAccumulator returns m carrying acc as its request-local reasoning
+// carry-forward state. Used by RunToolAgent to thread a per-run ReasoningState
+// through the native tool-calling steps.
+func (m *GollemModel) withReasoningAccumulator(acc *ReasoningState) *GollemModel {
+	m.reasoningAcc = acc
+	return m
 }
 
 // ModelName identifies the underlying provider (for logs/observability),
@@ -145,7 +163,7 @@ func (m *GollemModel) requestWithTools(
 		}
 	}
 
-	res, err := tc.CallTools(ctx, system, prompt, specs)
+	res, err := m.callToolsMaybeReasoning(ctx, tc, system, prompt, specs)
 	if err != nil {
 		return nil, fmt.Errorf("gollem model %q (tool calling): %w", m.ModelName(), err)
 	}
@@ -186,6 +204,28 @@ func (m *GollemModel) requestWithTools(
 		FinishReason: core.FinishReasonToolCall,
 		Timestamp:    time.Now(),
 	}, nil
+}
+
+// callToolsMaybeReasoning routes the tool call through the provider's reasoning
+// carry-forward path (CallToolsReasoning) when BOTH a request-local reasoning
+// accumulator is present (RunToolAgent set one) AND the client implements
+// ReasoningToolCaller — reinjecting the prior reasoning and capturing the fresh
+// reasoning back into the accumulator. Otherwise it falls back to plain
+// CallTools, byte-for-byte the pre-reasoning behavior. The accumulator is
+// updated in place; because it is stack-local to one RunToolAgent run, this is
+// tenant-safe by construction (no shared/keyed state).
+func (m *GollemModel) callToolsMaybeReasoning(ctx context.Context, tc ToolCaller, system, prompt string, specs []ToolSpec) (ToolCallResult, error) {
+	if m.reasoningAcc != nil {
+		if rtc, ok := tc.(ReasoningToolCaller); ok {
+			res, next, err := rtc.CallToolsReasoning(ctx, system, prompt, specs, m.reasoningAcc.Clone())
+			if err != nil {
+				return ToolCallResult{}, err
+			}
+			*m.reasoningAcc = next
+			return res, nil
+		}
+	}
+	return tc.CallTools(ctx, system, prompt, specs)
 }
 
 // RequestStream implements core.Model in streaming mode: re-exposes the

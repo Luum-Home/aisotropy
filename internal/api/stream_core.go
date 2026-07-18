@@ -12,7 +12,6 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/gateway"
-	"github.com/Luum-Home/aisotropy/internal/lang"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
@@ -175,28 +174,12 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 		return errors.New("request blocked by input guardrail (possible prompt injection)")
 	}
 
-	// Language-detection seam (research R1), identical to the non-streaming path
-	// (ChatCore): detect the language ONCE at the request boundary and carry it
-	// on ctx via the canonical lang.WithLanguage, off the REDACTED prompt so no
-	// secret text is inspected. The same ctx flows into hydrateSystemPrompt below
-	// (persona selection reads lang.FromContext) and the whole stream loop, so a
-	// language-conditional consumer sees the detected value without re-detecting.
-	// Per-(tenant,user) persistence layered on the request-scoped detection
-	// (ADR-0053): a confident detection updates the subject's remembered language,
-	// an Undetermined one inherits it — see resolveSubjectLanguage (core.go), the
-	// same helper the non-streaming path uses so both remember identically.
-	detected := lang.Detect(forwarded)
-	effective := resolveSubjectLanguage(ctx, d.WM, in.TenantID, in.UserID, detected)
-	ctx = lang.WithLanguage(ctx, effective)
-
 	slog.InfoContext(ctx, "chat stream request",
 		"tenant_id", in.TenantID,
 		"user_id", in.UserID,
 		"session_id", in.Body.SessionID,
 		"product_id", in.Body.ProductID,
 		"prompt_len", len(in.Body.Prompt),
-		"lang", effective.String(),
-		"lang_detected", detected.String(),
 		"llm", d.Client.Name(),
 	)
 
@@ -384,6 +367,10 @@ func recordStreamCost(d StreamDeps, tenantID string, usage *llm.Usage) {
 	if d.OutPricePer1M > 0 {
 		outP = d.OutPricePer1M
 	}
-	cost := costmeter.EstimateCostUSD(usage.InputTokens, usage.OutputTokens, inP, outP)
-	d.Meter.Record(tenantID, usage.InputTokens, usage.OutputTokens, cost)
+	// Reasoning tokens (ADR-0061) are priced at the output rate and recorded on
+	// their own line for visibility; 0 on a non-reasoning turn, so the estimate
+	// and the meter line are unchanged when reasoning is off.
+	cost := costmeter.EstimateCostUSD(usage.InputTokens, usage.OutputTokens, inP, outP) +
+		costmeter.EstimateCostUSD(0, usage.ReasoningTokens, 0, outP)
+	d.Meter.RecordUsage(tenantID, usage.InputTokens, usage.OutputTokens, usage.ReasoningTokens, cost)
 }

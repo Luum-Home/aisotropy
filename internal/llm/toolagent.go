@@ -71,7 +71,14 @@ func RunToolAgent(
 	exec func(ctx context.Context, name string, argsJSON string) (string, error),
 	maxSteps int,
 ) ([]ToolStep, error) {
-	model := NewGollemModel(client)
+	// reasoning is the REQUEST-LOCAL reasoning carry-forward state (ADR-0061): a
+	// value on THIS goroutine's stack, threaded through the run's tool-call steps
+	// via the GollemModel accumulator. It is never shared across runs/tenants and
+	// is garbage-collected when RunToolAgent returns, so raw chain-of-thought
+	// never outlives the task nor reaches persistence. Empty and inert unless the
+	// client implements ReasoningToolCaller and actually emits reasoning.
+	var reasoning ReasoningState
+	model := NewGollemModel(client).withReasoningAccumulator(&reasoning)
 	tracker := core.NewCostTracker(gollemModelPricing)
 
 	var (

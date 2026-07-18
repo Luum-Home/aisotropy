@@ -132,8 +132,16 @@ type StepResult struct {
 func (l *Loop) Run(ctx context.Context, scopes []string, prompt string) ([]StepResult, error) {
 	var steps []StepResult
 	current := prompt
+	// reasoning is the REQUEST-LOCAL reasoning carry-forward (ADR-0061): a value
+	// on THIS goroutine's stack, never a shared/keyed map, so two tenants' Run
+	// calls cannot share a reasoning byte. It is captured from each step's stream
+	// and reinjected as leading context into the next step's prompt — stateless
+	// text reinjection, acceptable for these StreamChat-only (unsigned) clients.
+	// It is empty and inert on non-reasoning endpoints (stub/agnes emit none), so
+	// the loop behaves byte-for-byte as before when reasoning is off.
+	var reasoning llm.ReasoningState
 	for range l.MaxSteps {
-		dec, err := l.SelectTool(ctx, scopes, current)
+		dec, err := l.selectToolCapturingReasoning(ctx, scopes, current, &reasoning)
 		if err != nil {
 			return steps, err
 		}
@@ -152,6 +160,55 @@ func (l *Loop) Run(ctx context.Context, scopes []string, prompt string) ([]StepR
 		current = fmt.Sprintf("%s\n\nTool %q returned:\n%s\n\nContinue.", current, dec.Tool, result)
 	}
 	return steps, nil
+}
+
+// selectToolCapturingReasoning is SelectTool plus reasoning carry-forward: it
+// reinjects the accumulated reasoning as leading prompt context, runs the same
+// scope-safe single-turn selection, and folds this turn's reasoning back into
+// *reasoning for the next step. It shares SelectTool's security guarantees
+// exactly (a non-permitted tool is downgraded to the no-tool Decision). *reasoning
+// stays empty when the client streams no reasoning (the default), making this a
+// no-op wrapper over SelectTool.
+func (l *Loop) selectToolCapturingReasoning(ctx context.Context, scopes []string, prompt string, reasoning *llm.ReasoningState) (Decision, error) {
+	permitted := l.Registry.Permitted(scopes)
+	permittedSet := make(map[string]struct{}, len(permitted))
+	for _, t := range permitted {
+		permittedSet[t.Name] = struct{}{}
+	}
+
+	system := buildSystemPrompt(l.Registry, scopes)
+	effectivePrompt := reinjectReasoning(prompt, *reasoning)
+
+	raw, captured, err := collectTextReasoning(ctx, l.Client, system, effectivePrompt)
+	if err != nil {
+		return Decision{}, err
+	}
+	*reasoning = captured
+
+	dec, err := parseDecision(raw)
+	if err != nil {
+		return Decision{}, fmt.Errorf("%w: %w", ErrMalformedDecision, err)
+	}
+	if dec.Tool == "" {
+		return Decision{Tool: ""}, nil
+	}
+	if _, ok := permittedSet[dec.Tool]; !ok {
+		// SECURITY INVARIANT (identical to SelectTool): a tool the caller's scopes
+		// did not permit is never surfaced as a usable Decision.
+		return Decision{Tool: ""}, nil
+	}
+	return dec, nil
+}
+
+// reinjectReasoning prepends accumulated reasoning text to prompt as clearly
+// labelled leading context. Empty reasoning returns prompt unchanged (the
+// no-reasoning / reasoning-off path).
+func reinjectReasoning(prompt string, reasoning llm.ReasoningState) string {
+	text := reasoning.ReasoningText()
+	if text == "" {
+		return prompt
+	}
+	return "[prior reasoning]\n" + text + "\n\n" + prompt
 }
 
 // buildSystemPrompt renders the scope-permitted tool list (via
@@ -201,6 +258,39 @@ func collectText(ctx context.Context, client llm.Client, system, prompt string) 
 			}
 			if tok.Done {
 				return sb.String(), nil
+			}
+		}
+	}
+}
+
+// collectTextReasoning drains client.StreamChat like collectText, but keeps the
+// ANSWER text and the REASONING deltas in SEPARATE channels (ADR-0061): tok.Text
+// accumulates into the returned raw answer, tok.Reasoning into a request-local
+// ReasoningState — so chain-of-thought never contaminates the Decision JSON the
+// model is parsed against. The returned ReasoningState is empty when the stream
+// carried no reasoning (the default / non-reasoning endpoints).
+func collectTextReasoning(ctx context.Context, client llm.Client, system, prompt string) (string, llm.ReasoningState, error) {
+	ch, err := client.StreamChat(ctx, system, prompt)
+	if err != nil {
+		return "", llm.ReasoningState{}, fmt.Errorf("agentloop: starting stream: %w", err)
+	}
+
+	var text, reasoning strings.Builder
+	for {
+		select {
+		case <-ctx.Done():
+			return text.String(), llm.NewTextReasoningState(reasoning.String()), ctx.Err()
+		case tok, ok := <-ch:
+			if !ok {
+				return text.String(), llm.NewTextReasoningState(reasoning.String()), nil
+			}
+			text.WriteString(tok.Text)
+			reasoning.WriteString(tok.Reasoning)
+			if tok.Err != nil {
+				return text.String(), llm.NewTextReasoningState(reasoning.String()), fmt.Errorf("agentloop: stream error: %w", tok.Err)
+			}
+			if tok.Done {
+				return text.String(), llm.NewTextReasoningState(reasoning.String()), nil
 			}
 		}
 	}

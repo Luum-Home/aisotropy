@@ -38,9 +38,13 @@ const (
 	defaultMaxTokens = 1024
 )
 
-// OpenAICompatClient implements both Client (streaming chat) and ToolCaller
-// (native tool-calling, ADR-0012).
-var _ ToolCaller = (*OpenAICompatClient)(nil)
+// OpenAICompatClient implements Client (streaming chat), ToolCaller (native
+// tool-calling, ADR-0012), and ReasoningToolCaller (stateless reasoning
+// carry-forward, ADR-0061).
+var (
+	_ ToolCaller          = (*OpenAICompatClient)(nil)
+	_ ReasoningToolCaller = (*OpenAICompatClient)(nil)
+)
 
 // OpenAICompatClient speaks the OpenAI /chat/completions protocol with stream=true.
 type OpenAICompatClient struct {
@@ -50,6 +54,31 @@ type OpenAICompatClient struct {
 	name      string
 	maxTokens int
 	http      *http.Client
+
+	// reasoning gates reasoning-model support (ADR-0061): when false (default)
+	// the request sends no reasoning_effort and behaves byte-for-byte as before.
+	// Reading reasoning fields OFF the response is always safe (a no-reasoning
+	// endpoint like agnes returns them null → structural no-op), so it is not
+	// gated. Set via EnableReasoning at composition when AISOTROPY_REASONING is on.
+	reasoning       bool
+	reasoningEffort string
+}
+
+// EnableReasoning turns on reasoning-model support at the given effort
+// ("high"|"medium"|"low"|"off"). It makes the request advertise reasoning_effort
+// so an o-series / reasoning-capable model spends a thinking budget. "off" is a
+// no-op that leaves reasoning disabled. Called at composition (registry.go) only
+// when AISOTROPY_REASONING is set — reasoning stays OFF by default. Reading the
+// provider's reasoning fields off the response does not require this (see the
+// reasoning field doc).
+func (c *OpenAICompatClient) EnableReasoning(effort string) {
+	effort = normalizeReasoningEffort(effort)
+	if effort == ReasoningEffortOff {
+		c.reasoning = false
+		return
+	}
+	c.reasoning = true
+	c.reasoningEffort = effort
 }
 
 // NewOpenRouterClient creates a client pointing at OpenRouter.
@@ -141,13 +170,20 @@ func (c *OpenAICompatClient) newStreamRequest(ctx context.Context, system, promp
 	}
 	msgs = append(msgs, chatMessage{Role: "user", Content: prompt})
 
-	body, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"model":          c.model,
 		"stream":         true,
 		"max_tokens":     c.maxTokens,
 		"messages":       msgs,
 		"stream_options": map[string]any{"include_usage": true},
-	})
+	}
+	// Reasoning-effort request param (ADR-0061), only when reasoning is enabled.
+	// A model that ignores it is unaffected; the field is omitted otherwise, so
+	// the default request is byte-for-byte unchanged.
+	if c.reasoning && c.reasoningEffort != "" {
+		payload["reasoning_effort"] = c.reasoningEffort
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("openai-compat: marshal request: %w", err)
 	}
@@ -186,8 +222,14 @@ func (c *OpenAICompatClient) consumeStream(ctx context.Context, body io.ReadClos
 			sendToken(ctx, ch, Token{Done: true, Usage: usage})
 			return
 		}
-		text, emit := applyStreamChunk(data, &usage)
-		if emit && !sendToken(ctx, ch, Token{Text: text}) {
+		text, reasoning := applyStreamChunk(data, &usage)
+		// Reasoning is a SEPARATE channel: emit it as its own Token so a text-only
+		// reader (which appends only tok.Text) never sees chain-of-thought. A chunk
+		// carrying both (rare) yields two tokens, reasoning first.
+		if reasoning != "" && !sendToken(ctx, ch, Token{Reasoning: reasoning}) {
+			return
+		}
+		if text != "" && !sendToken(ctx, ch, Token{Text: text}) {
 			return
 		}
 	}
@@ -215,30 +257,49 @@ func sseLineData(line string) (data string, ok bool) {
 // applyStreamChunk decodes one SSE "data:" JSON payload, folding any usage it
 // carries into *usage (usage arrives on its own chunk, with empty Choices,
 // right before [DONE] — see newStreamRequest's stream_options.include_usage),
-// and returns the text delta to emit. emit is false for a usage-only chunk, a
-// non-JSON keep-alive line, or a chunk with no text delta.
-func applyStreamChunk(data string, usage **Usage) (text string, emit bool) {
+// and returns the text delta AND the reasoning delta from this chunk (either or
+// both may be ""). Reasoning is read from the three shapes gateways expose
+// (ADR-0061 Piece 1c): delta.reasoning, delta.reasoning_content, and
+// provider_specific_fields.reasoning; the reasoning-token count from
+// usage.completion_tokens_details.reasoning_tokens. A no-reasoning endpoint
+// (agnes returns these null/absent) is a structural no-op: reasoning stays "".
+func applyStreamChunk(data string, usage **Usage) (text, reasoning string) {
 	var chunk struct {
 		Choices []struct {
 			Delta struct {
-				Content string `json:"content"`
+				Content          string `json:"content"`
+				Reasoning        string `json:"reasoning"`
+				ReasoningContent string `json:"reasoning_content"`
+				ProviderSpecific struct {
+					Reasoning string `json:"reasoning"`
+				} `json:"provider_specific_fields"`
 			} `json:"delta"`
 		} `json:"choices"`
 		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
+			PromptTokens           int `json:"prompt_tokens"`
+			CompletionTokens       int `json:"completion_tokens"`
+			CompletionTokensDetail struct {
+				ReasoningTokens int `json:"reasoning_tokens"`
+			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-		return "", false // keep-alive / comment / non-JSON line
+		return "", "" // keep-alive / comment / non-JSON line
 	}
 	if chunk.Usage != nil {
-		*usage = &Usage{InputTokens: chunk.Usage.PromptTokens, OutputTokens: chunk.Usage.CompletionTokens}
+		*usage = &Usage{
+			InputTokens:     chunk.Usage.PromptTokens,
+			OutputTokens:    chunk.Usage.CompletionTokens,
+			ReasoningTokens: chunk.Usage.CompletionTokensDetail.ReasoningTokens,
+		}
 	}
-	if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-		return chunk.Choices[0].Delta.Content, true
+	if len(chunk.Choices) > 0 {
+		d := chunk.Choices[0].Delta
+		text = d.Content
+		// First non-empty of the three reasoning shapes wins.
+		reasoning = firstNonEmpty(d.Reasoning, d.ReasoningContent, d.ProviderSpecific.Reasoning)
 	}
-	return "", false
+	return text, reasoning
 }
 
 // CallTools implements ToolCaller (ADR-0012) over the OpenAI /chat/completions
@@ -277,6 +338,74 @@ func (c *OpenAICompatClient) CallTools(ctx context.Context, system, prompt strin
 		})
 	}
 	return res, nil
+}
+
+// CallToolsReasoning implements ReasoningToolCaller (ADR-0061): stateless
+// reasoning carry-forward for the OpenAI-compat seam. prior is reinjected as
+// OPTIONAL context (there is no signed block to preserve, unlike Anthropic): any
+// text-kind reasoning it carries is prepended to the prompt so the model can see
+// its earlier train of thought. The response's reasoning (delta.reasoning /
+// reasoning_content / provider_specific_fields.reasoning, folded here from the
+// non-streaming message) is returned as the fresh ReasoningState for the next
+// step. On a no-reasoning endpoint the response carries none, so the returned
+// state is empty — a structural no-op that degrades to plain CallTools behavior.
+func (c *OpenAICompatClient) CallToolsReasoning(ctx context.Context, system, prompt string, toolSpecs []ToolSpec, prior ReasoningState) (ToolCallResult, ReasoningState, error) {
+	// Reinject prior reasoning as optional leading context (text-kind only).
+	prompt = prependPriorReasoning(prompt, prior)
+
+	payload := c.buildToolCallPayload(system, prompt, toolSpecs)
+	if c.reasoning && c.reasoningEffort != "" {
+		payload["reasoning_effort"] = c.reasoningEffort
+	}
+
+	out, err := c.sendToolCallRequest(ctx, payload)
+	if err != nil {
+		return ToolCallResult{}, ReasoningState{}, err
+	}
+	if len(out.Choices) == 0 {
+		return ToolCallResult{}, ReasoningState{}, nil
+	}
+
+	res, next := toolResultAndReasoning(out)
+	return res, next, nil
+}
+
+// prependPriorReasoning folds a prior ReasoningState's text-kind reasoning into
+// the prompt as clearly-labelled optional context. Non-text (signed/redacted)
+// blocks are skipped — they are Anthropic-native and meaningless as OpenAI text.
+// Empty prior returns prompt unchanged.
+func prependPriorReasoning(prompt string, prior ReasoningState) string {
+	var sb strings.Builder
+	for _, b := range prior.Blocks {
+		if b.kind == reasoningKindText && b.text != "" {
+			sb.WriteString(b.text)
+			sb.WriteString("\n")
+		}
+	}
+	if sb.Len() == 0 {
+		return prompt
+	}
+	return "[prior reasoning]\n" + sb.String() + "\n" + prompt
+}
+
+// toolResultAndReasoning maps a non-streaming tool response's first choice into
+// the ToolCallResult (mirroring CallTools) and extracts any reasoning the
+// message carried into a fresh ReasoningState (text-kind, no signature).
+func toolResultAndReasoning(out toolCallResponse) (ToolCallResult, ReasoningState) {
+	msg := out.Choices[0].Message
+	res := ToolCallResult{Message: msg.Content}
+	for _, tc := range msg.ToolCalls {
+		res.Calls = append(res.Calls, ToolCall{
+			Name:    tc.Function.Name,
+			Args:    parseToolArgs(tc.Function.Arguments),
+			RawArgs: rawToolArgs(tc.Function.Arguments),
+		})
+	}
+	var next ReasoningState
+	if r := firstNonEmpty(msg.Reasoning, msg.ReasoningContent, msg.ProviderSpecific.Reasoning); r != "" {
+		next.Blocks = append(next.Blocks, newTextReasoningBlock(r))
+	}
+	return res, next
 }
 
 // buildToolCallPayload assembles the /chat/completions request body for a
@@ -335,7 +464,14 @@ func (c *OpenAICompatClient) buildToolCallPayload(system, prompt string, toolSpe
 type toolCallResponse struct {
 	Choices []struct {
 		Message struct {
-			Content   string `json:"content"`
+			Content string `json:"content"`
+			// Reasoning shapes (ADR-0061): the three keys gateways use for a
+			// non-streaming message's reasoning. All "" on a no-reasoning endpoint.
+			Reasoning        string `json:"reasoning"`
+			ReasoningContent string `json:"reasoning_content"`
+			ProviderSpecific struct {
+				Reasoning string `json:"reasoning"`
+			} `json:"provider_specific_fields"`
 			ToolCalls []struct {
 				Function struct {
 					Name      string `json:"name"`

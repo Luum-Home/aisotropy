@@ -93,19 +93,19 @@ func TestOpenAICompat_StreamCleanCloseNoDONE(t *testing.T) {
 // a text chunk, and a non-JSON keep-alive line.
 func TestApplyStreamChunk(t *testing.T) {
 	var usage *Usage
-	if text, emit := applyStreamChunk(`{"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":4}}`, &usage); emit || text != "" {
-		t.Errorf("usage-only chunk: emit=%v text=%q, want no emit", emit, text)
+	if text, reasoning := applyStreamChunk(`{"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":4}}`, &usage); text != "" || reasoning != "" {
+		t.Errorf("usage-only chunk: text=%q reasoning=%q, want both empty", text, reasoning)
 	}
 	if usage == nil || usage.InputTokens != 2 || usage.OutputTokens != 4 {
 		t.Fatalf("usage not folded: %+v", usage)
 	}
-	if text, emit := applyStreamChunk(`{"choices":[{"delta":{"content":"hi"}}]}`, &usage); !emit || text != "hi" {
-		t.Errorf("text chunk: emit=%v text=%q", emit, text)
+	if text, _ := applyStreamChunk(`{"choices":[{"delta":{"content":"hi"}}]}`, &usage); text != "hi" {
+		t.Errorf("text chunk: text=%q", text)
 	}
-	if _, emit := applyStreamChunk(`not json`, &usage); emit {
+	if text, reasoning := applyStreamChunk(`not json`, &usage); text != "" || reasoning != "" {
 		t.Error("non-JSON line must not emit")
 	}
-	if _, emit := applyStreamChunk(`{"choices":[{"delta":{"content":""}}]}`, &usage); emit {
+	if text, _ := applyStreamChunk(`{"choices":[{"delta":{"content":""}}]}`, &usage); text != "" {
 		t.Error("empty content must not emit")
 	}
 }
