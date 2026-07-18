@@ -86,128 +86,307 @@ func (d diverseProbeSampler) HeldOut(_ context.Context, _ int) ([]bitrate.Sample
 	return d.samples, nil
 }
 
-func main() {
-	addr := flag.String("addr", ":18080", "HTTP listen address for the booted aisotropyd (the real /bitrate view)")
-	httpProof := flag.Bool("http-proof", true, "boot the real aisotropyd and read the trend back over GET /health + GET /bitrate")
-	flag.Parse()
+// --- Injectable seams --------------------------------------------------------
+//
+// Every real-world boundary the harness crosses — env, filesystem, the scorer
+// subprocess, the memory tiers, and the HTTP proof against a booted aisotropyd —
+// is reached only through deps below. Production wiring (defaultDeps) uses the
+// real implementations; tests substitute fakes so the whole orchestration in
+// run() is exercisable without Docker, a Python venv, or a built scorer binary.
 
-	if code := run(*addr, *httpProof); code != 0 {
-		os.Exit(code)
-	}
+// appRunner is the subset of *aisotropy.App the HTTP proof needs.
+type appRunner interface {
+	Run(ctx context.Context) error
 }
 
-func run(addr string, httpProof bool) int {
-	ctx := context.Background()
+// httpGetter is the subset of *http.Client serveAndProbe needs.
+type httpGetter interface {
+	Get(url string) (*http.Response, error)
+}
 
-	// --- Scorer gate: skip cleanly if the real scorer is unavailable. --------
-	bin := os.Getenv("AISOTROPY_BITRATE_BIN")
-	if bin == "" {
-		fmt.Println("SKIP: AISOTROPY_BITRATE_BIN unset — point it at a scorer wrapper to run the harness.")
-		fmt.Println(dockerHint)
-		return 0
-	}
-	if _, err := os.Stat(bin); err != nil {
-		fmt.Printf("SKIP: scorer binary %q not found: %v\n", bin, err)
-		return 0
-	}
+// bitrateStore is the subset of *bitrate.Store run() uses directly (beyond the
+// Coordinator's narrower MeasurementStore seam). *bitrate.Store satisfies it;
+// tests wrap a real in-memory store to inject a targeted failure in exactly one
+// method (e.g. Series) without disturbing the others.
+type bitrateStore interface {
+	Save(ctx context.Context, m bitrate.Measurement) error
+	Series(ctx context.Context, tenant, user string) ([]bitrate.Measurement, error)
+	TrendSlope(ctx context.Context, tenant, user string) (float64, error)
+	AllSummaries(ctx context.Context) ([]bitrate.TenantSummary, error)
+	Close() error
+}
 
-	// --- Tier selection: report exactly which substrate this run exercises. ---
-	rqlite := os.Getenv("RQLITE_URL")
-	qdrant := os.Getenv("QDRANT_HOST")
-	realFacts := rqlite != ""
-	realSemantic := qdrant != ""
-	realTiers := realFacts && realSemantic
-
-	fmt.Println("== Bet-6 longitudinal harness (KR8.1 instrument) ==")
-	fmt.Printf("scorer:   %s\n", bin)
-	if realFacts {
-		fmt.Printf("facts:    REAL rqlite @ %s\n", rqlite)
-	} else {
-		fmt.Println("facts:    in-process SQLite (fallback — set RQLITE_URL for the real tier)")
-	}
-	if realSemantic {
-		fmt.Printf("semantic: REAL Qdrant @ %s:%s\n", qdrant, envOr("QDRANT_PORT", "6334"))
-	} else {
-		fmt.Println("semantic: in-process cosine (fallback — set QDRANT_HOST for the real tier)")
-	}
-	if realTiers {
-		fmt.Println("mode:     PRODUCTION-LIKE (real networked memory tiers + real scorer + real /bitrate)")
-	} else {
-		fmt.Println("mode:     IN-PROCESS FALLBACK (Docker tiers not both set)")
-		fmt.Println(dockerHint)
-	}
-	fmt.Println("NOTE: this is a SIMULATED evolving tenant (authored accumulation schedule),")
-	fmt.Println("      NOT real users over weeks. It validates the production INSTRUMENT.")
-	fmt.Println()
-
-	// A shared on-disk data dir so the bpt store the harness WRITES is the exact
-	// file the booted aisotropyd READS through GET /bitrate. Set before opening
-	// any store or booting the App, since both resolve it from the environment.
-	dataDir, err := os.MkdirTemp("", "bitrate-harness-")
-	if err != nil {
-		fmt.Printf("FAIL: scratch data dir: %v\n", err)
-		return 1
-	}
-	defer func() { _ = os.RemoveAll(dataDir) }()
-	if err := os.Setenv("AISOTROPY_DATA_DIR", dataDir); err != nil {
-		fmt.Printf("FAIL: set AISOTROPY_DATA_DIR: %v\n", err)
-		return 1
-	}
-
-	// --- The FIXED, DIVERSE held-out probe set (K distinct topics). ----------
-	// Each is a QUESTION about one topic of the tenant's world, CONSTANT across
-	// all steps. topicProbe[j] is answered by topicFacts[j]/topicDocs[j] WITHOUT
-	// restating it verbatim (leakage guard below).
-	topicProbe := []string{
+// topicProbe/topicFacts/topicDocs are the FIXED, DIVERSE held-out probe set (K
+// distinct topics) and the memory that answers each one — package-level so
+// tests can reference the exact same content a fake scorer keys off of,
+// without duplicating (and risking drift from) the strings run() seeds.
+// Each topicProbe[j] is answered by topicFacts[j]/topicDocs[j] WITHOUT
+// restating it verbatim (leakage guard in seedTopic).
+var (
+	topicProbe = []string{
 		"When is the finance team weekly sync scheduled?",
 		"How many vacation days does the HR policy grant new engineers?",
 		"Which airline is preferred when booking company travel?",
 		"What is the next milestone on the product roadmap?",
 		"Who must approve the legal review before a vendor contract is signed?",
 	}
-	topicFacts := []string{
+	topicFacts = []string{
 		"The finance team weekly sync is held on Tuesdays at 3pm.",
 		"New engineers at Acme receive 22 vacation days per year under the HR policy.",
 		"The preferred airline for Acme company travel bookings is SkyJet.",
 		"The next product roadmap milestone is the v2 launch in March.",
 		"Vendor contracts require legal review approval from general counsel Dana before signing.",
 	}
-	topicDocs := []string{
+	topicDocs = []string{
 		"Acme finance operations handbook: the weekly sync meeting recurs every Tuesday at 3pm.",
 		"Acme HR policy handbook: engineering new hires accrue 22 vacation days annually.",
 		"Acme travel booking guide: SkyJet is the designated preferred carrier for all company trips.",
 		"Acme product roadmap overview: the upcoming milestone is the v2 launch scheduled for March.",
 		"Acme legal review process: general counsel Dana signs off on every vendor contract before signing.",
 	}
+)
+
+type deps struct {
+	stdout io.Writer
+	getenv func(string) string
+	statFn func(string) error
+
+	mkdirTemp func(dir, pattern string) (string, error)
+	setenv    func(key, val string) error
+
+	openFacts        func() (facts.Store, error)
+	openSemantic     func(ctx context.Context, dim int) (semantic.Store, error)
+	newEmbedder      func() semantic.Embedder
+	openBitrateStore func(dsn string) (bitrateStore, error)
+	newRunner        func(bin string) bitrate.Runner
+
+	newApp        func(addr string) appRunner
+	newHTTPClient func() httpGetter
+	now           func() time.Time
+	sleep         func(time.Duration)
+
+	readyTimeout    time.Duration
+	pollInterval    time.Duration
+	shutdownTimeout time.Duration
+}
+
+func defaultDeps() deps {
+	return deps{
+		stdout:    os.Stdout,
+		getenv:    os.Getenv,
+		statFn:    func(p string) error { _, err := os.Stat(p); return err },
+		mkdirTemp: os.MkdirTemp,
+		setenv:    os.Setenv,
+		openFacts: facts.OpenFromEnv,
+		openSemantic: func(ctx context.Context, dim int) (semantic.Store, error) {
+			return semantic.OpenFromEnv(ctx, dim)
+		},
+		newEmbedder: func() semantic.Embedder { return semantic.EmbedderFromEnv() },
+		openBitrateStore: func(dsn string) (bitrateStore, error) {
+			return bitrate.OpenStore(dsn)
+		},
+		newRunner: func(bin string) bitrate.Runner { return bitrate.Worker{BinaryPath: bin} },
+		newApp: func(addr string) appRunner {
+			return aisotropy.New(aisotropy.WithAddr(addr))
+		},
+		newHTTPClient:   func() httpGetter { return &http.Client{Timeout: 5 * time.Second} },
+		now:             time.Now,
+		sleep:           time.Sleep,
+		readyTimeout:    20 * time.Second,
+		pollInterval:    300 * time.Millisecond,
+		shutdownTimeout: 10 * time.Second,
+	}
+}
+
+func main() {
+	if code := runMain(os.Args[1:], defaultDeps()); code != 0 {
+		os.Exit(code)
+	}
+}
+
+// runMain is main()'s body: flag parsing plus the run() dispatch, split out so
+// tests can drive it with injected deps and captured args.
+func runMain(args []string, d deps) int {
+	fs := flag.NewFlagSet("bitrate-harness", flag.ContinueOnError)
+	fs.SetOutput(d.stdout)
+	addr := fs.String("addr", ":18080", "HTTP listen address for the booted aisotropyd (the real /bitrate view)")
+	httpProof := fs.Bool("http-proof", true, "boot the real aisotropyd and read the trend back over GET /health + GET /bitrate")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	return run(*addr, *httpProof, d)
+}
+
+// checkScorerGate resolves AISOTROPY_BITRATE_BIN via getenv and validates it
+// exists via statFn. A non-empty skipMsg means the harness must SKIP cleanly
+// (exit 0) rather than fabricate a curve without a real scorer.
+func checkScorerGate(getenv func(string) string, statFn func(string) error) (bin, skipMsg string) {
+	bin = getenv("AISOTROPY_BITRATE_BIN")
+	if bin == "" {
+		return "", "SKIP: AISOTROPY_BITRATE_BIN unset — point it at a scorer wrapper to run the harness.\n" + dockerHint
+	}
+	if err := statFn(bin); err != nil {
+		return "", fmt.Sprintf("SKIP: scorer binary %q not found: %v", bin, err)
+	}
+	return bin, ""
+}
+
+// tierLines reports exactly which substrate this run exercises, mirroring the
+// runtime's own env precedence (RQLITE_URL / QDRANT_HOST). Pure with respect to
+// getenv, so every combination (neither/one/both set) is directly table-testable.
+func tierLines(getenv func(string) string) (lines []string, realTiers bool) {
+	rqlite := getenv("RQLITE_URL")
+	qdrant := getenv("QDRANT_HOST")
+	realFacts := rqlite != ""
+	realSemantic := qdrant != ""
+	realTiers = realFacts && realSemantic
+
+	if realFacts {
+		lines = append(lines, fmt.Sprintf("facts:    REAL rqlite @ %s", rqlite))
+	} else {
+		lines = append(lines, "facts:    in-process SQLite (fallback — set RQLITE_URL for the real tier)")
+	}
+	if realSemantic {
+		lines = append(lines, fmt.Sprintf("semantic: REAL Qdrant @ %s:%s", qdrant, envOr(getenv, "QDRANT_PORT", "6334")))
+	} else {
+		lines = append(lines, "semantic: in-process cosine (fallback — set QDRANT_HOST for the real tier)")
+	}
+	if realTiers {
+		lines = append(lines, "mode:     PRODUCTION-LIKE (real networked memory tiers + real scorer + real /bitrate)")
+	} else {
+		lines = append(lines, "mode:     IN-PROCESS FALLBACK (Docker tiers not both set)")
+		lines = append(lines, strings.Split(strings.Trim(dockerHint, "\n"), "\n")...)
+	}
+	return lines, realTiers
+}
+
+// checkLeakage guards seedTopic against folding a probe turn verbatim into
+// memory: if the scored text were already distilled into the tenant's memory,
+// ContextWith would trivially predict it and the measured lift would be
+// spuriously high and meaningless (see internal/bitrate/sampler.go ShouldSample
+// doc for the same anti-leakage contract).
+func checkLeakage(probe []string, candidate string) error {
+	for _, p := range probe {
+		if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(p)) {
+			return fmt.Errorf("LEAKAGE: candidate memory equals a probe turn verbatim: %q", candidate)
+		}
+	}
+	return nil
+}
+
+// curveVerdict computes the KR8.1 headline downward-curve check over the
+// AGGREGATE bpt_with series: a negative least-squares slope and a strictly
+// lower final value than the first. Pure over the already-measured series.
+func curveVerdict(aggWith []float64) (slope, totalDrop float64, ok bool, failLines []string) {
+	n := len(aggWith)
+	slope = leastSquaresSlope(aggWith)
+	if n == 0 {
+		return slope, 0, false, failLines
+	}
+	totalDrop = aggWith[0] - aggWith[n-1]
+	ok = true
+	if aggWith[n-1] >= aggWith[0] {
+		failLines = append(failLines, fmt.Sprintf("FAIL: NO downward curve: agg bpt_with[last]=%.4f >= [first]=%.4f", aggWith[n-1], aggWith[0]))
+		ok = false
+	}
+	if slope >= 0 {
+		failLines = append(failLines, fmt.Sprintf("FAIL: agg bpt_with slope is not negative: %.5f", slope))
+		ok = false
+	}
+	return slope, totalDrop, ok, failLines
+}
+
+// sustainedMetric is the SUSTAINED-descent metric (curve, not a single anchor
+// cliff): applicable only for K>=3 steps with an overall positive drop.
+func sustainedMetric(aggWith []float64) (applicable bool, firstStepDrop, postAnchorDrop, postAnchorFraction, maxRise float64) {
+	n := len(aggWith)
+	if n < 3 {
+		return false, 0, 0, 0, 0
+	}
+	totalDrop := aggWith[0] - aggWith[n-1]
+	if totalDrop <= 0 {
+		return false, 0, 0, 0, 0
+	}
+	firstStepDrop = aggWith[0] - aggWith[1]
+	postAnchorDrop = aggWith[1] - aggWith[n-1]
+	postAnchorFraction = postAnchorDrop / totalDrop
+	for i := 1; i < n; i++ {
+		if rise := aggWith[i] - aggWith[i-1]; rise > maxRise {
+			maxRise = rise
+		}
+	}
+	return true, firstStepDrop, postAnchorDrop, postAnchorFraction, maxRise
+}
+
+func run(addr string, httpProof bool, d deps) int {
+	ctx := context.Background()
+
+	// --- Scorer gate: skip cleanly if the real scorer is unavailable. --------
+	bin, skipMsg := checkScorerGate(d.getenv, d.statFn)
+	if skipMsg != "" {
+		fmt.Fprintln(d.stdout, skipMsg)
+		return 0
+	}
+
+	// --- Tier selection: report exactly which substrate this run exercises. ---
+	tLines, realTiers := tierLines(d.getenv)
+	fmt.Fprintln(d.stdout, "== Bet-6 longitudinal harness (KR8.1 instrument) ==")
+	fmt.Fprintf(d.stdout, "scorer:   %s\n", bin)
+	for _, l := range tLines {
+		fmt.Fprintln(d.stdout, l)
+	}
+	fmt.Fprintln(d.stdout, "NOTE: this is a SIMULATED evolving tenant (authored accumulation schedule),")
+	fmt.Fprintln(d.stdout, "      NOT real users over weeks. It validates the production INSTRUMENT.")
+	fmt.Fprintln(d.stdout)
+
+	// A shared on-disk data dir so the bpt store the harness WRITES is the exact
+	// file the booted aisotropyd READS through GET /bitrate. Set before opening
+	// any store or booting the App, since both resolve it from the environment.
+	dataDir, err := d.mkdirTemp("", "bitrate-harness-")
+	if err != nil {
+		fmt.Fprintf(d.stdout, "FAIL: scratch data dir: %v\n", err)
+		return 1
+	}
+	defer func() { _ = os.RemoveAll(dataDir) }()
+	if err := d.setenv("AISOTROPY_DATA_DIR", dataDir); err != nil {
+		fmt.Fprintf(d.stdout, "FAIL: set AISOTROPY_DATA_DIR: %v\n", err)
+		return 1
+	}
+
+	// The FIXED, DIVERSE held-out probe set (K distinct topics) is the
+	// package-level topicProbe/topicFacts/topicDocs above: each topicProbe[j] is
+	// a QUESTION about one topic of the tenant's world, CONSTANT across all
+	// steps, answered by topicFacts[j]/topicDocs[j] WITHOUT restating it
+	// verbatim (leakage guard below).
 	K := len(topicProbe)
 
 	// --- Real (or fallback) memory tiers, built from the SAME env the runtime
 	// uses, so the hydration below is byte-for-byte the production retrieval. ---
-	factsStore, err := facts.OpenFromEnv()
+	factsStore, err := d.openFacts()
 	if err != nil {
-		fmt.Printf("FAIL: open facts store: %v\n", err)
+		fmt.Fprintf(d.stdout, "FAIL: open facts store: %v\n", err)
 		return 1
 	}
 	defer func() { _ = factsStore.Close() }()
 	factsScope, err := facts.NewScope(tenant, user)
 	if err != nil {
-		fmt.Printf("FAIL: facts scope: %v\n", err)
+		fmt.Fprintf(d.stdout, "FAIL: facts scope: %v\n", err)
 		return 1
 	}
 
 	// EmbedderFromEnv is the exact embedder the booted App's ensureSemantic uses
 	// (default HashEmbedder, dim 128), so the harness seeds Qdrant at the same
 	// vector width the server later probes — no collection dimension conflict.
-	embedder := semantic.EmbedderFromEnv()
-	semStore, err := semantic.OpenFromEnv(ctx, embedder.Dimension())
+	embedder := d.newEmbedder()
+	semStore, err := d.openSemantic(ctx, embedder.Dimension())
 	if err != nil {
-		fmt.Printf("FAIL: open semantic store: %v\n", err)
+		fmt.Fprintf(d.stdout, "FAIL: open semantic store: %v\n", err)
 		return 1
 	}
 	defer func() { _ = semStore.Close() }()
 	semScope, err := semantic.NewScope(tenant, user)
 	if err != nil {
-		fmt.Printf("FAIL: semantic scope: %v\n", err)
+		fmt.Fprintf(d.stdout, "FAIL: semantic scope: %v\n", err)
 		return 1
 	}
 
@@ -216,9 +395,9 @@ func run(addr string, httpProof bool) int {
 	resetScope(ctx, factsStore, factsScope, semStore, semScope, K)
 
 	// Durable bpt store: the file GET /bitrate serves. One AGGREGATE row per step.
-	bStore, err := bitrate.OpenStore(filepath.Join(dataDir, "bitrate.db"))
+	bStore, err := d.openBitrateStore(filepath.Join(dataDir, "bitrate.db"))
 	if err != nil {
-		fmt.Printf("FAIL: open bitrate store: %v\n", err)
+		fmt.Fprintf(d.stdout, "FAIL: open bitrate store: %v\n", err)
 		return 1
 	}
 
@@ -227,11 +406,11 @@ func run(addr string, httpProof bool) int {
 	// seedTopic folds topic j's fact + doc into consolidated memory, guarding
 	// against leakage (no seed may equal any probe turn verbatim).
 	seedTopic := func(j int) error {
-		for _, probe := range topicProbe {
-			if strings.EqualFold(strings.TrimSpace(topicFacts[j]), strings.TrimSpace(probe)) ||
-				strings.EqualFold(strings.TrimSpace(topicDocs[j]), strings.TrimSpace(probe)) {
-				return fmt.Errorf("LEAKAGE: topic %d memory equals a probe turn verbatim", j)
-			}
+		if err := checkLeakage(topicProbe, topicFacts[j]); err != nil {
+			return err
+		}
+		if err := checkLeakage(topicProbe, topicDocs[j]); err != nil {
+			return err
 		}
 		f := facts.Fact{
 			ID:         fmt.Sprintf("harness-fact-topic-%d", j),
@@ -271,10 +450,10 @@ func run(addr string, httpProof bool) int {
 	aggWith := make([]float64, 0, K)
 	aggWithout := make([]float64, 0, K)
 
-	fmt.Println("-- per-step measurement (real coordinator -> hydrator -> scorer -> store) --")
+	fmt.Fprintln(d.stdout, "-- per-step measurement (real coordinator -> hydrator -> scorer -> store) --")
 	for i := 0; i < K; i++ {
 		if err := seedTopic(i); err != nil {
-			fmt.Printf("FAIL: %v\n", err)
+			fmt.Fprintf(d.stdout, "FAIL: %v\n", err)
 			_ = bStore.Close()
 			return 1
 		}
@@ -293,18 +472,18 @@ func run(addr string, httpProof bool) int {
 		coord := bitrate.Coordinator{
 			Sampler:     diverseProbeSampler{samples: samples},
 			Hydrator:    hydrator,
-			Runner:      bitrate.Worker{BinaryPath: bin},
+			Runner:      d.newRunner(bin),
 			Store:       &captureStore{}, // throwaway; the durable aggregate write is below
 			SampleBatch: K,
 		}
 		ms, err := coord.RunOnce(ctx)
 		if err != nil {
-			fmt.Printf("FAIL: coordinator RunOnce (step %d): %v\n", i, err)
+			fmt.Fprintf(d.stdout, "FAIL: coordinator RunOnce (step %d): %v\n", i, err)
 			_ = bStore.Close()
 			return 1
 		}
 		if len(ms) != K {
-			fmt.Printf("FAIL: step %d: expected %d measurements over the diverse probe, got %d\n", i, K, len(ms))
+			fmt.Fprintf(d.stdout, "FAIL: step %d: expected %d measurements over the diverse probe, got %d\n", i, K, len(ms))
 			_ = bStore.Close()
 			return 1
 		}
@@ -335,59 +514,43 @@ func run(addr string, httpProof bool) int {
 			SampleID:   fmt.Sprintf("harness-agg-step-%d", i),
 		}
 		if err := bStore.Save(ctx, agg); err != nil {
-			fmt.Printf("FAIL: durable save (step %d): %v\n", i, err)
+			fmt.Fprintf(d.stdout, "FAIL: durable save (step %d): %v\n", i, err)
 			_ = bStore.Close()
 			return 1
 		}
 
-		fmt.Printf("step %d  topics_covered=%d/%d  agg_bpt_with=%.4f  agg_bpt_without=%.4f  agg_lift=%.4f  model=%s  per_turn_with=%v\n",
+		fmt.Fprintf(d.stdout, "step %d  topics_covered=%d/%d  agg_bpt_with=%.4f  agg_bpt_without=%.4f  agg_lift=%.4f  model=%s  per_turn_with=%v\n",
 			i, i+1, K, meanWith, meanWithout, meanWithout-meanWith, modelID, roundAll(withs))
 	}
-	fmt.Println()
+	fmt.Fprintln(d.stdout)
 
 	// --- Headline KR8.1 downward-curve assertions (over the AGGREGATE). -------
-	slope := leastSquaresSlope(aggWith)
-	totalDrop := aggWith[0] - aggWith[K-1]
-	fmt.Println("-- KR8.1 downward curve --")
-	fmt.Printf("AGG bpt_with:    %v\n", roundAll(aggWith))
-	fmt.Printf("AGG bpt_without: %v  (control; ~constant bare persona)\n", roundAll(aggWithout))
-	fmt.Printf("least-squares slope over AGG bpt_with = %.5f  (want NEGATIVE)\n", slope)
-	fmt.Printf("total drop bpt_with[0]-bpt_with[last] = %.5f\n", totalDrop)
-
-	ok := true
-	if aggWith[K-1] >= aggWith[0] {
-		fmt.Printf("FAIL: NO downward curve: agg bpt_with[last]=%.4f >= [first]=%.4f\n", aggWith[K-1], aggWith[0])
-		ok = false
-	}
-	if slope >= 0 {
-		fmt.Printf("FAIL: agg bpt_with slope is not negative: %.5f\n", slope)
-		ok = false
+	slope, totalDrop, ok, failLines := curveVerdict(aggWith)
+	fmt.Fprintln(d.stdout, "-- KR8.1 downward curve --")
+	fmt.Fprintf(d.stdout, "AGG bpt_with:    %v\n", roundAll(aggWith))
+	fmt.Fprintf(d.stdout, "AGG bpt_without: %v  (control; ~constant bare persona)\n", roundAll(aggWithout))
+	fmt.Fprintf(d.stdout, "least-squares slope over AGG bpt_with = %.5f  (want NEGATIVE)\n", slope)
+	fmt.Fprintf(d.stdout, "total drop bpt_with[0]-bpt_with[last] = %.5f\n", totalDrop)
+	for _, l := range failLines {
+		fmt.Fprintln(d.stdout, l)
 	}
 
 	// --- SUSTAINED-descent metric (curve, not a single anchor cliff). --------
-	if K >= 3 && totalDrop > 0 {
-		firstStepDrop := aggWith[0] - aggWith[1]
-		postAnchorDrop := aggWith[1] - aggWith[K-1]
-		postAnchorFraction := postAnchorDrop / totalDrop
-		maxRise := 0.0
-		for i := 1; i < K; i++ {
-			if rise := aggWith[i] - aggWith[i-1]; rise > maxRise {
-				maxRise = rise
-			}
-		}
-		fmt.Println("-- sustained-descent metric --")
-		fmt.Printf("first-step drop (0->1)     = %.5f\n", firstStepDrop)
-		fmt.Printf("post-anchor drop (1->last) = %.5f\n", postAnchorDrop)
-		fmt.Printf("postAnchorFraction         = %.4f  (anchor-artifact ~0, ideal ~%.2f)\n",
-			postAnchorFraction, float64(K-2)/float64(K-1))
-		fmt.Printf("max per-step RISE          = %.5f\n", maxRise)
+	if applicable, firstStepDrop, postAnchorDrop, postAnchorFraction, maxRise := sustainedMetric(aggWith); applicable {
+		n := len(aggWith)
+		fmt.Fprintln(d.stdout, "-- sustained-descent metric --")
+		fmt.Fprintf(d.stdout, "first-step drop (0->1)     = %.5f\n", firstStepDrop)
+		fmt.Fprintf(d.stdout, "post-anchor drop (1->last) = %.5f\n", postAnchorDrop)
+		fmt.Fprintf(d.stdout, "postAnchorFraction         = %.4f  (anchor-artifact ~0, ideal ~%.2f)\n",
+			postAnchorFraction, float64(n-2)/float64(n-1))
+		fmt.Fprintf(d.stdout, "max per-step RISE          = %.5f\n", maxRise)
 	}
-	fmt.Println()
+	fmt.Fprintln(d.stdout)
 
 	// --- Prove the AGGREGATE series persists and round-trips (the /bitrate data).
 	series, err := bStore.Series(ctx, tenant, user)
 	if err != nil {
-		fmt.Printf("FAIL: read series back: %v\n", err)
+		fmt.Fprintf(d.stdout, "FAIL: read series back: %v\n", err)
 		_ = bStore.Close()
 		return 1
 	}
@@ -397,67 +560,67 @@ func run(addr string, httpProof bool) int {
 	}
 	liftSlope, err := bStore.TrendSlope(ctx, tenant, user)
 	if err != nil {
-		fmt.Printf("FAIL: store TrendSlope: %v\n", err)
+		fmt.Fprintf(d.stdout, "FAIL: store TrendSlope: %v\n", err)
 		_ = bStore.Close()
 		return 1
 	}
 	summaries, err := bStore.AllSummaries(ctx)
 	if err != nil {
-		fmt.Printf("FAIL: store AllSummaries: %v\n", err)
+		fmt.Fprintf(d.stdout, "FAIL: store AllSummaries: %v\n", err)
 		_ = bStore.Close()
 		return 1
 	}
-	fmt.Println("-- durable store read-back (what GET /bitrate serves) --")
-	fmt.Printf("Series bpt_with (oldest->newest): %v  (%d rows)\n", roundAll(readBack), len(series))
-	fmt.Printf("Store.TrendSlope over LIFT = %.5f  (POSITIVE mirror of the downward bpt_with curve)\n", liftSlope)
+	fmt.Fprintln(d.stdout, "-- durable store read-back (what GET /bitrate serves) --")
+	fmt.Fprintf(d.stdout, "Series bpt_with (oldest->newest): %v  (%d rows)\n", roundAll(readBack), len(series))
+	fmt.Fprintf(d.stdout, "Store.TrendSlope over LIFT = %.5f  (POSITIVE mirror of the downward bpt_with curve)\n", liftSlope)
 	sumJSON, _ := json.MarshalIndent(summaries, "", "  ")
-	fmt.Printf("AllSummaries:\n%s\n\n", sumJSON)
+	fmt.Fprintf(d.stdout, "AllSummaries:\n%s\n\n", sumJSON)
 
 	// The booted App reopens this same on-disk file; close the harness's writer
 	// handle first so there is a single writer at a time.
 	if err := bStore.Close(); err != nil {
-		fmt.Printf("WARN: bitrate store close: %v\n", err)
+		fmt.Fprintf(d.stdout, "WARN: bitrate store close: %v\n", err)
 	}
 
 	// --- HTTP proof: read the SAME trend back through the REAL aisotropyd. ----
 	if httpProof {
-		if err := serveAndProbe(addr, tenant, realTiers); err != nil {
+		if err := serveAndProbe(d, addr, tenant, realTiers); err != nil {
 			// A failed HTTP proof does NOT invalidate the curve (the store-level
 			// read above already satisfies "read the trend back"); surface it but
 			// keep the core verdict.
-			fmt.Printf("WARN: HTTP proof did not complete: %v\n", err)
-			fmt.Println("      (the store-level Series/TrendSlope read above still evidences the trend)")
+			fmt.Fprintf(d.stdout, "WARN: HTTP proof did not complete: %v\n", err)
+			fmt.Fprintln(d.stdout, "      (the store-level Series/TrendSlope read above still evidences the trend)")
 		}
 	}
 
-	fmt.Println()
+	fmt.Fprintln(d.stdout)
 	if ok {
-		fmt.Println("RESULT: PASS — downward bpt curve + negative slope captured through the real pipeline.")
+		fmt.Fprintln(d.stdout, "RESULT: PASS — downward bpt curve + negative slope captured through the real pipeline.")
 		return 0
 	}
-	fmt.Println("RESULT: FAIL — the curve did not descend (see FAIL lines above).")
+	fmt.Fprintln(d.stdout, "RESULT: FAIL — the curve did not descend (see FAIL lines above).")
 	return 1
 }
 
 // serveAndProbe boots the REAL aisotropyd (aisotropy.App) sharing this process's
 // env (real tiers + the same on-disk bpt store), waits for liveness, then reads
 // GET /health and GET /bitrate — the exact operator surface — and prints them.
-func serveAndProbe(addr, tenantID string, realTiers bool) error {
-	fmt.Println("-- HTTP proof: booting the real aisotropyd (aisotropy.App) --")
+func serveAndProbe(d deps, addr, tenantID string, realTiers bool) error {
+	fmt.Fprintln(d.stdout, "-- HTTP proof: booting the real aisotropyd (aisotropy.App) --")
 	appCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	app := aisotropy.New(aisotropy.WithAddr(addr))
+	app := d.newApp(addr)
 	runErr := make(chan error, 1)
 	go func() { runErr <- app.Run(appCtx) }()
 
 	base := "http://127.0.0.1" + addr
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := d.newHTTPClient()
 
 	// Poll liveness (/healthz is outside the OpenAPI contract, returns 200 ok).
 	live := false
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
+	deadline := d.now().Add(d.readyTimeout)
+	for d.now().Before(deadline) {
 		select {
 		case e := <-runErr:
 			return fmt.Errorf("server exited before ready: %v", e)
@@ -471,12 +634,12 @@ func serveAndProbe(addr, tenantID string, realTiers bool) error {
 				break
 			}
 		}
-		time.Sleep(300 * time.Millisecond)
+		d.sleep(d.pollInterval)
 	}
 	if !live {
 		return fmt.Errorf("aisotropyd did not become live at %s within timeout", base)
 	}
-	fmt.Printf("GET /healthz -> 200 (aisotropyd live at %s)\n", base)
+	fmt.Fprintf(d.stdout, "GET /healthz -> 200 (aisotropyd live at %s)\n", base)
 
 	// Readiness: probes the REAL rqlite + Qdrant when realTiers.
 	healthBody, healthCode, err := getBody(client, base+"/health")
@@ -487,28 +650,28 @@ func serveAndProbe(addr, tenantID string, realTiers bool) error {
 	if realTiers {
 		label = "REAL rqlite + Qdrant"
 	}
-	fmt.Printf("GET /health  -> %d (%s): %s\n", healthCode, label, compact(healthBody))
+	fmt.Fprintf(d.stdout, "GET /health  -> %d (%s): %s\n", healthCode, label, compact(healthBody))
 
 	// The trend, read back through the operator view.
 	bitrateBody, bitrateCode, err := getBody(client, base+"/bitrate")
 	if err != nil {
 		return fmt.Errorf("GET /bitrate: %w", err)
 	}
-	fmt.Printf("GET /bitrate -> %d: %s\n", bitrateCode, compact(bitrateBody))
+	fmt.Fprintf(d.stdout, "GET /bitrate -> %d: %s\n", bitrateCode, compact(bitrateBody))
 	if bitrateCode != http.StatusOK {
 		return fmt.Errorf("/bitrate returned %d", bitrateCode)
 	}
 	if !strings.Contains(bitrateBody, tenantID) {
 		return fmt.Errorf("/bitrate did not include tenant %q (the trend was not served)", tenantID)
 	}
-	fmt.Printf("OK: /bitrate served the %q trend through the real HTTP surface.\n", tenantID)
+	fmt.Fprintf(d.stdout, "OK: /bitrate served the %q trend through the real HTTP surface.\n", tenantID)
 
 	// Graceful shutdown.
 	cancel()
 	select {
 	case <-runErr:
-	case <-time.After(10 * time.Second):
-		fmt.Println("WARN: aisotropyd shutdown did not complete within 10s")
+	case <-time.After(d.shutdownTimeout):
+		fmt.Fprintln(d.stdout, "WARN: aisotropyd shutdown did not complete within the shutdown timeout")
 	}
 	return nil
 }
@@ -577,7 +740,7 @@ func roundAll(xs []float64) []float64 {
 	return out
 }
 
-func getBody(c *http.Client, url string) (string, int, error) {
+func getBody(c httpGetter, url string) (string, int, error) {
 	resp, err := c.Get(url)
 	if err != nil {
 		return "", 0, err
@@ -599,8 +762,8 @@ func compact(s string) string {
 	return buf.String()
 }
 
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
+func envOr(getenv func(string) string, key, def string) string {
+	if v := getenv(key); v != "" {
 		return v
 	}
 	return def
