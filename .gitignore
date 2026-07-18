@@ -63,3 +63,5 @@ crates/*/target/
 /examples/serve-http/serve-http
 /examples/guardrail-policy/guardrail-policy
 /examples/domain-assistant/domain-assistant
+
+examples/graphbot/graphbot

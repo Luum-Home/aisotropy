@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -239,24 +237,13 @@ func runNativeToolAgent(ctx context.Context, tc llm.ToolCaller, tracer oteltrace
 		specs = append(specs, llm.ToolSpec{Name: t.Name, Description: t.Description, Parameters: t.Parameters})
 	}
 
-	// run receives the model's RAW JSON args. A typed tool decodes+validates them
-	// against its arg struct; a decode/validation failure (*ToolArgsError) is
-	// reflected back to the model AS THE TOOL RESULT so it self-corrects within
-	// the step budget (never a coerced call, SDD R4). An untyped tool flattens the
-	// args to the string map its ToolExecutor consumes. The double scope-gate is
-	// unchanged: only permitted tools are offered, so run only ever sees an
-	// offered tool name.
-	run := func(ctx context.Context, name, argsJSON string) (string, error) {
-		if typed.Has(name) {
-			res, rerr := typed.Run(ctx, name, json.RawMessage(argsJSON))
-			var ae *ToolArgsError
-			if errors.As(rerr, &ae) {
-				return "invalid arguments: " + ae.Err.Error() + " — please correct and retry.", nil
-			}
-			return res, rerr
-		}
-		return executor.Execute(ctx, name, decodeStringArgs(argsJSON))
-	}
+	// run receives the model's RAW JSON args (see NewAgentToolExec): a typed tool
+	// decodes+validates against its arg struct — a *ToolArgsError is reflected back
+	// AS THE TOOL RESULT so the model self-corrects within the step budget (never a
+	// coerced call, SDD R4) — and an untyped tool flattens to the string map its
+	// ToolExecutor consumes. The double scope-gate is unchanged: only permitted
+	// tools are offered, so run only ever sees an offered tool name.
+	run := NewAgentToolExec(typed, executor)
 
 	toolSteps, err := llm.RunToolAgent(ctx, tc, tracer, nativeToolSystemPrompt, prompt, specs, run, maxSteps)
 	if err != nil {

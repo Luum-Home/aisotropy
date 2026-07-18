@@ -71,10 +71,34 @@ func RunToolAgent(
 	exec func(ctx context.Context, name string, argsJSON string) (string, error),
 	maxSteps int,
 ) ([]ToolStep, error) {
+	// Thin, stable API: RunToolAgent is RunToolAgentWithOutput with the final
+	// free-text answer discarded (callers that only need the []ToolStep + error).
+	steps, _, err := RunToolAgentWithOutput(ctx, client, tracer, system, prompt, tools, exec, maxSteps)
+	return steps, err
+}
+
+// RunToolAgentWithOutput is RunToolAgent plus the agent's FINAL free-text answer
+// (the value core.Agent[string].Run returns after the last turn). RunToolAgent
+// delegates to it and discards that text; callers that pipe one agent's answer
+// into another — the graph executor's edges (ADR-0060), where a node's Output is
+// exactly what a downstream node reads — use this variant. The output is "" when
+// a run stops on the max-steps guardrail (a graceful, non-converged stop yields
+// the recorded steps and no final text, mirroring RunToolAgent's contract) or on
+// any other error. The []ToolStep, scope-gate, guardrail, and cost/tracing
+// semantics are identical to RunToolAgent.
+func RunToolAgentWithOutput(
+	ctx context.Context,
+	client Client,
+	tracer oteltrace.TracerProvider,
+	system, prompt string,
+	tools []ToolSpec,
+	exec func(ctx context.Context, name string, argsJSON string) (string, error),
+	maxSteps int,
+) ([]ToolStep, string, error) {
 	// reasoning is the REQUEST-LOCAL reasoning carry-forward state (ADR-0061): a
 	// value on THIS goroutine's stack, threaded through the run's tool-call steps
 	// via the GollemModel accumulator. It is never shared across runs/tenants and
-	// is garbage-collected when RunToolAgent returns, so raw chain-of-thought
+	// is garbage-collected when this function returns, so raw chain-of-thought
 	// never outlives the task nor reaches persistence. Empty and inert unless the
 	// client implements ReasoningToolCaller and actually emits reasoning.
 	var reasoning ReasoningState
@@ -127,7 +151,8 @@ func RunToolAgent(
 
 	agent := core.NewAgent[string](model, opts...)
 
-	if _, err := agent.Run(ctx, prompt); err != nil {
+	result, err := agent.Run(ctx, prompt)
+	if err != nil {
 		mu.Lock()
 		recorded := append([]ToolStep(nil), steps...)
 		mu.Unlock()
@@ -135,18 +160,19 @@ func RunToolAgent(
 		// turns — that is a graceful stop (return the steps taken so far with no
 		// error), mirroring the pre-Gollem loop, NOT a request failure. Any other
 		// error (provider down, breaker open, guardrail rejection, tool error) is
-		// a real failure and propagates.
+		// a real failure and propagates. On either path the final text is "" (Run
+		// returned no answer), so the graceful stop yields steps-only with no text.
 		var gErr *core.GuardrailError
 		if errors.As(err, &gErr) && gErr.GuardrailName == maxToolStepsGuardrailName {
-			return recorded, nil
+			return recorded, "", nil
 		}
-		return recorded, err
+		return recorded, "", err
 	}
 
 	mu.Lock()
 	recorded := append([]ToolStep(nil), steps...)
 	mu.Unlock()
-	return recorded, nil
+	return recorded, result.Output, nil
 }
 
 // otelTracingHooks builds the ext/otel tracing hook. When tracer is non-nil it
