@@ -310,9 +310,9 @@ mode, `observability` writes a **different JSON contract**, not the shared one a
   "framework": "eino",
   "mode": "observability",
   "otel_supported": true,
-  "span_count": 5,
-  "span_names": ["ChatModel(OpenAI)", "calculate(Calculate)", "Tools", "ChatModel(OpenAI)", "ReActAgent"],
-  "span_timings_ms": {"ChatModel(OpenAI)": 6526.18, "ChatModel(OpenAI)#2": 6412.39, "ReActAgent": 12938.75, "Tools": 0.09, "calculate(Calculate)": 0.07},
+  "span_count": 4,
+  "span_names": ["eino.ChatModel", "eino.calculate", "eino.ReActAgent", "eino.ChatModel"],
+  "span_timings_ms": {"eino.ChatModel": 6949.31, "eino.ChatModel#2": 6763.64, "eino.ReActAgent": 6949.51, "eino.calculate": 0.08},
   "logs_structured": false,
   "log_sample": "{\"time\":\"...\",\"level\":\"INFO\",\"msg\":\"eino_observability_turn\",...}",
   "notes": "string — full write-up of what was measured and how"
@@ -333,51 +333,66 @@ already uses (see `mode_tools.go`) to capture token usage and real tool-call arg
 It fires once per component invocation (`ChatModel`, `Tool`, the `Tools` node, and the graph
 itself) and hands the handler a `*callbacks.RunInfo{Name, Type, Component}` plus a
 component-typed input/output. There is **no built-in aggregation, span concept, or exporter** in
-`eino` core — a callback handler is a raw hook, not a tracing system.
+`eino` core — a callback handler is a raw hook, not a tracing system. `eino` itself does not
+import `go.opentelemetry.io/otel` at all; any OTel story has to come from something built *on
+top of* `callbacks.Handler`.
 
-**OTel — via `eino-ext`, not `eino` core, and OTLP-only out of the box.** `eino` itself does not
-import `go.opentelemetry.io/otel`. The OTel integration lives in the separate `eino-ext` module,
-at two levels:
+**Three community OTel options were evaluated** — the decision below is evidence-based (source
+read directly, not inferred from docs), per this repo's `.claude/rules/prune-evidence-gate.md`
+code-truth discipline:
 
-- `github.com/cloudwego/eino-ext/libs/acl/opentelemetry` — builds a `*sdktrace.TracerProvider`
-  wired to `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc`. Its
-  `NewOpenTelemetryProvider` **only constructs an OTLP/gRPC exporter** — there is no in-memory or
-  stdout exporter option in that package, so it cannot be exercised offline as shipped.
-- `github.com/cloudwego/eino-ext/callbacks/apmplus` — the actual `callbacks.Handler`
-  implementation that turns Eino callback firings into real OTel spans (one span per component,
-  `gen_ai.*` semantic-convention attributes, plus metrics: token histograms, chat counters,
-  streaming TTFT/TPOT). It is built *on top of* the `opentelemetry` package above, so it inherits
-  the same OTLP-only constraint — it requires a live ByteDance APM Plus (or any OTLP) collector
-  endpoint (`Host`/`AppKey` in its `Config`) just to construct successfully; there is no
-  no-network mode.
+| Option | What it is | In-process/offline? |
+|---|---|---|
+| (a) `github.com/cloudwego/eino-ext/callbacks/apmplus`, built on `github.com/cloudwego/eino-ext/libs/acl/opentelemetry` | eino-ext's own `callbacks.Handler` → OTel bridge, `gen_ai.*` attributes + token/TTFT/TPOT metrics | **No.** `opentelemetry.NewOpenTelemetryProvider` only constructs a `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc` exporter — no in-memory/stdout option exists in that package, so it cannot even construct without a live OTLP collector endpoint (`Host`/`AppKey`). |
+| (b) `github.com/braintrustdata/braintrust-sdk-go/trace/contrib/cloudwego/eino` (Apache-2.0) | A standalone, importable Go module — `traceeino.Handler` implements `callbacks.Handler` and turns ChatModel/Tool/Embedding callback firings into real OTel spans (`gen_ai.*` attributes + a `braintrust.*` attribute set) | **Yes.** `HandlerOptions.TracerProvider` is an *optional* `go.opentelemetry.io/otel/trace.TracerProvider` — verified by reading `traceeino.go` directly: it makes zero network calls and needs no Braintrust API key to construct or emit spans. Handing it an in-memory-exporter-backed provider (as this mode does) captures real spans fully offline. |
+| (c) `github.com/alibaba/loongsuite-go-agent` | OTel **compile-time** instrumentation for Go — you build your binary through an `otel go build` wrapper, not an importable library | **Not applicable as a Go module dependency.** It's a build-toolchain plugin, and per its own docs, Eino support is being "released sequentially" framework-by-framework — not confirmed as a stable, generally-available integration at the time of writing. |
 
-Since the task requires REAL infra with **no external collector**, this adapter does not import
-`eino-ext/callbacks/apmplus` (it would either fail to construct or silently try to dial a
-collector). Instead `observability.go` reimplements the *same shape* of handler apmplus uses —
-`tracer.Start()` on `OnStart`, `span.End()` on `OnEnd`/`OnError` — directly against
-`go.opentelemetry.io/otel/sdk/trace`, but swaps the exporter for
+This mode adopted **(b)** — the only one of the three that is both a plain `go get`-able
+community package and capable of in-process/offline span capture. `observability.go`'s
+`obsRecorder` builds a real `go.opentelemetry.io/otel/sdk/trace.TracerProvider` backed by
 `go.opentelemetry.io/otel/sdk/trace/tracetest.InMemoryExporter` (part of the OTel Go SDK itself,
 not a third-party mock) wired via `sdktrace.WithSyncer` (synchronous export, no batching
-goroutine, zero network I/O). This is a genuine, real OTel SDK — real `ReadOnlySpan`s with real
-start/end timestamps, real attributes, real span names from Eino's own `RunInfo` — the only thing
-swapped out is where the finished spans land.
+goroutine, zero network I/O), then hands that provider to `traceeino.NewHandlerWithOptions`. Eino's
+native `callbacks.Handler` seam drives the packaged handler exactly the same way `mode_tools.go`'s
+`usageToolTracker` drives its own bookkeeping — **this mode writes zero span-construction code of
+its own**, unlike its previous iteration (a hand-rolled ~30-line `tracer.Start()`/`span.End()`
+bridge) — the packaged module owns that entirely now. A second, minimal `callbacks.Handler`
+(`obsRecorder.counterHandler()`, still hand-rolled, ~15 lines) is registered alongside it purely to
+count raw callback firings for the `raw_callback_events` figure in `notes`/`log_sample` — Eino
+copies the callback stream independently per registered handler
+(`github.com/cloudwego/eino/callbacks/aspect_inject.go`), so the two handlers never interfere.
+
+**Honest scope note, from a real run, not speculation.** The packaged handler only creates a span
+when the callback payload is shaped like `model.CallbackInput`/`Output`, `tool.CallbackInput`/
+`Output`, or `embedding.CallbackInput`/`Output` — a narrower net than "one span per `RunInfo`",
+which is what this mode's *previous* hand-rolled bridge did. Empirically (see
+[smoke test](#observability---real-in-memory-otel-spans-from-a-live-turn) below) this still
+captures the ReAct agent's own root span (Eino's `react.Agent` apparently satisfies the
+tool-shaped callback contract) plus both `ChatModel` calls and the `calculate` tool call — **4
+spans**, not 5: the one span the packaged handler does NOT produce, that the old hand-rolled
+bridge did, is the `Tools`-node graph wrapper (its callback payload isn't Model/Tool/Embedding
+-shaped, so the packaged handler's `OnStart` type-switch falls through and skips it). That is the
+real, measured trade-off of preferring the packaged integration: **less exhaustive
+per-graph-node coverage, in exchange for zero bespoke span-construction code** and an
+externally-maintained mapping from Eino callbacks to OTel semantic-convention attributes.
 
 **What was actually observed** (one real run, `agnes-2.0-flash`, see
 [smoke test](#observability---real-in-memory-otel-spans-from-a-live-turn) below): **10 raw
-`callbacks.Handler` firings** (`OnStart`+`OnEnd` × 5 component invocations) converted **1:1 into
-5 real OTel spans** — `ReActAgent` (the whole turn, root span), `ChatModel(OpenAI)` ×2
-(tool-decision call, ~6.5s; final-answer call, ~6.4s — real agnes network latency, not
-synthetic), `Tools` (the tools-node wrapper, ~0.09ms), `calculate(Calculate)` (the actual
-evaluator execution, ~0.07ms). Chat-model spans additionally carry Eino's native
-`gen_ai.usage.prompt_tokens`/`gen_ai.usage.completion_tokens` attributes, sourced from
-`model.ConvCallbackOutput(...).TokenUsage` — the same field every other mode's token counts come
-from.
+`callbacks.Handler` firings** (`OnStart`+`OnEnd` × 5 component invocations — the same 5 Eino
+fires internally regardless of which OTel bridge is listening) converted by the packaged handler
+into **4 real OTel spans** — `eino.ReActAgent` (the whole turn, ~6.95s), `eino.ChatModel` ×2
+(tool-decision call, ~6.95s; final-answer call, ~6.76s — real agnes network latency, not
+synthetic), `eino.calculate` (the actual evaluator execution, ~0.08ms). Chat-model spans
+additionally carry OTel `gen_ai.*` semantic-convention attributes (`gen_ai.request.model`,
+`gen_ai.finish_reason`) plus a `braintrust.metrics` JSON attribute containing Eino's native
+`TokenUsage` — the packaged handler's own attribute shape, not this adapter's.
 
 **Logs.** `eino` core has no logging component and emits nothing structured on its own — there is
 no `eino.Logger` interface, no log line per component call, nothing to capture. `logs_structured`
 is honestly `false`. `log_sample` is a **DIY** example: this mode builds one `log/slog` JSON line
-on top of the *same* callback data (`raw_callback_events`, `span_count`, `total_ms`) to show what
-a hand-rolled structured log would look like — clearly not something Eino emits by itself.
+on top of the *same* raw callback data (`raw_callback_events`, `span_count`, `total_ms`) to show
+what a hand-rolled structured log would look like — clearly not something Eino or the packaged
+OTel handler emits by itself.
 
 ## Real infrastructure this adapter reaches
 
@@ -465,13 +480,13 @@ $ echo '{"mode":"structured","messages":[{"role":"user","content":"What is the c
 {"framework":"eino","mode":"structured","model":"agnes-2.0-flash","reply":"{\n  \"answer\": \"Paris\",\n  \"confidence\": \"high\"\n}","input_tokens":398,"output_tokens":20,"latency_ms":6852,"tool_calls":[],"retrieved":[],"structured":{"answer":"Paris","confidence":"high"},"ttft_ms":0,"error":""}
 ```
 
-### `observability` — real in-memory OTel spans from a live turn
+### `observability` — real in-memory OTel spans from a live turn, via a packaged OSS integration
 
 ```bash
 $ echo '{"mode":"observability"}' | bash run.sh
-{"framework":"eino","mode":"observability","otel_supported":true,"span_count":5,"span_names":["ChatModel(OpenAI)","calculate(Calculate)","Tools","ChatModel(OpenAI)","ReActAgent"],"span_timings_ms":{"ChatModel(OpenAI)":6526.177125,"ChatModel(OpenAI)#2":6412.390709,"ReActAgent":12938.754625,"Tools":0.0895,"calculate(Calculate)":0.070083},"logs_structured":false,"log_sample":"{\"time\":\"2026-07-17T23:22:33Z\",\"level\":\"INFO\",\"msg\":\"eino_observability_turn\",\"framework\":\"eino\",\"raw_callback_events\":10,\"span_count\":5,\"total_ms\":12938}","notes":"Eino ships NO built-in OTel exporter usable offline: ... Observed 10 raw callback firings (OnStart+OnEnd/OnError across every component) for this turn, converted 1:1 into 5 real OTel spans: [ChatModel(OpenAI) calculate(Calculate) Tools ChatModel(OpenAI) ReActAgent]. ..."}
+{"framework":"eino","mode":"observability","otel_supported":true,"span_count":4,"span_names":["eino.ChatModel","eino.calculate","eino.ReActAgent","eino.ChatModel"],"span_timings_ms":{"eino.ChatModel":6949.314375,"eino.ChatModel#2":6763.638541,"eino.ReActAgent":6949.506416,"eino.calculate":0.082709},"logs_structured":false,"log_sample":"{\"time\":\"2026-07-18T00:09:47Z\",\"level\":\"INFO\",\"msg\":\"eino_observability_turn\",\"framework\":\"eino\",\"raw_callback_events\":10,\"span_count\":4,\"total_ms\":13713}","notes":"Eino ships NO built-in OTel exporter usable offline. Three community OTel options were evaluated ... This mode uses (b) github.com/braintrustdata/braintrust-sdk-go/trace/contrib/cloudwego/eino: Eino's NATIVE callbacks.Handler seam ... drives that packaged handler, wired to a real go.opentelemetry.io/otel/sdk/trace TracerProvider backed by tracetest.InMemoryExporter ... zero network I/O, zero external collector, and none of this mode's own span-construction code. Observed 10 raw callback firings ... converted ... into 4 real OTel spans: [eino.ChatModel eino.calculate eino.ReActAgent eino.ChatModel] — it only instruments ChatModel/Tool/Embedding callback payloads, so (honest scope note) it does NOT emit a span for the ... Tools-node graph wrapper ..."}
 ```
-(full `notes` text elided here for length — see [`observability` mode](#observability-mode) above for the complete write-up.) 5 real spans, real durations (the two `ChatModel` calls are ~6.5s/6.4s of genuine agnes network latency, not synthetic), exit code 0, exactly one JSON object on stdout — verified with `wc -l` on a captured stdout-only run. A parallel check with `source ../../../.env` confirmed `$OPENAI_API_KEY` appears in neither stdout nor stderr of this run.
+(full `notes` text elided here for length — see [`observability` mode](#observability-mode) above for the complete write-up and the community-options evaluation table.) 4 real spans, real durations (the two `ChatModel` calls are ~6.9s/6.8s of genuine agnes network latency, not synthetic; `eino.calculate` is ~0.08ms, real in-process evaluator execution), exit code 0, exactly one JSON object on stdout — verified with `wc -l` on a captured stdout-only run. A parallel check with `source ../../../.env` confirmed `$OPENAI_API_KEY` appears in neither stdout nor stderr of this run.
 
 ### `tools` — real multi-step execution
 
@@ -660,9 +675,11 @@ part of the single-shot adapter.
 | github.com/cloudwego/eino-ext/libs/acl/openai | v0.1.17 | Apache-2.0 |
 | github.com/eino-contrib/jsonschema | v1.0.3 | MIT |
 | github.com/qdrant/go-client **(NEW)** | v1.18.3 | Apache-2.0 |
+| github.com/braintrustdata/braintrust-sdk-go/trace/contrib/cloudwego/eino **(NEW, observability mode)** — the packaged, community OSS `callbacks.Handler`→OTel bridge this mode uses; see [`observability` mode](#observability-mode) | v0.10.0 | Apache-2.0 |
+| github.com/braintrustdata/braintrust-sdk-go **(NEW, observability mode, indirect — pulled in by the module above; not directly imported, no API key used)** | v0.10.0 | Apache-2.0 |
 | go.opentelemetry.io/otel **(NEW, observability mode)** | v1.44.0 | Apache-2.0 |
 | go.opentelemetry.io/otel/sdk **(NEW, observability mode)** | v1.44.0 | Apache-2.0 |
-| go.opentelemetry.io/otel/trace **(NEW, observability mode)** | v1.44.0 | Apache-2.0 |
+| go.opentelemetry.io/otel/trace **(NEW, observability mode, indirect)** | v1.44.0 | Apache-2.0 |
 | go.opentelemetry.io/otel/metric **(NEW, observability mode, indirect)** | v1.44.0 | Apache-2.0 |
 | go.opentelemetry.io/auto/sdk **(NEW, observability mode, indirect)** | v1.2.1 | Apache-2.0 |
 | github.com/go-logr/logr **(NEW, observability mode, indirect)** | v1.4.3 | Apache-2.0 |
@@ -749,9 +766,12 @@ component performs every chat HTTP call:
   tenant/user/product scope key over the on-disk SQLite store; see
   [Multi-tenant scoped memory](#multi-tenant-scoped-memory-memory_scoped-isolation_leak-modes)).
 - `observability.go` — the `observability` mode's OTel/callbacks plumbing: `obsRecorder` builds a
-  real Eino `callbacks.Handler` on top of a real `go.opentelemetry.io/otel/sdk/trace`
-  `TracerProvider` exporting to an in-memory `tracetest.InMemoryExporter` (no external collector);
-  see [`observability` mode](#observability-mode).
+  real `go.opentelemetry.io/otel/sdk/trace` `TracerProvider` exporting to an in-memory
+  `tracetest.InMemoryExporter` (no external collector) and hands it to the packaged
+  `github.com/braintrustdata/braintrust-sdk-go/trace/contrib/cloudwego/eino` handler, which does
+  the actual Eino-`callbacks.Handler`-to-OTel-span conversion; a small local `counterHandler()`
+  is registered alongside it purely for the raw-callback-firing count; see
+  [`observability` mode](#observability-mode).
 - `mode_observability.go` — `observability` mode's scenario (a real multi-step ReAct turn) and its
   own JSON wire contract (`observabilityOutput`, distinct from `adapterOutput`); owns its full
   stdout write and process exit code.

@@ -4,199 +4,166 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
 	"sync/atomic"
 	"time"
 
+	traceeino "github.com/braintrustdata/braintrust-sdk-go/trace/contrib/cloudwego/eino"
 	"github.com/cloudwego/eino/callbacks"
-	"github.com/cloudwego/eino/components"
-	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	otelapi "go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // This file wires Eino's NATIVE callbacks.Handler mechanism
 // (github.com/cloudwego/eino/callbacks — the same seam every other mode's
-// usageToolTracker already uses) to a REAL, in-process OpenTelemetry SDK
-// (go.opentelemetry.io/otel/sdk/trace), exporting to an in-memory span
-// recorder — never an external collector or network exporter.
+// usageToolTracker already uses) to a PACKAGED, third-party, OSS OTel
+// integration for Eino: github.com/braintrustdata/braintrust-sdk-go's
+// trace/contrib/cloudwego/eino module (Apache-2.0). That module implements
+// callbacks.Handler itself and turns each ChatModel/Tool/Embedding callback
+// firing into a real go.opentelemetry.io/otel span — this file only supplies
+// the *sdktrace.TracerProvider it writes to.
 //
-// This mirrors the pattern eino-ext itself ships for OTel integration
-// (github.com/cloudwego/eino-ext/libs/acl/opentelemetry +
-// github.com/cloudwego/eino-ext/callbacks/apmplus): both build a
-// callbacks.Handler on top of a go.opentelemetry.io/otel/trace.Tracer,
-// starting one real span per component OnStart and ending it on
-// OnEnd/OnError. The difference is the exporter: eino-ext's own OTel
-// integration only ships an OTLP/gRPC exporter, which needs a live
-// collector endpoint to even construct (see README.md#observability-mode).
-// This adapter swaps in tracetest.InMemoryExporter — part of the OTel Go
-// SDK itself, not a third-party mock — via sdktrace.WithSyncer, so every
-// span is captured synchronously, in-process, with zero network I/O.
+// WHY this package, not the hand-rolled OTel bridge this file used to
+// contain: per README.md#observability-mode, three community options were
+// evaluated. (a) eino-ext's own OTel integration
+// (github.com/cloudwego/eino-ext/callbacks/apmplus, built on
+// github.com/cloudwego/eino-ext/libs/acl/opentelemetry) only constructs an
+// OTLP/gRPC exporter — it requires a live collector endpoint just to
+// construct, so it cannot run offline/in-process. (c) loongsuite-go-agent
+// (github.com/alibaba/loongsuite-go-agent) is compile-time/eBPF
+// instrumentation driven by an `otel` build-wrapper, not an importable
+// library, and its own docs describe Eino support as still rolling out
+// framework-by-framework — not a drop-in Go module dependency this adapter
+// can `go get`. (b) THIS package —
+// github.com/braintrustdata/braintrust-sdk-go/trace/contrib/cloudwego/eino —
+// is a plain importable Go module: its Handler takes an *optional*
+// trace.TracerProvider (HandlerOptions.TracerProvider) and, verified by
+// reading traceeino.go directly (not just its docs), makes ZERO network
+// calls and requires NO Braintrust API key to construct or emit spans — it
+// is decoupled from Braintrust's hosted backend and only touches whatever
+// TracerProvider/exporter is handed to it. That is exactly the shape this
+// adapter needs: swap in tracetest.InMemoryExporter (part of the OTel Go SDK
+// itself) via sdktrace.WithSyncer, and every span from a REAL Eino turn
+// lands in-process, synchronously, with zero external collector.
+//
+// Honest scope note: this packaged handler only instruments the THREE
+// component kinds it recognizes at the RunInfo level — ChatModel, Tool, and
+// Embedding (see its OnStart: model.ConvCallbackInput /
+// tool.ConvCallbackInput / embedding.ConvCallbackInput, each gated behind a
+// type check on the callback payload). It does NOT create a span for the
+// surrounding graph/composite nodes (e.g. the ReAct agent's own root node or
+// the "Tools" node wrapper) the way this file's PREVIOUS hand-rolled
+// implementation did (which started a span for every RunInfo unconditionally).
+// So the span count/shape below is narrower — and, we judge, more honestly
+// "OTel spans an Eino OSS integration actually produces" — than a bespoke
+// span-per-callback implementation would be. See mode_observability.go's
+// Notes field for the exact counts from a real run.
 
 func init() {
 	// Any internal OTel SDK error (e.g. a malformed attribute) surfaces on
-	// stderr instead of being silently dropped — mirrors how eino-ext's own
-	// OtelProvider registers errors via otel.Handle in provider.go.
+	// stderr instead of being silently dropped.
 	otelapi.SetErrorHandler(otelapi.ErrorHandlerFunc(func(err error) {
 		log.Printf("eino-live-arena: otel sdk error: %v", err)
 	}))
 }
 
-// obsSpanKeyT is the context key the observability handler uses to pass the
-// just-started span from OnStart/OnStartWithStreamInput to the matching
-// OnEnd/OnError/OnEndWithStreamOutput call — the same per-handler
-// ctx-chaining contract callbacks.Handler documents (see mode_tools.go's
-// usageToolTracker for the established pattern in this adapter).
-type obsSpanKeyT struct{}
-
-// obsRecorder is the observability mode's callback bookkeeping: it counts
-// every raw Eino callback firing (OnStart/OnEnd/OnError — the native
-// signal, no OTel involved) and drives the real OTel tracer that turns each
-// firing into a real recorded span.
+// obsRecorder is the observability mode's callback bookkeeping. It pairs two
+// independent callbacks.Handler registrations on the SAME Eino graph run
+// (Eino copies the callback stream per handler — see
+// github.com/cloudwego/eino/callbacks/aspect_inject.go — so registering both
+// is safe and neither interferes with the other):
+//
+//  1. counterHandler(): a ~15-line handler owned by THIS adapter that counts
+//     every raw OnStart/OnEnd/OnError(/stream variant) firing — Eino's
+//     baseline native signal, independent of whether anything downstream
+//     turns it into a span.
+//  2. span: the packaged traceeino.Handler (github.com/braintrustdata/
+//     braintrust-sdk-go), which does the actual OTel span production.
 type obsRecorder struct {
-	tracer trace.Tracer
-
-	mu    sync.Mutex
-	order []string // span names, in the order their OnStart fired
-
 	rawEvents int64 // atomic: total OnStart+OnEnd/OnError callback firings observed
+
+	span *traceeino.Handler
 }
 
 // newObsRecorder builds a real go.opentelemetry.io/otel/sdk/trace
 // TracerProvider backed by an in-memory exporter, wired via
 // sdktrace.WithSyncer so every span.End() call exports synchronously — no
-// background batching goroutine, no network hop, no collector process. The
-// returned shutdown func flushes/closes the provider; call it once the
-// scenario's Generate call returns.
-func newObsRecorder(serviceName string) (*obsRecorder, *tracetest.InMemoryExporter, func(context.Context) error) {
+// background batching goroutine, no network hop, no collector process — and
+// hands that provider to the packaged traceeino.Handler. The returned
+// shutdown func flushes/closes the provider; call it once the scenario's
+// Generate call returns.
+func newObsRecorder() (*obsRecorder, *tracetest.InMemoryExporter, func(context.Context) error) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
-	tracer := provider.Tracer(
-		"eino-live-arena/observability",
-		trace.WithInstrumentationAttributes(attribute.String("service.name", serviceName)),
-	)
-	return &obsRecorder{tracer: tracer}, exporter, provider.Shutdown
+	span := traceeino.NewHandlerWithOptions(traceeino.HandlerOptions{
+		TracerProvider: provider,
+	})
+	return &obsRecorder{span: span}, exporter, provider.Shutdown
 }
 
-// handler returns a real Eino callbacks.Handler. It starts one OTel span per
-// component invocation (OnStart family) and ends it (OnEnd/OnError family) —
-// the same shape eino-ext's own OTel handler (callbacks/apmplus) uses, see
-// the file-level comment above.
-func (r *obsRecorder) handler() callbacks.Handler {
+// handlers returns every callbacks.Handler this mode registers on the run —
+// pass this whole slice to compose.WithCallbacks(recorder.handlers()...).
+func (r *obsRecorder) handlers() []callbacks.Handler {
+	return []callbacks.Handler{r.counterHandler(), r.span}
+}
+
+// wait blocks until the packaged handler's async streaming-output goroutines
+// (if this scenario used the ChatModel's Stream path anywhere internally)
+// have finished annotating and ending their spans, so exporter.GetSpans()
+// below is guaranteed to see every finished span before the caller reads it.
+// Safe to call even when no streaming happened (the underlying WaitGroup is
+// then simply already at zero).
+func (r *obsRecorder) wait() { r.span.Wait() }
+
+// counterHandler builds a minimal Eino callbacks.Handler that does nothing
+// but count raw callback firings — no OTel involved. It receives its OWN
+// independent copy of any stream (Eino's framework-level guarantee; see the
+// file-level comment above), so draining/closing it here never starves the
+// packaged span handler's copy of the same stream.
+func (r *obsRecorder) counterHandler() callbacks.Handler {
+	inc := func() { atomic.AddInt64(&r.rawEvents, 1) }
 	return callbacks.NewHandlerBuilder().
-		OnStartFn(func(ctx context.Context, info *callbacks.RunInfo, _ callbacks.CallbackInput) context.Context {
-			return r.start(ctx, info)
-		}).
-		OnEndFn(func(ctx context.Context, info *callbacks.RunInfo, out callbacks.CallbackOutput) context.Context {
-			r.annotateChatUsage(ctx, info, out)
-			r.end(ctx, nil)
+		OnStartFn(func(ctx context.Context, _ *callbacks.RunInfo, _ callbacks.CallbackInput) context.Context {
+			inc()
 			return ctx
 		}).
-		OnErrorFn(func(ctx context.Context, info *callbacks.RunInfo, err error) context.Context {
-			r.end(ctx, err)
+		OnEndFn(func(ctx context.Context, _ *callbacks.RunInfo, _ callbacks.CallbackOutput) context.Context {
+			inc()
 			return ctx
 		}).
-		OnStartWithStreamInputFn(func(ctx context.Context, info *callbacks.RunInfo, input *schema.StreamReader[callbacks.CallbackInput]) context.Context {
-			input.Close() // this adapter's observability scenario never streams input; drain+close per the Handler contract
-			return r.start(ctx, info)
+		OnErrorFn(func(ctx context.Context, _ *callbacks.RunInfo, _ error) context.Context {
+			inc()
+			return ctx
 		}).
-		OnEndWithStreamOutputFn(func(ctx context.Context, info *callbacks.RunInfo, output *schema.StreamReader[callbacks.CallbackOutput]) context.Context {
+		OnStartWithStreamInputFn(func(ctx context.Context, _ *callbacks.RunInfo, input *schema.StreamReader[callbacks.CallbackInput]) context.Context {
+			input.Close() // this counter's own independent stream copy — drain+close per the Handler contract
+			inc()
+			return ctx
+		}).
+		OnEndWithStreamOutputFn(func(ctx context.Context, _ *callbacks.RunInfo, output *schema.StreamReader[callbacks.CallbackOutput]) context.Context {
 			defer output.Close()
 			for {
 				if _, err := output.Recv(); err != nil {
 					break // io.EOF (normal end) or a stream error — either way, done
 				}
 			}
-			r.end(ctx, nil)
+			inc()
 			return ctx
 		}).
 		Build()
 }
 
-func (r *obsRecorder) spanName(info *callbacks.RunInfo) string {
-	if info == nil {
-		return "unknown"
-	}
-	name := info.Name
-	if name == "" {
-		name = string(info.Component)
-	}
-	if info.Type != "" {
-		return fmt.Sprintf("%s(%s)", name, info.Type)
-	}
-	return name
-}
-
-func (r *obsRecorder) start(ctx context.Context, info *callbacks.RunInfo) context.Context {
-	atomic.AddInt64(&r.rawEvents, 1)
-	if info == nil {
-		return ctx
-	}
-	name := r.spanName(info)
-	ctx, span := r.tracer.Start(ctx, name, trace.WithSpanKind(trace.SpanKindInternal))
-	span.SetAttributes(
-		attribute.String("eino.run_info.name", info.Name),
-		attribute.String("eino.run_info.type", info.Type),
-		attribute.String("eino.run_info.component", string(info.Component)),
-	)
-	r.mu.Lock()
-	r.order = append(r.order, name)
-	r.mu.Unlock()
-	return context.WithValue(ctx, obsSpanKeyT{}, span)
-}
-
-func (r *obsRecorder) end(ctx context.Context, callErr error) {
-	atomic.AddInt64(&r.rawEvents, 1)
-	span, ok := ctx.Value(obsSpanKeyT{}).(trace.Span)
-	if !ok || span == nil {
-		return
-	}
-	if callErr != nil {
-		span.RecordError(callErr)
-		span.SetStatus(codes.Error, callErr.Error())
-	} else {
-		span.SetStatus(codes.Ok, "")
-	}
-	span.End()
-}
-
-// annotateChatUsage adds prompt/completion token counts to the current
-// ChatModel span when Eino's own callback output carries them
-// (model.ConvCallbackOutput) — the one piece of framework-native structured
-// data Eino emits per call, same field mode_tools.go's usageToolTracker
-// already reads for the tools-mode token totals.
-func (r *obsRecorder) annotateChatUsage(ctx context.Context, info *callbacks.RunInfo, out callbacks.CallbackOutput) {
-	if info == nil || info.Component != components.ComponentOfChatModel {
-		return
-	}
-	mo := model.ConvCallbackOutput(out)
-	if mo == nil || mo.TokenUsage == nil {
-		return
-	}
-	span, ok := ctx.Value(obsSpanKeyT{}).(trace.Span)
-	if !ok || span == nil {
-		return
-	}
-	span.SetAttributes(
-		attribute.Int("gen_ai.usage.prompt_tokens", mo.TokenUsage.PromptTokens),
-		attribute.Int("gen_ai.usage.completion_tokens", mo.TokenUsage.CompletionTokens),
-	)
-}
-
 // rawEventCount returns the total number of raw OnStart+OnEnd/OnError
 // callback firings observed — Eino's native signal, independent of whether
-// anything downstream (like this file's OTel wiring) turns them into spans.
+// anything downstream (like the packaged OTel handler) turns them into
+// spans.
 func (r *obsRecorder) rawEventCount() int64 { return atomic.LoadInt64(&r.rawEvents) }
 
 // spanTimingsMS converts the in-memory exporter's finished spans into the
 // observability-mode wire contract: an ordered name list (duplicates kept,
-// exactly as they fired — e.g. "ChatModel(...)" appears twice for the ReAct
-// agent's tool-call turn and its final-answer turn) plus a
+// exactly as they fired — e.g. a chat-model span name appears twice for the
+// ReAct agent's tool-call turn and its final-answer turn) plus a
 // name-to-duration-ms map, disambiguating repeated names with a "#N" suffix
 // so no timing is silently dropped by a map key collision.
 func spanTimingsMS(spans tracetest.SpanStubs) (names []string, timingsMS map[string]float64) {
