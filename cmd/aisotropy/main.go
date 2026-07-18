@@ -45,8 +45,14 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/plugin"
 )
 
+// exitFunc is a seam over os.Exit: main() calls through it instead of
+// os.Exit directly, so a test can substitute a non-terminating fake and
+// observe the requested exit code without killing the test binary.
+// Production always uses the real os.Exit.
+var exitFunc = os.Exit
+
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	exitFunc(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 // run is the testable entrypoint: it takes the argument list (os.Args[1:]) and

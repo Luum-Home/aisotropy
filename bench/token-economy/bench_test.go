@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"math/rand"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -248,4 +251,246 @@ func TestNoopSummarizerSummaryStaysBounded(t *testing.T) {
 		t.Fatal("no checkpoints were reached — DefaultConfig().Turns is too small for this test")
 	}
 	t.Logf("summary plateaued at max %d chars across %d checkpoints", maxLen, checkpoints)
+}
+
+// TestRandomSentence_EmptyWhenZeroWords covers randomSentence's empty-output
+// branch: a zero-word request (minWords == maxWords == 0) joins zero words
+// into "", which must short-circuit rather than index sentence[:1].
+func TestRandomSentence_EmptyWhenZeroWords(t *testing.T) {
+	rng := rand.New(rand.NewSource(1))
+	if got := randomSentence(rng, 0, 0); got != "" {
+		t.Errorf("randomSentence(rng, 0, 0) = %q, want empty string", got)
+	}
+}
+
+// TestReductionPercent_ZeroBaselineReturnsZero covers ReductionPercent's
+// division-by-zero guard: an all-zero baseline (b == 0) must return 0 rather
+// than divide by zero.
+func TestReductionPercent_ZeroBaselineReturnsZero(t *testing.T) {
+	if got := ReductionPercent(100, 0); got != 0 {
+		t.Errorf("ReductionPercent(100, 0) = %v, want 0", got)
+	}
+}
+
+// limitedErrCtx is a context.Context whose Err() returns nil for the first
+// okCalls invocations and context.Canceled on every call after that.
+// RunStrategyA drives memory.WorkingMemory.Summary, .Recent, and two
+// .Append calls per turn, each of which checks ctx.Err() first — so this
+// lets a test pick exactly which of those four ctx-gated calls fails,
+// deterministically and without any real cancellation/timeout race.
+type limitedErrCtx struct {
+	context.Context
+	calls   int
+	okCalls int
+}
+
+func (c *limitedErrCtx) Err() error {
+	c.calls++
+	if c.calls > c.okCalls {
+		return context.Canceled
+	}
+	return nil
+}
+
+// TestRunStrategyA_ContextErrorsPropagateAtEachStage covers RunStrategyA's
+// four ctx-gated error-wrapping branches (read summary, read recent, append
+// user, append assistant) — each guarded by an early ctx.Err() check inside
+// the memory.WorkingMemory method it calls.
+func TestRunStrategyA_ContextErrorsPropagateAtEachStage(t *testing.T) {
+	conv := []Turn{{User: "hello there", Assistant: "hi, how can I help"}}
+
+	cases := []struct {
+		name    string
+		okCalls int
+		wantSub string
+	}{
+		{name: "read summary fails", okCalls: 0, wantSub: "read summary"},
+		{name: "read recent fails", okCalls: 1, wantSub: "read recent"},
+		{name: "append user fails", okCalls: 2, wantSub: "append user"},
+		{name: "append assistant fails", okCalls: 3, wantSub: "append assistant"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := &limitedErrCtx{Context: context.Background(), okCalls: tc.okCalls}
+			if _, err := RunStrategyA(ctx, conv); err == nil {
+				t.Fatalf("expected an error after %d ok ctx.Err() call(s)", tc.okCalls)
+			} else if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tc.wantSub)
+			}
+		})
+	}
+}
+
+// withStubStrategies swaps the runStrategyA/runStrategyB seams run() calls
+// through, restoring the real RunStrategyA/RunStrategyB on cleanup. A nil
+// replacement leaves that seam untouched.
+func withStubStrategies(t *testing.T, a func(context.Context, []Turn) ([]RequestCost, error), b func([]Turn) []RequestCost) {
+	t.Helper()
+	origA, origB := runStrategyA, runStrategyB
+	if a != nil {
+		runStrategyA = a
+	}
+	if b != nil {
+		runStrategyB = b
+	}
+	t.Cleanup(func() {
+		runStrategyA = origA
+		runStrategyB = origB
+	})
+}
+
+// TestRun_StrategyAFailurePropagates covers run()'s "strategy A: %w"
+// error-wrapping branch via the runStrategyA seam — the real RunStrategyA has
+// no reachable failure path from a plain Config, so this substitutes a fake.
+func TestRun_StrategyAFailurePropagates(t *testing.T) {
+	wantErr := errors.New("boom")
+	withStubStrategies(t, func(context.Context, []Turn) ([]RequestCost, error) {
+		return nil, wantErr
+	}, nil)
+
+	var buf bytes.Buffer
+	err := run(&buf, DefaultConfig())
+	if err == nil {
+		t.Fatal("expected an error when strategy A fails")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("error = %v, want it to wrap %v", err, wantErr)
+	}
+	if !strings.Contains(err.Error(), "strategy A:") {
+		t.Errorf("error = %q, want the %q prefix", err.Error(), "strategy A:")
+	}
+}
+
+// TestRun_RowCountMismatchIsAnInternalError covers run()'s defensive
+// invariant check (strategy A and B must produce the same row count) via the
+// runStrategyA/runStrategyB seams, since real conversations always keep the
+// two strategies' row counts equal by construction.
+func TestRun_RowCountMismatchIsAnInternalError(t *testing.T) {
+	withStubStrategies(t,
+		func(context.Context, []Turn) ([]RequestCost, error) {
+			return []RequestCost{{Turn: 1}}, nil
+		},
+		func([]Turn) []RequestCost {
+			return []RequestCost{{Turn: 1}, {Turn: 2}}
+		},
+	)
+
+	var buf bytes.Buffer
+	err := run(&buf, DefaultConfig())
+	if err == nil {
+		t.Fatal("expected an internal-error when strategy A/B row counts mismatch")
+	}
+	if !strings.Contains(err.Error(), "internal error") {
+		t.Errorf("error = %q, want the %q prefix", err.Error(), "internal error")
+	}
+}
+
+// TestRun_ShortConversationSkipsDepthSummaryEntries covers
+// printDepthSummary's "continue" branches in both the per-request and
+// cumulative loops: a conversation shorter than every reportDepths entry
+// (10/25/50) has no turn to report at any of those depths.
+func TestRun_ShortConversationSkipsDepthSummaryEntries(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Turns = 5 // shorter than every entry in reportDepths
+
+	var buf bytes.Buffer
+	if err := run(&buf, cfg); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	out := buf.String()
+
+	for _, unwanted := range []string{"turn 10:", "turn 25:", "turn 50:"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("run() output unexpectedly contains %q for a %d-turn conversation:\n%s", unwanted, cfg.Turns, out)
+		}
+	}
+	if !strings.Contains(out, "Final A vs B input-token reduction at turn 5") {
+		t.Errorf("run() output missing the final-turn summary line:\n%s", out)
+	}
+}
+
+// TestParseFlags covers the CLI flag surface main() delegates to: defaults,
+// explicit overrides, and a malformed value returning an error rather than
+// exiting the process (the old flag.Parse()-on-the-global-CommandLine
+// behavior this was factored out of could not be driven from a test at all).
+func TestParseFlags(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		cfg, err := parseFlags(nil)
+		if err != nil {
+			t.Fatalf("parseFlags(nil): %v", err)
+		}
+		if cfg != DefaultConfig() {
+			t.Errorf("parseFlags(nil) = %+v, want DefaultConfig() = %+v", cfg, DefaultConfig())
+		}
+	})
+
+	t.Run("overrides seed and turns", func(t *testing.T) {
+		cfg, err := parseFlags([]string{"-seed=7", "-turns=3"})
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		want := DefaultConfig()
+		want.Seed, want.Turns = 7, 3
+		if cfg != want {
+			t.Errorf("cfg = %+v, want %+v", cfg, want)
+		}
+	})
+
+	t.Run("invalid flag value returns an error instead of exiting", func(t *testing.T) {
+		if _, err := parseFlags([]string{"-turns=not-a-number"}); err == nil {
+			t.Fatal("expected a parse error for a malformed -turns value")
+		}
+	})
+}
+
+// withFakeExit swaps the exitFunc seam for the duration of a test, recording
+// every requested exit code instead of terminating the test binary, and
+// restores the real os.Exit on cleanup.
+func withFakeExit(t *testing.T) *[]int {
+	t.Helper()
+	var codes []int
+	prev := exitFunc
+	exitFunc = func(code int) { codes = append(codes, code) }
+	t.Cleanup(func() { exitFunc = prev })
+	return &codes
+}
+
+// TestMain_Direct drives the real main() end to end via the exitFunc and
+// runStrategyA/runStrategyB seams, covering its flag-parsing, success, and
+// both fatal (non-zero exit) paths without ever calling the real os.Exit or
+// touching the process's real os.Args.
+func TestMain_Direct(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+
+	t.Run("success", func(t *testing.T) {
+		os.Args = []string{"token-economy", "-turns=3", "-seed=99"}
+		codes := withFakeExit(t)
+		main()
+		if len(*codes) != 0 {
+			t.Errorf("exitFunc called with %v, want no fatal exit on success", *codes)
+		}
+	})
+
+	t.Run("bad flag exits 1", func(t *testing.T) {
+		os.Args = []string{"token-economy", "-turns=not-a-number"}
+		codes := withFakeExit(t)
+		main()
+		if len(*codes) != 1 || (*codes)[0] != 1 {
+			t.Errorf("exitFunc calls = %v, want exactly one call with code 1", *codes)
+		}
+	})
+
+	t.Run("run failure exits 1", func(t *testing.T) {
+		os.Args = []string{"token-economy", "-turns=3"}
+		withStubStrategies(t, func(context.Context, []Turn) ([]RequestCost, error) {
+			return nil, errors.New("boom")
+		}, nil)
+		codes := withFakeExit(t)
+		main()
+		if len(*codes) != 1 || (*codes)[0] != 1 {
+			t.Errorf("exitFunc calls = %v, want exactly one call with code 1", *codes)
+		}
+	})
 }

@@ -14,18 +14,56 @@ import (
 // benchmark (turn 10/25/50).
 var reportDepths = []int{10, 25, 50}
 
-func main() {
-	seed := flag.Int64("seed", DefaultConfig().Seed, "PRNG seed for the synthetic conversation (determinism knob)")
-	turns := flag.Int("turns", DefaultConfig().Turns, "number of user/assistant exchange pairs to synthesize")
-	flag.Parse()
+// runStrategyA/runStrategyB are package-level seams over RunStrategyA and
+// RunStrategyB. run() calls through them (rather than the functions
+// directly) so tests can substitute a fake that fails, or that returns a
+// mismatched row count, to exercise run()'s two error-wrapping branches
+// below without needing to make the real memory-backed RunStrategyA fail
+// (which — driven by a real in-memory BadgerDB and a non-cancellable
+// internal context — has no reachable failure path from a Config alone).
+var (
+	runStrategyA = RunStrategyA
+	runStrategyB = RunStrategyB
+)
+
+// parseFlags parses the token-economy CLI flags out of args (excluding the
+// program name, i.e. os.Args[1:]) into a Config seeded from DefaultConfig.
+// It is factored out of main() so flag parsing — including a malformed flag
+// value — is testable without driving the process's real os.Args or exit
+// code: it uses a fresh, ContinueOnError FlagSet and returns any parse error
+// to the caller instead of exiting directly.
+func parseFlags(args []string) (Config, error) {
+	fs := flag.NewFlagSet("token-economy", flag.ContinueOnError)
+	seed := fs.Int64("seed", DefaultConfig().Seed, "PRNG seed for the synthetic conversation (determinism knob)")
+	turns := fs.Int("turns", DefaultConfig().Turns, "number of user/assistant exchange pairs to synthesize")
+	if err := fs.Parse(args); err != nil {
+		return Config{}, err
+	}
 
 	cfg := DefaultConfig()
 	cfg.Seed = *seed
 	cfg.Turns = *turns
+	return cfg, nil
+}
+
+// exitFunc is a seam over os.Exit: main()'s two fatal paths call through it
+// instead of os.Exit directly, so a test can substitute a non-terminating
+// fake and observe that the intended exit code was requested, without
+// killing the test binary. Production always uses the real os.Exit.
+var exitFunc = os.Exit
+
+func main() {
+	cfg, err := parseFlags(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "bench/token-economy:", err)
+		exitFunc(1)
+		return
+	}
 
 	if err := run(os.Stdout, cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "bench/token-economy:", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 }
 
@@ -33,11 +71,11 @@ func run(w io.Writer, cfg Config) error {
 	conv := GenerateConversation(cfg)
 
 	ctx := context.Background()
-	a, err := RunStrategyA(ctx, conv)
+	a, err := runStrategyA(ctx, conv)
 	if err != nil {
 		return fmt.Errorf("strategy A: %w", err)
 	}
-	b := RunStrategyB(conv)
+	b := runStrategyB(conv)
 
 	if len(a) != len(b) {
 		return fmt.Errorf("internal error: strategy A produced %d rows, strategy B produced %d", len(a), len(b))

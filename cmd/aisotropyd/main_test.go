@@ -1,8 +1,20 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/Luum-Home/aisotropy/aisotropy"
 )
 
 // clearAuthEnv forces every authentication-selecting env var to empty for the
@@ -127,5 +139,232 @@ func TestResolveAuthBoot_WeakSecretRefusesWithoutLeak(t *testing.T) {
 	}
 	if strings.Contains(dec.refuse, weak) {
 		t.Errorf("refusal message leaked the secret value: %q", dec.refuse)
+	}
+}
+
+// discardLogger returns a *slog.Logger writing to io.Discard, so run() tests
+// exercise every logging branch without polluting test output.
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// withFakeRunApp swaps the runApp seam (the only piece of run() that would
+// otherwise bind a real network listener) for the duration of a test, and
+// restores the real aisotropy.App.Run implementation on cleanup.
+func withFakeRunApp(t *testing.T, fake func(ctx context.Context, app *aisotropy.App) error) {
+	t.Helper()
+	prev := runApp
+	runApp = fake
+	t.Cleanup(func() { runApp = prev })
+}
+
+// rsaPublicKeyPEM PEM-encodes pub in the PKIX form ParseRSAPublicKeyPEM
+// expects, mirroring aisotropy/authenv_test.go's helper.
+func rsaPublicKeyPEM(t *testing.T, pub *rsa.PublicKey) string {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+}
+
+// TestRun_RefusalPropagatesAsError proves run() never calls os.Exit itself: an
+// auth boot refusal (no authentication configured) surfaces as a returned
+// error, leaving the exit-code decision entirely to main().
+func TestRun_RefusalPropagatesAsError(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("AISOTROPY_ADDR", "")
+
+	err := run(context.Background(), discardLogger())
+	if err == nil {
+		t.Fatal("expected an error when no authentication is configured")
+	}
+	if !strings.Contains(err.Error(), "aisotropyd refusing to start") {
+		t.Errorf("error = %q, want it to mention the refusal", err.Error())
+	}
+}
+
+// TestRun_RunAppErrorIsWrapped proves a runApp (HTTP server) failure is
+// wrapped and returned rather than the process exiting directly, and that the
+// built *aisotropy.App is passed through to the seam.
+func TestRun_RunAppErrorIsWrapped(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("AISOTROPY_ALLOW_NOAUTH", "1")
+	t.Setenv("AISOTROPY_ADDR", "127.0.0.1:0")
+
+	wantErr := errors.New("bind failed: address in use")
+	withFakeRunApp(t, func(_ context.Context, app *aisotropy.App) error {
+		if app == nil {
+			t.Error("expected a non-nil *aisotropy.App to be passed to runApp")
+		}
+		return wantErr
+	})
+
+	err := run(context.Background(), discardLogger())
+	if err == nil {
+		t.Fatal("expected the runApp error to propagate")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("error = %q, want it to wrap %q", err.Error(), wantErr.Error())
+	}
+	if !strings.Contains(err.Error(), "aisotropyd exited with error") {
+		t.Errorf("error = %q, want the exited-with-error prefix", err.Error())
+	}
+}
+
+// TestRun_SuccessAllAuthModesAndOpsPostures drives run() through every auth
+// mode branch (hs256, rs256 static key, rs256 jwks, noauth) crossed with the
+// ops-token-set/unset and TLS-enforcement-on/off logging branches, using the
+// runApp fake so no test in this suite ever binds a real network listener.
+func TestRun_SuccessAllAuthModesAndOpsPostures(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey: %v", err)
+	}
+
+	cases := []struct {
+		name  string
+		setup func(t *testing.T)
+	}{
+		{
+			name: "hs256",
+			setup: func(t *testing.T) {
+				t.Setenv("AISOTROPY_JWT_SECRET", validSecret)
+			},
+		},
+		{
+			name: "rs256-static",
+			setup: func(t *testing.T) {
+				t.Setenv("AISOTROPY_JWT_PUBLIC_KEY", rsaPublicKeyPEM(t, &rsaKey.PublicKey))
+			},
+		},
+		{
+			name: "rs256-jwks",
+			setup: func(t *testing.T) {
+				t.Setenv("AISOTROPY_JWT_JWKS_URL", "https://issuer.example.com/.well-known/jwks.json")
+			},
+		},
+		{
+			name: "noauth-loopback",
+			setup: func(t *testing.T) {
+				t.Setenv("AISOTROPY_ALLOW_NOAUTH", "1")
+				t.Setenv("AISOTROPY_ADDR", "127.0.0.1:0")
+			},
+		},
+	}
+
+	for _, opsTok := range []string{"", "s3cr3t-ops-token"} {
+		for _, tlsVal := range []string{"", "true"} {
+			for _, tc := range cases {
+				t.Run(tc.name+"/ops="+opsTok+"/tls="+tlsVal, func(t *testing.T) {
+					clearAuthEnv(t)
+					t.Setenv("AISOTROPY_ADDR", "")
+					tc.setup(t)
+					t.Setenv("AISOTROPY_OPS_TOKEN", opsTok)
+					t.Setenv("AISOTROPY_REQUIRE_TLS", tlsVal)
+
+					var gotCtx context.Context
+					withFakeRunApp(t, func(ctx context.Context, app *aisotropy.App) error {
+						gotCtx = ctx
+						if app == nil {
+							t.Error("expected a non-nil *aisotropy.App")
+						}
+						return nil
+					})
+
+					ctx := context.Background()
+					if err := run(ctx, discardLogger()); err != nil {
+						t.Fatalf("run() error = %v, want nil", err)
+					}
+					if gotCtx != ctx { //nolint:govet // pointer/interface identity check is intentional here
+						t.Error("expected the same ctx to be forwarded to runApp")
+					}
+				})
+			}
+		}
+	}
+}
+
+// cleanEnv builds a child-process environment from the current process's
+// environment with every AISOTROPY_*/ANTHROPIC_*/RQLITE_*/QDRANT_* variable
+// stripped, then layers extra on top. This keeps the TestMain_ExitCodes
+// subprocess cases deterministic regardless of what the developer's shell (or
+// CI) happens to have set ambiently.
+func cleanEnv(extra ...string) []string {
+	base := os.Environ()
+	filtered := make([]string, 0, len(base)+len(extra))
+	for _, kv := range base {
+		key, _, _ := strings.Cut(kv, "=")
+		switch {
+		case strings.HasPrefix(key, "AISOTROPY_"),
+			strings.HasPrefix(key, "ANTHROPIC_"),
+			strings.HasPrefix(key, "RQLITE_"),
+			strings.HasPrefix(key, "QDRANT_"):
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	return append(filtered, extra...)
+}
+
+// TestMain_ExitCodes drives the real main() — the 4-line os.Exit wrapper
+// around run() — in a re-exec'd subprocess. main()'s failure path calls
+// os.Exit(1) directly, which cannot be exercised in-process without killing
+// the test binary, so this follows the standard Go subprocess pattern (cf.
+// os/exec_test.go's TestHelperProcess): the test re-executes its own test
+// binary with an env sentinel that makes it call main() instead of running
+// the normal test suite, then asserts on the child's exit code.
+func TestMain_ExitCodes(t *testing.T) {
+	if os.Getenv("AISOTROPYD_TEST_BE_MAIN") == "1" {
+		// Re-exec'd child: act as the compiled binary's entrypoint. The success
+		// case fakes runApp so main() never binds a real network listener.
+		if os.Getenv("AISOTROPYD_TEST_FAKE_RUNAPP") == "1" {
+			runApp = func(context.Context, *aisotropy.App) error { return nil }
+		}
+		main()
+		return
+	}
+
+	cases := []struct {
+		name     string
+		env      []string
+		wantCode int
+	}{
+		{
+			name: "success_exits_0",
+			env: []string{
+				"AISOTROPY_ALLOW_NOAUTH=1",
+				"AISOTROPY_ADDR=127.0.0.1:0",
+				"AISOTROPYD_TEST_FAKE_RUNAPP=1",
+			},
+			wantCode: 0,
+		},
+		{
+			name:     "refusal_exits_1",
+			env:      nil, // no auth configured, no NoAuth opt-in -> resolveAuthBoot refuses
+			wantCode: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestMain_ExitCodes$")
+			cmd.Env = cleanEnv(append([]string{"AISOTROPYD_TEST_BE_MAIN=1"}, tc.env...)...)
+			out, err := cmd.CombinedOutput()
+
+			code := 0
+			if err != nil {
+				var exitErr *exec.ExitError
+				if errors.As(err, &exitErr) {
+					code = exitErr.ExitCode()
+				} else {
+					t.Fatalf("unexpected exec error: %v, output: %s", err, out)
+				}
+			}
+			if code != tc.wantCode {
+				t.Errorf("exit code = %d, want %d; output: %s", code, tc.wantCode, out)
+			}
+		})
 	}
 }

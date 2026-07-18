@@ -23,6 +23,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -80,7 +81,23 @@ func resolveAuthBoot(addr string) authBootDecision {
 	return authBootDecision{authr: authr, mode: mode}
 }
 
-func main() {
+// runApp is the seam that actually boots and blocks on the runtime HTTP
+// server (binds the real listener via aisotropy.App.Run). It is a package
+// variable so tests can substitute a fake that never binds a real listener —
+// covering the wiring, logging, and error-handling in run() without a live
+// network bind — while main() always uses the real implementation.
+var runApp = func(ctx context.Context, app *aisotropy.App) error {
+	return app.Run(ctx)
+}
+
+// run is the testable body of main(): it resolves the auth boot decision,
+// builds the App with the demo tools/executor/persona, logs the resulting
+// boot posture (auth mode, ops-endpoint gate, TLS enforcement) to logger,
+// and hands off to the runApp seam. It performs no logging side effects of
+// its own beyond logger and never calls os.Exit — every fatal condition is
+// surfaced as a returned error so main() is the only place that decides the
+// process exit code.
+func run(ctx context.Context, logger *slog.Logger) error {
 	// Authentication is SECURABLE BY CONFIG and SECURE BY DEFAULT: AuthenticatorFromEnv
 	// returns a real JWT authenticator when a secret/key is set, and NoAuth ONLY when
 	// AISOTROPY_ALLOW_NOAUTH=1 is explicitly set. Absent both, resolveAuthBoot reports a
@@ -90,8 +107,7 @@ func main() {
 	addr := aisotropy.ResolveListenAddr("")
 	dec := resolveAuthBoot(addr)
 	if dec.refuse != "" {
-		slog.Error("aisotropyd refusing to start: " + dec.refuse)
-		os.Exit(1)
+		return fmt.Errorf("aisotropyd refusing to start: %s", dec.refuse)
 	}
 	authr, authMode := dec.authr, dec.mode
 
@@ -118,13 +134,13 @@ func main() {
 
 	switch authMode {
 	case "jwt-hs256":
-		slog.Info("aisotropyd authentication enabled: verifying HS256 bearer JWTs (AISOTROPY_JWT_SECRET is set).")
+		logger.Info("aisotropyd authentication enabled: verifying HS256 bearer JWTs (AISOTROPY_JWT_SECRET is set).")
 	case "jwt-rs256":
-		slog.Info("aisotropyd authentication enabled: verifying RS256 bearer JWTs against a static RSA public key (AISOTROPY_JWT_PUBLIC_KEY[_FILE] is set).")
+		logger.Info("aisotropyd authentication enabled: verifying RS256 bearer JWTs against a static RSA public key (AISOTROPY_JWT_PUBLIC_KEY[_FILE] is set).")
 	case "jwt-rs256-jwks":
-		slog.Info("aisotropyd authentication enabled: verifying RS256 bearer JWTs against a JWKS endpoint (AISOTROPY_JWT_JWKS_URL is set).")
+		logger.Info("aisotropyd authentication enabled: verifying RS256 bearer JWTs against a JWKS endpoint (AISOTROPY_JWT_JWKS_URL is set).")
 	default: // "noauth" — reached only via an explicit AISOTROPY_ALLOW_NOAUTH=1 opt-in
-		slog.Warn("aisotropyd is running in NoAuth (insecure) mode: path tenant_id/user_id are trusted with no credential verification (AISOTROPY_ALLOW_NOAUTH is set). " +
+		logger.Warn("aisotropyd is running in NoAuth (insecure) mode: path tenant_id/user_id are trusted with no credential verification (AISOTROPY_ALLOW_NOAUTH is set). " +
 			"Set AISOTROPY_JWT_SECRET (HS256), AISOTROPY_JWT_PUBLIC_KEY[_FILE] (RS256), or AISOTROPY_JWT_JWKS_URL (RS256 JWKS) to enable JWT authentication for any non-local deployment.")
 	}
 
@@ -132,16 +148,23 @@ func main() {
 	// /costs and /bitrate are default-closed unless AISOTROPY_OPS_TOKEN is set,
 	// and plaintext requests are rejected only when AISOTROPY_REQUIRE_TLS is on.
 	if api.OpsTokenFromEnv() != "" {
-		slog.Info("aisotropyd ops endpoints enabled: /costs and /bitrate require the AISOTROPY_OPS_TOKEN bearer token.")
+		logger.Info("aisotropyd ops endpoints enabled: /costs and /bitrate require the AISOTROPY_OPS_TOKEN bearer token.")
 	} else {
-		slog.Info("aisotropyd ops endpoints disabled: /costs and /bitrate return 503 until AISOTROPY_OPS_TOKEN is set.")
+		logger.Info("aisotropyd ops endpoints disabled: /costs and /bitrate return 503 until AISOTROPY_OPS_TOKEN is set.")
 	}
 	if requireTLS, _ := strconv.ParseBool(os.Getenv("AISOTROPY_REQUIRE_TLS")); requireTLS {
-		slog.Info("aisotropyd TLS enforcement ON (AISOTROPY_REQUIRE_TLS): non-TLS requests are rejected 400.")
+		logger.Info("aisotropyd TLS enforcement ON (AISOTROPY_REQUIRE_TLS): non-TLS requests are rejected 400.")
 	}
 
-	if err := app.Run(context.Background()); err != nil {
-		slog.Error("aisotropyd exited with error", "err", err)
+	if err := runApp(ctx, app); err != nil {
+		return fmt.Errorf("aisotropyd exited with error: %w", err)
+	}
+	return nil
+}
+
+func main() {
+	if err := run(context.Background(), slog.Default()); err != nil {
+		slog.Error(err.Error())
 		os.Exit(1)
 	}
 }

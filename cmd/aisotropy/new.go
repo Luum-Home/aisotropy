@@ -45,6 +45,13 @@ import (
 //go:embed all:templates
 var templatesFS embed.FS
 
+// scaffoldTemplatesFS is the fs.FS renderTemplate actually reads from. It
+// defaults to the real embedded templates (embed.FS satisfies fs.FS); tests
+// substitute a fake (e.g. fstest.MapFS) to exercise renderTemplate's parse/
+// execute error branches without shipping a deliberately broken template in
+// the real templates/ directory.
+var scaffoldTemplatesFS fs.FS = templatesFS
+
 // scaffoldFile pairs an embedded template with the file it renders to inside the
 // generated project. The output name is separate from the template name so a
 // template can render to a dotfile (gitignore.tmpl -> .gitignore) that //go:embed
@@ -219,7 +226,7 @@ func scaffold(dir string, data scaffoldData) ([]string, error) {
 // "missingkey=error" option turns a typo'd field reference into a hard error
 // rather than a silently rendered "<no value>".
 func renderTemplate(name string, data scaffoldData) ([]byte, error) {
-	raw, err := fs.ReadFile(templatesFS, name)
+	raw, err := fs.ReadFile(scaffoldTemplatesFS, name)
 	if err != nil {
 		return nil, fmt.Errorf("read embedded template %q: %w", name, err)
 	}
