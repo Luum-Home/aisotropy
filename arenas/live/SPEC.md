@@ -58,6 +58,21 @@ are objective measurements and carry no such caveat.
 
 ---
 
+## Full-matrix coverage law (a standing premise)
+
+Every arena artifact is covered across the **full cartesian matrix** — **model lane** (`stub` +
+`real`) × **execution form** (`native` + `docker` + `wasm`-where-WASI-feasible) × **dimension** (every
+mode the adapter implements). This is a **premise, not a per-task question**: an agent building for the
+arena covers all feasible cells and **declares the infeasible ones with a reason** — a silently missing
+cell is an arena defect (it reads as "covered" when it is not). Each adapter ships a `matrix.json`
+manifest; the runner **fails the report if any cell is left blank** (`pending`), so completeness is
+machine-checked. `wasm` is `infeasible: WASI has no sockets` for every networked framework and feasible
+only for aisotropy's wazero tool-sandbox — that reason is the cell's content, not an omission. The full
+enforcement law is `arenas/live/FULL-MATRIX.md` (version-controlled, authoritative); it is also
+projected into `.claude/rules/arena-full-matrix.md` so in-repo agents auto-load it.
+
+---
+
 ## The uniform adapter contract
 
 Every framework adapter is a runnable command at `arenas/live/<fw>/run.sh`. The runner
