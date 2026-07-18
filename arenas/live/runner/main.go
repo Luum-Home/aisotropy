@@ -54,6 +54,7 @@ func main() {
 	maxTasks := flag.Int("max-tasks", 0, "cap tasks per correctness mode (0 = all; bounds real spend on a re-run)")
 	concurrency := flag.Int("concurrency", 4, "max frameworks to run concurrently during the correctness/quality pass (1 = fully sequential, exact old behavior; the benchmark pass always stays sequential/uncontended)")
 	retry := flag.Int("retry", 1, "max retries per adapter invocation (correctness/quality pass) on a TRANSIENT failure — timeout/deadline/connection-reset/EOF or a 429/500/502/503/'unavailable' adapter error; a deterministic adapter/contract error never retries. 0 = no retry, exact old behavior")
+	rps := flag.Float64("rps", 0, "client-side GLOBAL rate limit in model calls/sec, shared across ALL concurrent framework goroutines (0 = disabled, exact old behavior). This is the client-side dual of the agnes FREE-TIER rate limit: with -concurrency>1, N frameworks otherwise burst their calls at once and blow the free-tier limit → a 429 storm (see docs/architecture/arena-rate-limiting.md). Sizing -rps at/under the free-tier ceiling paces the aggregate call rate so a parallel sweep stays clean. Recommended for -concurrency>1, e.g. -rps 1.5.")
 	llmJudge := flag.Bool("llm-judge", false, "OPT-IN, default OFF: run the SECONDARY LLM-as-judge scoring pass (agnes judging agnes — a same-family judge that scores generously and non-discriminatingly; see docs/architecture/arena-deterministic-judging.md). The PRIMARY score is always the deterministic arenas/live/runner/scoring pass and needs no flag.")
 	skipJudge := flag.Bool("skip-judge", false, "force the LLM-as-judge pass off even if -llm-judge is set (kept for backward compatibility; -llm-judge already defaults to off)")
 	skipBench := flag.Bool("skip-bench", false, "skip the benchmark pass entirely")
@@ -72,6 +73,13 @@ func main() {
 	if *retry < 0 {
 		fatal("-retry must be >= 0 (got %d)", *retry)
 	}
+	if *rps < 0 {
+		fatal("-rps must be >= 0 (got %v)", *rps)
+	}
+	// Install the process-global model-call pacer from -rps. Set BEFORE any
+	// billable call is issued (correctness/bench/dimension passes all route
+	// through runAdapterRetry/runAdapter, which consult modelRateLimiter).
+	modelRateLimiter = newRateLimiter(*rps)
 	forms := []string{"native", "docker"}
 	switch {
 	case *nativeOnly:
@@ -131,8 +139,8 @@ func main() {
 		fatal("no adapters found under %s/*/run.sh", *liveDir)
 	}
 	logf("adapters: %s", strings.Join(fwNames(frameworks), ", "))
-	logf("modes: %s | bench-modes: %s | forms: %s | bench-iters: %d | correctness concurrency: %d | retry: %d",
-		strings.Join(modes, ","), strings.Join(benchModes, ","), strings.Join(forms, ","), *benchIters, *concurrency, *retry)
+	logf("modes: %s | bench-modes: %s | forms: %s | bench-iters: %d | correctness concurrency: %d | retry: %d | rps: %s",
+		strings.Join(modes, ","), strings.Join(benchModes, ","), strings.Join(forms, ","), *benchIters, *concurrency, *retry, rpsLabel(*rps))
 	if len(dims) > 0 && !*skipDims {
 		logf("dimensions: %s", strings.Join(dims, ","))
 	}
@@ -199,6 +207,7 @@ func main() {
 		ColdProbes:  *coldProbes,
 		JudgeOn:     judge != nil,
 		Concurrency: *concurrency,
+		RPS:         *rps,
 		Records:     records,
 		Benches:     benches,
 		IsoRecords:  isoRecs,
@@ -427,15 +436,96 @@ var retrySleep = time.Sleep
 
 // retryBackoff returns the backoff before retry attempt `attempt` (0-based:
 // the sleep before the FIRST retry, i.e. after the initial attempt failed).
-// Exponential-ish and short by design — the transient failures this targets
-// (agnes latency spikes, shared-infra 429/502 under load) clear in seconds,
-// not minutes: 1s, 2s, 4s, capped at 8s.
-func retryBackoff(attempt int) time.Duration {
-	d := time.Second << uint(attempt)
-	if d > 8*time.Second {
-		d = 8 * time.Second
+// Two schedules: a generic-transient one (agnes latency spike / shared-infra
+// 502 — clears in ~1s: 1s, 2s, 4s, capped 8s) and a longer RATE-LIMIT one for
+// agnes FREE-TIER 429s, whose throttle window is seconds-to-tens-of-seconds:
+// 3s, 6s, 12s, 24s, capped 30s. Retrying a 429 after only 1s just re-hits the
+// same open rate-limit window and burns another billable 429; the longer
+// schedule gives the window real room to clear. The attempt clamp guards the
+// left-shift against int64 overflow (the cap dominates well before then).
+func retryBackoff(attempt int, rateLimited bool) time.Duration {
+	base, ceiling := time.Second, 8*time.Second
+	if rateLimited {
+		base, ceiling = 3*time.Second, 30*time.Second
+	}
+	if attempt > 20 {
+		attempt = 20
+	}
+	d := base << uint(attempt)
+	if d <= 0 || d > ceiling { // d<=0 catches shift overflow
+		d = ceiling
 	}
 	return d
+}
+
+// ---- client-side rate limiter (free-tier pacing) ---------------------------
+
+// modelRateLimiter is the process-GLOBAL pacer for billable model calls. It is
+// package-global (like retrySleep) because the resource it protects — the
+// shared agnes endpoint's rate limit — is itself process-global: every
+// framework goroutine and every pass draws from the same upstream quota. main()
+// installs the real one from -rps before any billable call; the default is
+// disabled (exact old behavior). See docs/architecture/arena-rate-limiting.md.
+var modelRateLimiter = newRateLimiter(0)
+
+// rateSleep is the limiter's sleep, a package var so tests can stub it (mirrors
+// retrySleep). Kept separate from retrySleep so a test can exercise pacing and
+// retry backoff independently.
+var rateSleep = time.Sleep
+
+// rateNow is the limiter's clock, a package var so tests can drive time
+// deterministically instead of sleeping in real wall-clock.
+var rateNow = time.Now
+
+// rateLimiter is a reservation-style token bucket: each caller atomically
+// reserves the NEXT evenly-spaced slot and blocks until it is due. Reserving
+// under the mutex (but sleeping OUTSIDE it) means N concurrent callers each get
+// a distinct, monotonically increasing slot without serializing on the lock
+// while they wait — so a -concurrency 4 sweep interleaves its four frameworks'
+// calls at one bounded aggregate rate rather than bursting all four at once.
+type rateLimiter struct {
+	mu       sync.Mutex
+	interval time.Duration // min gap between successive calls; 0 = disabled
+	next     time.Time     // earliest instant the next reserved slot may fire
+}
+
+// newRateLimiter builds a limiter admitting at most rps calls/sec on aggregate.
+// rps<=0 yields a disabled limiter whose wait() is an immediate no-op.
+func newRateLimiter(rps float64) *rateLimiter {
+	rl := &rateLimiter{}
+	if rps > 0 {
+		rl.interval = time.Duration(float64(time.Second) / rps)
+	}
+	return rl
+}
+
+// wait reserves this caller's slot and blocks until it is due. Concurrent-safe;
+// a disabled limiter (interval==0, or a nil receiver) returns immediately.
+func (rl *rateLimiter) wait() {
+	if rl == nil || rl.interval == 0 {
+		return
+	}
+	rl.mu.Lock()
+	now := rateNow()
+	slot := rl.next
+	if slot.Before(now) {
+		slot = now
+	}
+	rl.next = slot.Add(rl.interval)
+	rl.mu.Unlock()
+	if d := slot.Sub(now); d > 0 {
+		rateSleep(d)
+	}
+}
+
+// rpsLabel renders the -rps flag for the run header/log: "off" when disabled,
+// else the numeric rate. Keeps the model-call cadence documented in RESULTS.md
+// so a paced run is never mistaken for an unpaced one.
+func rpsLabel(rps float64) string {
+	if rps <= 0 {
+		return "off"
+	}
+	return fmt.Sprintf("%.3g/s", rps)
 }
 
 // transientRunErrMarkers match process-level failures on execResult.runErr —
@@ -482,6 +572,23 @@ func isTransientFailure(res execResult) bool {
 	return false
 }
 
+// rateLimitMarkers match the specific agnes FREE-TIER 429 signature (a subset
+// of the transient markers). isRateLimited uses these to select retryBackoff's
+// longer schedule — a 429 is transient AND rate-limited; a 502/timeout is
+// transient but NOT rate-limited (shorter backoff is fine).
+var rateLimitMarkers = []string{"429", "too many requests", "rate limit"}
+
+// isRateLimited reports whether a failed result is specifically an upstream
+// RATE LIMIT (agnes free-tier 429), as opposed to a generic transient
+// (502/timeout/reset). Callers reach this only after isTransientFailure is
+// true; it selects the longer retry backoff for the throttle to clear.
+func isRateLimited(res execResult) bool {
+	if res.out.Error != "" && containsAnyFold(res.out.Error, rateLimitMarkers) {
+		return true
+	}
+	return res.runErr != "" && containsAnyFold(res.runErr, rateLimitMarkers)
+}
+
 // containsAnyFold reports whether s contains any of markers, case-insensitive.
 func containsAnyFold(s string, markers []string) bool {
 	low := strings.ToLower(s)
@@ -507,6 +614,10 @@ func containsAnyFold(s string, markers []string) bool {
 func runAdapterRetry(script string, in adapterInput, timeout time.Duration, retries int, budget *callCounter) execResult {
 	var res execResult
 	for attempt := 0; ; attempt++ {
+		// Pace against the shared agnes free-tier limit BEFORE spending the
+		// call (no-op when -rps is unset). Every attempt — first and retries —
+		// draws a slot, since every attempt is a real billable call.
+		modelRateLimiter.wait()
 		res = runAdapter(script, in, timeout)
 		budget.add(1)
 		if !res.failed() || !isTransientFailure(res) {
@@ -515,9 +626,14 @@ func runAdapterRetry(script string, in adapterInput, timeout time.Duration, retr
 		if attempt >= retries {
 			return res // exhausted retries; last (still-transient) failure stands
 		}
-		backoff := retryBackoff(attempt)
-		logf("transient failure on attempt %d/%d (%s) — retrying in %s",
-			attempt+1, retries+1, execResultErrSummary(res), backoff)
+		rateLimited := isRateLimited(res)
+		backoff := retryBackoff(attempt, rateLimited)
+		reason := "transient"
+		if rateLimited {
+			reason = "rate-limited (429)"
+		}
+		logf("%s failure on attempt %d/%d (%s) — retrying in %s",
+			reason, attempt+1, retries+1, execResultErrSummary(res), backoff)
 		retrySleep(backoff)
 	}
 }

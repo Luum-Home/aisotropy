@@ -21,7 +21,8 @@ type reportData struct {
 	BenchIters  int
 	ColdProbes  int
 	JudgeOn     bool
-	Concurrency int // -concurrency the correctness/quality pass ran under (1 = sequential)
+	Concurrency int     // -concurrency the correctness/quality pass ran under (1 = sequential)
+	RPS         float64 // -rps client-side global model-call pacing (0 = off)
 	Records     []record
 	Benches     []benchCell
 	IsoRecords  []isoRecord
@@ -219,6 +220,10 @@ func writeQualityTable(b *strings.Builder, rep reportData, aggs map[string]*mode
 		b.WriteString("concurrently, so per-item latency in this pass reflects mild host contention — a\n")
 		b.WriteString("directional signal, not a clean isolated p50. The benchmark pass below always stays\n")
 		b.WriteString("sequential/uncontended and remains the p50/p95 source of truth for latency._\n\n")
+		if rep.RPS > 0 {
+			fmt.Fprintf(b, "_Model calls were paced client-side at `-rps %.3g/s` (global across all frameworks)\n", rep.RPS)
+			b.WriteString("to stay under the shared agnes free-tier rate limit — see docs/architecture/arena-rate-limiting.md._\n\n")
+		}
 	} else {
 		b.WriteString("_Ran under `-concurrency 1` (fully sequential) — latency in this pass is uncontended._\n\n")
 	}

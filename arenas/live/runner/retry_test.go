@@ -39,6 +39,11 @@ func writeFlakyAdapter(t *testing.T, dir, name string, failFirst int, failMode s
 		failBlock = fmt.Sprintf(`echo '{"framework":"%s","mode":"na","error":"agnes returned 502 bad gateway"}'`, name)
 	case "deterministic":
 		failBlock = fmt.Sprintf(`echo '{"framework":"%s","mode":"na","error":"unknown mode: bogus"}'`, name)
+	case "rate-limited":
+		// exit 0, valid JSON, out.Error carrying the agnes FREE-TIER 429
+		// signature — transient AND rate-limited (isRateLimited true), so
+		// retryBackoff must pick the longer 3s/6s/12s schedule.
+		failBlock = fmt.Sprintf(`echo '{"framework":"%s","mode":"na","error":"flow run: 429 too many requests (rate limit) for free users"}'`, name)
 	default:
 		t.Fatalf("unknown failMode %q", failMode)
 	}
