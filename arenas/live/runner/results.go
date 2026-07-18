@@ -24,6 +24,7 @@ type reportData struct {
 	IsoRecords []isoRecord
 	CrashRecs  []crashRecord
 	ObsRecords []obsRecord
+	MatrixDocs []matrixDoc
 	ModelCalls int
 }
 
@@ -121,6 +122,7 @@ func writeResults(path string, rep reportData) error {
 
 	var b strings.Builder
 	writeHeader(&b, rep)
+	writeMatrixSection(&b, rep)
 	writeQualityTable(&b, rep, aggs, get)
 	writeScopedIsolationTable(&b, rep)
 	writeCrashTable(&b, rep)

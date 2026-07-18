@@ -1,0 +1,53 @@
+{
+  "framework": "aisotropy",
+  "dimensions": {
+    "crash_recovery": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    },
+    "isolation_leak": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    },
+    "memory": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    },
+    "memory_scoped": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    },
+    "middleware": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    },
+    "observability": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    },
+    "qa": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    },
+    "rag": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    },
+    "stream": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    },
+    "structured": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    },
+    "tools": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    },
+    "wasm_tool": {
+      "stub": {"native":"pending","docker":"pending","wasm":"pending"},
+      "real": {"native":"pending","docker":"pending","wasm":"pending"}
+    }
+  }
+}

@@ -55,6 +55,7 @@ func main() {
 	skipBench := flag.Bool("skip-bench", false, "skip the benchmark pass entirely")
 	skipCorrect := flag.Bool("skip-correctness", false, "skip the correctness/quality pass entirely")
 	skipDims := flag.Bool("skip-dimensions", false, "skip the new-dimensions pass (scoped-memory, isolation, crash, observability)")
+	skipMatrixGate := flag.Bool("skip-matrix-gate", false, "skip the full-matrix completeness gate over arenas/live/<fw>/matrix.json (still renders the matrix section)")
 	flag.Parse()
 
 	if *nativeOnly && *dockerOnly {
@@ -109,6 +110,20 @@ func main() {
 		strings.Join(modes, ","), strings.Join(benchModes, ","), strings.Join(forms, ","), *benchIters)
 	if len(dims) > 0 && !*skipDims {
 		logf("dimensions: %s", strings.Join(dims, ","))
+	}
+
+	// ---- full-matrix completeness gate (arenas/live/FULL-MATRIX.md) --------
+	matrixDocs, err := loadMatrixDocs(*liveDir)
+	if err != nil {
+		fatal("load matrix.json manifests: %v", err)
+	}
+	logf("matrix manifests: %d found", len(matrixDocs))
+	if !*skipMatrixGate {
+		if err := gateMatrices(matrixDocs); err != nil {
+			fatal("matrix completeness gate: %v", err)
+		}
+	} else if len(matrixDocs) > 0 {
+		logf("WARNING: -skip-matrix-gate set — pending/invalid cells will render in RESULTS.md but did not fail the run")
 	}
 
 	var judge *judgeClient
@@ -169,6 +184,7 @@ func main() {
 		IsoRecords: isoRecs,
 		CrashRecs:  crashRecs,
 		ObsRecords: obsRecs,
+		MatrixDocs: matrixDocs,
 		ModelCalls: callBudget.n,
 	}
 	resultsPath := filepath.Join(*liveDir, "RESULTS.md")
