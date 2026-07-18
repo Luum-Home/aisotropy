@@ -156,6 +156,13 @@ type App struct {
 	// convenience only (unauthenticated, single-page); see WithDevUI.
 	devUIPath string
 
+	// mcpServe backs WithMCPServe (aisotropy/mcpserve.go): the chi route the
+	// scope-gated MCP *server* endpoint mounts on. nil (the default) means the
+	// endpoint is NOT registered and the runtime stays MCP consume-only; when set,
+	// Run mounts a stateless streamable-HTTP MCP server that publishes the caller's
+	// scope-permitted tools. See WithMCPServe.
+	mcpServe *mcpServeSpec
+
 	// embedder / chunkSize / chunkOverlap back WithEmbedder / WithChunkSize
 	// (ADR-0018, aisotropy/knowledge.go). chunkSize <= 0 means "unset": the
 	// façade falls back to semantic.DefaultChunkOptions().
@@ -1125,6 +1132,19 @@ func (a *App) Run(ctx context.Context) error {
 			return serr
 		}},
 	).Handler())
+
+	// MCP SERVE (opt-in via WithMCPServe): publish this runtime's scope-gated
+	// tools as a Model Context Protocol server. A chi route OUTSIDE the /v1 Huma
+	// middleware — it runs its OWN per-request authentication (the same
+	// Authenticator) and derives the served tool set from the caller's VERIFIED
+	// scopes, so only Permitted(scopes) tools are ever listed or callable, each
+	// served call dispatches through the same tenant-scoped executor path, and the
+	// per-tenant quota gate still applies. Inert by default (nil => not mounted, so
+	// the runtime stays MCP consume-only).
+	if a.mcpServe != nil {
+		router.Handle(a.mcpServe.path, a.buildMCPServeHandler(rt))
+		slog.Info("MCP serve endpoint enabled (scope-gated tool publishing)", "path", a.mcpServe.path)
+	}
 
 	api.Register(humaAPI, rt.client, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.persona, rt.costMeter, rt.gateway, rt.guard)
 	api.RegisterStream(humaAPI, rt.streamClient, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.costMeter, rt.cheapStreamClient, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, a.inPricePer1M, a.outPricePer1M, rt.bptSampler, rt.gateway, rt.guard)

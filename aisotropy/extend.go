@@ -50,11 +50,12 @@
 // EvalSample / Score / Scale / UnitScale), ModelPolicy (Request / Decision), and
 // TenantRoutingPolicy (TenantTier / TierShared / TierDedicated) — so a consumer
 // implements any of the six against the public façade alone, with no internal
-// import. The remaining pending follow-up is narrower and lives on the two
-// SEALED-DRIVER (Tier-2) backends below: VectorBackend's BackendVector/BackendHit
-// and DocBackend's BackendDoc/BackendDocHit driver payload types are not
-// re-exported here yet (tracked in each backend's doc comment), so an EXTERNAL
-// backend implementation still needs those. Inside this module (and this repo's
+// import. The two SEALED-DRIVER (Tier-2) backends below are now on the same
+// footing: VectorBackend's BackendVector/BackendHit and DocBackend's
+// BackendDoc/BackendDocHit driver payload types are re-exported here alongside
+// each backend interface alias, so an EXTERNAL module can fully implement
+// WithVectorBackend / WithFactsBackend against the public façade alone — "bring
+// your own vector/facts store" is complete. Inside this module (and this repo's
 // tests) every seam is implementable.
 package aisotropy
 
@@ -297,12 +298,29 @@ const (
 // namespace from the caller's validated Scope on every call, so the backend only
 // ever sees the hash for the exact tenant the runtime authorized at the Huma
 // boundary — it can neither observe nor choose a tenant. The payload/return
-// element types (BackendVector/BackendHit) are not re-exported here yet, so a
-// full EXTERNAL implementation still needs those aliases — a pending follow-up;
-// inside this module the seam is implementable today. Author a conformance +
-// isolation-proof test for an implementation with internal/plugintest's
-// RunVectorBackendSuite.
+// element types (BackendVector / BackendHit) are re-exported below, so a
+// VectorBackend is now fully implementable from an EXTERNAL module — no internal
+// import required. Author a conformance + isolation-proof test for an
+// implementation with internal/plugintest's RunVectorBackendSuite.
 type VectorBackend = semantic.VectorBackend
+
+// BackendVector is one opaque stored item a VectorBackend receives at Upsert and
+// returns from Scan: an ID (the decorator-supplied idempotency key), its Vector
+// (the embedding, its length equal to the store dimension), and an opaque
+// string->string Payload the backend persists verbatim without interpreting.
+// Identity (tenant/user) is deliberately NOT in the payload — it lives only in
+// the opaque namespace the sealed decorator derives — so a backend never sees or
+// stores a tenant. Re-exported so an external VectorBackend can name its
+// argument/return element type and build items as plain struct literals in its
+// tests, against the public façade alone.
+type BackendVector = semantic.BackendVector
+
+// BackendHit is a BackendVector annotated with its similarity Score (higher =
+// closer), the element VectorBackend.Search returns. Its embedded BackendVector's
+// fields are promoted, so an external backend reads them directly and constructs
+// hits as plain struct literals. Re-exported alongside BackendVector so
+// VectorBackend.Search is expressible from an external module.
+type BackendHit = semantic.BackendHit
 
 // DocBackend is the SEALED-DRIVER seam for facts (document/task journal)
 // persistence — the DocBackend analogue of VectorBackend. Bring your own
@@ -325,11 +343,31 @@ type VectorBackend = semantic.VectorBackend
 // namespace and cross-tenant access is structurally impossible. ExportAll is the
 // single audited CROSS-tenant path (the sleep cycle's export); the sealed store
 // reconstructs identity from stored fields there, matching the existing
-// exportAll contract. The BackendDoc/BackendDocHit payload types are not
-// re-exported here yet — a pending follow-up. Prove an implementation with
+// exportAll contract. The BackendDoc / BackendDocHit payload types are
+// re-exported below, so a DocBackend is now fully implementable from an EXTERNAL
+// module — no internal import required. Prove an implementation with
 // internal/plugintest's RunDocBackendSuite (it includes the tenant-isolation
 // proof).
 type DocBackend = facts.DocBackend
+
+// BackendDoc is one opaque stored fact document a DocBackend round-trips: a Key
+// (the decorator-supplied idempotency key), the keyword-searchable Content, and
+// an opaque string->string Fields map the backend persists verbatim. The backend
+// treats Content as searchable text and Fields as an opaque blob; identity lives
+// in the namespace, NOT here, except that ExportAll — the single audited
+// cross-tenant path — requires the identity Fields be round-tripped verbatim so
+// the sealed store can reconstruct each row's (tenant,user). Re-exported so an
+// external DocBackend can name its argument/return type and build documents as
+// plain struct literals in its tests, against the public façade alone.
+type BackendDoc = facts.BackendDoc
+
+// BackendDocHit is a BackendDoc annotated with the backend's keyword relevance
+// Score (higher = better), the element DocBackend.Search returns; the decorator
+// folds this into its Relevance×Importance×Recency final ranking. Its embedded
+// BackendDoc's fields are promoted, so an external backend reads them directly.
+// Re-exported alongside BackendDoc so DocBackend.Search is expressible from an
+// external module.
+type BackendDocHit = facts.BackendDocHit
 
 // appExt groups the Wave-2 "bring your own" extension wiring an App carries: the
 // consumer implementations registered via the WithX options below, plus the
