@@ -138,6 +138,29 @@ func (c combinedMapExecutor) Execute(ctx context.Context, name string, args map[
 	return c.fallback.Execute(ctx, name, args)
 }
 
+// NewAgentToolExec builds the raw-JSON tool-dispatch closure shared by the
+// native agent route (runNativeToolAgent) and the graph executor (ADR-0060,
+// where each node runs one llm.RunToolAgent). It preserves the exact double
+// scope-gate + typed-reflection semantics: a typed tool decodes+validates the
+// model's raw JSON against its arg struct and a *ToolArgsError is reflected back
+// AS THE TOOL RESULT so the model self-corrects within its step budget (never a
+// coerced call, SDD R4); an untyped tool flattens the args to the string map its
+// ToolExecutor consumes. Only scope-permitted tools are ever offered upstream, so
+// the returned closure only ever sees an offered tool name.
+func NewAgentToolExec(typed *TypedToolExecutor, executor agentloop.ToolExecutor) func(ctx context.Context, name, argsJSON string) (string, error) {
+	return func(ctx context.Context, name, argsJSON string) (string, error) {
+		if typed.Has(name) {
+			res, rerr := typed.Run(ctx, name, json.RawMessage(argsJSON))
+			var ae *ToolArgsError
+			if errors.As(rerr, &ae) {
+				return "invalid arguments: " + ae.Err.Error() + " — please correct and retry.", nil
+			}
+			return res, rerr
+		}
+		return executor.Execute(ctx, name, decodeStringArgs(argsJSON))
+	}
+}
+
 // decodeStringArgs flattens the model's raw JSON tool arguments into the
 // string-keyed map the map-based ToolExecutor consumes (untyped tools on the
 // native path). It mirrors internal/llm's decodeToolArgs: string scalars pass

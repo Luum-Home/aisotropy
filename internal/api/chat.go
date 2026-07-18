@@ -176,6 +176,25 @@ func withIdentity(ctx context.Context, tenant, user, session string) (context.Co
 	return ctx, nil
 }
 
+// WithIdentity injects a validated (tenant, user, session) identity into ctx for
+// BOTH internal/api's own carrier (TenantFromContext/UserFromContext) and
+// internal/llm's carrier (so OTel span attribution works), exactly as the chat
+// handlers do at the Huma boundary. It is the exported seam a NON-HTTP entry
+// point uses to scope a ctx before calling a runtime primitive that reads
+// identity from ctx — currently the ADR-0060 graph executor via App.RunGraph.
+// The identity is validated with the same memory.Key.Validate rules the HTTP path
+// enforces, so an empty/invalid/reserved identity returns an error rather than a
+// silently unscoped ctx.
+func WithIdentity(ctx context.Context, tenant, user, session string) (context.Context, error) {
+	ctx, err := withIdentity(ctx, tenant, user, session)
+	if err != nil {
+		return ctx, err
+	}
+	ctx = llm.WithTenant(ctx, tenant)
+	ctx = llm.WithUser(ctx, user)
+	return ctx, nil
+}
+
 // chatIdentity validates the tenant/user/session identity, injects it into
 // ctx (both the local carrier and internal/llm's own ctx carrier, mirroring
 // chat_stream.go so OTel instrumentation can attribute spans without

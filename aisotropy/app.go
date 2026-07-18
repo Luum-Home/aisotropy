@@ -118,6 +118,7 @@ type App struct {
 	typedHandlers map[string]api.TypedToolHandler
 	mcpServers    []mcpServerSpec
 	personas      map[string]string
+	graphs        map[string]*Graph
 	llmClient     llm.Client
 	ratePerSec    float64
 	burst         float64
@@ -209,6 +210,7 @@ type Option func(*App)
 func New(opts ...Option) *App {
 	a := &App{
 		personas:   map[string]string{},
+		graphs:     map[string]*Graph{},
 		ratePerSec: defaultRatePerSec,
 		burst:      defaultBurst,
 	}
