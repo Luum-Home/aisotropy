@@ -123,6 +123,12 @@ func (a *App) ensureSemantic(ctx context.Context) (semantic.Store, semantic.Embe
 		} else {
 			store, err = openSemanticStore(ctx, tierRouter, dedicatedTenants, emb.Dimension())
 		}
+		// Defensive: never memoize a store when open failed — so App.Close's
+		// `if semanticStore != nil` guard is always correct (belt-and-suspenders
+		// with openSemanticStore's typed-nil normalization above).
+		if err != nil {
+			store = nil
+		}
 		a.semanticStore = store
 		a.semanticErr = err
 	})

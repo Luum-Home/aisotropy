@@ -467,14 +467,16 @@ func TestKnowledgeMethods_EnsureSemanticErrorSurfaces(t *testing.T) {
 	defer cancel()
 
 	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9))
-	// Deliberately no closeApp(t, app)() here: a failed Qdrant dial leaves
-	// a.semanticStore holding a non-nil semantic.Store interface wrapping a nil
-	// *QdrantStore (semantic.OpenQdrant's (nil, err) return implicitly boxes into
-	// a non-nil interface), and App.Close()'s `a.semanticStore != nil` check does
-	// not see through that — calling Close() would panic on the nil receiver.
-	// That is a pre-existing App.Close/ensureSemantic interaction this test does
-	// not attempt to fix (out of scope here); nothing else was allocated (no
-	// runtime was built), so skipping Close leaks nothing this process needs.
+	// A failed Qdrant open now memoizes a GENUINELY-nil semantic store (the
+	// typed-nil trap — a (*QdrantStore)(nil) boxed into semantic.Store slipping
+	// past App.Close's `!= nil` guard — was fixed in openSemanticStore +
+	// ensureSemantic), so Close is safe here. The Close-without-panic invariant is
+	// asserted directly by TestApp_Close_NoPanicAfterFailedSemanticOpen.
+	defer func() {
+		if cerr := app.Close(); cerr != nil {
+			t.Errorf("Close after failed semantic open must not error/panic: %v", cerr)
+		}
+	}()
 
 	if _, err := app.IngestKnowledge(ctx, "acme", "alice", Document{ID: "d1", Content: "x"}); err == nil {
 		t.Fatal("IngestKnowledge must surface the ensureSemantic build error")

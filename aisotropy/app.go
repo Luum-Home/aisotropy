@@ -1463,7 +1463,7 @@ func openSemanticStore(ctx context.Context, router routing.Router, dedicated []s
 				port = n
 			}
 		}
-		return semantic.OpenQdrant(ctx, semantic.QdrantConfig{
+		st, err := semantic.OpenQdrant(ctx, semantic.QdrantConfig{
 			Host:       os.Getenv("QDRANT_HOST"),
 			Port:       port,
 			APIKey:     os.Getenv("QDRANT_API_KEY"),
@@ -1471,11 +1471,24 @@ func openSemanticStore(ctx context.Context, router routing.Router, dedicated []s
 			Collection: resource,
 			Dim:        dim,
 		})
+		if err != nil {
+			// Return a genuinely-nil interface on error — NOT a typed-nil
+			// (*QdrantStore)(nil) boxed into semantic.Store. A boxed typed-nil is
+			// != nil as an interface, so it slips past App.Close's
+			// `if semanticStore != nil` guard and panics on the nil-receiver
+			// Close(). Same reasoning for NewRoutingStore below.
+			return nil, err
+		}
+		return st, nil
 	}
 	if len(dedicated) == 0 {
 		return factory(base)
 	}
-	return semantic.NewRoutingStore(router, base, dedicated, factory)
+	rs, err := semantic.NewRoutingStore(router, base, dedicated, factory)
+	if err != nil {
+		return nil, err
+	}
+	return rs, nil
 }
 
 // gwPrimary / gwCheap are the gateway target NAMES the model-selection seam
