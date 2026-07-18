@@ -598,18 +598,39 @@ call`), `rag` (`[ARENA_STUB] ... no e5 call` / `no Qdrant call`), `stream`, `obs
 and `middleware` (inbound/outbound both still fire against `TestModel`) all ran with **zero**
 network I/O.
 
-**Honest limitation:** `TestModel`'s generic behavior (auto-calls any tool with schema-generated —
-not semantically meaningful — arguments; for non-tool-forcing text output returns a fixed
-`"success (no tool calls)"` string) does not satisfy every mode's *domain* expectations. `tools`
-mode's real `calculate` tool receives a schema-shaped but non-arithmetic generated `expression`
-string and fails closed with a caught (non-crashing) `ValueError` in the result's `error` field;
-`structured` mode's `PromptedOutput(Answer)` strategy expects the model to emit JSON matching the
-`Answer` schema as plain text, which `TestModel`'s default text output does not produce, so it
-fails closed with `UnexpectedModelBehavior: Exceeded maximum output retries` in `error`. Both are
-**offline, non-network, non-crashing** failures — `main()` never raises, it always writes one
-valid JSON object to stdout — just not a *meaningful* answer for those two modes specifically.
-`qa`, `rag`, `memory`, `memory_scoped`, `isolation_leak`, `crash_recovery`, `stream`,
-`observability`, and `middleware` all produce clean, non-error stub output.
+**Previously a limitation, now fixed (see `arenas/live/pydantic-ai/matrix.json` /
+`arenas/live/FULL-MATRIX.md`'s full-matrix coverage law):** `TestModel`'s generic behavior
+auto-calls any tool with schema-generated — not semantically meaningful — arguments (e.g. a bare
+`"a"` for a `str` field). That is harmless for tool-call *capture* (`qa` mode never executes what
+it captures) but was fatal for tool call *execution*: `tools` and `observability` modes' real
+`calculate` tool received a non-arithmetic generated `expression` string and failed closed with a
+caught `ValueError`. Likewise `structured` mode's `PromptedOutput(Answer)` strategy expects the
+model to emit JSON matching the `Answer` schema as plain text, which `TestModel`'s default text
+output does not produce, so it failed closed with `UnexpectedModelBehavior: Exceeded maximum
+output retries`. Both were **offline, non-network, non-crashing** failures — `main()` never
+raises, it always writes one valid JSON object to stdout — but not a *passing*, domain-correct
+stub result, which the full-matrix coverage law requires wherever a canned fix is possible.
+
+`arena_common.build_model()` now returns a canned model in stub mode instead of plain `TestModel`:
+by default, `_CannedToolArgsTestModel` (a `TestModel` subclass overriding `gen_tool_args` to
+return `_STUB_CANNED_TOOL_ARGS["calculate"] = {"expression": "6 * 7"}` for the one tool this arena
+actually executes) — this is what `tools` and `observability` modes now build against, so their
+executed `calculate` call receives real, evaluable arithmetic instead of schema-random garbage.
+`structured` mode instead passes `build_model(custom_output_text=<canned Answer JSON>)`, since
+`PromptedOutput` needs a schema-valid JSON *string* rather than a tool call — `TestModel`'s
+`custom_output_text` parameter supplies it directly. Evidence (offline, `error=""` for all three):
+```json
+{"mode": "tools", "tool_calls": [{"name": "calculate", "arguments": {"expression": "6 * 7"}, "result": 42}], "error": ""}
+{"mode": "structured", "structured": {"answer": "ARENA_STUB canned answer -- no real model call", "key_points": ["ARENA_STUB canned key point (ARENA_STUB=1, no network I/O)"], "confidence": 0.5}, "error": ""}
+{"mode": "observability", "otel_supported": true, "span_count": 4, "tool_calls": [{"name": "calculate", "arguments": {"expression": "6 * 7"}, "result": 42}], "error": ""}
+```
+`qa`, `rag`, `memory`, `memory_scoped`, `isolation_leak`, `stream`, and `middleware` needed no
+change — their stub path was already clean. `crash_recovery` is the one mode this fix does NOT
+reach: see the "In-process only, not cross-process" note below and `matrix.json`, where
+`crash_recovery`'s `stub` lane is `infeasible` for both `native` and `docker` (verified
+empirically: a fresh stub process/container shows `resumed=false, state_lost=true` — there is no
+canned fix for "no cross-process store exists", unlike a canned tool argument or a canned JSON
+string).
 
 **In-process only, not cross-process:** `ARENA_STUB`'s history/scoped-fact fallbacks are Python
 module globals, not a file or rqlite — two *separate* `ARENA_STUB=1 python adapter.py` invocations
@@ -630,6 +651,12 @@ environment, so the literal value never appears in the `docker run` argv either)
 `EMBED_URL`/`QDRANT_URL`/`RQLITE_URL` to `http://host.docker.internal:<port>` so the container
 reaches the host's real local services. `--add-host=host.docker.internal:host-gateway` makes this
 resolve on Linux Docker hosts too (a no-op on Docker Desktop, which already provides it).
+
+**Fixed (full-matrix fill pass):** the `Dockerfile`'s `COPY` line omitted `arena_middleware.py` —
+a leftover from before the `middleware` mode was added — so `docker×{stub,real}/middleware` would
+have failed closed on `ModuleNotFoundError` in-container despite working fine natively. Now
+copied alongside the other four adapter modules; verified with a real in-container `middleware`
+call (`docker×real`) and an offline `--network none` one (`docker×stub`), both `"error": ""`.
 
 **Docker qa smoke** (real call, from inside the container, reaching agnes's public URL and
 confirming the container's network path works):

@@ -88,7 +88,7 @@ import json
 import sys
 import time
 
-from arena_common import ConfigError, build_model, current_model_name, embed_query_vector, log, qdrant_search
+from arena_common import ConfigError, build_model, current_model_name, embed_query_vector, is_stub, log, qdrant_search
 from arena_memory_store import load_history_json, load_scoped_facts, save_history_json, save_scoped_fact, scope_key
 from arena_tools import safe_eval_expr
 
@@ -842,7 +842,23 @@ async def mode_structured(payload: dict) -> dict:
     prompt = _last_user_content(payload)
     system = payload.get("system") or "Answer concisely and factually."
 
-    model, model_name = build_model()
+    # Under ARENA_STUB=1, TestModel's default text output ("success (no tool
+    # calls)") is not valid JSON, so PromptedOutput's schema validation fails
+    # closed with UnexpectedModelBehavior every time -- not a meaningful stub
+    # result. Canning a schema-valid Answer as TestModel's custom_output_text
+    # keeps the stub offline/deterministic while producing a domain-correct
+    # (if canned) structured result, the same "canned valid structured JSON"
+    # pattern used for the `tools`/`observability` modes' canned tool args.
+    canned_text = None
+    if is_stub():
+        canned_answer = Answer(
+            answer="ARENA_STUB canned answer -- no real model call",
+            key_points=["ARENA_STUB canned key point (ARENA_STUB=1, no network I/O)"],
+            confidence=0.5,
+        )
+        canned_text = canned_answer.model_dump_json()
+
+    model, model_name = build_model(custom_output_text=canned_text)
     # NOTE (verified gotcha, see README): the default native-tool-call output
     # strategy (bare `output_type=Answer`) fails against agnes-2.0-flash with
     # `UnexpectedModelBehavior: Exceeded maximum output retries` -- the model

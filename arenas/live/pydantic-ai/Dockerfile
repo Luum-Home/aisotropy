@@ -26,7 +26,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Adapter code only -- no .env, no venv, no test scripts baked into the image.
-COPY adapter.py arena_common.py arena_memory_store.py arena_tools.py ./
+COPY adapter.py arena_common.py arena_memory_store.py arena_tools.py arena_middleware.py ./
 
 # Non-root runtime.
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app

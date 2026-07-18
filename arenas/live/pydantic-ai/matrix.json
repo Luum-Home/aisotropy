@@ -1,0 +1,49 @@
+{
+  "framework": "pydantic-ai",
+  "dimensions": {
+    "crash_recovery": {
+      "stub": {"native":"infeasible:ARENA_STUB swaps rqlite for a per-process in-memory dict (arena_memory_store.py) and TestModel has near-zero latency -- no cross-process store to recover from and no mid-flight window for a kill -9 to land during a real model call; verified empirically: a fresh stub process shows resumed=false, state_lost=true; SIGKILL-survival requires real rqlite + real model I/O (persistence itself verified: resumed=true under real)","docker":"infeasible:same as stub/native -- ARENA_STUB's in-process dict does not cross a container boundary either and TestModel has no mid-flight window; verified empirically: a fresh stub container shows resumed=false, state_lost=true; SIGKILL-survival requires real rqlite + real model I/O (persistence itself verified: resumed=true under real)","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"}
+    },
+    "isolation_leak": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"}
+    },
+    "memory": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"}
+    },
+    "memory_scoped": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"}
+    },
+    "middleware": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"}
+    },
+    "observability": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"}
+    },
+    "qa": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"}
+    },
+    "rag": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"}
+    },
+    "stream": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"}
+    },
+    "structured": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"}
+    },
+    "tools": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets -- the Pydantic AI model client (HTTP) cannot run in a WASI sandbox"}
+    }
+  }
+}

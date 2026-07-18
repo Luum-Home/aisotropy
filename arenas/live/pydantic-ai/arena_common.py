@@ -25,6 +25,20 @@ class ConfigError(RuntimeError):
 
 _STUB_VECTOR_DIM = 8  # arbitrary, offline-only -- no real embedding model backs this
 
+# Canned, genuinely-evaluable arguments for tools this arena's modes actually
+# EXECUTE under ARENA_STUB=1 (tools / observability modes both register a real
+# `calculate(expression)` tool). Plain `TestModel.gen_tool_args` generates
+# schema-shaped but semantically-meaningless values (e.g. a bare "a" for a
+# `str` field) -- harmless for tool-call CAPTURE (qa mode never executes what
+# it captures) but fatal for tool call EXECUTION, since `arena_tools.safe_eval_expr`
+# then fails closed on a non-arithmetic string. Canning known tool names' args
+# keeps the stub model fully offline/deterministic while making the executed
+# call domain-correct -- the same "canned tool_call" pattern the eino/mastra
+# live-arena stubs use (see arenas/live/eino/stub.go's `stubToolCallArgs`).
+_STUB_CANNED_TOOL_ARGS: dict[str, dict] = {
+    "calculate": {"expression": "6 * 7"},
+}
+
 
 def is_stub() -> bool:
     """True when `ARENA_STUB=1` is set in the environment.
@@ -72,7 +86,7 @@ def rqlite_base_url() -> str:
     return os.environ.get("RQLITE_URL", "http://localhost:4001").rstrip("/")
 
 
-def build_model():
+def build_model(*, custom_output_text: str | None = None):
     """Construct the chat model Pydantic AI's `Agent` runs against.
 
     Real agnes (`OpenAIChatModel` over an OpenAI-compatible endpoint) by default. When
@@ -83,14 +97,43 @@ def build_model():
     a hand-rolled fake; it ships inside `pydantic-ai-slim` itself. No `OPENAI_*` env is required
     in stub mode.
 
+    `custom_output_text`: when set (stub mode only), the returned model is a plain `TestModel`
+    seeded with `custom_output_text` as its final answer -- used by `structured` mode to hand back
+    a canned, schema-valid JSON string for `PromptedOutput` to validate (TestModel's default text
+    output is a fixed non-JSON string that fails `PromptedOutput` validation). When unset (the
+    default), the returned model is `_CannedToolArgsTestModel`, a `TestModel` subclass that
+    substitutes genuinely-evaluable canned arguments for tools this arena EXECUTES (currently just
+    `calculate`, see `_STUB_CANNED_TOOL_ARGS`) instead of TestModel's schema-random garbage --
+    every other mode's tool-free or capture-only behavior is unaffected.
+
     Returns (model, model_name). Raises ConfigError if env is incomplete (only in non-stub mode).
     """
     if is_stub():
         from pydantic_ai.models.test import TestModel
 
         model_name = "pydantic_ai.models.test.TestModel (ARENA_STUB=1)"
-        log("build_model: ARENA_STUB=1 -- using pydantic_ai.models.test.TestModel, no network call")
-        return TestModel(), model_name
+
+        if custom_output_text is not None:
+            log(
+                "build_model: ARENA_STUB=1 -- using TestModel with a canned structured-output "
+                "text, no network call"
+            )
+            return TestModel(custom_output_text=custom_output_text), model_name
+
+        class _CannedToolArgsTestModel(TestModel):
+            """TestModel with canned, genuinely-evaluable arguments for known EXECUTED tools."""
+
+            def gen_tool_args(self, tool_def):
+                canned = _STUB_CANNED_TOOL_ARGS.get(tool_def.name)
+                if canned is not None:
+                    return canned
+                return super().gen_tool_args(tool_def)
+
+        log(
+            "build_model: ARENA_STUB=1 -- using a canned-tool-args TestModel subclass, "
+            "no network call"
+        )
+        return _CannedToolArgsTestModel(), model_name
 
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
