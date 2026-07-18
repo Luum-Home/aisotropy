@@ -39,6 +39,19 @@ func TestDetect_EmptyIsUndetermined(t *testing.T) {
 	}
 }
 
+// TestDetect_UnclassifiableTextIsUndetermined exercises the "lingua could not
+// confidently classify this" branch (DetectLanguageOf's ok=false), distinct
+// from the empty-input fast path above: non-empty text with no linguistic
+// signal (digits/punctuation only) reaches the detector but still degrades to
+// Undetermined rather than a bogus guess.
+func TestDetect_UnclassifiableTextIsUndetermined(t *testing.T) {
+	for _, in := range []string{"12345", "!@#$%^&*()", "1234567890 !!!"} {
+		if got := Detect(in); got != Undetermined {
+			t.Fatalf("Detect(%q) = %q, want Undetermined (unclassifiable, non-empty input)", in, got)
+		}
+	}
+}
+
 // TestWithLanguageFromContext_RoundTrip asserts the canonical ctx contract: a
 // value written by WithLanguage is read back byte-identically by FromContext.
 func TestWithLanguageFromContext_RoundTrip(t *testing.T) {

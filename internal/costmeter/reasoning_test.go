@@ -50,3 +50,22 @@ func TestRecordUsage_NegativeReasoningClamped(t *testing.T) {
 		t.Fatalf("negative values must clamp to zero, got reasoning=%d cost=%f", got.ReasoningTokens, got.CostUSD)
 	}
 }
+
+// TestRecordUsage_NegativeInputAndOutputClamped is the sibling of
+// TestRecordUsage_NegativeReasoningClamped for the OTHER two counters: a
+// buggy upstream report of negative input or output tokens must also clamp
+// to zero, not decrement the running total.
+func TestRecordUsage_NegativeInputAndOutputClamped(t *testing.T) {
+	m := New()
+	m.RecordUsage("t", -10, -20, 5, 1.0)
+	got, _ := m.Stats("t")
+	if got.InputTokens != 0 {
+		t.Fatalf("negative InputTokens must clamp to zero, got %d", got.InputTokens)
+	}
+	if got.OutputTokens != 0 {
+		t.Fatalf("negative OutputTokens must clamp to zero, got %d", got.OutputTokens)
+	}
+	if got.ReasoningTokens != 5 {
+		t.Fatalf("positive ReasoningTokens must pass through unclamped, got %d", got.ReasoningTokens)
+	}
+}

@@ -110,6 +110,128 @@ func TestRunOnceScratchDirError(t *testing.T) {
 	}
 }
 
+// TestRunOnceDefaultsScratchDirToOSTempDir exercises the "Dir unset" branch:
+// RunOnce must fall back to os.TempDir() rather than failing or refusing to
+// run, exactly like every other Dir-set test but WITHOUT setting Dir.
+func TestRunOnceDefaultsScratchDirToOSTempDir(t *testing.T) {
+	c := Coordinator{
+		Sampler:  fakeSampler{samples: oneSample()},
+		Hydrator: fakeHydrator{},
+		Runner:   fakeRunner{withBPT: 1, withoutBPT: map[string]float64{"r1": 3}},
+		Store:    openTestStore(t),
+		// Dir intentionally left "" — must default to os.TempDir().
+	}
+	ms, err := c.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce with unset Dir: %v", err)
+	}
+	if len(ms) != 1 {
+		t.Fatalf("measurements = %d, want 1", len(ms))
+	}
+}
+
+// longPathBeyondOSLimit builds a directory (created on disk, nested to respect
+// each component's NAME_MAX) whose own path is short enough for os.MkdirTemp
+// to succeed inside it, but long enough that appending "/requests.ndjson" (the
+// WriteNDJSON input filename) exceeds the OS path-length ceiling — isolating
+// WriteNDJSON's own os.Create failure from RunOnce's earlier os.MkdirTemp
+// call, which TestRunOnceScratchDirError already covers via a different
+// failure mode (a non-directory Dir).
+//
+// The exact boundary (PATH_MAX and t.TempDir()'s own prefix length) varies by
+// OS and even by test name, so this walks up to it dynamically rather than
+// hardcoding a byte count: nest fixed 200-byte components (well under the
+// 255-byte NAME_MAX) until close to the ceiling, then binary-search the
+// longest final component for which os.MkdirTemp("bitrate-"+9-or-10 random
+// digits) still succeeds. os.MkdirTemp's random suffix length is not fully
+// fixed (it varies by 1-2 digits run to run), so rather than sitting exactly
+// on that boundary — which would make os.MkdirTemp itself flaky — this backs
+// off by a fixed margin comfortably larger than that variance, landing
+// somewhere that reliably (a) still lets os.MkdirTemp succeed and (b) leaves
+// no room for the further "/requests.ndjson" (17 bytes) WriteNDJSON appends.
+func longPathBeyondOSLimit(t *testing.T) string {
+	t.Helper()
+	base := t.TempDir()
+	comp := strings.Repeat("a", 200)
+	// Nest full 200-byte components for as long as MkdirAll succeeds, so this
+	// gets close to the path-length ceiling regardless of how long
+	// t.TempDir()'s own prefix happens to be for this test name.
+	for {
+		next := filepath.Join(base, comp)
+		if err := os.MkdirAll(next, 0o700); err != nil {
+			break
+		}
+		base = next
+	}
+
+	// mkdirTempFits reports whether os.MkdirTemp(candidate, "bitrate-")
+	// succeeds for a final component of length n bytes.
+	mkdirTempFits := func(n int) bool {
+		candidate := filepath.Join(base, strings.Repeat("b", n))
+		defer func() { _ = os.RemoveAll(candidate) }()
+		if err := os.MkdirAll(candidate, 0o700); err != nil {
+			return false
+		}
+		work, err := os.MkdirTemp(candidate, "bitrate-")
+		if err == nil {
+			_ = os.RemoveAll(work)
+		}
+		return err == nil
+	}
+
+	lo, hi := 0, 254 // 254: NAME_MAX(255)-1, the longest a single component can be.
+	if !mkdirTempFits(lo) {
+		t.Skip("even the shortest fixture path exceeds this filesystem's path-length limit")
+	}
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if mkdirTempFits(mid) {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+
+	// lo is (up to os.MkdirTemp's small random-length variance) the longest
+	// final component where MkdirTemp still succeeds. Back off by 8 bytes so
+	// MkdirTemp keeps succeeding reliably even with a longer random suffix,
+	// while remaining close enough to the boundary that appending
+	// "/requests.ndjson" (17 bytes) still overflows it.
+	const backoff = 8
+	n := lo - backoff
+	if n < 0 {
+		t.Skip("not enough path-length headroom on this filesystem to build the fixture reliably")
+	}
+	final := filepath.Join(base, strings.Repeat("b", n))
+	if err := os.MkdirAll(final, 0o700); err != nil {
+		t.Skipf("could not build the final fixture directory: %v", err)
+	}
+	return final
+}
+
+// TestRunOnceScratchFileWriteError exercises RunOnce's WriteNDJSON-failure
+// branch specifically — distinct from TestRunOnceScratchDirError, which fails
+// one call earlier at os.MkdirTemp. Here os.MkdirTemp succeeds (the scratch
+// dir IS created), but the subsequent WriteNDJSON(input, reqs) call fails
+// because the resulting file path exceeds the OS path-length limit.
+func TestRunOnceScratchFileWriteError(t *testing.T) {
+	dir := longPathBeyondOSLimit(t)
+	c := Coordinator{
+		Sampler:  fakeSampler{samples: oneSample()},
+		Hydrator: fakeHydrator{},
+		Runner:   fakeRunner{withBPT: 1, withoutBPT: map[string]float64{"r1": 3}},
+		Store:    openTestStore(t),
+		Dir:      dir,
+	}
+	_, err := c.RunOnce(context.Background())
+	if err == nil {
+		t.Fatal("expected RunOnce to fail when WriteNDJSON cannot create the input file")
+	}
+	if !strings.Contains(err.Error(), "create input") {
+		t.Fatalf("expected a WriteNDJSON create-input error, got: %v", err)
+	}
+}
+
 func TestRunOnceBaselineHydrationErrorDropsSample(t *testing.T) {
 	// ContextWith succeeds but ContextWithout fails → the sample is dropped, the
 	// batch has no usable requests, and RunOnce is a clean no-op (no error).
