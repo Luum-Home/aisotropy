@@ -79,17 +79,39 @@ var backendTierEnvVars = []string{
 	"RQLITE_URL", "AISOTROPY_DATA_DIR",
 }
 
-// clearBackendTierEnv unsets every backendTierEnvVars entry IN-PROCESS,
-// before aisotropy.New()/App.Run() is ever called, so aisotropy's own
-// env-driven resolvers (aisotropy/app.go's embedder/semantic/facts-backend
-// factories) fall back to their bare-binary in-process defaults (in-process
-// cosine semantic tier, in-process SQLite+FTS5 facts tier, in-memory
-// BadgerDB working memory) regardless of what the calling shell (run.sh)
-// already exported into this process's environment. Called once from
-// newAgnesClient's stub-mode branch, so it runs before ANY mode builds its
-// App.
+// providerEnvVars are every LLM-provider credential/selector run.sh sources
+// from the repo-root .env. In a STUB run these MUST be cleared too: newApp
+// omits WithLLM when agnes is nil, so aisotropy.New() resolves the model via
+// llm.RegistryFromEnv(), which auto-selects the REAL provider for ANY key it
+// finds (OPENROUTER_API_KEY → OPENAI_API_KEY → ANTHROPIC_API_KEY, see
+// internal/llm/registry.go). If the key survives, a "stub" run silently calls
+// the real agnes model (observed: ~20s latency, `llm=openai:agnes-2.0-flash`
+// in the log, and 502s + billable quota burn under rate limiting) instead of
+// the keyless in-process StubClient. Clearing them is what actually forces
+// FromEnv down to the stub — this, not the store vars, was the reason
+// aisotropy's stub lane was never truly offline.
+var providerEnvVars = []string{
+	"OPENROUTER_API_KEY", "OPENROUTER_MODEL",
+	"OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+	"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL",
+	"AISOTROPY_MODEL",
+}
+
+// clearBackendTierEnv unsets every backendTierEnvVars AND providerEnvVars entry
+// IN-PROCESS, before aisotropy.New()/App.Run() is ever called, so aisotropy's
+// own env-driven resolvers fall back to their bare-binary in-process defaults:
+// the store factories (aisotropy/app.go embedder/semantic/facts) to in-process
+// cosine + SQLite+FTS5 + in-memory BadgerDB, AND llm.RegistryFromEnv() to the
+// keyless in-process StubClient — regardless of what the calling shell (run.sh,
+// which sources .env) exported into this process. Called once from
+// newAgnesClient's stub-mode branch, so it runs before ANY mode builds its App.
+// The provider-key clear is the load-bearing half: without it a stub run calls
+// the real model (see providerEnvVars).
 func clearBackendTierEnv() {
 	for _, v := range backendTierEnvVars {
+		_ = os.Unsetenv(v)
+	}
+	for _, v := range providerEnvVars {
 		_ = os.Unsetenv(v)
 	}
 }
