@@ -33,6 +33,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -51,6 +52,7 @@ func main() {
 	nativeOnly := flag.Bool("native-only", false, "benchmark the native execution form only")
 	dockerOnly := flag.Bool("docker", false, "benchmark the docker execution form only")
 	maxTasks := flag.Int("max-tasks", 0, "cap tasks per correctness mode (0 = all; bounds real spend on a re-run)")
+	concurrency := flag.Int("concurrency", 4, "max frameworks to run concurrently during the correctness/quality pass (1 = fully sequential, exact old behavior; the benchmark pass always stays sequential/uncontended)")
 	skipJudge := flag.Bool("skip-judge", false, "skip the LLM-as-judge scoring pass")
 	skipBench := flag.Bool("skip-bench", false, "skip the benchmark pass entirely")
 	skipCorrect := flag.Bool("skip-correctness", false, "skip the correctness/quality pass entirely")
@@ -60,6 +62,9 @@ func main() {
 
 	if *nativeOnly && *dockerOnly {
 		fatal("-native-only and -docker are mutually exclusive")
+	}
+	if *concurrency < 1 {
+		fatal("-concurrency must be >= 1 (got %d)", *concurrency)
 	}
 	forms := []string{"native", "docker"}
 	switch {
@@ -106,8 +111,8 @@ func main() {
 		fatal("no adapters found under %s/*/run.sh", *liveDir)
 	}
 	logf("adapters: %s", strings.Join(fwNames(frameworks), ", "))
-	logf("modes: %s | bench-modes: %s | forms: %s | bench-iters: %d",
-		strings.Join(modes, ","), strings.Join(benchModes, ","), strings.Join(forms, ","), *benchIters)
+	logf("modes: %s | bench-modes: %s | forms: %s | bench-iters: %d | correctness concurrency: %d",
+		strings.Join(modes, ","), strings.Join(benchModes, ","), strings.Join(forms, ","), *benchIters, *concurrency)
 	if len(dims) > 0 && !*skipDims {
 		logf("dimensions: %s", strings.Join(dims, ","))
 	}
@@ -139,19 +144,7 @@ func main() {
 	// ---- pass 1: correctness/quality (native) ------------------------------
 	var records []record
 	if !*skipCorrect {
-		for _, fw := range frameworks {
-			for _, mode := range modes {
-				items := buildWork(fw.name, mode, tasks, rag, *maxTasks)
-				for _, it := range items {
-					logf("[correctness] %s/%s %s ...", fw.name, mode, it.ID)
-					rec := runWorkItem(fw, it, callBudget)
-					if !rec.failed() {
-						scoreRecord(&rec, it, judge, callBudget)
-					}
-					records = append(records, rec)
-				}
-			}
-		}
+		records = runCorrectnessPass(frameworks, modes, tasks, rag, *maxTasks, judge, callBudget, *concurrency)
 	}
 
 	// ---- pass 2: benchmarks (native + docker) ------------------------------
@@ -170,36 +163,129 @@ func main() {
 
 	// ---- emit ---------------------------------------------------------------
 	rep := reportData{
-		Model:      modelName(),
-		Frameworks: fwNames(frameworks),
-		Modes:      modes,
-		Dimensions: dims,
-		BenchModes: benchModes,
-		Forms:      forms,
-		BenchIters: *benchIters,
-		ColdProbes: *coldProbes,
-		JudgeOn:    judge != nil,
-		Records:    records,
-		Benches:    benches,
-		IsoRecords: isoRecs,
-		CrashRecs:  crashRecs,
-		ObsRecords: obsRecs,
-		MatrixDocs: matrixDocs,
-		ModelCalls: callBudget.n,
+		Model:       modelName(),
+		Frameworks:  fwNames(frameworks),
+		Modes:       modes,
+		Dimensions:  dims,
+		BenchModes:  benchModes,
+		Forms:       forms,
+		BenchIters:  *benchIters,
+		ColdProbes:  *coldProbes,
+		JudgeOn:     judge != nil,
+		Concurrency: *concurrency,
+		Records:     records,
+		Benches:     benches,
+		IsoRecords:  isoRecs,
+		CrashRecs:   crashRecs,
+		ObsRecords:  obsRecs,
+		MatrixDocs:  matrixDocs,
+		ModelCalls:  callBudget.total(),
 	}
 	resultsPath := filepath.Join(*liveDir, "RESULTS.md")
 	if err := writeResults(resultsPath, rep); err != nil {
 		fatal("write results: %v", err)
 	}
 	logf("wrote %s (%d correctness records, %d bench cells, %d iso + %d crash + %d obs dimension records, %d model calls)",
-		resultsPath, len(records), len(benches), len(isoRecs), len(crashRecs), len(obsRecs), callBudget.n)
+		resultsPath, len(records), len(benches), len(isoRecs), len(crashRecs), len(obsRecs), callBudget.total())
+}
+
+// runCorrectnessPass runs the correctness/quality sweep with up to
+// `concurrency` frameworks in flight at once. Each framework's full
+// modes×items sequence (including its LLM-judge calls) runs inside its own
+// goroutine against a LOCAL records slice — no shared mutable state inside a
+// worker. Each goroutine writes its local slice into its OWN, exclusive slot
+// of a pre-sized results slice (index i, never resized, never touched by any
+// other goroutine), which is race-free without a mutex: concurrent writes to
+// disjoint slice elements are not a data race, and wg.Wait() establishes the
+// happens-before edge before the slots are read back. The merged records are
+// then stably sorted by (framework, mode) — using the caller-supplied
+// frameworks/modes order, not alphabetical — so RESULTS.md rendering (in
+// particular the per-item detail table, which walks the slice directly) stays
+// deterministic regardless of goroutine completion order. concurrency=1
+// reproduces the exact old sequential loop and ordering.
+func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag []ragQuestion, maxTasks int, judge *judgeClient, budget *callCounter, concurrency int) []record {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
+	perFW := make([][]record, len(frameworks))
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	for i, fw := range frameworks {
+		wg.Add(1)
+		sem <- struct{}{} // acquire a slot; blocks once `concurrency` workers are in flight
+		go func(i int, fw adapter) {
+			defer wg.Done()
+			defer func() { <-sem }() // release the slot
+
+			var local []record
+			for _, mode := range modes {
+				items := buildWork(fw.name, mode, tasks, rag, maxTasks)
+				for _, it := range items {
+					logf("[correctness] %s/%s %s ...", fw.name, mode, it.ID)
+					rec := runWorkItem(fw, it, budget)
+					if !rec.failed() {
+						scoreRecord(&rec, it, judge, budget)
+					}
+					local = append(local, rec)
+				}
+			}
+			perFW[i] = local // this goroutine owns index i exclusively — no race
+		}(i, fw)
+	}
+	wg.Wait()
+
+	var records []record
+	for _, local := range perFW {
+		records = append(records, local...)
+	}
+
+	// Defensive determinism guarantee (belt-and-suspenders on top of the
+	// index-ordered merge above): sort by the caller's framework/mode order so
+	// any future change to the collection strategy can't silently reorder
+	// RESULTS.md rows based on goroutine completion timing.
+	fwIdx := make(map[string]int, len(frameworks))
+	for i, fw := range frameworks {
+		fwIdx[fw.name] = i
+	}
+	modeIdx := make(map[string]int, len(modes))
+	for i, m := range modes {
+		modeIdx[m] = i
+	}
+	sort.SliceStable(records, func(i, j int) bool {
+		if fwIdx[records[i].Framework] != fwIdx[records[j].Framework] {
+			return fwIdx[records[i].Framework] < fwIdx[records[j].Framework]
+		}
+		return modeIdx[records[i].Mode] < modeIdx[records[j].Mode]
+	})
+
+	return records
 }
 
 // callCounter tracks how many billable model round-trips the sweep issued, so
-// RESULTS can document the real agnes spend.
-type callCounter struct{ n int }
+// RESULTS can document the real agnes spend. Guarded by a mutex: the
+// correctness pass now calls add() from multiple framework goroutines
+// concurrently (bounded by -concurrency).
+type callCounter struct {
+	mu sync.Mutex
+	n  int
+}
 
-func (c *callCounter) add(n int) { c.n += n }
+func (c *callCounter) add(n int) {
+	c.mu.Lock()
+	c.n += n
+	c.mu.Unlock()
+}
+
+// total returns the current count. Safe to call concurrently; also safe to
+// call after all writers have joined (main calls it only after every pass's
+// goroutines have completed via wg.Wait()).
+func (c *callCounter) total() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
 
 // ---- adapter discovery & execution -----------------------------------------
 

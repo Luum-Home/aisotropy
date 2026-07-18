@@ -10,22 +10,23 @@ import (
 
 // reportData is everything writeResults needs to render RESULTS.md.
 type reportData struct {
-	Model      string
-	Frameworks []string
-	Modes      []string
-	Dimensions []string
-	BenchModes []string
-	Forms      []string
-	BenchIters int
-	ColdProbes int
-	JudgeOn    bool
-	Records    []record
-	Benches    []benchCell
-	IsoRecords []isoRecord
-	CrashRecs  []crashRecord
-	ObsRecords []obsRecord
-	MatrixDocs []matrixDoc
-	ModelCalls int
+	Model       string
+	Frameworks  []string
+	Modes       []string
+	Dimensions  []string
+	BenchModes  []string
+	Forms       []string
+	BenchIters  int
+	ColdProbes  int
+	JudgeOn     bool
+	Concurrency int // -concurrency the correctness/quality pass ran under (1 = sequential)
+	Records     []record
+	Benches     []benchCell
+	IsoRecords  []isoRecord
+	CrashRecs   []crashRecord
+	ObsRecords  []obsRecord
+	MatrixDocs  []matrixDoc
+	ModelCalls  int
 }
 
 // per (framework, mode) correctness aggregate.
@@ -186,6 +187,15 @@ func writeQualityTable(b *strings.Builder, rep reportData, aggs map[string]*mode
 	b.WriteString("(rag: retrieval hit@1 on the gold doc + trap-refusal; tools: real tool execution + numeric\n")
 	b.WriteString("correctness; structured: schema-valid JSON; stream: mean TTFT). Latency is end-to-end\n")
 	b.WriteString("wall-clock (native, correctness pass) including the real model round-trip(s).\n\n")
+	if rep.Concurrency > 1 {
+		fmt.Fprintf(b, "_Ran under `-concurrency %d`: up to %d frameworks' correctness/quality sweeps (incl.\n", rep.Concurrency, rep.Concurrency)
+		b.WriteString("their LLM-judge calls) executed concurrently, so per-item latency in this pass reflects\n")
+		b.WriteString("mild host contention — a directional signal, not a clean isolated p50. The benchmark\n")
+		b.WriteString("pass below always stays sequential/uncontended and remains the p50/p95 source of truth\n")
+		b.WriteString("for latency._\n\n")
+	} else {
+		b.WriteString("_Ran under `-concurrency 1` (fully sequential) — latency in this pass is uncontended._\n\n")
+	}
 	b.WriteString("| Framework | Mode | Correctness | Helpfulness | Faithfulness | Mode signal | Avg latency (ms) | Runs | Err |\n")
 	b.WriteString("|---|---|---:|---:|---:|---|---:|---:|---:|\n")
 
