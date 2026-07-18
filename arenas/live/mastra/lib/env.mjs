@@ -11,6 +11,12 @@ import { buildStubChatModel } from './stub-model.mjs';
 const DEFAULT_EMBED_URL = 'http://127.0.0.1:8899';
 const DEFAULT_QDRANT_URL = 'http://localhost:6333';
 const DEFAULT_QDRANT_COLLECTION = 'arena_rag';
+// Single arena tenant every corpus doc shares (matches the aisotropy adapter's
+// arenaTenant + populate-qdrant.py's ARENA_TENANT). Passed as a Qdrant payload
+// filter in rag mode so this adapter does the SAME in-scan tenant filtering
+// aisotropy pays (matched DURING the HNSW scan, not a post-filter). Single-tenant
+// corpus => the filter returns the same doc set an unfiltered top-k would.
+const DEFAULT_ARENA_TENANT = 'arena';
 const DEFAULT_RQLITE_URL = 'http://localhost:4001';
 // Mastra's native Memory (memory mode) persists to an on-disk libsql/SQLite file.
 // A stable default path lets a SECOND `node index.mjs` process reopen the same
@@ -38,6 +44,7 @@ export function resolveEnv() {
   const embedUrl = process.env.EMBED_URL || DEFAULT_EMBED_URL;
   const qdrantUrl = process.env.QDRANT_URL || DEFAULT_QDRANT_URL;
   const qdrantCollection = process.env.QDRANT_COLLECTION || DEFAULT_QDRANT_COLLECTION;
+  const arenaTenant = process.env.ARENA_TENANT || DEFAULT_ARENA_TENANT;
   const rqliteUrl = process.env.RQLITE_URL || DEFAULT_RQLITE_URL;
   const libsqlUrl = process.env.AISOTROPY_MASTRA_LIBSQL || DEFAULT_LIBSQL_URL;
 
@@ -48,6 +55,7 @@ export function resolveEnv() {
       embedUrl,
       qdrantUrl,
       qdrantCollection,
+      arenaTenant,
       rqliteUrl,
       libsqlUrl,
       stub: true,
@@ -81,6 +89,7 @@ export function resolveEnv() {
     embedUrl,
     qdrantUrl,
     qdrantCollection,
+    arenaTenant,
     rqliteUrl,
     libsqlUrl,
     stub: false,

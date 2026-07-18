@@ -12,8 +12,15 @@ Pipeline (all real, no stubs):
   correct e5 side for stored documents, then reuses the same embeddings for
   every target collection (embedding the whole corpus once per collection
   would be N times the real embed-server cost for identical vectors).
-- Stores payload {doc_id, title, text} per point so a search returns the
-  human-readable source, not just an id.
+- Stores payload {doc_id, title, text, tenant_id} per point so a search returns
+  the human-readable source (not just an id) AND carries the single arena tenant
+  every doc shares. The tenant_id field exists so competitor adapters can apply
+  the SAME in-scan tenant payload filter aisotropy pays (tenant_id matched DURING
+  the Qdrant HNSW scan, not a post-filter). The corpus is SINGLE-TENANT — every
+  point gets the identical ARENA_TENANT value — so filtering on it returns the
+  exact same document set an unfiltered top-k would; it only adds the real
+  filtering WORK, changing no retrieval results. Matches aisotropy's own flat
+  payload key `tenant_id` (arenas/live/aisotropy/rag_backends.go qdrantSearch).
 
 COLLISION FIX (arenas/live/runner/main.go frameworkCollectionEnv): the live
 arena runner sets a UNIQUE QDRANT_COLLECTION per framework
@@ -49,6 +56,11 @@ import urllib.error
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333").rstrip("/")
 EMBED_URL = os.environ.get("EMBED_URL", "http://127.0.0.1:8899").rstrip("/")
+# The single arena tenant every corpus doc shares (matches the aisotropy adapter's
+# arenaTenant, arenas/live/aisotropy/main.go). Stored on every point's payload so
+# competitor RAG adapters can apply the same in-scan tenant filter aisotropy does;
+# single-tenant => filtering on it returns the identical doc set, only adds work.
+ARENA_TENANT = os.environ.get("ARENA_TENANT", "arena")
 DIM = 384
 HERE = os.path.dirname(os.path.abspath(__file__))
 CORPUS_DIR = os.path.join(HERE, "corpus")
@@ -152,6 +164,8 @@ def load_corpus_points() -> list[dict]:
                     "doc_id": os.path.basename(path),
                     "title": title,
                     "text": text,
+                    # Single arena tenant, identical on every point — see ARENA_TENANT.
+                    "tenant_id": ARENA_TENANT,
                 },
             }
         )

@@ -42,10 +42,19 @@ export async function runRag(input, env) {
     // version than the installed client; that mismatch is cosmetic for the plain
     // REST `search` call this adapter makes, so skip the noisy startup warning.
     const qdrant = new QdrantClient({ url: env.qdrantUrl, checkCompatibility: false });
+    // In-scan tenant payload filter -- the SAME work aisotropy's semantic tier pays.
+    // Qdrant applies `filter` DURING the HNSW scan (not a post-filter) on the flat
+    // `tenant_id` payload key populate-qdrant.py seeds, matching aisotropy's own flat
+    // filter (arenas/live/aisotropy/rag_backends.go qdrantSearch). The corpus is
+    // single-tenant -- every point carries the identical env.arenaTenant value -- so
+    // this returns the same doc set an unfiltered top-k would; it only adds the work.
     searchResult = await qdrant.search(env.qdrantCollection, {
       vector,
       limit: RETRIEVAL_LIMIT,
       with_payload: true,
+      filter: {
+        must: [{ key: 'tenant_id', match: { value: env.arenaTenant } }],
+      },
     });
   }
 

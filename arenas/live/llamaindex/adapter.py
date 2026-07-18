@@ -177,6 +177,16 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333").rstrip("/")
 ARENA_COLLECTION = os.environ.get("ARENA_COLLECTION", "arena_rag")
 EMBED_QUERY_MODEL = "multilingual-e5-small-query"  # "-query" suffix -> e5 query: prefix
 
+# Single arena tenant every corpus doc shares (matches the aisotropy adapter's
+# arenaTenant + populate-qdrant.py's ARENA_TENANT). Applied as a native LlamaIndex
+# MetadataFilter on the RAG retriever so this adapter does the SAME in-scan tenant
+# filtering aisotropy pays (matched DURING the Qdrant HNSW scan, not a post-filter).
+# LlamaIndex's QdrantVectorStore builds the qdrant FieldCondition with the raw
+# filter key (key=subfilter.key, no `metadata.` prefix), matching the flat
+# `tenant_id` payload key populate-qdrant.py seeds. Single-tenant corpus => the
+# filter returns the same doc set an unfiltered top-k would; it only adds work.
+ARENA_TENANT = os.environ.get("ARENA_TENANT", "arena")
+
 MEMORY_DIR = Path(os.environ.get("LLAMAINDEX_MEMORY_DIR", str(SCRIPT_DIR / ".memory")))
 
 # Offline stub toggle (see module docstring "Offline stub toggle") — swaps the agnes-backed LLM
@@ -690,6 +700,10 @@ def run_rag(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
     if not question:
         raise RuntimeError("rag mode requires at least one user message")
 
+    # Native tenant payload filter for the REAL Qdrant path only. The in-memory stub
+    # corpus (_stub_index) carries no tenant_id payload, so filtering there would
+    # (correctly) return nothing — the stub proves wiring, not this filter.
+    retriever_filters = None
     if ARENA_STUB:
         _progress("[rag] ARENA_STUB=1: MockEmbedding + in-memory stub corpus, no e5/Qdrant network calls")
         embed_model = _stub_embed_model()
@@ -702,7 +716,24 @@ def run_rag(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
         client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
         vector_store = QdrantVectorStore(client=client, collection_name=ARENA_COLLECTION)
         index = VectorStoreIndex.from_vector_store(vector_store=vector_store, embed_model=embed_model)
-    retriever = index.as_retriever(similarity_top_k=3)
+
+        # In-scan tenant filter — the SAME work aisotropy's semantic tier pays. The
+        # QdrantVectorStore translates this MetadataFilter into a qdrant FieldCondition
+        # matched DURING the HNSW scan (query_filter), keyed on the flat `tenant_id`
+        # payload populate-qdrant.py seeds. Single-tenant corpus => same result set.
+        from llama_index.core.vector_stores.types import (
+            FilterOperator,
+            MetadataFilter,
+            MetadataFilters,
+        )
+
+        tenant = payload.get("tenant_id") or ARENA_TENANT
+        retriever_filters = MetadataFilters(
+            filters=[MetadataFilter(key="tenant_id", value=tenant, operator=FilterOperator.EQ)]
+        )
+        _progress(f"[rag] tenant payload filter: tenant_id={tenant!r} (in-scan, matches aisotropy)")
+
+    retriever = index.as_retriever(similarity_top_k=3, filters=retriever_filters)
 
     system_prompt = payload.get("system") or ""
     instruction = (
