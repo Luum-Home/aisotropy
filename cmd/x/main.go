@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -54,13 +55,27 @@ func run(args []string) int {
 
 // runTUI starts the interactive Bubbletea program and blocks until the user
 // quits. It is never invoked from the non-interactive dispatch path.
+//
+// Building the *tea.Program here (rather than inline in runProgram) keeps
+// runProgram free of any dependency on a real terminal, so tests can drive it
+// with a Program constructed over tea.WithInput/tea.WithOutput instead of the
+// real stdin/stdout — runTUI itself (real terminal, tea.WithAltScreen) is not
+// unit-tested, since doing so would require a real TTY or would block reading
+// from the test process's stdin.
 func runTUI() int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	p := tea.NewProgram(NewModel(ctx), tea.WithAltScreen())
+	return runProgram(tea.NewProgram(NewModel(ctx), tea.WithAltScreen()), os.Stderr)
+}
+
+// runProgram runs p to completion and translates a Bubbletea error into the
+// process exit code, printing it to stderr. Split out from runTUI so tests
+// can supply a Program built with test-only I/O (tea.WithInput/tea.WithOutput)
+// and a captured stderr writer, without touching the real terminal.
+func runProgram(p *tea.Program, stderr io.Writer) int {
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "x:", err)
+		fmt.Fprintln(stderr, "x:", err)
 		return 1
 	}
 	return 0

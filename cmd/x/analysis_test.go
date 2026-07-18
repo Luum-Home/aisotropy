@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -221,6 +223,97 @@ func TestCoverProfilePathIsUniqueAndWritable(t *testing.T) {
 	}
 	if _, err := os.Stat(p1); err != nil {
 		t.Errorf("coverProfilePath() path %q is not accessible: %v", p1, err)
+	}
+}
+
+// The following tests assert command CONSTRUCTION only (Args), never
+// executing dup/gocognit/deadcode/govulncheck for real: those tools either
+// require a real golangci-lint binary or fetch a package via network
+// (`go run pkg@latest`), which would make tests slow, flaky, and
+// network-dependent. Asserting cmd.Args is a real, load-bearing assertion —
+// it is what streamCmd actually executes — without paying that cost.
+
+func TestDupCmdArgs(t *testing.T) {
+	cmd := dupCmd(context.Background())
+	want := []string{"golangci-lint", "run", "--enable-only", "dupl", "./..."}
+	if !reflect.DeepEqual(cmd.Args, want) {
+		t.Fatalf("dupCmd Args = %v, want %v", cmd.Args, want)
+	}
+}
+
+func TestGocognitCmdArgs(t *testing.T) {
+	cmd := gocognitCmd(context.Background())
+	wantPrefix := []string{"go", "run", "github.com/uudashr/gocognit/cmd/gocognit@latest", "-over", "15"}
+	if len(cmd.Args) <= len(wantPrefix) {
+		t.Fatalf("gocognitCmd Args = %v, want at least %d elements (prefix + >=1 target dir)", cmd.Args, len(wantPrefix)+1)
+	}
+	for i, want := range wantPrefix {
+		if cmd.Args[i] != want {
+			t.Fatalf("gocognitCmd Args[%d] = %q, want %q (full: %v)", i, cmd.Args[i], want, cmd.Args)
+		}
+	}
+}
+
+func TestDeadcodeCmdArgs(t *testing.T) {
+	cmd := deadcodeCmd(context.Background())
+	want := []string{"go", "run", "golang.org/x/tools/cmd/deadcode@latest", "./..."}
+	if !reflect.DeepEqual(cmd.Args, want) {
+		t.Fatalf("deadcodeCmd Args = %v, want %v", cmd.Args, want)
+	}
+}
+
+func TestGovulncheckCmdArgs(t *testing.T) {
+	cmd := govulncheckCmd(context.Background())
+	want := []string{"go", "run", "golang.org/x/vuln/cmd/govulncheck@latest", "./..."}
+	if !reflect.DeepEqual(cmd.Args, want) {
+		t.Fatalf("govulncheckCmd Args = %v, want %v", cmd.Args, want)
+	}
+}
+
+func TestCoverCmdBuildsChainedShellScript(t *testing.T) {
+	cmd := coverCmd(context.Background())
+	if len(cmd.Args) != 3 || cmd.Args[0] != "sh" || cmd.Args[1] != "-c" {
+		t.Fatalf("coverCmd Args = %v, want [sh -c <script>]", cmd.Args)
+	}
+	script := cmd.Args[2]
+	if !strings.Contains(script, "go test -coverprofile=") {
+		t.Errorf("script missing coverprofile step: %q", script)
+	}
+	if !strings.Contains(script, "go tool cover -func=") {
+		t.Errorf("script missing cover -func step: %q", script)
+	}
+	if !strings.Contains(script, "&&") {
+		t.Errorf("script should chain both commands with &&: %q", script)
+	}
+}
+
+// TestCoverCmdProfileCreateFailureFailsLoudly forces coverProfilePath's
+// os.CreateTemp to fail (TMPDIR pointed at a nonexistent directory) and
+// asserts coverCmd falls back to the documented loud-failure script instead
+// of silently skipping coverage enforcement.
+func TestCoverCmdProfileCreateFailureFailsLoudly(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
+
+	cmd := coverCmd(context.Background())
+	if len(cmd.Args) != 3 || cmd.Args[0] != "sh" {
+		t.Fatalf("coverCmd Args = %v, want a 3-element [sh -c <script>] fallback", cmd.Args)
+	}
+	if !strings.Contains(cmd.Args[2], "failed to create temp profile") {
+		t.Fatalf("script = %q, want it to mention the temp profile failure", cmd.Args[2])
+	}
+}
+
+// TestTasksCmdFileCreateFailureFailsLoudly is the same failure-injection
+// proof for tasksCmd's own os.CreateTemp call.
+func TestTasksCmdFileCreateFailureFailsLoudly(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
+
+	cmd := tasksCmd(context.Background())
+	if len(cmd.Args) != 3 || cmd.Args[0] != "sh" {
+		t.Fatalf("tasksCmd Args = %v, want a 3-element [sh -c <script>] fallback", cmd.Args)
+	}
+	if !strings.Contains(cmd.Args[2], "failed to create temp file") {
+		t.Fatalf("script = %q, want it to mention the temp file failure", cmd.Args[2])
 	}
 }
 

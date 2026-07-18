@@ -2,10 +2,37 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/Luum-Home/aisotropy/internal/llm"
 )
+
+// criterionFailingClient wraps a real llm.Client (normally the deterministic
+// stub) and forces a hard StreamChat failure only for requests whose system
+// prompt names one specific criterion (LLMJudge.systemPrompt always embeds
+// "Criterion: <name>"), delegating to inner for everything else. This is
+// deterministic regardless of how many attempts internal/llm's reflection
+// loop makes for any ONE judge (it can retry a judge whose first attempt
+// fails validation, so counting raw StreamChat calls is not reliable — an
+// earlier version of this test tried that and was flaky) — targeting by
+// criterion name lets a test fail exactly one of the scorer's three judges
+// (correctness, helpfulness, faithfulness) while the other two succeed for
+// real through the stub's schema-satisfying response.
+type criterionFailingClient struct {
+	inner         llm.Client
+	failCriterion string
+}
+
+func (c criterionFailingClient) Name() string { return c.inner.Name() }
+
+func (c criterionFailingClient) StreamChat(ctx context.Context, system, prompt string) (<-chan llm.Token, error) {
+	if strings.Contains(system, "Criterion: "+c.failCriterion) {
+		return nil, fmt.Errorf("criterionFailingClient: forced failure for criterion %q", c.failCriterion)
+	}
+	return c.inner.StreamChat(ctx, system, prompt)
+}
 
 func TestLooksLikeRefusal(t *testing.T) {
 	cases := map[string]bool{
@@ -73,6 +100,77 @@ func TestScorer_StubEndToEnd(t *testing.T) {
 			t.Error("a refusal answer should set refused=true")
 		}
 	})
+}
+
+// TestNewScorerRejectsNilClient exercises newScorer's error-propagation
+// branch for eval.NewLLMJudge failing on the correctness judge (a nil client
+// fails LLMJudge construction fail-closed, per eval.NewLLMJudge's doc
+// comment). The helpfulness/faithfulness construction-error branches are not
+// independently reachable: newScorer passes the SAME client to all three
+// NewLLMJudge calls and both later criteria have fixed, always-valid names,
+// so their own construction can only fail for the same reason correctness
+// already did — meaning newScorer returns on the very first one.
+func TestNewScorerRejectsNilClient(t *testing.T) {
+	if _, err := newScorer(nil); err == nil {
+		t.Fatal("expected an error constructing judges around a nil client")
+	}
+}
+
+// TestScore_CorrectnessJudgeErrorPropagates forces the correctness judge to
+// fail and asserts score() returns the wrapped error without ever reaching
+// helpfulness/faithfulness.
+func TestScore_CorrectnessJudgeErrorPropagates(t *testing.T) {
+	fc := criterionFailingClient{inner: llm.NewStubClient(), failCriterion: "correctness"}
+	sc, err := newScorer(fc)
+	if err != nil {
+		t.Fatalf("newScorer: %v", err)
+	}
+
+	_, err = sc.score(context.Background(), question{ID: "q", Prompt: "p"}, "answer")
+	if err == nil {
+		t.Fatal("expected an error when the correctness judge call fails")
+	}
+	if !strings.Contains(err.Error(), "score correctness") {
+		t.Fatalf("err = %v, want it to mention \"score correctness\"", err)
+	}
+}
+
+// TestScore_HelpfulnessJudgeErrorPropagates lets correctness succeed for real
+// (via the stub) and forces helpfulness to fail.
+func TestScore_HelpfulnessJudgeErrorPropagates(t *testing.T) {
+	fc := criterionFailingClient{inner: llm.NewStubClient(), failCriterion: "helpfulness"}
+	sc, err := newScorer(fc)
+	if err != nil {
+		t.Fatalf("newScorer: %v", err)
+	}
+
+	_, err = sc.score(context.Background(), question{ID: "q", Prompt: "p"}, "answer")
+	if err == nil {
+		t.Fatal("expected an error when the helpfulness judge call fails")
+	}
+	if !strings.Contains(err.Error(), "score helpfulness") {
+		t.Fatalf("err = %v, want it to mention \"score helpfulness\"", err)
+	}
+}
+
+// TestScore_FaithfulnessJudgeErrorPropagates lets correctness and
+// helpfulness succeed for real and forces faithfulness (which only runs when
+// the question carries grounding context) to fail.
+func TestScore_FaithfulnessJudgeErrorPropagates(t *testing.T) {
+	fc := criterionFailingClient{inner: llm.NewStubClient(), failCriterion: "faithfulness"}
+	sc, err := newScorer(fc)
+	if err != nil {
+		t.Fatalf("newScorer: %v", err)
+	}
+
+	q := question{ID: "q", Prompt: "p", Context: "grounding context so faithfulness runs"}
+	_, err = sc.score(context.Background(), q, "answer")
+	if err == nil {
+		t.Fatal("expected an error when the faithfulness judge call fails")
+	}
+	if !strings.Contains(err.Error(), "score faithfulness") {
+		t.Fatalf("err = %v, want it to mention \"score faithfulness\"", err)
+	}
 }
 
 func TestLLMCriteriaFor(t *testing.T) {

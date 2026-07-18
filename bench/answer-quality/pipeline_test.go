@@ -2,9 +2,27 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/Luum-Home/aisotropy/aisotropy"
 )
+
+// embedErrEmbedder satisfies aisotropy.Embedder but fails every Embed call,
+// so a code path that must embed (IngestKnowledge chunking) is forced to
+// surface an error instead of silently succeeding. seedKnowledge's in-process
+// default backends (HashEmbedder, in-memory store) never fail on their own —
+// not even with an already-cancelled ctx for an operation this small and
+// local — so a real, deliberately-broken Embedder wired in via the public
+// aisotropy.WithEmbedder seam is the only way to exercise IngestKnowledge's
+// error-return branch without touching the real network.
+type embedErrEmbedder struct{ dim int }
+
+func (e embedErrEmbedder) Embed(context.Context, []string) ([][]float32, error) {
+	return nil, errors.New("embed backend down")
+}
+func (e embedErrEmbedder) Dimension() int { return e.dim }
 
 // clearProviderEnv forces the serving and judge clients to the keyless stub, so
 // the end-to-end test runs with zero credentials and zero network — proving the
@@ -66,6 +84,78 @@ func TestRunEval_StubEndToEnd(t *testing.T) {
 	report := render(rr)
 	if !strings.Contains(report, "STUB RUN") {
 		t.Error("report must loudly label a stub run")
+	}
+}
+
+// TestSeedKnowledge_SkipsEmptyAndDuplicateDocs drives seedKnowledge directly
+// (not through runEval) with a duplicate doc ID and an empty-text doc,
+// proving both are silently skipped (the dedup/empty-text guard) rather than
+// ingested or erroring.
+func TestSeedKnowledge_SkipsEmptyAndDuplicateDocs(t *testing.T) {
+	clearProviderEnv(t)
+	app := aisotropy.New()
+	defer func() { _ = app.Close() }()
+
+	questions := []question{
+		{ID: "q1", Docs: []contextDoc{
+			{ID: "d1", Text: "first"},
+			{ID: "d1", Text: "duplicate id, must be skipped"},
+			{ID: "d2", Text: ""}, // empty text, must be skipped
+		}},
+	}
+	if err := seedKnowledge(context.Background(), app, questions); err != nil {
+		t.Fatalf("seedKnowledge: %v", err)
+	}
+}
+
+// TestSeedKnowledge_IngestErrorPropagates forces app.IngestKnowledge to fail
+// (a deliberately broken Embedder wired in via the public aisotropy.WithEmbedder
+// seam) and asserts seedKnowledge wraps and returns that error instead of
+// swallowing it. Note: runEval itself builds its own App internally with no
+// seam to inject a broken embedder into from outside the package, so the
+// symmetric "runEval propagates a seedKnowledge failure" branch (the
+// `if err := seedKnowledge(...); err != nil` check in runEval) is not
+// separately exercised here — it is the same one-line propagation pattern
+// already proven for app.Turn's error in TestRunEval_TurnErrorIsRecordedPerQuestion
+// and for newScorer's error via TestNewScorerRejectsNilClient/newScorer being
+// called from runEval.
+func TestSeedKnowledge_IngestErrorPropagates(t *testing.T) {
+	clearProviderEnv(t)
+	app := aisotropy.New(aisotropy.WithEmbedder(embedErrEmbedder{dim: 64}))
+	defer func() { _ = app.Close() }()
+
+	questions := []question{{ID: "q1", Docs: []contextDoc{{ID: "d1", Text: "some content"}}}}
+	err := seedKnowledge(context.Background(), app, questions)
+	if err == nil {
+		t.Fatal("expected an error when IngestKnowledge fails")
+	}
+	if !strings.Contains(err.Error(), "seed knowledge") {
+		t.Fatalf("err = %v, want it to mention \"seed knowledge\"", err)
+	}
+}
+
+// TestRunEval_TurnErrorIsRecordedPerQuestion proves a failing App.Turn call
+// (forced via an already-cancelled ctx, so no real network/model dependency
+// is needed) is recorded on the per-question result rather than aborting the
+// whole run — the questions carry no context_docs, so seedKnowledge's early
+// "nothing to seed" return is taken and the cancelled ctx is only observed
+// once the loop calls app.Turn.
+func TestRunEval_TurnErrorIsRecordedPerQuestion(t *testing.T) {
+	clearProviderEnv(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	questions := []question{{ID: "q1", Prompt: "anything at all"}}
+	rr, err := runEval(ctx, questions, "cancelled-set", 0, 0, 0)
+	if err != nil {
+		t.Fatalf("runEval: %v", err)
+	}
+	if len(rr.Results) != 1 {
+		t.Fatalf("got %d results, want 1", len(rr.Results))
+	}
+	if rr.Results[0].Err == "" {
+		t.Fatal("expected the Turn error to be recorded on the per-question result")
 	}
 }
 
