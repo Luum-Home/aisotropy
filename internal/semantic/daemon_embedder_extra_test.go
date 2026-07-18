@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestNewDaemonEmbedderValidation verifies the required-field checks reject a
@@ -142,18 +141,23 @@ func TestDaemonEmbedderStdinWriteErrorTearsDown(t *testing.T) {
 	e := mustDaemon(t, path, 4)
 	defer func() { _ = e.Close() }()
 
-	// Force-spawn the process directly (bypassing Embed's ctx check) and give
-	// it time to exit and close its stdin read end, so the next Write
-	// deterministically fails rather than racing the process's own exit.
+	// Force-spawn the daemon, then deterministically force the NEXT write to
+	// fail by closing its stdin write-end directly. This exercises the exact
+	// same "write daemon request" error -> teardown path as the process having
+	// exited and closed the read-end, but is NOT timing-dependent: a fixed
+	// post-spawn sleep flaked under full-suite parallel-load starvation (the sh
+	// `exit 0` process had not always closed its stdin within the window, so the
+	// Write occasionally succeeded and the test saw a nil error).
 	e.mu.Lock()
-	if _, err := e.ensureProcLocked(); err != nil {
+	p, err := e.ensureProcLocked()
+	if err != nil {
 		e.mu.Unlock()
 		t.Fatalf("ensureProcLocked: %v", err)
 	}
+	_ = p.stdin.Close()
 	e.mu.Unlock()
-	time.Sleep(300 * time.Millisecond)
 
-	_, err := e.Embed(context.Background(), []string{"a"})
+	_, err = e.Embed(context.Background(), []string{"a"})
 	if err == nil || !strings.Contains(err.Error(), "write daemon request") {
 		t.Fatalf("Embed against an exited daemon: got %v, want a write-daemon-request error", err)
 	}
