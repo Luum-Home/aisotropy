@@ -56,16 +56,21 @@ if [ -n "$PRE_RQLITE_URL" ]; then RQLITE_URL="$PRE_RQLITE_URL"; else
 fi
 QDRANT_COLLECTION="${QDRANT_COLLECTION:-arena_rag}"
 
-if [ -z "$(docker images -q "$IMAGE_TAG" 2>/dev/null)" ]; then
-  echo "PROGRESS: building $IMAGE_TAG (no cached image found)" >&2
-  docker build -t "$IMAGE_TAG" "$SCRIPT_DIR" >&2
-fi
+# Always build (not "only if no cached image exists"): docker's own layer
+# cache already makes a no-op rebuild cheap when index.mjs/lib/ are
+# unchanged, but a tag-existence check alone left a stale image running old
+# adapter code (missing modes) indefinitely once *any* image with this tag
+# had been built once -- source changes must always be picked up.
+echo "PROGRESS: building $IMAGE_TAG" >&2
+docker build -t "$IMAGE_TAG" "$SCRIPT_DIR" >&2
 
 # Explicit `-e VAR="$VAR"` (not bare `-e VAR`) so this does not depend on shell
 # export state -- EMBED_URL/QDRANT_URL/RQLITE_URL above are plain local
 # variables (deliberately reassigned after `set +a`), not exported ones, and a
 # bare `-e VAR` only forwards a variable that is actually in the process
-# environment.
+# environment. ARENA_STUB is forwarded the same way (defaulting to unset/empty)
+# so `ARENA_STUB=1 bash run-docker.sh` actually runs the container in offline
+# stub mode instead of silently falling through to the real model.
 exec docker run --rm -i \
   --add-host=host.docker.internal:host-gateway \
   -e OPENAI_API_KEY="$OPENAI_API_KEY" \
@@ -75,4 +80,5 @@ exec docker run --rm -i \
   -e QDRANT_URL="$QDRANT_URL" \
   -e QDRANT_COLLECTION="$QDRANT_COLLECTION" \
   -e RQLITE_URL="$RQLITE_URL" \
+  -e ARENA_STUB="${ARENA_STUB:-}" \
   "$IMAGE_TAG"
