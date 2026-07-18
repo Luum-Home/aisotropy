@@ -1,0 +1,137 @@
+{
+  "framework": "llamaindex",
+  "dimensions": {
+    "crash_recovery": {
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "isolation_leak": {
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "memory": {
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "memory_scoped": {
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "middleware": {
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "observability": {
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "qa": {
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "rag": {
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "stream": {
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "structured": {
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "tools": {
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    }
+  }
+}

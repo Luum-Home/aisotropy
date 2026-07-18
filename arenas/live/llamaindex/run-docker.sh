@@ -31,19 +31,41 @@ else
   echo "run-docker.sh: WARNING: $ENV_FILE not found — relying on already-exported env vars." >&2
 fi
 
-missing=()
-for var in OPENAI_API_KEY OPENAI_BASE_URL OPENAI_MODEL; do
-  if [[ -z "${!var:-}" ]]; then
-    missing+=("$var")
+arena_stub="${ARENA_STUB:-}"
+case "${arena_stub,,}" in
+  1|true|yes) arena_stub_on=1 ;;
+  *) arena_stub_on=0 ;;
+esac
+
+if [[ "$arena_stub_on" -eq 0 ]]; then
+  missing=()
+  for var in OPENAI_API_KEY OPENAI_BASE_URL OPENAI_MODEL; do
+    if [[ -z "${!var:-}" ]]; then
+      missing+=("$var")
+    fi
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "run-docker.sh: FATAL: missing required env var(s): ${missing[*]}" >&2
+    exit 1
   fi
-done
-if [[ ${#missing[@]} -gt 0 ]]; then
-  echo "run-docker.sh: FATAL: missing required env var(s): ${missing[*]}" >&2
-  exit 1
+else
+  # ARENA_STUB=1: every backend (agnes, e5, Qdrant) is swapped for an in-process LlamaIndex
+  # mock (see README.md "Offline stub toggle") -- OPENAI_*/EMBED_URL/QDRANT_URL are irrelevant
+  # and this precondition must not block an offline run (known issue task_bf1b16f2).
+  echo "run-docker.sh: ARENA_STUB=1 -- skipping OPENAI_* required-key precondition (offline run)" >&2
 fi
 
 echo "run-docker.sh: building image ${IMAGE_TAG}..." >&2
 docker build --quiet -t "$IMAGE_TAG" "$SCRIPT_DIR" >&2
+
+# Bind-mount the SAME host .memory/ directory run.sh's native form persists to (gitignored,
+# see .gitignore) at the container's default LLAMAINDEX_MEMORY_DIR (/app/.memory — SCRIPT_DIR
+# is /app inside the image, adapter.py's own default). Without this, each `docker run --rm`
+# is a throwaway filesystem: a `memory`/`memory_scoped`/`isolation_leak`/`crash_recovery`
+# invocation in one container can never be recalled by a SEPARATE container later, which is
+# exactly what cross-invocation persistence testing requires (empirically verified: memory
+# mode's second-turn recall silently failed under docker before this mount was added).
+mkdir -p "$SCRIPT_DIR/.memory"
 
 exec docker run --rm -i \
   --add-host=host.docker.internal:host-gateway \
@@ -53,4 +75,5 @@ exec docker run --rm -i \
   -e EMBED_URL="${EMBED_URL:-http://host.docker.internal:8899}" \
   -e QDRANT_URL="${QDRANT_URL:-http://host.docker.internal:6333}" \
   -e ARENA_STUB="${ARENA_STUB:-}" \
+  -v "$SCRIPT_DIR/.memory:/app/.memory" \
   "$IMAGE_TAG"

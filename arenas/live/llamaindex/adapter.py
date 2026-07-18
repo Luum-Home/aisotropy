@@ -428,6 +428,141 @@ def _stub_index(embed_model: Any) -> Any:
 
 
 # --------------------------------------------------------------------------------------
+# ARENA_STUB function-calling LLM — offline replacement for agnes ONLY for the two modes whose
+# real LlamaIndex machinery structurally requires a genuine FunctionCallingLLM: `tools`
+# (FunctionAgent raises "LLM must be a FunctionCallingLLM" against a plain MockLLM) and
+# `structured` (PydanticOutputParser fails to validate MockLLM's echoed-prompt text as JSON).
+# Every other mode keeps using the plain llama_index.core.llms.MockLLM built in main() —
+# unchanged.
+#
+# Built on llama_index.core.llms.mock.MockFunctionCallingLLM — LlamaIndex's OWN native mock
+# base for exactly this contract (ships in llama-index-core, already pinned; no new
+# dependency), not a hand-rolled fake. Only its `response_generator` callback below is adapter
+# code, mirroring the same "canned decision, real execution" convention the eino and mastra
+# arena adapters already use for their own stub tool-calling (arenas/live/eino/stub.go,
+# arenas/live/mastra/lib/stub-model.mjs): the stub decides WHICH tool to call and WITH WHAT
+# arguments deterministically — never "reasoning" — but the tool itself still genuinely
+# executes: calculate("2 + 2") really evaluates to "4" via the real AST evaluator below.
+# --------------------------------------------------------------------------------------
+
+_STUB_SCHEMA_MARK = "Here's a JSON schema to follow:"
+_STUB_SCHEMA_END_MARK = "\n\nOutput a valid JSON object"
+
+
+def _stub_fabricate_from_schema(schema: Any) -> Any:
+    """Deterministic placeholder value shaped to a JSON-Schema-7 fragment — never the result of
+    any reasoning, the same convention as the Mastra adapter's stub-model.mjs `fabricate()`."""
+    if not isinstance(schema, dict):
+        return None
+    if isinstance(schema.get("enum"), list) and schema["enum"]:
+        return schema["enum"][0]
+    schema_type = schema.get("type")
+    if schema_type == "object" or "properties" in schema:
+        return {
+            key: _stub_fabricate_from_schema(sub)
+            for key, sub in (schema.get("properties") or {}).items()
+        }
+    if schema_type == "array":
+        return []
+    if schema_type in ("number", "integer"):
+        return 0
+    if schema_type == "boolean":
+        return True
+    return "stub"
+
+
+def _stub_extract_schema_json(text: str) -> dict[str, Any] | None:
+    """Pull the JSON-Schema-7 object PydanticOutputParser.format() embeds in the prompt text
+    (llama_index/core/output_parsers/pydantic.py::PYDANTIC_FORMAT_TMPL) so the stub can
+    fabricate a matching object instead of echoing the prompt back as MockLLM does (which is
+    never valid JSON, and is exactly why `structured` mode fails offline against plain
+    MockLLM — see README.md "Offline stub toggle")."""
+    if _STUB_SCHEMA_MARK not in text:
+        return None
+    after = text.split(_STUB_SCHEMA_MARK, 1)[1]
+    schema_str = after.split(_STUB_SCHEMA_END_MARK, 1)[0].strip()
+    # PydanticOutputParser.get_format_string(escape_json=True) doubles every brace
+    # ("{"->"{{", "}"->"}}") so the schema survives PromptTemplate's own str.format() pass
+    # untouched — verified empirically: PromptTemplate.format_messages() does NOT collapse the
+    # doubled braces back down (the real agnes model still answers correctly despite reading
+    # literally-doubled braces in its instructions; only this stub needs the schema parsed).
+    # Undo that escaping before parsing.
+    schema_str = schema_str.replace("{{", "{").replace("}}", "}")
+    try:
+        parsed = json.loads(schema_str)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _stub_tool_or_structured_response(messages: Any, **kwargs: Any) -> Any:
+    """`response_generator` for the ARENA_STUB=1 `tools`/`structured` stub LLM (see module
+    comment above). Branches, checked in order:
+
+    1. Tools are bound AND no tool-result message is in the conversation yet -> emit a CANNED
+       ToolCallBlock, preferring the "calculate" tool with a real, evaluable expression (the
+       tool ACTUALLY runs on this; only the decision to call it is canned) — mirrors
+       eino/mastra's identical convention for the identical tool shape.
+    2. A tool result IS already in the conversation -> the tool-calling loop is done; reply with
+       plain text summarizing it (no more tool calls, so FunctionAgent finalizes the turn) —
+       the same "tool calls complete" shape LlamaIndex's OWN default MockFunctionCallingLLM
+       generator uses (llama_index/core/llms/mock.py::_tool_calling_response_generator).
+    3. Neither of the above, but the prompt carries a PydanticOutputParser JSON-schema
+       instruction (`structured` mode) -> fabricate a JSON object shaped to that schema.
+    4. Otherwise -> a fixed, unmistakably-synthetic plain-text reply.
+    """
+    from llama_index.core.base.llms.types import ToolCallBlock
+    from llama_index.core.llms import ChatMessage, MessageRole
+
+    tools = kwargs.get("tools") or []
+    msg_list = list(messages) if messages else []
+    has_tool_result = any(m.role == MessageRole.TOOL for m in msg_list)
+
+    if tools and not has_tool_result:
+        target = tools[0]
+        for t in tools:
+            if getattr(t.metadata, "name", "") == "calculate":
+                target = t
+                break
+        tool_name = target.metadata.name or ""
+        args: dict[str, Any] = {"expr": "2 + 2"} if tool_name == "calculate" else {}
+        return ChatMessage(
+            role=MessageRole.ASSISTANT,
+            blocks=[
+                ToolCallBlock(tool_call_id="arena-stub-call-1", tool_name=tool_name, tool_kwargs=args)
+            ],
+        )
+
+    if has_tool_result:
+        last_tool = next(m for m in reversed(msg_list) if m.role == MessageRole.TOOL)
+        return ChatMessage(
+            role=MessageRole.ASSISTANT,
+            content=f"[ARENA_STUB] tool result: {last_tool.content or ''}",
+        )
+
+    last_text = msg_list[-1].content if msg_list else ""
+    schema = _stub_extract_schema_json(last_text or "")
+    if schema is not None:
+        fabricated = _stub_fabricate_from_schema(schema)
+        return ChatMessage(role=MessageRole.ASSISTANT, content=json.dumps(fabricated))
+
+    return ChatMessage(role=MessageRole.ASSISTANT, content=f"[ARENA_STUB] {last_text}")
+
+
+def _build_stub_function_calling_llm(callback_manager: Any) -> Any:
+    """Constructs the ARENA_STUB=1 LLM used ONLY for `tools`/`structured` (see module comment
+    above) — llama_index.core.llms.mock.MockFunctionCallingLLM, LlamaIndex's own native mock
+    FunctionCallingLLM, driven by `_stub_tool_or_structured_response` above."""
+    from llama_index.core.llms.mock import MockFunctionCallingLLM
+
+    return MockFunctionCallingLLM(
+        is_chat_model=True,
+        callback_manager=callback_manager,
+        response_generator=_stub_tool_or_structured_response,
+    )
+
+
+# --------------------------------------------------------------------------------------
 # Real, executable tools for `tools` mode (per arenas/live/_shared/README.md convention: no
 # stubbed tool that returns a canned value — these actually run).
 # --------------------------------------------------------------------------------------
@@ -1725,11 +1860,23 @@ def main() -> None:
     Settings.callback_manager = cb_manager
 
     if ARENA_STUB:
-        _progress(
-            f"mode={mode} ARENA_STUB=1: wiring llama_index.core.llms.MockLLM — no OPENAI_*/"
-            f"EMBED_URL/QDRANT_URL network calls in any mode"
-        )
-        llm = MockLLM(is_chat_model=True, callback_manager=cb_manager)
+        if mode in ("tools", "structured"):
+            # See "ARENA_STUB function-calling LLM" module comment above _stub_fabricate_from_schema:
+            # a plain MockLLM cannot satisfy FunctionAgent's FunctionCallingLLM requirement
+            # (`tools`) nor produce valid schema-shaped JSON (`structured`) — both need the
+            # native MockFunctionCallingLLM-based stub instead.
+            _progress(
+                f"mode={mode} ARENA_STUB=1: wiring llama_index.core.llms.mock."
+                f"MockFunctionCallingLLM (canned tool-call / schema-fabricated JSON) — no "
+                f"OPENAI_*/EMBED_URL/QDRANT_URL network calls"
+            )
+            llm = _build_stub_function_calling_llm(cb_manager)
+        else:
+            _progress(
+                f"mode={mode} ARENA_STUB=1: wiring llama_index.core.llms.MockLLM — no OPENAI_*/"
+                f"EMBED_URL/QDRANT_URL network calls in any mode"
+            )
+            llm = MockLLM(is_chat_model=True, callback_manager=cb_manager)
     else:
         _progress(
             f"mode={mode} wiring OpenAILike model={model_name!r} base_url={base_url!r} "
