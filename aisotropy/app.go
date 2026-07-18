@@ -567,13 +567,37 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	// OTel tracing (ADR-0010, no-op by default), circuit breaker, and the OTel
 	// decorator shared by the streaming and reflection paths.
 	shutdownTracing, tracer, tracerProvider := llm.NewTracerProvider(context.Background()) //nolint:contextcheck // tracer lifetime must outlive ctx (cancelled on signal): shutdownTracing is invoked later, during graceful shutdown, with its own bounded context
-	protectedClient := llm.WithCircuitBreaker(llmClient, circuitFailureThreshold, circuitCooldown)
+
+	// User model middleware (ADR-0062, docs/decisions/0062-bounded-model-
+	// middleware.md): installed at the FIXED INNER slot — wrapping ONLY the raw
+	// llmClient, strictly BEFORE (i.e. inside) the runtime-owned circuit breaker
+	// and OTel decorators below. Because it is composed here, every downstream
+	// consumer of protectedClient/streamClient (Register, RegisterStream,
+	// RegisterAgent, RegisterAsk, RegisterAISDK, RegisterAGUI, and App.Turn — see
+	// their call sites further down) inherits it uniformly, and because the
+	// handler-level pre-spend quota gate (internal/api/core.go's chatCheckQuota,
+	// internal/api/stream_core.go's inline check) runs entirely BEFORE any of
+	// those handlers ever calls a Client method, a registered middleware has no
+	// way to reach — let alone reorder or bypass — either constitutional gate.
+	// a.ext.modelMiddleware empty (the default, no WithModelMiddleware calls)
+	// makes WithModelMiddleware return llmClient completely unwrapped, so this
+	// line is a no-op and the runtime is byte-for-byte unchanged from before
+	// ADR-0062.
+	middlewaredClient := llm.WithModelMiddleware(llmClient, a.ext.modelMiddleware...)
+	protectedClient := llm.WithCircuitBreaker(middlewaredClient, circuitFailureThreshold, circuitCooldown)
 	streamClient := llm.WithOTel(protectedClient, tracer)
 
-	// Optional cheap-model client for quota-pressure degradation (Phase 7).
+	// Optional cheap-model client for quota-pressure degradation (Phase 7). The
+	// SAME user model middleware is applied here too (ADR-0062): a tenant
+	// degraded to the cheap model under quota pressure is still served through
+	// the identical middleware chain the primary model uses, so a registered
+	// middleware's view of "every model call" stays uniform even across
+	// degradation — never a silent gap a middleware author would have to special
+	// case.
 	var cheapStreamClient llm.Client
 	if raw := llm.CheapClientFromEnv(); raw != nil {
-		cheapStreamClient = llm.WithOTel(llm.WithCircuitBreaker(raw, circuitFailureThreshold, circuitCooldown), tracer)
+		cheapMiddlewared := llm.WithModelMiddleware(raw, a.ext.modelMiddleware...)
+		cheapStreamClient = llm.WithOTel(llm.WithCircuitBreaker(cheapMiddlewared, circuitFailureThreshold, circuitCooldown), tracer)
 		slog.Info("cheap model configured for quota-pressure degradation", "model", raw.Name())
 	}
 

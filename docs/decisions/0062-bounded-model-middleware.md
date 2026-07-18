@@ -1,6 +1,6 @@
 # ADR-0062: Bounded model-middleware seam (`WithModelMiddleware`)
 
-**Status:** proposed (2026-07-17)
+**Status:** implemented (2026-07-17)
 **Delivers:** a user-pluggable model-middleware API, the safe/bounded counterpart to Vercel AI SDK's
 `wrapLanguageModel` — without weakening the constitutional pre-spend gate.
 **Related:** ADR-0061 (reasoning — the `ReasoningState` tenant-safety lesson), the extension-mechanism
@@ -71,6 +71,80 @@ call, and its own token spend still flows through the cost tracker.
    middleware to `next`; a middleware error fails the call closed (no silent unmiddlewared fallback);
    the seam never logs prompts/keys.
 5. **Backward-compatible.** No middleware registered ⇒ byte-identical behaviour to today.
+
+## Reuse of gollem primitives
+
+Before implementing, the codebase's dependency (`github.com/fugue-labs/gollem` v0.5.1,
+MIT) was checked for an existing middleware/interceptor system rather than hand-rolling
+one blind — the same discipline `.claude/rules/prune-evidence-gate.md` requires for
+deletion claims applies symmetrically to reuse claims: verify against the actual source,
+not a memory of what a dependency "probably" has.
+
+**Finding (verified via `go list -m -f '{{.Dir}}' github.com/fugue-labs/gollem` +
+reading the source directly):** gollem's `core` package already ships an agent-scoped
+middleware/interceptor system —
+`core.AgentMiddleware`/`core.RequestMiddlewareFunc`/`core.AgentStreamMiddleware` +
+`core.WithAgentMiddleware[T]` (`core/agent_middleware.go`), and
+`core.MessageInterceptor`/`core.ResponseInterceptor` +
+`core.WithMessageInterceptor[T]`/`core.WithResponseInterceptor[T]` with the ready-made
+`core.RedactPII`/`core.AuditLog` (`core/interceptor.go`). This is **not new information
+to the codebase**: `internal/llm/gollem.go`'s `gollemGuardrailOptions` already attaches
+`core.RedactPII`/`core.AuditLog` to every `core.Agent[T]` this runtime builds (ADR-0010) —
+that wiring is pre-existing and unrelated to this ADR.
+
+**Layer analysis — why this ADR does NOT route through `core.WithAgentMiddleware`:**
+
+Aisotropy has three LLM call paths, not one:
+
+1. **Reflection route** (`Register`/`App.Turn` → `ChatCore` → `chatReflect` →
+   `GollemReflect` → a `core.Agent[T]` built over `GollemModel`).
+2. **Native-tool-calling agent route** (`RegisterAgent` → `RunToolAgent` → another
+   `core.Agent[string]` over `GollemModel`).
+3. **Direct-streaming route** (`RegisterStream`/`RegisterAsk`/`RegisterAISDK`/
+   `RegisterAGUI` → `StreamCore` → `Client.StreamChat` directly — confirmed by reading
+   `internal/api/stream_core.go`: it never constructs a `core.Agent[T]` at all).
+
+`core.WithAgentMiddleware` is a `core.Agent[T]` option. It can only ever reach paths 1
+and 2 — it structurally **cannot** reach path 3, because path 3 builds no `Agent[T]` for
+it to attach to. So adopting it would, at best, be a partial answer that still needs a
+`Client`-level seam for the direct-streaming route.
+
+The `Client`-level seam this ADR builds (`internal/llm/middleware.go`'s
+`WithModelMiddleware`, inserted once at `aisotropy/app.go`'s `startRuntime`, wrapping the
+raw provider client before `WithCircuitBreaker`/`WithOTel`) does not have that gap: every
+one of the three paths above ultimately resolves to the SAME decorated `Client` —
+confirmed by reading `aisotropy/app.go`'s wiring: `api.Register(..., rt.client, ...)`,
+`api.RegisterAgent(..., rt.client, ...)`, and
+`api.RegisterStream/RegisterAsk/RegisterAISDK/RegisterAGUI(..., rt.streamClient, ...)`
+all pass a client derived from the one `middlewaredClient := llm.WithModelMiddleware(llmClient,
+a.ext.modelMiddleware...)` built once. `GollemModel` (`internal/llm/gollem.go`) is itself
+just a thin adapter over this package's `Client` — its `Request`/`RequestStream` call
+straight through to `m.client.StreamChat` — so a middleware registered once is inherited
+by the reflection and agent-text paths automatically, with zero additional wiring.
+
+Given that, layering `core.WithAgentMiddleware` on top as well would be **strictly
+worse**, not merely redundant:
+
+- It would **double-wrap** the reflection/agent-text branches (the `Client` those
+  `Agent[T]`s call is already middleware-decorated).
+- It would **silently widen scope** on the agent path only: `core.Agent[T].Request()`
+  internally branches into `GollemModel.requestWithTools` (native tool-calling) for that
+  one path, so an `AgentMiddleware` attached there would also intercept tool-calls —
+  something this ADR's own API (`ModelMiddleware.WrapStream`, a streaming-token seam)
+  deliberately does not cover anywhere else. A middleware author's mental model
+  ("my middleware sees every model call the same way") would silently break depending on
+  which route served the request.
+
+**Conclusion:** the single `Client`-level seam is adopted as the ADR's sole mechanism.
+gollem's `core.WithAgentMiddleware`/interceptors are not layered in additionally. The
+pre-existing internal use of `core.RedactPII`/`core.AuditLog` inside
+`gollemGuardrailOptions` (ADR-0010) is untouched by this decision — it is a different,
+already-shipped feature (the built-in PII/audit guardrail on `Agent[T]` runs) operating at
+a different abstraction layer (`[]core.ModelMessage`, not `(system, prompt string)`). The
+worked example (`aisotropy/model_middleware_example_test.go`) demonstrates *bridging* into
+that existing library rather than reimplementing it: it adapts `core.RedactPII` into a
+`ModelMiddleware` via a small conversion shim, so an adopter who wants gollem's regex-based
+redaction at this seam can reuse it instead of writing their own.
 
 ## Consequences
 

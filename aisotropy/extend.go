@@ -64,6 +64,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/facts"
 	"github.com/Luum-Home/aisotropy/internal/gateway"
 	"github.com/Luum-Home/aisotropy/internal/guardrails"
+	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/routing"
 	"github.com/Luum-Home/aisotropy/internal/semantic"
@@ -277,6 +278,43 @@ const (
 	TierDedicated = routing.Dedicated
 )
 
+// ModelMiddleware is the ADR-0062 bounded model-middleware seam: implement it
+// to attach logging, caching, retry, prompt transformation, PII redaction, or
+// prompt A/B AROUND the model call — the safe, bounded counterpart to Vercel AI
+// SDK's wrapLanguageModel. Register an implementation with WithModelMiddleware.
+// Alias for the real internal/llm interface.
+//
+// Fixed shape:
+//
+//	WrapStream(ctx context.Context, system, prompt string, next StreamFunc) (<-chan Token, error)
+//
+// The seam is BOUNDED by construction, not by convention: the runtime installs
+// a registered middleware at a FIXED INNER position of the LLM client decorator
+// chain — wrapping only the raw provider client, strictly INSIDE (i.e. called
+// from underneath) the runtime-owned circuit breaker and cost/OTel decorators,
+// and entirely below the handler-level pre-spend quota gate (which runs before
+// the handler ever calls into the Client at all — see
+// internal/api/core.go/stream_core.go's quota checks). A middleware therefore
+// structurally CANNOT reorder or bypass either constitutional gate: it never
+// runs while the circuit breaker is open (the breaker fails fast before the
+// middleware chain is ever reached), and it has no path to the handler's quota
+// check regardless of what it does with `next`. See
+// docs/decisions/0062-bounded-model-middleware.md for the full invariant set
+// and docs/decisions/0062-bounded-model-middleware.md's implementation notes in
+// internal/llm/middleware.go for exactly which call paths inherit this seam
+// (every one of them: the non-streaming reflection route, the native-tool-call
+// agent route's text/answer branch, and the direct-streaming routes — they all
+// resolve to the same decorated Client). StreamFunc and Token are re-exported
+// below so ModelMiddleware is fully implementable from an external module — no
+// internal import required.
+type ModelMiddleware = llm.ModelMiddleware
+
+// StreamFunc is the `next` continuation a ModelMiddleware.WrapStream receives:
+// call it to run the next inner middleware (or, once the chain is exhausted,
+// the base provider client's own streaming call). Re-exported so an external
+// ModelMiddleware can name the parameter type without an internal import.
+type StreamFunc = llm.StreamFunc
+
 // VectorBackend is the SEALED-DRIVER seam for semantic (vector) persistence: the
 // Tier-2 open-core path that lets a third party bring their OWN vector store
 // (pgvector, Milvus, a managed ANN service, an in-memory ref) WITHOUT being
@@ -417,6 +455,13 @@ type appExt struct {
 	// pluginDirs are directories scanned for manifests (WithPluginDir); the
 	// AISOTROPY_PLUGIN_DIR env directory is appended to these at boot. Accumulates.
 	pluginDirs []string
+	// modelMiddleware are installed at the FIXED INNER slot of the LLM client
+	// decorator chain (ADR-0062), inside the runtime-owned circuit breaker/OTel
+	// decorators and below the handler-level quota gate — see WithModelMiddleware
+	// and internal/llm/middleware.go. Accumulates across WithModelMiddleware
+	// calls, applied in registration order, innermost-first. nil/empty => the
+	// base LLM client is used completely unwrapped (unchanged).
+	modelMiddleware []ModelMiddleware
 }
 
 // WithGuardrailCheck registers one or more custom output guardrail checks. Each
@@ -544,4 +589,26 @@ func WithPlugin(path string) Option {
 // AISOTROPY_PLUGIN_DIR empty) => no directory scan (unchanged).
 func WithPluginDir(dir string) Option {
 	return func(a *App) { a.ext.pluginDirs = append(a.ext.pluginDirs, dir) }
+}
+
+// WithModelMiddleware registers one user model-middleware (ADR-0062) at the
+// runtime's FIXED INNER decorator slot — see ModelMiddleware's doc for the full
+// safety argument. It accumulates: call it once per middleware, or call it
+// several times; registration order is innermost-first (the first-registered
+// middleware ends up closest to the base provider client, the last-registered
+// is outermost — the first one a caller's stream reaches). Unset => the base
+// LLM client is used completely unwrapped, byte-for-byte identical to a
+// pre-ADR-0062 runtime (invariant 5, backward-compatible).
+//
+// Applies uniformly to every LLM call path the runtime serves: the
+// non-streaming route (Register/App.Turn -> ChatCore -> chatReflect), the
+// native-tool-calling agent route's text/answer branch (RegisterAgent ->
+// RunToolAgent), and every direct-streaming route (RegisterStream/
+// RegisterAsk/RegisterAISDK/RegisterAGUI -> StreamCore) — they all resolve to
+// the same middleware-decorated Client (see aisotropy/app.go's startRuntime).
+// It does NOT wrap native tool-calling itself (ToolCaller.CallTools): that
+// capability passes through unmodified, exactly like the circuit breaker and
+// OTel decorators already preserve it — see ModelMiddleware's doc for why.
+func WithModelMiddleware(mw ModelMiddleware) Option {
+	return func(a *App) { a.ext.modelMiddleware = append(a.ext.modelMiddleware, mw) }
 }
