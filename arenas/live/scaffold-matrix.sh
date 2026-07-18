@@ -101,7 +101,8 @@ else
   mapfile -t dims < <(
     awk '/^## Modes/{flag=1; next} /^## /{flag=0} flag' "$readme" \
       | grep -oE '^\| `[a-z0-9_]+`' \
-      | sed -E 's/^\| `([a-z0-9_]+)`/\1/'
+      | sed -E 's/^\| `([a-z0-9_]+)`/\1/' \
+      | grep -vxE 'mode'
   )
   [[ ${#dims[@]} -gt 0 ]] || {
     echo "ERROR: no '## Modes' table with \`dim\` rows found in ${readme} — pass --dimensions explicitly" >&2
