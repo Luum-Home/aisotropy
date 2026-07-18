@@ -9,12 +9,16 @@ thing aisotropy treats as a first-class constitutional gate (see
 ``.claude/rules/constitutional-gates.md`` -> "Multi-tenant data isolation"):
 scoped memory keyed by ``(tenant_id, user_id, product_id[, session_id])``.
 
-LangGraph provides NO primitive for this. ``modes.scoped_store.ScopedStore``
-is a small hand-rolled on-disk SQLite key/value store the adapter itself
-built for this purpose — see that module's docstring for the compound-key
-construction and its honest caveats. This mode does not call the model at
-all: it is a pure test of whether the hand-rolled scope key isolates
-correctly, which is the property under test.
+LangGraph DOES provide a scoping primitive for this — ``BaseStore``
+(``InMemoryStore``/``PostgresStore``) namespace tuples,
+``store.put((tenant_id, user_id, product_id), key, value)`` — but it does
+NOT enforce that the caller supplies the right scope (namespaces are
+organizational, not access control). ``modes.scoped_store.ScopedStore`` is a
+small hand-rolled on-disk SQLite key/value store the adapter built to
+exercise that same namespacing directly and offline (no Postgres) — see that
+module's docstring for the compound-key construction and its honest caveats.
+This mode does not call the model at all: it is a pure test of whether the
+hand-rolled scope key isolates correctly, which is the property under test.
 
 Scenario (default, no ``"op"`` field, one adapter invocation):
   1. WRITE a fact under scope (tenant_id, user_id, product_id[, session_id]).

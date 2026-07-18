@@ -138,13 +138,21 @@ byte-for-byte the same behavior as the original adapter (single-shot tool captur
 #### Why go-client, not a Genkit plugin
 
 Genkit-Go `v1.10.0` ships retriever/indexer **interfaces** (`ai.Retriever`, `ai.Indexer`)
-but no first-party Qdrant **implementation** — unlike the JS SDK, which has
-`genkitx-qdrant`. Rather than hand-roll an `ai.Retriever` wrapper purely to satisfy the
-interface (which would add indirection without adding real capability), this adapter
-calls `github.com/qdrant/go-client` directly for the retrieval half and drives
-generation through a native Genkit flow — matching the task's explicit fallback
-instruction ("if Genkit-Go lacks a Qdrant plugin, use github.com/qdrant/go-client for
-retrieval ... but drive generation through Genkit").
+but no **first-party** (firebase/genkit) Qdrant **implementation** — the first-party plugin
+lives only in the JS SDK (`genkitx-qdrant`). A **third-party** Go plugin does exist, however:
+Qdrant's own [`qdrant/qdrant-genkit`](https://github.com/qdrant/qdrant-genkit) has a Go
+implementation (`go/qdrant/qdrant.go`) that wires `genkit.DefineIndexer` / `genkit.DefineRetriever`
+with a configurable `ContentKey`/`MetadataKey` — so "no Go Qdrant plugin" would be false; the
+accurate statement is "no *first-party* Go Qdrant plugin." This adapter still talks to
+`github.com/qdrant/go-client` directly rather than adopting that third-party plugin for two
+concrete reasons: (1) it is third-party (Qdrant-maintained, not firebase/genkit — a maintenance/
+version-drift risk against the pinned `v1.10.0`), and (2) its retriever `Config` requires an
+`ai.Embedder`, whereas this arena embeds through the shared e5 server directly (`embed_client.go`)
+to stay byte-for-byte comparable with the other adapters. Wrapping the raw search in an
+`ai.Retriever` purely to satisfy the interface would add indirection without adding real
+capability, so retrieval is driven directly and generation goes through a native Genkit flow —
+matching the task's explicit fallback instruction ("if Genkit-Go lacks a Qdrant plugin, use
+github.com/qdrant/go-client for retrieval ... but drive generation through Genkit").
 
 ### `tools` — real, executed, multi-step tool calls
 

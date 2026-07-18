@@ -16,24 +16,37 @@ API key, no network, no `.data/*.sqlite` file. See "Offline mode — `ARENA_STUB
 
 ## Multi-tenant honesty (read this before using `memory_scoped` / `isolation_leak`)
 
-**LangGraph provides no native multi-tenant memory isolation.** Its own checkpointer
-(`langgraph.checkpoint.*`, used by `memory` mode below) keys state by a single caller-supplied
-`thread_id` string — there is no tenant/user/product dimension anywhere in the framework, no
-key-prefix validation, and nothing that stops one thread's state from being read under a different
-thread id if the caller passes the wrong string.
+**LangGraph ships a multi-tenant scoping primitive, but does not ENFORCE it.** Two things are
+true and must not be conflated:
+
+- Its checkpointer (`langgraph.checkpoint.*`, used by `memory` mode below) keys state by a single
+  caller-supplied `thread_id` string — no tenant/user/product dimension there.
+- Its *long-term memory* store, `BaseStore` (`InMemoryStore`/`PostgresStore`), DOES have a
+  hierarchical scoping mechanism: **namespace tuples**. `store.put((tenant_id, user_id, product_id),
+  key, value)` / `.get(...)` / `.search(...)` (with optional semantic search since 2024-12-05 —
+  see [long-term memory docs](https://docs.langchain.com/oss/python/langchain/long-term-memory) and
+  [the semantic-search announcement](https://www.langchain.com/blog/semantic-search-for-langgraph-memory)).
+
+So the honest gap vs aisotropy is **"not enforced by construction," not "no multi-tenant concept
+exists."** LangGraph treats a namespace as *organizational structure, not access control*: nothing
+in the framework validates that the caller supplied the correct `tenant_id`, so passing the wrong
+tuple reads another tenant's data — the same trust model as `thread_id`.
 
 `memory_scoped` and `isolation_leak` (both new) hand-roll a compound scope key
 `(tenant_id, user_id, product_id[, session_id])` over a small adapter-owned SQLite store
-(`modes/scoped_store.py`) — LangGraph does nothing for you here. **The dev is responsible for
-getting this right; a keying mistake (forgetting `tenant_id`, using a collidable delimiter, reusing
-a store across scopes without checking) is a cross-tenant memory leak, not a framework bug.**
+(`modes/scoped_store.py`) — the same namespacing `BaseStore` would give you, done directly so the
+arena can exercise it offline (no Postgres). **The dev is responsible for getting the scope right on
+every read/write either way; a keying mistake (forgetting `tenant_id`, using a collidable delimiter,
+reusing a store across scopes without checking) is a cross-tenant memory leak, not a framework bug —
+and LangGraph's `BaseStore` would not have flagged it either.**
 
 Contrast: aisotropy enforces this by construction — `tenant_id` travels exclusively via
 `context.Context` injected once at the Huma handler boundary (never trusted from body/header/query),
 and Qdrant semantic-memory reads use payload filtering **during** the HNSW scan (not a post-filter,
 which is an isolation leak, not a fix) — see `.claude/rules/constitutional-gates.md` ->
-"Multi-tenant data isolation" in this repo. LangGraph gives an app developer the primitives to build
-that; it does not give them the guarantee.
+"Multi-tenant data isolation" in this repo. LangGraph gives an app developer the primitive
+(`BaseStore` namespaces) to scope by; it does not give them the *guarantee* that a missing scope
+column fails closed.
 
 ## Real infra wiring
 

@@ -47,8 +47,10 @@ type ragFlowOutput struct {
 // Rail corpus (arenas/live/_shared/corpus, collection "arena_rag"):
 //  1. embed the question with the e5 "query:" role (EMBED_URL);
 //  2. retrieve top-K passages from the real Qdrant collection (QDRANT_URL) via
-//     github.com/qdrant/go-client — Genkit-Go ships no first-party Qdrant
-//     plugin, so this half is driven directly (see qdrant_client.go);
+//     github.com/qdrant/go-client — Genkit-Go ships no FIRST-PARTY Qdrant
+//     plugin (a third-party Go one, qdrant/qdrant-genkit, exists but is not
+//     adopted here — see README.md), so this half is driven directly (see
+//     qdrant_client.go);
 //  3. run a genkit.DefineFlow that calls agnes ONLY with the retrieved
 //     passages as grounding context, instructed to answer only from that
 //     context or say it does not know — this is what lets the two trap

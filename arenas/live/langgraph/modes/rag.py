@@ -16,11 +16,20 @@ say you don't know" — this is appended regardless of any caller-supplied
 """
 from __future__ import annotations
 
+import os
 import time
 import traceback
 from typing import Any, TypedDict
 
 from . import common
+
+# Single arena tenant every corpus doc shares (matches the aisotropy adapter's
+# arenaTenant + populate-qdrant.py's ARENA_TENANT). Passed as a Qdrant payload
+# filter so this adapter does the SAME in-scan tenant filtering aisotropy pays
+# (filtered DURING the HNSW scan, not a post-filter). Single-tenant corpus =>
+# every point carries this identical value, so the filter returns the same doc
+# set an unfiltered top-k would — it only adds the real filtering work.
+ARENA_TENANT = os.environ.get("ARENA_TENANT", "arena")
 
 MODE = "rag"
 
@@ -125,8 +134,29 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
         else:
             vector_store = _build_vector_store(embed_url, qdrant_url, collection, api_key)
 
+            # Native qdrant-client Filter matched DURING the HNSW scan (query_filter,
+            # not a post-filter) on the flat `tenant_id` payload key populate-qdrant.py
+            # seeds — the same in-scan tenant filtering aisotropy's semantic tier does
+            # (arenas/live/aisotropy/rag_backends.go qdrantSearch). langchain-qdrant
+            # passes a models.Filter straight through as query_filter, so the key is the
+            # raw payload key `tenant_id`, NOT `metadata.tenant_id`. Single-tenant corpus
+            # => same result set, added work only.
+            from qdrant_client import models as qdrant_models
+
+            tenant = payload.get("tenant_id") or ARENA_TENANT
+            tenant_filter = qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="tenant_id",
+                        match=qdrant_models.MatchValue(value=tenant),
+                    )
+                ]
+            )
+
             def retrieve(state: RagState) -> dict[str, Any]:
-                hits = vector_store.similarity_search_with_score(state["question"], k=state["top_k"])
+                hits = vector_store.similarity_search_with_score(
+                    state["question"], k=state["top_k"], filter=tenant_filter
+                )
                 ids = [doc.metadata.get("_id") for doc, _ in hits]
                 # QdrantVectorStore only surfaces content_payload_key +
                 # metadata_payload_key (default "metadata", absent in our

@@ -3,13 +3,26 @@ arena modes (``memory_scoped``, ``isolation_leak``).
 
 LangGraph ships a checkpointer (``langgraph.checkpoint.*``, used by
 ``modes.memory``) keyed by a single caller-supplied ``thread_id`` string.
-There is no multi-tenant concept anywhere in LangGraph's memory primitives:
-no tenant/user/product dimension, no built-in isolation, no key-prefix
-validation, nothing that stops one thread's state from being read under
-another thread's id if the caller passes the wrong string. This module is
-what a LangGraph app developer would have to write themselves to get scoped,
-tenant-isolated memory — a small on-disk SQLite table keyed by a
-hand-assembled compound scope string.
+LangGraph also ships a *long-term memory* primitive — ``BaseStore``
+(``InMemoryStore``/``PostgresStore``) — whose **namespace tuples** ARE a
+hierarchical multi-tenant scoping mechanism:
+``store.put((tenant_id, user_id, product_id), key, value)`` /
+``store.get(...)`` / ``store.search(...)`` (with optional semantic search
+since 2024-12-05). So the honest claim is narrower than "LangGraph has no
+multi-tenant concept": the SCOPING PRIMITIVE EXISTS, but LangGraph does not
+*enforce* it — namespaces are treated as organizational structure, not
+access control, so nothing stops a caller from reading under the wrong
+``tenant_id`` if the app passes the wrong tuple (the same trust model as
+``thread_id``). Getting isolation right is still 100% the app's
+responsibility. See
+https://docs.langchain.com/oss/python/langchain/long-term-memory and
+https://www.langchain.com/blog/semantic-search-for-langgraph-memory .
+
+This module hand-rolls its OWN small on-disk SQLite store rather than using
+``BaseStore`` so the arena can exercise the store contract directly and
+offline (no Postgres); the point it demonstrates is the *discipline* — every
+read/write must carry the full scope — not that a LangGraph-native scoping
+primitive is missing.
 
 The scope key is built by joining ``tenant_id``/``user_id``/``product_id``
 (and optionally ``session_id``) with the ASCII Unit Separator (``0x1F``)
@@ -37,7 +50,11 @@ _SEP = "\x1f"  # ASCII Unit Separator — never realistic inside a real id.
 
 
 def scope_key(tenant_id: str, user_id: str, product_id: str, session_id: Optional[str] = None) -> str:
-    """Hand-rolled compound scope key. LangGraph has no equivalent primitive."""
+    """Hand-rolled compound scope key. LangGraph's own equivalent is a
+    ``BaseStore`` namespace tuple (``(tenant_id, user_id, product_id)``); this
+    module keys its own SQLite store the same way, but LangGraph does not
+    enforce that the caller supplies the right scope — that discipline is on
+    the app either way."""
     parts = [str(tenant_id), str(user_id), str(product_id)]
     if session_id:
         parts.append(str(session_id))

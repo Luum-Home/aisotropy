@@ -13,10 +13,13 @@ import (
 
 // searchQdrant runs a real ANN search against the "arena_rag" collection
 // (arenas/live/_shared/populate-qdrant.py) using github.com/qdrant/go-client
-// (Apache-2.0) over gRPC. Genkit-Go v1.10.0 ships no first-party Qdrant
-// retriever/indexer plugin, so this adapter talks to Qdrant directly — see
-// README.md "Why go-client, not a Genkit plugin" — while generation itself
-// still goes through a Genkit flow (rag.go).
+// (Apache-2.0) over gRPC. Genkit-Go v1.10.0 ships no FIRST-PARTY (firebase/
+// genkit) Qdrant retriever/indexer plugin; a third-party Go one does exist
+// (qdrant/qdrant-genkit, go/qdrant/qdrant.go) but is not adopted here (third-
+// party maintenance risk + it requires an ai.Embedder, while this arena
+// embeds via the shared e5 server directly). So this adapter talks to Qdrant
+// directly — see README.md "Why go-client, not a Genkit plugin" — while
+// generation itself still goes through a Genkit flow (rag.go).
 //
 // qdrantURL is the REST-shaped env value (QDRANT_URL, default
 // http://localhost:6333); go-client speaks gRPC, whose port is REST+1 by the
