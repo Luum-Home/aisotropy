@@ -1,5 +1,6 @@
-"""``observability`` mode — measures LangGraph/LangChain's NATIVE
-observability surface, honestly, against a real multi-op turn.
+"""``observability`` mode — measures LangGraph/LangChain's observability
+surface against a real multi-op turn, using the REAL open-source OTel
+auto-instrumentation the community already ships.
 
 This mode does **not** return the shared multi-mode envelope
 (``modes.common.envelope``) — it is a diagnostic/report mode, not a chat
@@ -8,34 +9,75 @@ into ``adapter.py``'s ``MODES`` dict like every other mode.
 
 What this proves, and how
 --------------------------
-LangGraph/LangChain ship **no OpenTelemetry exporter of their own**. There is
-no ``OTEL_*`` env var, no ``langgraph.otel`` module, and ``graph.invoke(...)``
-emits zero OTel spans out of the box — verified by grep against the
-installed ``langgraph``/``langchain-core`` packages in this arena's
-``.venv`` (no ``opentelemetry`` import anywhere in either package).
-
-What LangChain/LangGraph DO ship natively is the **callback system**
+LangGraph/LangChain ship **no OpenTelemetry exporter of their own** — no
+``OTEL_*`` env var, no ``langgraph.otel`` module, and ``graph.invoke(...)``
+emits zero OTel spans out of the box (verified by grep against the installed
+``langgraph``/``langchain-core`` packages: no ``opentelemetry`` import in
+either). What LangChain/LangGraph DO ship natively is the **callback system**
 (``langchain_core.callbacks.BaseCallbackHandler``): every chain, chat-model,
 and tool invocation inside a graph fires ``on_*_start``/``on_*_end`` (or
 ``on_*_error``) with a ``run_id``/``parent_run_id`` pair that already forms a
-proper execution tree (LangSmith and every third-party LangChain tracer
-integration is built on exactly this hook, nothing more privileged). This
-mode's ``_OTelBridgeHandler`` bridges that native callback stream to real
-``opentelemetry-sdk`` spans, held by an in-process ``InMemorySpanExporter``
-(``SimpleSpanProcessor`` exports synchronously on ``span.end()`` — no OTLP
-collector, no network hop, nothing leaves this process). This is this
-adapter's own ~80 lines of bridge code, not a third-party auto-instrumentation
-package — there was no MIT/BSD/Apache-licensed "LangChain -> OTel" package
-already installed in this arena, and writing the bridge directly keeps the
-dependency surface to the two official ``opentelemetry-python`` packages
-(both Apache-2.0, see README's "Dependencies and licenses").
+proper execution tree. **LangSmith** — LangChain's own hosted/native
+observability platform — is built on exactly this hook, and so is every
+third-party OTel integration; none of them get any more privileged access
+than an app developer gets by attaching their own ``BaseCallbackHandler``.
+
+The earlier version of this mode hand-rolled its own ~80-line
+callback-to-OTel bridge (``_OTelBridgeHandler``) and used that to argue
+LangGraph "needs custom OTel plumbing." That framing was misleading: a real
+developer does not write a bridge. They add one of several MIT/Apache-2.0
+**auto-instrumentation packages** that already do exactly this, in 2-3 lines,
+with zero changes to their own graph/agent code:
+
+- **OpenInference** — ``openinference-instrumentation-langchain``
+  (Apache-2.0, Arize AI). Used here. Same OpenInference family this repo's
+  ``arenas/live/llamaindex`` adapter already uses for its own
+  ``observability`` mode (``openinference-instrumentation-llama-index``) —
+  picked for consistency across arenas and because it is the OpenInference
+  family closest to the OTel GenAI semantic conventions
+  (``openinference.span.kind`` on every span; ``gen_ai.*``-shaped usage
+  attributes on LLM spans).
+- **OpenLLMetry** — ``opentelemetry-instrumentation-langchain`` (Apache-2.0,
+  Traceloop). A drop-in alternative with the same "instrument once, get
+  spans" shape; not installed here to keep one instrumentation family
+  active per run (mixing two auto-instrumentors patching the same
+  ``BaseCallbackManager.__init__`` seam is unnecessary for what this mode
+  measures and would muddy the span count).
+- **OpenLIT** — another OSS OTel-native LLM observability SDK with LangChain
+  auto-instrumentation support; same category, not installed for the same
+  reason as OpenLLMetry above.
+
+All three integrate the SAME way: monkey-patch (technically, ``wrapt``-wrap)
+``langchain_core.callbacks.BaseCallbackManager.__init__`` so every callback
+manager LangChain/LangGraph constructs automatically gets a tracer handler
+attached — **no ``callbacks=[...]`` argument, no custom handler class, no
+edit to the graph being tested.** That is the entire "how a dev adds OTel to
+LangGraph" story; this mode now tests exactly that story instead of a
+bespoke bridge.
+
+**Two honest, separate axes** (do not conflate them):
+
+1. **Native observability platform**: LangChain/LangGraph's own product for
+   this is **LangSmith** (hosted SaaS, a `.venv` dependency already pulled
+   in transitively — see README's dependency table — but never activated by
+   this adapter: no ``LANGCHAIN_TRACING_V2``/``LANGCHAIN_API_KEY`` is set,
+   so zero data leaves this process). That is a *product* answer, not an
+   OTel answer.
+2. **Measured OTel emission**: what THIS mode reports — real
+   ``opentelemetry-sdk`` spans, captured in-process (``InMemorySpanExporter``
+   + ``SimpleSpanProcessor``, synchronous export on ``span.end()``, no OTLP
+   collector, nothing leaves this process), produced by wiring one
+   community-maintained OSS auto-instrumentation package
+   (``LangChainInstrumentor().instrument(tracer_provider=...)``) around a
+   real multi-op turn. ``otel_supported`` reflects axis (2) — whether that
+   wiring produced real spans for a real turn — not axis (1).
 
 The representative turn instrumented here is the same real ReAct tool-use
 loop as ``modes/tools.py`` (agent decides to call ``calculate`` -> the tool
 genuinely executes -> agent answers from the real result) — a "tools turn"
 per this task's brief, i.e. multiple real ops in one turn: at least two real
-``ChatOpenAI`` calls plus one real tool execution, each wrapped in its own
-LangChain callback pair and therefore its own OTel span.
+``ChatOpenAI`` calls plus one real tool execution, each producing its own
+OTel span through OpenInference's instrumentation.
 """
 from __future__ import annotations
 
@@ -46,7 +88,6 @@ import operator
 import time
 import traceback
 from typing import Any
-from uuid import UUID
 
 from . import common
 
@@ -99,144 +140,6 @@ class _SafeLogCapture(logging.Handler):
         for logger in self._attached:
             logger.removeHandler(self)
             logger.setLevel(self._prev_level)
-
-
-def _infer_name(serialized: dict[str, Any] | None, kwargs: dict[str, Any], fallback: str) -> str:
-    name = kwargs.get("name")
-    if isinstance(name, str) and name:
-        return name
-    if serialized:
-        name = serialized.get("name")
-        if isinstance(name, str) and name:
-            return name
-        id_path = serialized.get("id")
-        if isinstance(id_path, list) and id_path:
-            return str(id_path[-1])
-    return fallback
-
-
-class _OTelBridgeHandler:
-    """LangChain callback handler that bridges run_id/parent_run_id pairs
-    to real opentelemetry-sdk spans on a private (non-global) TracerProvider.
-
-    Subclasses ``BaseCallbackHandler`` lazily (import deferred so this
-    module has no hard opentelemetry/langchain import at module load time,
-    matching the rest of this adapter's "import inside run()" convention).
-    """
-
-    def __init__(self, tracer: Any) -> None:
-        self._tracer = tracer
-        self._spans: dict[UUID, Any] = {}
-        self._starts: dict[UUID, float] = {}
-
-    # -- internal helpers -------------------------------------------------
-    def _start(self, run_id: UUID, parent_run_id: UUID | None, name: str, kind: Any, attributes: dict[str, Any] | None = None) -> None:
-        from opentelemetry import trace as trace_api
-
-        parent_span = self._spans.get(parent_run_id) if parent_run_id else None
-        ctx = trace_api.set_span_in_context(parent_span) if parent_span is not None else None
-        span = self._tracer.start_span(name, context=ctx, kind=kind, attributes=attributes or {})
-        self._spans[run_id] = span
-        self._starts[run_id] = time.monotonic()
-
-    def _end(self, run_id: UUID, attributes: dict[str, Any] | None = None, error: BaseException | None = None) -> None:
-        span = self._spans.pop(run_id, None)
-        self._starts.pop(run_id, None)
-        if span is None:
-            return
-        if attributes:
-            for k, v in attributes.items():
-                try:
-                    span.set_attribute(k, v)
-                except Exception:  # pragma: no cover - defensive
-                    pass
-        if error is not None:
-            span.set_attribute("error", True)
-            span.set_attribute("error.type", type(error).__name__)
-        span.end()
-
-    def open_span_count(self) -> int:
-        return len(self._spans)
-
-    def close_dangling(self) -> None:
-        """Force-close any span whose matching *_end callback never fired.
-
-        Recorded as a diagnostic, not silently discarded — see the ``notes``
-        field in the final report for whether this ever triggers.
-        """
-        for run_id in list(self._spans):
-            self._end(run_id, attributes={"force_closed": True})
-
-    # -- LangChain callback surface ---------------------------------------
-    def on_chain_start(self, serialized, inputs, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
-        from opentelemetry.trace import SpanKind
-
-        name = _infer_name(serialized, kwargs, "chain")
-        self._start(run_id, parent_run_id, f"chain.{name}", SpanKind.INTERNAL)
-
-    def on_chain_end(self, outputs, *, run_id, parent_run_id=None, **kwargs):
-        self._end(run_id)
-
-    def on_chain_error(self, error, *, run_id, parent_run_id=None, **kwargs):
-        self._end(run_id, error=error)
-
-    def on_chat_model_start(self, serialized, messages, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
-        from opentelemetry.trace import SpanKind
-
-        name = _infer_name(serialized, kwargs, "ChatModel")
-        self._start(run_id, parent_run_id, f"llm.{name}", SpanKind.CLIENT)
-
-    def on_llm_start(self, serialized, prompts, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
-        from opentelemetry.trace import SpanKind
-
-        name = _infer_name(serialized, kwargs, "LLM")
-        self._start(run_id, parent_run_id, f"llm.{name}", SpanKind.CLIENT)
-
-    def on_llm_end(self, response, *, run_id, parent_run_id=None, **kwargs):
-        attrs: dict[str, Any] = {}
-        try:
-            generations = getattr(response, "generations", None) or []
-            if generations and generations[0]:
-                msg = getattr(generations[0][0], "message", None)
-                if msg is not None:
-                    inp, out = common.extract_usage(msg)
-                    if inp >= 0:
-                        attrs["gen_ai.usage.input_tokens"] = inp
-                    if out >= 0:
-                        attrs["gen_ai.usage.output_tokens"] = out
-        except Exception:  # pragma: no cover - defensive
-            pass
-        self._end(run_id, attributes=attrs)
-
-    def on_llm_error(self, error, *, run_id, parent_run_id=None, tags=None, **kwargs):
-        self._end(run_id, error=error)
-
-    def on_tool_start(self, serialized, input_str, *, run_id, parent_run_id=None, tags=None, metadata=None, inputs=None, **kwargs):
-        from opentelemetry.trace import SpanKind
-
-        name = _infer_name(serialized, kwargs, "tool")
-        self._start(run_id, parent_run_id, f"tool.{name}", SpanKind.INTERNAL, attributes={"tool.input": str(input_str)[:200]})
-
-    def on_tool_end(self, output, *, run_id, parent_run_id=None, **kwargs):
-        self._end(run_id, attributes={"tool.output": str(output)[:200]})
-
-    def on_tool_error(self, error, *, run_id, parent_run_id=None, **kwargs):
-        self._end(run_id, error=error)
-
-
-def _make_handler_class():
-    """Builds the concrete BaseCallbackHandler subclass at call time.
-
-    Deferred so importing this module never requires langchain_core to be
-    installed unless ``observability`` mode is actually invoked (matches
-    every other mode's lazy-import convention in this adapter).
-    """
-    from langchain_core.callbacks import BaseCallbackHandler
-
-    class OTelBridgeHandler(_OTelBridgeHandler, BaseCallbackHandler):
-        pass
-
-    return OTelBridgeHandler
 
 
 # -- the real tool for the representative "tools" turn ---------------------
@@ -322,6 +225,7 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
         from langchain_openai import ChatOpenAI
         from langgraph.graph import END, START, MessagesState, StateGraph
         from langgraph.prebuilt import ToolNode, tools_condition
+        from openinference.instrumentation.langchain import LangChainInstrumentor
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -347,14 +251,19 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
         default_expr = "(482 * 17) + 391"
         messages = [HumanMessage(content=f"Use the calculate tool to compute {default_expr}, then state the result plainly.")]
 
-    # --- private (non-global) OTel pipeline, in-process only --------------
+    # --- REAL OSS OTel auto-instrumentation, in-process only ---------------
+    # This IS the whole "add OTel to LangGraph" story: an in-process
+    # TracerProvider + InMemorySpanExporter (no OTLP collector, nothing
+    # leaves this process), then ONE call — LangChainInstrumentor().instrument
+    # (tracer_provider=...) — from the community-maintained, Apache-2.0
+    # `openinference-instrumentation-langchain` package. No custom handler
+    # class, no `callbacks=[...]` argument on graph.invoke() below, and zero
+    # changes to the graph/agent code being tested (see module docstring).
     exporter = InMemorySpanExporter()
     provider = TracerProvider(resource=Resource.create({"service.name": "aisotropy-arena-langgraph"}))
     provider.add_span_processor(SimpleSpanProcessor(exporter))  # synchronous export on span.end()
-    tracer = provider.get_tracer("aisotropy.arenas.live.langgraph.observability")
-
-    HandlerClass = _make_handler_class()
-    otel_handler = HandlerClass(tracer)
+    instrumentor = LangChainInstrumentor()
+    instrumentor.instrument(tracer_provider=provider)  # <- the 1-line "add OTel" step
 
     try:
         calculate = _make_calculate_tool()
@@ -375,13 +284,15 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
         with _SafeLogCapture() as log_capture:
             wall_start = time.monotonic()
             graph.invoke(
+                # No `callbacks=[...]` here — unlike the old hand-rolled
+                # bridge, OpenInference's instrumentor patches
+                # langchain_core.callbacks.BaseCallbackManager.__init__
+                # itself, so every callback manager LangGraph constructs for
+                # this invocation already carries the OTel tracer.
                 {"messages": messages},
-                config={"recursion_limit": 12, "callbacks": [otel_handler]},
+                config={"recursion_limit": 12},
             )
             wall_ms = int((time.monotonic() - wall_start) * 1000)
-
-        dangling_before_close = otel_handler.open_span_count()
-        otel_handler.close_dangling()  # ensures export even if some *_end never fired
 
         finished = list(exporter.get_finished_spans())
         # Order by start time so span_names reflects real execution order.
@@ -389,6 +300,7 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
 
         span_names: list[str] = []
         span_timings_ms: dict[str, float] = {}
+        span_kinds: set[str] = set()
         seen_counts: dict[str, int] = {}
         for span in finished:
             name = span.name
@@ -397,6 +309,9 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
             seen_counts[name] = seen_counts.get(name, 0) + 1
             key = name if seen_counts[name] == 1 else f"{name}#{seen_counts[name]}"
             span_timings_ms[key] = duration_ms
+            kind = span.attributes.get("openinference.span.kind") if span.attributes else None
+            if kind:
+                span_kinds.add(str(kind))
 
         log_records = log_capture.records
         logs_structured = False
@@ -408,21 +323,43 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
                 logs_structured = False
         log_sample = log_records[0] if log_records else ""
 
+        otel_supported = len(finished) > 0
+
         notes = (
-            "LangGraph/LangChain emit NO OpenTelemetry spans natively — no opentelemetry import "
-            "anywhere in the installed langgraph/langchain-core packages, no OTEL_* env var read, "
-            "graph.invoke() alone produces zero spans. What IS native is the LangChain callback "
-            "system (on_chain_start/end, on_chat_model_start/on_llm_end, on_tool_start/end with "
-            "run_id/parent_run_id forming a real execution tree) — this is the same hook LangSmith "
-            "and every third-party tracer integration builds on. This mode bridges that native "
-            "callback stream to real opentelemetry-sdk spans itself (this adapter's own "
-            f"~80-line _OTelBridgeHandler in modes/observability.py), captured by an "
-            "InMemorySpanExporter (SimpleSpanProcessor exports synchronously on span.end(), "
-            "nothing leaves this process, no OTLP collector). "
-            f"{span_count_note(len(finished), dangling_before_close)} "
-            f"Wall time for the whole turn (graph.invoke): {wall_ms}ms across "
-            f"{sum(1 for n in span_names if n.startswith('llm.'))} real LLM call(s) and "
-            f"{sum(1 for n in span_names if n.startswith('tool.'))} real tool execution(s). "
+            "OTel here comes from a REAL open-source auto-instrumentation package — "
+            "openinference-instrumentation-langchain (Apache-2.0, Arize AI OpenInference family; "
+            "the SAME family this repo's arenas/live/llamaindex adapter uses for its own "
+            "observability mode) — wired in ONE line, "
+            "LangChainInstrumentor().instrument(tracer_provider=<in-process TracerProvider + "
+            "InMemorySpanExporter>), with ZERO changes to the graph/agent code under test: no "
+            "custom callback handler, no callbacks=[...] argument on graph.invoke(). This is NOT "
+            "this adapter's own bespoke bridge (an earlier version of this mode hand-rolled an "
+            "~80-line callback-to-OTel bridge; that framing overstated how hard OTel is to add to "
+            "LangGraph and has been replaced by this real OSS package). Mechanism: LangGraph/"
+            "LangChain still ship no OpenTelemetry exporter of their own (no opentelemetry import "
+            "in the installed langgraph/langchain-core packages, no OTEL_* env var read) — "
+            "OpenInference's instrumentor wraps langchain_core.callbacks.BaseCallbackManager."
+            "__init__ so every callback manager LangChain/LangGraph constructs automatically gets "
+            "an OpenInference tracer handler attached, translating the SAME native on_chain_start/"
+            "end, on_chat_model_start/on_llm_end, on_tool_start/end callback stream (the exact "
+            "hook LangSmith and every third-party tracer is built on) into real opentelemetry-sdk "
+            "spans. Alternatives in the same OSS category, not installed here (one instrumentor "
+            "family is enough to measure this and avoids double-patching the same callback-manager "
+            "seam): OpenLLMetry (opentelemetry-instrumentation-langchain, Traceloop) and OpenLIT — "
+            "both integrate the same way (wrap the callback-manager construction path), so the "
+            "span shape reported below is representative of the category, not one vendor's quirk. "
+            f"Captured directly off the real spans, not assumed: span kind(s) seen via the "
+            f"'openinference.span.kind' attribute = {sorted(span_kinds) or '(none found)'}. "
+            f"This turn produced {len(finished)} real span(s) via that instrumentation for one "
+            f"tools-style turn. Wall time for the whole turn (graph.invoke): {wall_ms}ms across "
+            f"{sum(1 for n in span_names if 'ChatOpenAI' in n)} real LLM call(s) and "
+            f"{sum(1 for n in span_names if n == 'calculate')} real tool execution(s). "
+            "Two honest, separate axes (do not conflate): (1) LangChain/LangGraph's own NATIVE "
+            "observability PLATFORM is LangSmith — a hosted SaaS product, never activated here "
+            "(no LANGCHAIN_TRACING_V2/LANGCHAIN_API_KEY set, zero data leaves this process); (2) "
+            "this mode measures OTel EMISSION — whether wiring a real OSS auto-instrumentor around "
+            "a real turn produces real spans, which is exactly what otel_supported/span_count "
+            f"report above (otel_supported={otel_supported}). "
             "Logging: LangChain/LangGraph do not use Python's stdlib logging module for tracing — "
             f"{len(log_records)} record(s) observed at INFO+ across langchain*/langgraph* loggers "
             "during this turn (openai/httpx loggers deliberately excluded from capture — they can "
@@ -430,12 +367,12 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
             "the API key). "
             + ("The one captured sample is plain text, not JSON — LangChain's own log lines are "
                "unstructured strings, not structured records." if log_records else
-               "No LangChain/LangGraph log records were emitted at all for this turn; the callback "
-               "stream above is the only native, observable instrumentation surface.")
+               "No LangChain/LangGraph log records were emitted at all for this turn; the OTel "
+               "spans above are the primary observable instrumentation surface for this turn.")
         )
 
         return _report(
-            otel_supported=False,
+            otel_supported=otel_supported,
             span_count=len(finished),
             span_names=span_names,
             span_timings_ms=span_timings_ms,
@@ -451,15 +388,5 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
             error=f"{type(exc).__name__}: {exc}",
         )
     finally:
+        instrumentor.uninstrument()
         provider.shutdown()
-
-
-def span_count_note(span_count: int, dangling_before_close: int) -> str:
-    base = f"This turn produced {span_count} real spans through that bridge."
-    if dangling_before_close:
-        base += (
-            f" {dangling_before_close} span(s) had no matching *_end callback fire before "
-            "graph.invoke() returned and were force-closed for export (flagged via the "
-            "'force_closed' span attribute, not silently dropped)."
-        )
-    return base

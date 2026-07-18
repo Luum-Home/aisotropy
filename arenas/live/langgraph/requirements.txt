@@ -16,7 +16,9 @@ qdrant-client==1.18.0
 # crash_recovery mode reuses this same package against a separate on-disk
 # file to prove survival of a hard kill -9, not just a clean process exit.
 langgraph-checkpoint-sqlite==3.1.0
-# observability mode: bridges LangChain's native callback stream to real
-# in-process OpenTelemetry spans (InMemorySpanExporter, no OTLP collector).
+# observability mode: real OSS OTel auto-instrumentation (OpenInference,
+# Apache-2.0) wired around a real LangGraph turn, exported in-process
+# (InMemorySpanExporter, no OTLP collector) -- not a hand-rolled bridge.
 opentelemetry-api==1.44.0
 opentelemetry-sdk==1.44.0
+openinference-instrumentation-langchain==0.1.67

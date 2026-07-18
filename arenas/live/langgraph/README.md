@@ -298,7 +298,7 @@ Real LLM calls: exactly 1 (the cross-tenant turn). `leak_detected` is `true` if 
 store-level cross-tenant recall returned the secret OR the model's reply contains the secret
 literal — `false` means isolation held at both layers.
 
-### `observability` (measures LangGraph's native observability surface — NOT the shared envelope)
+### `observability` (measures REAL OSS OTel auto-instrumentation around LangGraph — NOT the shared envelope)
 
 **This mode returns a different JSON shape than every other mode** — it is a diagnostic/report
 mode, not a chat turn, so it does not use `modes.common.envelope()`:
@@ -318,33 +318,66 @@ mode, not a chat turn, so it does not use `modes.common.envelope()`:
 }
 ```
 
-**The honest finding: LangGraph/LangChain emit no OpenTelemetry spans natively.** There is no
-`opentelemetry` import anywhere in the installed `langgraph`/`langchain-core` packages, no `OTEL_*`
-env var read anywhere in either, and `graph.invoke(...)` alone produces zero spans — verified by
-grep against this arena's own `.venv`, not assumed from documentation. `otel_supported` is
-therefore always `false`.
+**This mode was rebuilt to stop hand-rolling a callback→OTel bridge and instead use the REAL
+open-source auto-instrumentation the community already ships.** An earlier version of this mode
+wrote its own ~80-line `_OTelBridgeHandler` (a `BaseCallbackHandler` translating LangChain's
+`on_*_start`/`on_*_end` callbacks into `opentelemetry-sdk` spans by hand) and used that to argue
+LangGraph "needs custom OTel plumbing." That framing overstated the effort: a real developer adding
+OTel to LangChain/LangGraph writes **2-3 lines**, not a bridge class.
 
-What LangChain/LangGraph DO provide natively is the **callback system**
-(`langchain_core.callbacks.BaseCallbackHandler`): every chain, chat-model, and tool invocation
-inside a graph fires `on_chain_start/end`, `on_chat_model_start`/`on_llm_end`,
+**LangGraph/LangChain still ship no OpenTelemetry exporter of their own** — no `opentelemetry`
+import anywhere in the installed `langgraph`/`langchain-core` packages, no `OTEL_*` env var read
+anywhere in either, and `graph.invoke(...)` alone produces zero spans (verified by grep against
+this arena's own `.venv`, not assumed). What LangChain/LangGraph DO provide natively is the
+**callback system** (`langchain_core.callbacks.BaseCallbackHandler`): every chain, chat-model, and
+tool invocation inside a graph fires `on_chain_start/end`, `on_chat_model_start`/`on_llm_end`,
 `on_tool_start/end` (or the matching `*_error` variant) with a `run_id`/`parent_run_id` pair that
-already forms a real execution tree — this is the exact same hook LangSmith and every third-party
-LangChain tracer integration is built on, nothing more privileged is available.
+already forms a real execution tree — this is the exact same hook **LangSmith** (LangChain's own
+native, hosted observability platform) and every third-party LangChain tracer integration is built
+on; nothing more privileged is available to any of them.
 
-`modes/observability.py`'s `_OTelBridgeHandler` (this adapter's own ~80 lines, not a third-party
-auto-instrumentation package) bridges that native callback stream to real `opentelemetry-sdk`
-spans on a **private, non-global** `TracerProvider`, exported by an in-process
-`InMemorySpanExporter` via a `SimpleSpanProcessor` (synchronous export on `span.end()`) — no OTLP
-collector, no network hop, nothing leaves the process. Per-span attributes capture real provider
-token usage (`gen_ai.usage.input_tokens`/`output_tokens`) on LLM spans and tool input/output on
-tool spans.
+`modes/observability.py` now wires **OpenInference** (Apache-2.0, Arize AI —
+`openinference-instrumentation-langchain`, the same OpenInference family this repo's
+`arenas/live/llamaindex` adapter already uses for its own `observability` mode), the real OSS
+package that does exactly this translation:
+
+```python
+from openinference.instrumentation.langchain import LangChainInstrumentor
+LangChainInstrumentor().instrument(tracer_provider=provider)  # provider = in-process TracerProvider + InMemorySpanExporter
+```
+
+That is the **entire** "add OTel" step — **1 line** to instrument, 1 line to build the
+`TracerProvider`, 1 line to attach the `InMemorySpanExporter` via a `SimpleSpanProcessor`
+(synchronous export on `span.end()`, no OTLP collector, no network hop, nothing leaves the
+process). Zero changes to the graph/agent code under test: no custom handler class, and no
+`callbacks=[...]` argument on `graph.invoke()` — OpenInference's instrumentor wraps
+`langchain_core.callbacks.BaseCallbackManager.__init__` so every callback manager LangChain/
+LangGraph constructs automatically carries the OTel tracer. Per-span attributes include
+`openinference.span.kind` (`AGENT`/`CHAIN`/`LLM`/`TOOL`, OpenInference's semantic-convention
+layer, close to OTel GenAI conventions) and real provider token usage on LLM spans.
+
+**Alternatives in the same OSS category** (documented, not installed — one instrumentor family is
+enough to measure this and avoids double-patching the same callback-manager seam):
+- **OpenLLMetry** — `opentelemetry-instrumentation-langchain` (Apache-2.0, Traceloop). Same
+  integration shape: wraps the callback-manager construction path, one `.instrument()` call.
+- **OpenLIT** — another OSS, OTel-native LLM observability SDK with LangChain auto-instrumentation
+  support, same category.
+
+**Two honest, separate axes — do not conflate them:**
+1. **Native observability platform**: LangChain/LangGraph's own product answer is **LangSmith**
+   (hosted SaaS; already a transitive `.venv` dependency per the license table below, but never
+   activated by this adapter — no `LANGCHAIN_TRACING_V2`/`LANGCHAIN_API_KEY` is set, so zero data
+   leaves this process).
+2. **Measured OTel emission**: what this mode actually reports — real spans produced by wiring a
+   real OSS auto-instrumentation package around a real turn, in-process, no collector. `otel_supported`
+   reflects axis (2) only (`true` when the instrumented turn produced at least one real span).
 
 The representative turn instrumented is the same real ReAct `tools`-mode loop
 (`modes/tools.py`'s `calculate` tool, duplicated inline here to avoid importing another mode's
 private helpers): agent decides to call `calculate` -> the tool genuinely executes -> agent
 answers from the real result — at least two real `ChatOpenAI` calls plus one real tool execution,
-each wrapped in its own bridged span. If the request has no `"messages"`, a default arithmetic
-prompt is used so the mode is runnable standalone.
+each producing its own span through OpenInference's instrumentation. If the request has no
+`"messages"`, a default arithmetic prompt is used so the mode is runnable standalone.
 
 **Logging**: `logs_structured` and `log_sample` come from a `_SafeLogCapture` that attaches a
 `logging.Handler` (INFO+) to `langchain`/`langgraph`-prefixed loggers **only** — `openai`/`httpx`
@@ -352,8 +385,8 @@ loggers are deliberately excluded from capture (they can log request headers, in
 `Authorization`, at `DEBUG`) and any captured record containing a credential-shaped marker
 (`authorization`, `bearer `, `api_key`) is dropped outright, never surfaced. In the verified run
 below, zero LangChain/LangGraph log records were emitted at all for the turn — LangChain does not
-route its own diagnostics through Python's stdlib `logging` module by default; the callback stream
-above is the only native, observable instrumentation surface.
+route its own diagnostics through Python's stdlib `logging` module by default; the OTel spans
+above are the primary observable instrumentation surface for this turn.
 
 **Contract addition**: `"messages"` is optional for this mode (falls back to a canned arithmetic
 prompt); every other field is the same request shape as every other mode.
@@ -675,24 +708,40 @@ prompt built for the real agnes call never contained the secret, and the model's
 not know.") does not contain it either — isolation held at both the store layer and the model
 layer, checked independently.
 
-### `observability` — real ReAct turn instrumented via the OTel bridge (2 real agnes calls)
+### `observability` — real ReAct turn instrumented via real OSS OpenInference auto-instrumentation (2026-07-17 rebuild, 2 real agnes calls)
+
+Rebuilt to replace the hand-rolled `_OTelBridgeHandler` callback→OTel bridge with the real,
+community-maintained, Apache-2.0 `openinference-instrumentation-langchain` package (see mode
+docs above). Verified live against the same real ReAct `tools`-style turn:
 
 ```json
-{"framework": "langgraph", "mode": "observability", "otel_supported": false, "span_count": 9, "span_names": ["chain.LangGraph", "chain.agent", "llm.ChatOpenAI", "chain.tools_condition", "chain.tools", "tool.calculate", "chain.agent", "llm.ChatOpenAI", "chain.tools_condition"], "span_timings_ms": {"chain.LangGraph": 12947.852, "chain.agent": 6521.355, "llm.ChatOpenAI": 6518.19, "chain.tools_condition": 0.047, "chain.tools": 1.137, "tool.calculate": 0.44, "chain.agent#2": 6421.606, "llm.ChatOpenAI#2": 6419.649, "chain.tools_condition#2": 0.086}, "logs_structured": false, "log_sample": "", "error": ""}
+{"framework": "langgraph", "mode": "observability", "otel_supported": true, "span_count": 9, "span_names": ["LangGraph", "agent", "ChatOpenAI", "tools_condition", "tools", "calculate", "agent", "ChatOpenAI", "tools_condition"], "span_timings_ms": {"LangGraph": 13945.148, "agent": 7172.862, "ChatOpenAI": 7170.95, "tools_condition": 0.293, "tools": 4.127, "calculate": 0.83, "agent#2": 6764.224, "ChatOpenAI#2": 6762.024, "tools_condition#2": 0.361}, "logs_structured": false, "log_sample": "", "error": ""}
 ```
 
-(`notes` field omitted above for brevity — full text explains the findings below.) 9 real spans
-were emitted through the bridge for one `tools`-style turn: 1 root `chain.LangGraph` span, 2
-`chain.agent` rounds, 2 real `llm.ChatOpenAI` calls (the decide-to-call-tool call and the
-answer-from-result call), 2 `chain.tools_condition` routing decisions, 1 `chain.tools` node, and 1
-real `tool.calculate` execution — matching `modes/tools.py`'s documented "at least two real model
-calls" shape exactly. Per-span timings show the real cost breakdown: the two real network calls to
-agnes dominate (6518ms and 6420ms) while the routing/tool-node spans are sub-millisecond
-(`chain.tools_condition`: 0.05–0.09ms, `tool.calculate`: 0.44ms — genuinely local computation).
+(`notes` field omitted above for brevity — full text is in the mode docs above and matches the
+live run verbatim.) `otel_supported=true` — real spans were emitted through OpenInference's
+`LangChainInstrumentor` for one `tools`-style turn: 1 root `LangGraph` span, 2 `agent` rounds, 2
+real `ChatOpenAI` calls (the decide-to-call-tool call and the answer-from-result call), 2
+`tools_condition` routing decisions, 1 `tools` node, and 1 real `calculate` tool execution —
+matching `modes/tools.py`'s documented "at least two real model calls" shape exactly. Per-span
+`openinference.span.kind` attributes captured directly off the real spans: `['AGENT', 'CHAIN',
+'LLM', 'TOOL']`. Per-span timings show the real cost breakdown: the two real network calls to
+agnes dominate (7171ms and 6762ms) while the routing/tool-node spans are sub-millisecond
+(`tools_condition`: 0.29–0.36ms, `calculate`: 0.83ms — genuinely local computation).
 `logs_structured=false` and `log_sample=""`: zero LangChain/LangGraph log records were emitted at
 INFO+ for this turn — confirms LangChain does not route its own diagnostics through Python's
 stdlib `logging` module by default. The API key literal was verified to appear zero times in this
-run's stdout or stderr (same `grep`-based proof pattern as `test-env.sh`'s assertion (c)).
+run's stdout or stderr (same `grep`-based proof pattern as `test-env.sh`'s assertion (c)); a
+`qa`-mode regression call was also re-verified passing in the same session (1 more real agnes
+call, 3 total for this rebuild).
+
+`openinference-instrumentation-langchain==0.1.67` installed clean into this arena's `.venv`
+(Python 3.14.6) with no dependency conflicts against the existing pinned stack (`pip install -r
+requirements.txt` after the addition resolves fully via "Requirement already satisfied" for every
+transitive package). License, verified via `pip show` against the installed package (not
+assumed): **`License-Expression: Apache-2.0`** — see the updated dependency tables below for the
+four new packages this pulls in (`openinference-instrumentation`, `openinference-semantic-
+conventions`, `opentelemetry-instrumentation`, all Apache-2.0; `wrapt`, BSD-2-Clause).
 
 ### `test-isolation.sh` (full output)
 
@@ -762,6 +811,7 @@ is a separate project (not LangChain, Inc.). Full ecosystem map + rationale:
 | `langgraph-checkpoint-sqlite` | 3.1.0 | MIT | `memory` |
 | `opentelemetry-api` | 1.44.0 | Apache-2.0 | `observability` |
 | `opentelemetry-sdk` | 1.44.0 | Apache-2.0 | `observability` |
+| `openinference-instrumentation-langchain` | 0.1.67 | Apache-2.0 | `observability` — real OSS OTel auto-instrumentation (replaces the earlier hand-rolled bridge) |
 
 ### New transitive dependencies (pulled in by the three new direct deps above)
 
@@ -778,6 +828,10 @@ is a separate project (not LangChain, Inc.). Full ecosystem map + rationale:
 | `protobuf` | 7.35.1 | BSD-3-Clause | grpcio |
 | `sqlite-vec` | 0.1.9 | MIT License, Apache License 2.0 (dual) | langgraph-checkpoint-sqlite, unused by this adapter's own code |
 | `opentelemetry-semantic-conventions` | 0.65b0 | Apache-2.0 | pulled in by `opentelemetry-sdk`; not directly imported by this adapter's code |
+| `openinference-instrumentation` | 0.1.54 | Apache-2.0 | pulled in by `openinference-instrumentation-langchain` |
+| `openinference-semantic-conventions` | 0.1.30 | Apache-2.0 | pulled in by `openinference-instrumentation-langchain`; defines `openinference.span.kind` and related attribute keys |
+| `opentelemetry-instrumentation` | 0.65b0 | Apache-2.0 | pulled in by `openinference-instrumentation-langchain` (OTel's own base instrumentor class) |
+| `wrapt` | 2.2.2 | BSD-2-Clause | pulled in by `openinference-instrumentation-langchain`; used to wrap `BaseCallbackManager.__init__` |
 
 ### Transitive dependencies already present in the original single-mode adapter (unchanged)
 

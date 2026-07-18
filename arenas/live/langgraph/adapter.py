@@ -30,11 +30,12 @@ Modes (dispatched by the request's ``"mode"`` field, default ``"qa"``):
     isolation_leak - a REAL agnes turn answered as a different tenant than
                       the one that wrote a secret fact, to prove the secret
                       never reaches that tenant's prompt.
-    observability  - bridges LangChain's native callback stream to real
-                      in-process OpenTelemetry spans (InMemorySpanExporter,
-                      no external collector) over a real ReAct tools turn,
-                      and reports what LangGraph's native surface emits.
-                      See modes/observability.py.
+    observability  - wires the real OSS OpenInference auto-instrumentation
+                      (openinference-instrumentation-langchain, Apache-2.0)
+                      around a real ReAct tools turn, exporting to an
+                      in-process OTel span exporter (InMemorySpanExporter,
+                      no external collector), and reports the real spans it
+                      produces. See modes/observability.py.
 
 Security: never print, log, or persist the API key. All diagnostics go to
 stderr; stdout carries exactly one JSON object and nothing else.
