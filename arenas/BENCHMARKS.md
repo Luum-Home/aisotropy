@@ -154,6 +154,11 @@ a directional check (richer memory ⇒ larger lift). A representative run:
 
 ## Class 3 — Framework footprint (REAL, run-verified ▶)
 
+> **Deeper analysis:** why aisotropy's image is larger than the bare-Go control (ADK-Go) — and why
+> that is expected/good, not a weakness — is worked through in
+> [`docs/research/footprint-aisotropy-vs-adk-go-2026-07-17.md`](../docs/research/footprint-aisotropy-vs-adk-go-2026-07-17.md)
+> (the OS-tax framing, the lazy/opt-in tier mitigations, and the pitch guidance).
+
 The one cross-framework number that **is** honestly executable offline: deployment **footprint**.
 Image size, idle RSS, and dependency weight are language-agnostic in a way wall-clock is not — a
 400 MB image is 400 MB whether it is fast or slow, and it is a real property every operator pays for
