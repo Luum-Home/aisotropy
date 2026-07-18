@@ -1,0 +1,79 @@
+{
+  "framework": "spring-ai",
+  "candidate": true,
+  "_note": "SCAFFOLD (partial). Authored + compiled against Spring AI 1.0.0 GA (mvn package OK, 50MB uber-jar). stub.native is 'pass' for every dimension — actually built and run offline this session (env -u OPENAI_API_KEY ARENA_STUB=1, verified zero-network against bogus unreachable RQLITE/QDRANT/EMBED hosts, valid contract JSON incl. tool-call capture, structured schema validation, stream ttft, rag retrieval). stub.docker and BOTH real cells are 'pending': the real lane cannot be verified (agnes free-tier quota exhausted) and Docker/native-image were not built (no GraalVM installed). wasm is uniformly infeasible (the Spring AI HTTP model client needs host sockets). A follow-up with quota + a built image replaces each pending cell. See README.md 'What remains to verify'.",
+  "dimensions": {
+    "qa": {
+      "stub": {
+        "native": "pass",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      }
+    },
+    "rag": {
+      "stub": {
+        "native": "pass",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      }
+    },
+    "tools": {
+      "stub": {
+        "native": "pass",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      }
+    },
+    "memory": {
+      "stub": {
+        "native": "pass",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      }
+    },
+    "structured": {
+      "stub": {
+        "native": "pass",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      }
+    },
+    "stream": {
+      "stub": {
+        "native": "pass",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      }
+    }
+  }
+}

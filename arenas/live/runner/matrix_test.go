@@ -223,3 +223,24 @@ func TestMatrixRender_PendingCellRendersLoudlyWhenGateSkipped(t *testing.T) {
 		t.Errorf("writeMatrixSection() output does not surface the pending cell; got:\n%s", out)
 	}
 }
+
+// TestGateMatrices_CandidateExcluded verifies a WIP candidate adapter (with
+// pending cells) is excluded from the completeness gate — the honest middle
+// path between faking a pass and silently dropping the adapter — while a
+// non-candidate with the same pending cell still fails the gate.
+func TestGateMatrices_CandidateExcluded(t *testing.T) {
+	pendingDim := map[string]matrixLanes{
+		"qa": {Stub: matrixForms{"pass", "pending", "infeasible:x"}, Real: matrixForms{"pending", "pending", "infeasible:x"}},
+	}
+	candidate := matrixDoc{Framework: "spring-ai", Dimensions: pendingDim, Candidate: true}
+	if err := gateMatrices([]matrixDoc{candidate}); err != nil {
+		t.Errorf("candidate should be excluded from the gate, got error: %v", err)
+	}
+	noncandidate := matrixDoc{Framework: "spring-ai", Dimensions: pendingDim, Candidate: false}
+	if err := gateMatrices([]matrixDoc{noncandidate}); err == nil {
+		t.Error("a non-candidate with pending cells must FAIL the gate")
+	}
+	if got := candidateFrameworks([]matrixDoc{candidate, noncandidate}); len(got) != 1 || got[0] != "spring-ai" {
+		t.Errorf("candidateFrameworks = %v, want [spring-ai]", got)
+	}
+}

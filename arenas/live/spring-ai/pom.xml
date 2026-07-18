@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    Spring AI (Java) live-arena adapter.
+
+    Honors the uniform arenas/live stdin->stdout contract (see ../SPEC.md) using
+    Spring AI's NATIVE primitives (OpenAiChatModel, OpenAiEmbeddingModel,
+    QdrantVectorStore, ChatMemoryRepository, BeanOutputConverter, streaming
+    ChatModel) pointed at the SAME real infra every adapter shares:
+      - chat     : agnes-2.0-flash over its OpenAI-compatible endpoint (OPENAI_*)
+      - embed    : the shared e5 server (EMBED_URL, multilingual-e5-small)
+      - vectors  : the shared Qdrant collection (arena_rag_spring_ai) over gRPC
+      - facts    : the shared networked rqlite node (RQLITE_URL) for chat memory
+
+    License gate (../SPEC.md "Licensing", .claude/rules/cos/license-policy.md):
+    every dependency below is Apache-2.0 (Spring AI, Spring Framework, Jackson,
+    Qdrant Java client, protobuf/grpc) — NO GPL/AGPL/SSPL/BSL.
+  -->
+
+  <groupId>com.aisotropy.arena</groupId>
+  <artifactId>spring-ai-live-arena</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+  <name>spring-ai-live-arena</name>
+  <description>Spring AI adapter for the aisotropy live arena</description>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>17</maven.compiler.release>
+    <!-- Pin a known-stable Spring AI GA line. -->
+    <spring-ai.version>1.0.0</spring-ai.version>
+    <main.class>arena.springai.Adapter</main.class>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- Spring AI BOM aligns every spring-ai-* artifact + its transitive
+           Spring Framework / gRPC / Qdrant client versions. Apache-2.0. -->
+      <dependency>
+        <groupId>org.springframework.ai</groupId>
+        <artifactId>spring-ai-bom</artifactId>
+        <version>${spring-ai.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- Spring AI OpenAI model starter: OpenAiChatModel, OpenAiEmbeddingModel,
+         OpenAiApi. We construct these programmatically (no Spring Boot context)
+         so the CLI cold-starts fast and stays GraalVM-native-friendly; the
+         starter simply provides the model module. Apache-2.0. -->
+    <dependency>
+      <groupId>org.springframework.ai</groupId>
+      <artifactId>spring-ai-starter-model-openai</artifactId>
+    </dependency>
+
+    <!-- Spring AI Qdrant vector store starter: QdrantVectorStore over the
+         official io.qdrant gRPC client. Apache-2.0. -->
+    <dependency>
+      <groupId>org.springframework.ai</groupId>
+      <artifactId>spring-ai-starter-vector-store-qdrant</artifactId>
+    </dependency>
+
+    <!-- gRPC transport for the Qdrant client. The Qdrant Java client's
+         QdrantGrpcClient/QdrantClient reference io.grpc types (ManagedChannel)
+         in the signatures this adapter calls, so grpc must be on the COMPILE
+         classpath, not just runtime. All Apache-2.0. Version is managed by the
+         Spring AI BOM. -->
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-api</artifactId><version>1.65.1</version>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-netty-shaded</artifactId><version>1.65.1</version>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- Spring AI JDBC chat-memory repository: JdbcChatMemoryRepository, the
+         native ChatMemoryRepository SPI for JDBC-speaking stores. rqlite is
+         reached over its HTTP API (no bundled JDBC driver), so `memory` mode
+         implements the SAME ChatMemoryRepository SPI against real networked
+         rqlite (RqliteChatMemoryRepository) — see README.md "memory". This
+         dependency is kept so the JDBC-backed drop-in is available to a
+         follow-up that runs a JDBC store (Postgres/HSQLDB). Apache-2.0. -->
+    <dependency>
+      <groupId>org.springframework.ai</groupId>
+      <artifactId>spring-ai-starter-model-chat-memory-repository-jdbc</artifactId>
+    </dependency>
+
+    <!-- Jackson for the stdin/stdout JSON envelope (also a transitive Spring
+         AI dep; declared explicitly because the adapter uses it directly).
+         Apache-2.0. -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.17.2</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>spring-ai-live-arena</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+
+      <!-- Build a single executable uber-jar (java -jar target/spring-ai-live-arena.jar).
+           ServicesResourceTransformer merges META-INF/services (Spring uses it),
+           ManifestResourceTransformer sets the Main-Class. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.6.0</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>${main.class}</mainClass>
+                </transformer>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

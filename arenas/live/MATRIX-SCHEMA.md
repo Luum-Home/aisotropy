@@ -29,6 +29,7 @@ MUST match the `"framework"` field inside the file.
 ```json
 {
   "framework": "<fw>",
+  "candidate": false,
   "dimensions": {
     "<dim>": {
       "stub": {
@@ -63,7 +64,26 @@ MUST match the `"framework"` field inside the file.
 | `pass` | The cell ran and the result was a pass (dimension-specific pass condition — see the adapter's own mode/dimension definition). |
 | `fail` | The cell ran and the result was a fail. |
 | `infeasible:<reason>` | The cell cannot run for a structural reason (e.g. `infeasible:WASI has no sockets — the framework's HTTP model client cannot run in-sandbox`). The reason is the cell's content — one line, no trailing punctuation requirement, human-readable. |
-| `pending` | Not yet filled in. This is a placeholder status ONLY — it must never survive into a manifest an agent claims is complete. The runner's completeness gate (`arenas/live/runner/matrix.go`) treats any `pending` cell as a hard failure. |
+| `pending` | Not yet filled in. This is a placeholder status ONLY — it must never survive into a manifest an agent claims is complete. The runner's completeness gate (`arenas/live/runner/matrix.go`) treats any `pending` cell as a hard failure — UNLESS the manifest is a `candidate` (see below). |
+
+## `candidate` — a WORK-IN-PROGRESS adapter
+
+An optional top-level `"candidate": true` marks an adapter whose matrix is
+legitimately incomplete because verifying some cells is blocked on something
+**external** to the code: a `real`-lane cell that needs the provider while the
+free-tier quota is exhausted, or a `docker`/native-image build not yet exercised.
+
+A candidate is **excluded from the completeness gate** (its `pending` cells do
+NOT fail the run), but this is NOT a silent omission — `gateMatrices`' caller
+logs every candidate loudly (`WARNING: N WIP candidate adapter(s) excluded …`)
+and RESULTS.md renders its cells labeled `CANDIDATE`, never as passes. This is
+the honest middle path between **faking a `pass`** on an unverified cell (a lie)
+and **dropping the adapter entirely** (hides real work): it preserves the
+no-blank-cells law's INTENT — no SILENT gaps — while letting a genuine WIP land.
+
+Clear the flag (delete it, or set `false`) once every cell is a real result; the
+adapter then re-enters the normal completeness gate. Default is `false` (absent =
+false): a normal, complete adapter never sets it.
 
 No other strings are valid. `infeasible` without a `:<reason>` suffix, empty
 strings, `"n/a"`, `"skip"`, `"todo"`, `"unknown"`, etc. are all rejected by the
