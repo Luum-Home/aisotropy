@@ -7,8 +7,8 @@ tags: [arenas, live, results, agnes, quality, latency, cold-start, ttft, tokens,
 
 # Live arena results — modes × benchmarks
 
-> **Run:** 2026-07-18 05:10 UTC • **Model (held constant):** `agnes-2.0-flash` • **Modes:** qa, rag, tools, memory, structured, stream • **Frameworks:** 8 • **Execution forms:** native, docker
-> **Billable model round-trips this run:** 414 • **Bench modes:** qa • **Bench iters:** 5 • **Cold probes:** 3 (empty-stdin, 0 model calls)
+> **Run:** 2026-07-18 18:12 UTC • **Model (held constant):** `agnes-2.0-flash` • **Modes:** qa, rag, tools, memory, structured, stream • **Frameworks:** 8 • **Execution forms:** native, docker
+> **Billable model round-trips this run:** 499 • **Bench modes:** qa • **Bench iters:** 5 • **Cold probes:** 3 (empty-stdin, 0 model calls)
 > **New dimensions:** memory_scoped, isolation_leak, crash_recovery, observability (scoped-memory & isolation, crash recovery, observability capability)
 
 > **The model is real and identical for every row.** Because every framework calls the
@@ -168,62 +168,58 @@ that mode. The **Mode signal** column is the objective, un-judged metric for the
 correctness; structured: schema-valid JSON; stream: mean TTFT). Latency is end-to-end
 wall-clock (native, correctness pass) including the real model round-trip(s).
 
-_Ran under `-concurrency 4`: up to 4 frameworks' correctness/quality sweeps (incl.
-their LLM-judge calls) executed concurrently, so per-item latency in this pass reflects
-mild host contention — a directional signal, not a clean isolated p50. The benchmark
-pass below always stays sequential/uncontended and remains the p50/p95 source of truth
-for latency._
+_Ran under `-concurrency 1` (fully sequential) — latency in this pass is uncontended._
 
 | Framework | Mode | Correctness | Helpfulness | Faithfulness | Mode signal | Avg latency (ms) | Runs | Err |
 |---|---|---:|---:|---:|---|---:|---:|---:|
-| ai-sdk | qa | 5.0 | 5.0 | 5.0 | — | 11635 | 6 | 1 |
-| ai-sdk | rag | 5.0 | 4.8 | 5.0 | hit@1 6/6, trap-refuse 1/1 | 9973 | 9 | 2 |
-| ai-sdk | tools | — | — | — | exec 0/2, correct 2/2 | 18064 | 3 | 1 |
-| ai-sdk | memory | 5.0 | 5.0 | 5.0 | recall (judged) | 13322 | 3 | 1 |
-| ai-sdk | structured | 5.0 | 4.0 | 5.0 | valid 6/6 | 11992 | 6 | 0 |
-| ai-sdk | stream | 5.0 | 5.0 | 5.0 | TTFT 12597ms (n=6) | 13060 | 6 | 0 |
-| aisotropy | qa | 5.0 | 5.0 | 5.0 | — | 16391 | 6 | 0 |
-| aisotropy | rag | 5.0 | 5.0 | 5.0 | hit@1 2/2 | 8801 | 9 | 7 |
-| aisotropy | tools | — | — | — | — | — | 3 | 3 |
-| aisotropy | memory | — | — | — | recall (judged) | — | 3 | 3 |
-| aisotropy | structured | 5.0 | 5.0 | 5.0 | valid 2/2 | 18012 | 6 | 4 |
-| aisotropy | stream | — | — | — | — | — | 6 | 6 |
-| eino | qa | 5.0 | 5.0 | 5.0 | — | 10201 | 6 | 3 |
-| eino | rag | 5.0 | 5.0 | 5.0 | hit@1 2/2, trap-refuse 2/2 | 12618 | 9 | 5 |
-| eino | tools | — | — | — | exec 2/2, correct 2/2 | 43688 | 3 | 1 |
-| eino | memory | — | — | — | recall (judged) | — | 3 | 3 |
-| eino | structured | — | — | — | — | — | 6 | 6 |
-| eino | stream | — | — | — | TTFT 7143ms (n=1) | 7342 | 6 | 5 |
-| genkit-go | qa | 5.0 | 5.0 | 5.0 | — | 12710 | 6 | 3 |
-| genkit-go | rag | 5.0 | 5.0 | 5.0 | hit@1 6/6, trap-refuse 2/2 | 13657 | 9 | 1 |
+| ai-sdk | qa | 5.0 | 5.0 | 5.0 | — | 20005 | 6 | 0 |
+| ai-sdk | rag | 5.0 | 4.9 | 5.0 | hit@1 7/7, trap-refuse 2/2 | 23014 | 9 | 0 |
+| ai-sdk | tools | — | — | — | exec 0/3, correct 3/3 | 22958 | 3 | 0 |
+| ai-sdk | memory | 5.0 | 5.0 | 5.0 | recall (judged) | 10152 | 3 | 0 |
+| ai-sdk | structured | 5.0 | 4.0 | 5.0 | valid 6/6 | 8273 | 6 | 0 |
+| ai-sdk | stream | 5.0 | 5.0 | 5.0 | TTFT 8858ms (n=6) | 9189 | 6 | 0 |
+| aisotropy | qa | 5.0 | 4.8 | 5.0 | — | 8491 | 6 | 0 |
+| aisotropy | rag | 5.0 | 5.0 | 5.0 | hit@1 7/7, trap-refuse 2/2 | 15240 | 9 | 0 |
+| aisotropy | tools | — | — | — | exec 3/3, correct 3/3 | 21789 | 3 | 0 |
+| aisotropy | memory | 5.0 | 5.0 | 5.0 | recall (judged) | 25510 | 3 | 0 |
+| aisotropy | structured | 5.0 | 5.0 | 5.0 | valid 6/6 | 21956 | 6 | 0 |
+| aisotropy | stream | 5.0 | 5.0 | 5.0 | TTFT 9540ms (n=6) | 9940 | 6 | 0 |
+| eino | qa | 5.0 | 5.0 | 5.0 | — | 9264 | 6 | 0 |
+| eino | rag | 5.0 | 4.9 | 5.0 | hit@1 7/7, trap-refuse 2/2 | 10167 | 9 | 0 |
+| eino | tools | — | — | — | exec 3/3, correct 3/3 | 35363 | 3 | 0 |
+| eino | memory | 5.0 | 5.0 | 5.0 | recall (judged) | 16580 | 3 | 0 |
+| eino | structured | 5.0 | 5.0 | 5.0 | valid 6/6 | 10116 | 6 | 0 |
+| eino | stream | 5.0 | 5.0 | 5.0 | TTFT 10392ms (n=6) | 10821 | 6 | 0 |
+| genkit-go | qa | 5.0 | 5.0 | 5.0 | — | 13013 | 6 | 0 |
+| genkit-go | rag | 5.0 | 4.9 | 5.0 | hit@1 7/7, trap-refuse 2/2 | 10046 | 9 | 0 |
 | genkit-go | tools | — | — | — | — | — | 3 | 3 |
-| genkit-go | memory | — | — | — | recall (judged) | — | 3 | 3 |
-| genkit-go | structured | 5.0 | 5.0 | 5.0 | valid 3/3 | 12104 | 6 | 3 |
-| genkit-go | stream | — | — | — | TTFT 9882ms (n=1) | 10582 | 6 | 5 |
-| langgraph | qa | 5.0 | 5.0 | 5.0 | — | 13124 | 6 | 3 |
-| langgraph | rag | 5.0 | 5.0 | 5.0 | hit@1 6/6, trap-refuse 2/2 | 14787 | 9 | 1 |
-| langgraph | tools | — | — | — | exec 3/3, correct 3/3 | 23407 | 3 | 0 |
+| genkit-go | memory | 5.0 | 5.0 | 5.0 | recall (judged) | 8457 | 3 | 0 |
+| genkit-go | structured | 5.0 | 5.0 | 5.0 | valid 6/6 | 8428 | 6 | 0 |
+| genkit-go | stream | 5.0 | 5.0 | 5.0 | TTFT 8715ms (n=6) | 9631 | 6 | 0 |
+| langgraph | qa | 5.0 | 5.0 | 5.0 | — | 9328 | 6 | 0 |
+| langgraph | rag | 5.0 | 5.0 | 5.0 | hit@1 7/7, trap-refuse 2/2 | 10069 | 9 | 0 |
+| langgraph | tools | — | — | — | exec 3/3, correct 3/3 | 22375 | 3 | 0 |
 | langgraph | memory | — | — | — | recall (judged) | — | 3 | 3 |
-| langgraph | structured | 5.0 | 5.0 | 5.0 | valid 4/4 | 10706 | 6 | 2 |
-| langgraph | stream | 5.0 | 5.0 | 5.0 | TTFT 14139ms (n=6) | 15812 | 6 | 0 |
-| llamaindex | qa | 5.0 | 5.0 | 5.0 | — | 15078 | 6 | 0 |
+| langgraph | structured | 5.0 | 5.0 | 5.0 | valid 6/6 | 8249 | 6 | 0 |
+| langgraph | stream | 5.0 | 5.0 | 5.0 | TTFT 13316ms (n=6) | 14841 | 6 | 0 |
+| llamaindex | qa | 5.0 | 5.0 | 5.0 | — | 20429 | 6 | 0 |
 | llamaindex | rag | — | — | — | — | — | 9 | 9 |
-| llamaindex | tools | — | — | — | exec 3/3, correct 3/3 | 37970 | 3 | 0 |
-| llamaindex | memory | 3.7 | 4.0 | 3.7 | recall (judged) | 41812 | 3 | 0 |
-| llamaindex | structured | 1.0 | 1.0 | 1.0 | valid 6/6 | 13490 | 6 | 0 |
-| llamaindex | stream | 5.0 | 5.0 | 5.0 | TTFT 8825ms (n=6) | 10274 | 6 | 0 |
-| mastra | qa | 5.0 | 5.0 | 5.0 | — | 17624 | 6 | 0 |
-| mastra | rag | 5.0 | 5.0 | 5.0 | hit@1 4/4 | 24042 | 9 | 5 |
-| mastra | tools | — | — | — | — | — | 3 | 3 |
-| mastra | memory | — | — | — | recall (judged) | — | 3 | 3 |
-| mastra | structured | 5.0 | 4.7 | 5.0 | valid 4/4 | 10005 | 6 | 2 |
-| mastra | stream | 5.0 | 5.0 | 5.0 | TTFT 21998ms (n=6) | 22537 | 6 | 0 |
-| pydantic-ai | qa | 5.0 | 5.0 | 5.0 | — | 22914 | 6 | 0 |
-| pydantic-ai | rag | 5.0 | 4.9 | 5.0 | hit@1 7/7, trap-refuse 2/2 | 14644 | 9 | 0 |
+| llamaindex | tools | — | — | — | exec 3/3, correct 3/3 | 34232 | 3 | 0 |
+| llamaindex | memory | 3.7 | 3.7 | 3.7 | recall (judged) | 8728 | 3 | 0 |
+| llamaindex | structured | 1.0 | 1.0 | 1.0 | valid 6/6 | 10213 | 6 | 0 |
+| llamaindex | stream | 5.0 | 5.0 | 5.0 | TTFT 8718ms (n=6) | 10137 | 6 | 0 |
+| mastra | qa | 5.0 | 5.0 | 5.0 | — | 9323 | 6 | 0 |
+| mastra | rag | 5.0 | 5.0 | 5.0 | hit@1 7/7, trap-refuse 2/2 | 9623 | 9 | 0 |
+| mastra | tools | — | — | — | exec 0/3, correct 3/3 | 21758 | 3 | 0 |
+| mastra | memory | 5.0 | 5.0 | 5.0 | recall (judged) | 7842 | 3 | 0 |
+| mastra | structured | 5.0 | 4.0 | 5.0 | valid 6/6 | 10506 | 6 | 0 |
+| mastra | stream | 5.0 | 5.0 | 5.0 | TTFT 11273ms (n=6) | 12204 | 6 | 0 |
+| pydantic-ai | qa | 5.0 | 5.0 | 5.0 | — | 9764 | 6 | 0 |
+| pydantic-ai | rag | 5.0 | 5.0 | 5.0 | hit@1 7/7, trap-refuse 2/2 | 10523 | 9 | 0 |
 | pydantic-ai | tools | — | — | — | — | — | 3 | 3 |
-| pydantic-ai | memory | 4.3 | 4.7 | 4.0 | recall (judged) | 10018 | 3 | 0 |
-| pydantic-ai | structured | 5.0 | 5.0 | 5.0 | valid 6/6 | 11781 | 6 | 0 |
-| pydantic-ai | stream | 5.0 | 5.0 | 5.0 | TTFT 25052ms (n=6) | 26513 | 6 | 0 |
+| pydantic-ai | memory | 3.7 | 3.7 | 3.7 | recall (judged) | 8774 | 3 | 0 |
+| pydantic-ai | structured | 5.0 | 5.0 | 5.0 | valid 6/6 | 9491 | 6 | 0 |
+| pydantic-ai | stream | 5.0 | 5.0 | 5.0 | TTFT 8441ms (n=6) | 9864 | 6 | 0 |
 
 ## Measured token spend — per framework × per mode
 
@@ -233,218 +229,226 @@ Runs where usage was unavailable report `-1` and are excluded from the sums.
 
 | Framework | Mode | Total input | Total output | Total | Avg in/task | Avg out/task | Runs w/ usage |
 |---|---|---:|---:|---:|---:|---:|---:|
-| ai-sdk | qa | 1376 | 47 | 1423 | 275.2 | 9.4 | 5 |
-| ai-sdk | rag | 4526 | 199 | 4725 | 646.6 | 28.4 | 7 |
-| ai-sdk | tools | 2648 | 110 | 2758 | 1324.0 | 55.0 | 2 |
-| ai-sdk | memory | 2175 | 53 | 2228 | 1087.5 | 26.5 | 2 |
-| ai-sdk | structured | 1659 | 260 | 1919 | 276.5 | 43.3 | 6 |
-| ai-sdk | stream | 1659 | 88 | 1747 | 276.5 | 14.7 | 6 |
-| aisotropy | qa | 2133 | 71 | 2204 | 355.5 | 11.8 | 6 |
-| aisotropy | rag | 1480 | 68 | 1548 | 740.0 | 34.0 | 2 |
-| aisotropy | structured | 1709 | 107 | 1816 | 854.5 | 53.5 | 2 |
-| eino | qa | 824 | 25 | 849 | 274.7 | 8.3 | 3 |
-| eino | rag | 2595 | 56 | 2651 | 648.8 | 14.0 | 4 |
-| eino | tools | 2542 | 110 | 2652 | 1271.0 | 55.0 | 2 |
-| eino | stream | 275 | 8 | 283 | 275.0 | 8.0 | 1 |
-| genkit-go | qa | 824 | 25 | 849 | 274.7 | 8.3 | 3 |
-| genkit-go | rag | 5151 | 228 | 5379 | 643.9 | 28.5 | 8 |
-| genkit-go | structured | 1193 | 286 | 1479 | 397.7 | 95.3 | 3 |
-| genkit-go | stream | 43 | 13 | 56 | 43.0 | 13.0 | 1 |
-| langgraph | qa | 824 | 45 | 869 | 274.7 | 15.0 | 3 |
-| langgraph | rag | 5388 | 225 | 5613 | 673.5 | 28.1 | 8 |
-| langgraph | tools | 3636 | 170 | 3806 | 1212.0 | 56.7 | 3 |
-| langgraph | structured | 1109 | 97 | 1206 | 277.2 | 24.2 | 4 |
-| langgraph | stream | 1659 | 87 | 1746 | 276.5 | 14.5 | 6 |
-| llamaindex | qa | 1659 | 67 | 1726 | 276.5 | 11.2 | 6 |
-| llamaindex | tools | 1549 | 108 | 1657 | 516.3 | 36.0 | 3 |
-| llamaindex | memory | 2267 | 132 | 2399 | 755.7 | 44.0 | 3 |
-| llamaindex | structured | 3537 | 184 | 3721 | 589.5 | 30.7 | 6 |
-| llamaindex | stream | 251 | 73 | 324 | 41.8 | 12.2 | 6 |
-| mastra | qa | 1659 | 71 | 1730 | 276.5 | 11.8 | 6 |
-| mastra | rag | 2569 | 147 | 2716 | 642.2 | 36.8 | 4 |
-| mastra | structured | 1099 | 199 | 1298 | 274.8 | 49.8 | 4 |
-| mastra | stream | 1659 | 84 | 1743 | 276.5 | 14.0 | 6 |
-| pydantic-ai | qa | 1659 | 70 | 1729 | 276.5 | 11.7 | 6 |
-| pydantic-ai | rag | 6016 | 266 | 6282 | 668.4 | 29.6 | 9 |
-| pydantic-ai | memory | 2339 | 114 | 2453 | 779.7 | 38.0 | 3 |
-| pydantic-ai | structured | 2583 | 454 | 3037 | 430.5 | 75.7 | 6 |
+| ai-sdk | qa | 1659 | 70 | 1729 | 276.5 | 11.7 | 6 |
+| ai-sdk | rag | 5801 | 225 | 6026 | 644.6 | 25.0 | 9 |
+| ai-sdk | tools | 3973 | 167 | 4140 | 1324.3 | 55.7 | 3 |
+| ai-sdk | memory | 3517 | 74 | 3591 | 1172.3 | 24.7 | 3 |
+| ai-sdk | structured | 1659 | 312 | 1971 | 276.5 | 52.0 | 6 |
+| ai-sdk | stream | 1659 | 67 | 1726 | 276.5 | 11.2 | 6 |
+| aisotropy | qa | 2133 | 68 | 2201 | 355.5 | 11.3 | 6 |
+| aisotropy | rag | 6614 | 244 | 6858 | 734.9 | 27.1 | 9 |
+| aisotropy | tools | 2443 | 104 | 2547 | 814.3 | 34.7 | 3 |
+| aisotropy | memory | 4339 | 138 | 4477 | 1446.3 | 46.0 | 3 |
+| aisotropy | structured | 5558 | 318 | 5876 | 926.3 | 53.0 | 6 |
+| aisotropy | stream | 3467 | 70 | 3537 | 577.8 | 11.7 | 6 |
+| eino | qa | 1659 | 84 | 1743 | 276.5 | 14.0 | 6 |
+| eino | rag | 5801 | 231 | 6032 | 644.6 | 25.7 | 9 |
+| eino | tools | 3814 | 168 | 3982 | 1271.3 | 56.0 | 3 |
+| eino | memory | 2667 | 91 | 2758 | 889.0 | 30.3 | 3 |
+| eino | structured | 2517 | 155 | 2672 | 419.5 | 25.8 | 6 |
+| eino | stream | 1659 | 67 | 1726 | 276.5 | 11.2 | 6 |
+| genkit-go | qa | 1659 | 74 | 1733 | 276.5 | 12.3 | 6 |
+| genkit-go | rag | 5779 | 259 | 6038 | 642.1 | 28.8 | 9 |
+| genkit-go | memory | 2560 | 82 | 2642 | 853.3 | 27.3 | 3 |
+| genkit-go | structured | 2379 | 514 | 2893 | 396.5 | 85.7 | 6 |
+| genkit-go | stream | 251 | 79 | 330 | 41.8 | 13.2 | 6 |
+| langgraph | qa | 1659 | 70 | 1729 | 276.5 | 11.7 | 6 |
+| langgraph | rag | 6052 | 269 | 6321 | 672.4 | 29.9 | 9 |
+| langgraph | tools | 3636 | 157 | 3793 | 1212.0 | 52.3 | 3 |
+| langgraph | structured | 1659 | 183 | 1842 | 276.5 | 30.5 | 6 |
+| langgraph | stream | 1659 | 71 | 1730 | 276.5 | 11.8 | 6 |
+| llamaindex | qa | 1659 | 84 | 1743 | 276.5 | 14.0 | 6 |
+| llamaindex | tools | 1549 | 109 | 1658 | 516.3 | 36.3 | 3 |
+| llamaindex | memory | 2766 | 108 | 2874 | 922.0 | 36.0 | 3 |
+| llamaindex | structured | 3537 | 180 | 3717 | 589.5 | 30.0 | 6 |
+| llamaindex | stream | 251 | 91 | 342 | 41.8 | 15.2 | 6 |
+| mastra | qa | 1659 | 67 | 1726 | 276.5 | 11.2 | 6 |
+| mastra | rag | 5801 | 236 | 6037 | 644.6 | 26.2 | 9 |
+| mastra | tools | 3973 | 167 | 4140 | 1324.3 | 55.7 | 3 |
+| mastra | memory | 2221 | 73 | 2294 | 740.3 | 24.3 | 3 |
+| mastra | structured | 1659 | 319 | 1978 | 276.5 | 53.2 | 6 |
+| mastra | stream | 1659 | 67 | 1726 | 276.5 | 11.2 | 6 |
+| pydantic-ai | qa | 1659 | 84 | 1743 | 276.5 | 14.0 | 6 |
+| pydantic-ai | rag | 6016 | 264 | 6280 | 668.4 | 29.3 | 9 |
+| pydantic-ai | memory | 2821 | 102 | 2923 | 940.3 | 34.0 | 3 |
+| pydantic-ai | structured | 2583 | 449 | 3032 | 430.5 | 74.8 | 6 |
 | pydantic-ai | stream | 1659 | 67 | 1726 | 276.5 | 11.2 | 6 |
 
 ## Per-item detail
 
 | Framework | Mode | Item | Kind | Latency (ms) | In tok | Out tok | Corr | Help | Faith | Signal | Error |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---|---|
-| ai-sdk | qa | qa-01-capital | qa | 7311 | 274 | 8 | 5 | 5 | 5 | — | — |
-| ai-sdk | qa | qa-02-gold | qa | 8157 | 275 | 9 | 5 | 5 | 5 | — | — |
-| ai-sdk | qa | qa-03-continents | qa | 11529 | 275 | 8 | 5 | 5 | 5 | — | — |
-| ai-sdk | qa | qa-04-shakespeare | qa | 7345 | 275 | 10 | — | — | — | — | — |
-| ai-sdk | qa | qa-05-lightspeed | qa | 7500 | n/a | n/a | — | — | — | — | adapter: …PI without interruption. (request id: 20260718044033563774324hahlxVvR) |
-| ai-sdk | qa | qa-06-planets | qa | 23837 | 277 | 12 | 5 | 5 | 5 | — | — |
-| ai-sdk | rag | q1 | rag_grounded | 7751 | 636 | 31 | 5 | 4 | 5 | hit@1 ✓ | — |
-| ai-sdk | rag | q2 | rag_grounded | 7519 | 634 | 29 | 5 | 5 | 5 | hit@1 ✓ | — |
-| ai-sdk | rag | q3 | rag_grounded | 11242 | 651 | 54 | 5 | 5 | 5 | hit@1 ✓ | — |
-| ai-sdk | rag | q4 | rag_grounded | 7832 | 648 | 35 | 5 | 5 | 5 | hit@1 ✓ | — |
-| ai-sdk | rag | q5 | rag_grounded | 11290 | 637 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
-| ai-sdk | rag | q6 | rag_grounded | 12506 | 659 | 19 | 5 | 5 | 5 | hit@1 ✓ | — |
-| ai-sdk | rag | q7 | rag_grounded | 7898 | n/a | n/a | — | — | — | hit@1 ✗ | adapter: …PI without interruption. (request id: 20260718044330812179764Ne6SKM0p) |
-| ai-sdk | rag | q8 | rag_trap | 7506 | n/a | n/a | — | — | — | invented ✗ | adapter: …PI without interruption. (request id: 202607180443384161354953JzVLsf9) |
-| ai-sdk | rag | q9 | rag_trap | 11673 | 661 | 6 | — | — | — | refused ✓ | — |
-| ai-sdk | tools | tool-mul | tools | 19716 | 1311 | 46 | — | — | — | no-exec, right # | — |
-| ai-sdk | tools | tool-expr | tools | 16412 | 1337 | 64 | — | — | — | no-exec, right # | — |
-| ai-sdk | tools | tool-add | tools | 15042 | n/a | n/a | — | — | — | no tool ✗ | adapter: …PI without interruption. (request id: 20260718044441261059488m0IOvD3I) |
-| ai-sdk | memory | mem-01-color | memory | 7441 | n/a | n/a | — | — | — | — | adapter: …PI without interruption. (request id: 20260718044448710343858osWBeaGo) |
-| ai-sdk | memory | mem-02-pets | memory | 19456 | 1132 | 30 | 5 | 5 | 5 | — | — |
-| ai-sdk | memory | mem-03-deadline | memory | 7188 | 1043 | 23 | 5 | 5 | 5 | — | — |
-| ai-sdk | structured | qa-01-capital | structured | 13371 | 274 | 44 | 5 | 4 | 5 | valid JSON ✓ | — |
-| ai-sdk | structured | qa-02-gold | structured | 7251 | 275 | 33 | 5 | 5 | 5 | valid JSON ✓ | — |
-| ai-sdk | structured | qa-03-continents | structured | 10184 | 275 | 48 | 5 | 4 | 5 | valid JSON ✓ | — |
-| ai-sdk | structured | qa-04-shakespeare | structured | 20602 | 275 | 32 | 5 | 3 | 5 | valid JSON ✓ | — |
-| ai-sdk | structured | qa-05-lightspeed | structured | 7388 | 283 | 56 | 5 | 4 | 5 | valid JSON ✓ | — |
-| ai-sdk | structured | qa-06-planets | structured | 13156 | 277 | 47 | 5 | 4 | 5 | valid JSON ✓ | — |
-| ai-sdk | stream | qa-01-capital | stream | 19578 | 274 | 8 | 5 | 5 | 5 | ttft 18552ms | — |
-| ai-sdk | stream | qa-02-gold | stream | 7365 | 275 | 9 | 5 | 5 | 5 | ttft 6744ms | — |
-| ai-sdk | stream | qa-03-continents | stream | 21849 | 275 | 29 | 5 | 5 | 5 | ttft 21492ms | — |
-| ai-sdk | stream | qa-04-shakespeare | stream | 14031 | 275 | 10 | 5 | 5 | 5 | ttft 13809ms | — |
-| ai-sdk | stream | qa-05-lightspeed | stream | 7248 | 283 | 20 | 5 | 5 | 5 | ttft 6920ms | — |
-| ai-sdk | stream | qa-06-planets | stream | 8291 | 277 | 12 | — | — | — | ttft 8070ms | — |
-| aisotropy | qa | qa-01-capital | qa | 25198 | 353 | 7 | 5 | 5 | 5 | — | — |
-| aisotropy | qa | qa-02-gold | qa | 44124 | 354 | 12 | 5 | 5 | 5 | — | — |
-| aisotropy | qa | qa-03-continents | qa | 8704 | 354 | 13 | 5 | 5 | 5 | — | — |
-| aisotropy | qa | qa-04-shakespeare | qa | 1437 | 354 | 8 | 5 | 5 | 5 | — | — |
-| aisotropy | qa | qa-05-lightspeed | qa | 9137 | 362 | 18 | 5 | 5 | 5 | — | — |
-| aisotropy | qa | qa-06-planets | qa | 9748 | 356 | 13 | 5 | 5 | 5 | — | — |
-| aisotropy | rag | q1 | rag_grounded | 9568 | 743 | 39 | 5 | 5 | 5 | hit@1 ✓ | — |
-| aisotropy | rag | q2 | rag_grounded | 8034 | 737 | 29 | 5 | 5 | 5 | hit@1 ✓ | — |
-| aisotropy | rag | q3 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …: status 502 for http://127.0.0.1:64675/v1/tenant/arena/user/live/ask) |
-| aisotropy | rag | q4 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …: status 502 for http://127.0.0.1:64689/v1/tenant/arena/user/live/ask) |
-| aisotropy | rag | q5 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …: status 502 for http://127.0.0.1:64707/v1/tenant/arena/user/live/ask) |
-| aisotropy | rag | q6 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …: status 502 for http://127.0.0.1:64729/v1/tenant/arena/user/live/ask) |
-| aisotropy | rag | q7 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …: status 502 for http://127.0.0.1:64744/v1/tenant/arena/user/live/ask) |
-| aisotropy | rag | q8 | rag_trap | 0 | n/a | n/a | — | — | — | invented ✗ | run: …: status 502 for http://127.0.0.1:64760/v1/tenant/arena/user/live/ask) |
-| aisotropy | rag | q9 | rag_trap | 0 | n/a | n/a | — | — | — | invented ✗ | run: …: status 502 for http://127.0.0.1:64776/v1/tenant/arena/user/live/ask) |
-| aisotropy | tools | tool-mul | tools | 0 | n/a | n/a | — | — | — | no tool ✗ | run: …ropyd stopped aisotropy-live-adapter: /chat/agent returned status 500) |
-| aisotropy | tools | tool-expr | tools | 0 | n/a | n/a | — | — | — | no tool ✗ | run: …ropyd stopped aisotropy-live-adapter: /chat/agent returned status 500) |
-| aisotropy | tools | tool-add | tools | 0 | n/a | n/a | — | — | — | no tool ✗ | run: …ropyd stopped aisotropy-live-adapter: /chat/agent returned status 500) |
-| aisotropy | memory | mem-01-color | memory | 0 | n/a | n/a | — | — | — | — | run: …: agent failed to produce a valid structured reply after 0 attempt(s)) |
-| aisotropy | memory | mem-02-pets | memory | 0 | n/a | n/a | — | — | — | — | run: …: agent failed to produce a valid structured reply after 0 attempt(s)) |
-| aisotropy | memory | mem-03-deadline | memory | 0 | n/a | n/a | — | — | — | — | run: …: agent failed to produce a valid structured reply after 0 attempt(s)) |
-| aisotropy | structured | qa-01-capital | structured | 0 | n/a | n/a | — | — | — | no structured ✗ | run: …d stopped aisotropy-live-adapter: /chat/agent (structured) status 500) |
-| aisotropy | structured | qa-02-gold | structured | 0 | n/a | n/a | — | — | — | no structured ✗ | run: …d stopped aisotropy-live-adapter: /chat/agent (structured) status 500) |
-| aisotropy | structured | qa-03-continents | structured | 0 | n/a | n/a | — | — | — | no structured ✗ | run: …d stopped aisotropy-live-adapter: /chat/agent (structured) status 500) |
-| aisotropy | structured | qa-04-shakespeare | structured | 0 | n/a | n/a | — | — | — | no structured ✗ | run: …d stopped aisotropy-live-adapter: /chat/agent (structured) status 500) |
-| aisotropy | structured | qa-05-lightspeed | structured | 21426 | 863 | 56 | 5 | 5 | 5 | valid JSON ✓ | — |
-| aisotropy | structured | qa-06-planets | structured | 14598 | 846 | 51 | 5 | 5 | 5 | valid JSON ✓ | — |
-| aisotropy | stream | qa-01-capital | stream | 0 | n/a | n/a | — | — | — | ttft 0ms | run: …stopped aisotropy-live-adapter: /chat/stream produced no token events) |
-| aisotropy | stream | qa-02-gold | stream | 0 | n/a | n/a | — | — | — | ttft 0ms | run: …stopped aisotropy-live-adapter: /chat/stream produced no token events) |
-| aisotropy | stream | qa-03-continents | stream | 0 | n/a | n/a | — | — | — | ttft 0ms | run: …stopped aisotropy-live-adapter: /chat/stream produced no token events) |
-| aisotropy | stream | qa-04-shakespeare | stream | 0 | n/a | n/a | — | — | — | ttft 0ms | run: …stopped aisotropy-live-adapter: /chat/stream produced no token events) |
-| aisotropy | stream | qa-05-lightspeed | stream | 0 | n/a | n/a | — | — | — | ttft 0ms | run: …stopped aisotropy-live-adapter: /chat/stream produced no token events) |
-| aisotropy | stream | qa-06-planets | stream | 0 | n/a | n/a | — | — | — | ttft 0ms | run: …stopped aisotropy-live-adapter: /chat/stream produced no token events) |
-| eino | qa | qa-01-capital | qa | 7282 | 274 | 8 | 5 | 5 | 5 | — | — |
-| eino | qa | qa-02-gold | qa | 6918 | 275 | 9 | 5 | 5 | 5 | — | — |
-| eino | qa | qa-03-continents | qa | 16403 | 275 | 8 | 5 | 5 | 5 | — | — |
-| eino | qa | qa-04-shakespeare | qa | 0 | n/a | n/a | — | — | — | — | run: …rruption. (request id: 202607180440304366111425g7uWcHS) exit status 1) |
-| eino | qa | qa-05-lightspeed | qa | 0 | n/a | n/a | — | — | — | — | run: …erruption. (request id: 20260718044031504135053kqUCaae) exit status 1) |
-| eino | qa | qa-06-planets | qa | 0 | n/a | n/a | — | — | — | — | run: …rruption. (request id: 20260718044031734641959rQEDXkPh) exit status 1) |
-| eino | rag | q1 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …9tqxNXyfT) ------------------------ node path: [node_2] exit status 1) |
-| eino | rag | q2 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …2opEzdO5a) ------------------------ node path: [node_2] exit status 1) |
-| eino | rag | q3 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …8rC1FWFpH) ------------------------ node path: [node_2] exit status 1) |
-| eino | rag | q4 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …7kj8jieca) ------------------------ node path: [node_2] exit status 1) |
-| eino | rag | q5 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …29jrzjFHz) ------------------------ node path: [node_2] exit status 1) |
-| eino | rag | q6 | rag_grounded | 7101 | 659 | 19 | — | — | — | hit@1 ✓ | — |
-| eino | rag | q7 | rag_grounded | 12438 | 629 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
-| eino | rag | q8 | rag_trap | 15873 | 646 | 6 | — | — | — | refused ✓ | — |
-| eino | rag | q9 | rag_trap | 15060 | 661 | 6 | — | — | — | refused ✓ | — |
-| eino | tools | tool-mul | tools | 64916 | 1262 | 46 | — | — | — | exec+correct ✓ | — |
-| eino | tools | tool-expr | tools | 22461 | 1280 | 64 | — | — | — | exec+correct ✓ | — |
-| eino | tools | tool-add | tools | 0 | n/a | n/a | — | — | — | no tool ✗ | run: …793izdBKfI3) ------------------------ node path: [chat] exit status 1) |
-| eino | memory | mem-01-color | memory | 0 | n/a | n/a | — | — | — | — | run: …rruption. (request id: 20260718044332188805470011Q8cpD) exit status 1) |
-| eino | memory | mem-02-pets | memory | 0 | n/a | n/a | — | — | — | — | run: …rruption. (request id: 2026071804433277910832442pzW1Uc) exit status 1) |
-| eino | memory | mem-03-deadline | memory | 0 | n/a | n/a | — | — | — | — | run: …rruption. (request id: 20260718044333396290746E2h7QssY) exit status 1) |
-| eino | structured | qa-01-capital | structured | 0 | n/a | n/a | — | — | — | no structured ✗ | run: …rruption. (request id: 20260718044334359382040CcVEpB19) exit status 1) |
-| eino | structured | qa-02-gold | structured | 0 | n/a | n/a | — | — | — | no structured ✗ | run: …rruption. (request id: 20260718044335312021788ymKx1Add) exit status 1) |
-| eino | structured | qa-03-continents | structured | 0 | n/a | n/a | — | — | — | no structured ✗ | run: …rruption. (request id: 20260718044336397357615lmohAlR8) exit status 1) |
-| eino | structured | qa-04-shakespeare | structured | 0 | n/a | n/a | — | — | — | no structured ✗ | run: …rruption. (request id: 20260718044337366289485mPhsBtWt) exit status 1) |
-| eino | structured | qa-05-lightspeed | structured | 0 | n/a | n/a | — | — | — | no structured ✗ | run: …rruption. (request id: 20260718044338351673430fa3I8vt8) exit status 1) |
-| eino | structured | qa-06-planets | structured | 0 | n/a | n/a | — | — | — | no structured ✗ | run: …rruption. (request id: 20260718044339319898901qo8aovnQ) exit status 1) |
-| eino | stream | qa-01-capital | stream | 0 | n/a | n/a | — | — | — | ttft 0ms | run: …rruption. (request id: 20260718044339920268792S2IIaPUW) exit status 1) |
-| eino | stream | qa-02-gold | stream | 0 | n/a | n/a | — | — | — | ttft 0ms | run: …rruption. (request id: 20260718044340569088151qmnRmQjC) exit status 1) |
-| eino | stream | qa-03-continents | stream | 7342 | 275 | 8 | — | — | — | ttft 7143ms | — |
-| eino | stream | qa-04-shakespeare | stream | 0 | n/a | n/a | — | — | — | ttft 0ms | run: …rruption. (request id: 20260718044348991707580zwr1mDp3) exit status 1) |
-| eino | stream | qa-05-lightspeed | stream | 0 | n/a | n/a | — | — | — | ttft 0ms | run: …rruption. (request id: 20260718044349594901012KEDq4otU) exit status 1) |
-| eino | stream | qa-06-planets | stream | 0 | n/a | n/a | — | — | — | ttft 0ms | run: …rruption. (request id: 20260718044350222598618SIQucpYL) exit status 1) |
-| genkit-go | qa | qa-01-capital | qa | 22598 | 274 | 8 | 5 | 5 | 5 | — | — |
-| genkit-go | qa | qa-02-gold | qa | 7886 | 275 | 9 | 5 | 5 | 5 | — | — |
-| genkit-go | qa | qa-03-continents | qa | 7646 | 275 | 8 | 5 | 5 | 5 | — | — |
-| genkit-go | qa | qa-04-shakespeare | qa | 3205 | n/a | n/a | — | — | — | — | adapter: …(request id: 20260718044029138353279GhoK1iXs)","type":"AgnesAI_error"} |
-| genkit-go | qa | qa-05-lightspeed | qa | 3072 | n/a | n/a | — | — | — | — | adapter: …(request id: 20260718044032209773313O9RRwtbw)","type":"AgnesAI_error"} |
-| genkit-go | qa | qa-06-planets | qa | 3037 | n/a | n/a | — | — | — | — | adapter: …(request id: 20260718044035183840880HUwifBUL)","type":"AgnesAI_error"} |
-| genkit-go | rag | q1 | rag_grounded | 11061 | 635 | 31 | — | — | — | hit@1 ✓ | — |
-| genkit-go | rag | q2 | rag_grounded | 3427 | n/a | n/a | — | — | — | hit@1 ✗ | adapter: … (request id: 2026071804405078137343wQMGPI4w)","type":"AgnesAI_error"} |
-| genkit-go | rag | q3 | rag_grounded | 8775 | 646 | 56 | 5 | 5 | 5 | hit@1 ✓ | — |
-| genkit-go | rag | q4 | rag_grounded | 41786 | 654 | 35 | 5 | 5 | 5 | hit@1 ✓ | — |
-| genkit-go | rag | q5 | rag_grounded | 8383 | 632 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
-| genkit-go | rag | q6 | rag_grounded | 19263 | 654 | 18 | 5 | 5 | 5 | hit@1 ✓ | — |
-| genkit-go | rag | q7 | rag_grounded | 3105 | 629 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
-| genkit-go | rag | q8 | rag_trap | 8105 | 645 | 12 | — | — | — | refused ✓ | — |
-| genkit-go | rag | q9 | rag_trap | 8785 | 656 | 26 | — | — | — | refused ✓ | — |
-| genkit-go | tools | tool-mul | tools | 569 | n/a | n/a | — | — | — | no tool ✗ | adapter: tools mode: request has no tool definitions |
-| genkit-go | tools | tool-expr | tools | 579 | n/a | n/a | — | — | — | no tool ✗ | adapter: tools mode: request has no tool definitions |
-| genkit-go | tools | tool-add | tools | 205 | n/a | n/a | — | — | — | no tool ✗ | adapter: tools mode: request has no tool definitions |
-| genkit-go | memory | mem-01-color | memory | 3303 | n/a | n/a | — | — | — | — | adapter: …(request id: 20260718044328144905646xFvmQQsg)","type":"AgnesAI_error"} |
-| genkit-go | memory | mem-02-pets | memory | 3124 | n/a | n/a | — | — | — | — | adapter: …(request id: 20260718044331274914291kJmTZC0W)","type":"AgnesAI_error"} |
-| genkit-go | memory | mem-03-deadline | memory | 3362 | n/a | n/a | — | — | — | — | adapter: …(request id: 20260718044334609866692d3fmiDTH)","type":"AgnesAI_error"} |
-| genkit-go | structured | qa-01-capital | structured | 3067 | n/a | n/a | — | — | — | no structured ✗ | adapter: …(request id: 20260718044337695640147pOhKX5er)","type":"AgnesAI_error"} |
-| genkit-go | structured | qa-02-gold | structured | 2947 | n/a | n/a | — | — | — | no structured ✗ | adapter: …(request id: 20260718044340653917958034tdeBb)","type":"AgnesAI_error"} |
-| genkit-go | structured | qa-03-continents | structured | 14003 | 395 | 120 | — | — | — | valid JSON ✓ | — |
-| genkit-go | structured | qa-04-shakespeare | structured | 10709 | 395 | 72 | 5 | 5 | 5 | valid JSON ✓ | — |
-| genkit-go | structured | qa-05-lightspeed | structured | 11601 | 403 | 94 | 5 | 5 | 5 | valid JSON ✓ | — |
-| genkit-go | structured | qa-06-planets | structured | 3172 | n/a | n/a | — | — | — | no structured ✗ | adapter: …(request id: 20260718044436349693806NXrKo89d)","type":"AgnesAI_error"} |
-| genkit-go | stream | qa-01-capital | stream | 3004 | n/a | n/a | — | — | — | ttft 0ms | adapter: …(request id: 20260718044439380864192jcHwbSGK)","type":"AgnesAI_error"} |
-| genkit-go | stream | qa-02-gold | stream | 3130 | n/a | n/a | — | — | — | ttft 0ms | adapter: …(request id: 20260718044442512589942nVzsOf8B)","type":"AgnesAI_error"} |
-| genkit-go | stream | qa-03-continents | stream | 3039 | n/a | n/a | — | — | — | ttft 0ms | adapter: …(request id: 20260718044445553374962rVmHhCAy)","type":"AgnesAI_error"} |
-| genkit-go | stream | qa-04-shakespeare | stream | 3075 | n/a | n/a | — | — | — | ttft 0ms | adapter: …(request id: 20260718044448629519574WlbyWZPK)","type":"AgnesAI_error"} |
-| genkit-go | stream | qa-05-lightspeed | stream | 2938 | n/a | n/a | — | — | — | ttft 0ms | adapter: …(request id: 20260718044451567616642101nOLRb)","type":"AgnesAI_error"} |
-| genkit-go | stream | qa-06-planets | stream | 10582 | 43 | 13 | — | — | — | ttft 9882ms | — |
-| langgraph | qa | qa-01-capital | qa | 14445 | 274 | 8 | 5 | 5 | 5 | — | — |
-| langgraph | qa | qa-02-gold | qa | 15176 | 275 | 9 | — | — | — | — | — |
-| langgraph | qa | qa-03-continents | qa | 9753 | 275 | 28 | — | — | — | — | — |
-| langgraph | qa | qa-04-shakespeare | qa | 4107 | n/a | n/a | — | — | — | — | adapter: …quest id: 20260718044442722923242ryASNhTv)', 'type': 'AgnesAI_error'}} |
-| langgraph | qa | qa-05-lightspeed | qa | 3669 | n/a | n/a | — | — | — | — | adapter: …quest id: 20260718044446358838865BlyH41x7)', 'type': 'AgnesAI_error'}} |
-| langgraph | qa | qa-06-planets | qa | 3708 | n/a | n/a | — | — | — | — | adapter: …quest id: 20260718044449992012732HNdsQpEj)', 'type': 'AgnesAI_error'}} |
-| langgraph | rag | q1 | rag_grounded | 4607 | n/a | n/a | — | — | — | hit@1 ✗ | adapter: …quest id: 20260718044454498064050qCTexsAF)', 'type': 'AgnesAI_error'}} |
-| langgraph | rag | q2 | rag_grounded | 9550 | 659 | 27 | — | — | — | hit@1 ✓ | — |
-| langgraph | rag | q3 | rag_grounded | 25126 | 676 | 56 | 5 | 5 | 5 | hit@1 ✓ | — |
-| langgraph | rag | q4 | rag_grounded | 9819 | 674 | 34 | 5 | 5 | 5 | hit@1 ✓ | — |
-| langgraph | rag | q5 | rag_grounded | 32494 | 669 | 27 | 5 | 5 | 5 | hit@1 ✓ | — |
-| langgraph | rag | q6 | rag_grounded | 9796 | 689 | 19 | 5 | 5 | 5 | hit@1 ✓ | — |
-| langgraph | rag | q7 | rag_grounded | 9215 | 657 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
-| langgraph | rag | q8 | rag_trap | 13476 | 676 | 15 | — | — | — | refused ✓ | — |
-| langgraph | rag | q9 | rag_trap | 8822 | 688 | 22 | — | — | — | refused ✓ | — |
-| langgraph | tools | tool-mul | tools | 17980 | 1202 | 49 | — | — | — | exec+correct ✓ | — |
-| langgraph | tools | tool-expr | tools | 21730 | 1222 | 64 | — | — | — | exec+correct ✓ | — |
-| langgraph | tools | tool-add | tools | 30512 | 1212 | 57 | — | — | — | exec+correct ✓ | — |
-| langgraph | memory | mem-01-color | memory | 92 | n/a | n/a | — | — | — | — | adapter: memory mode requires a non-empty string 'thread_id' field |
-| langgraph | memory | mem-02-pets | memory | 63 | n/a | n/a | — | — | — | — | adapter: memory mode requires a non-empty string 'thread_id' field |
-| langgraph | memory | mem-03-deadline | memory | 65 | n/a | n/a | — | — | — | — | adapter: memory mode requires a non-empty string 'thread_id' field |
-| langgraph | structured | qa-01-capital | structured | 12285 | 274 | 15 | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-02-gold | structured | 3917 | n/a | n/a | — | — | — | no structured ✗ | adapter: …equest id: 2026071804501595002562UgI0msTB)', 'type': 'AgnesAI_error'}} |
-| langgraph | structured | qa-03-continents | structured | 3546 | n/a | n/a | — | — | — | no structured ✗ | adapter: …quest id: 202607180450187262369682fpw5VXk)', 'type': 'AgnesAI_error'}} |
-| langgraph | structured | qa-04-shakespeare | structured | 11070 | 275 | 25 | 5 | 5 | 5 | valid JSON ✓ | — |
-| langgraph | structured | qa-05-lightspeed | structured | 11265 | 283 | 35 | 5 | 5 | 5 | valid JSON ✓ | — |
-| langgraph | structured | qa-06-planets | structured | 8205 | 277 | 22 | 5 | 5 | 5 | valid JSON ✓ | — |
-| langgraph | stream | qa-01-capital | stream | 11442 | 274 | 8 | — | — | — | ttft 10118ms | — |
-| langgraph | stream | qa-02-gold | stream | 12265 | 275 | 9 | — | — | — | ttft 9603ms | — |
-| langgraph | stream | qa-03-continents | stream | 14029 | 275 | 25 | 5 | 5 | 5 | ttft 12513ms | — |
-| langgraph | stream | qa-04-shakespeare | stream | 13495 | 275 | 13 | 5 | 5 | 5 | ttft 11983ms | — |
-| langgraph | stream | qa-05-lightspeed | stream | 14661 | 283 | 20 | 5 | 5 | 5 | ttft 13042ms | — |
-| langgraph | stream | qa-06-planets | stream | 28980 | 277 | 12 | 5 | 5 | 5 | ttft 27579ms | — |
-| llamaindex | qa | qa-01-capital | qa | 21126 | 274 | 8 | — | — | — | — | — |
-| llamaindex | qa | qa-02-gold | qa | 32225 | 275 | 9 | 5 | 5 | 5 | — | — |
-| llamaindex | qa | qa-03-continents | qa | 9158 | 275 | 8 | 5 | 5 | 5 | — | — |
-| llamaindex | qa | qa-04-shakespeare | qa | 8586 | 275 | 10 | 5 | 5 | 5 | — | — |
-| llamaindex | qa | qa-05-lightspeed | qa | 8436 | 283 | 20 | 5 | 5 | 5 | — | — |
-| llamaindex | qa | qa-06-planets | qa | 10940 | 277 | 12 | 5 | 5 | 5 | — | — |
+| ai-sdk | qa | qa-01-capital | qa | 38101 | 274 | 8 | 5 | 5 | 5 | — | — |
+| ai-sdk | qa | qa-02-gold | qa | 31142 | 275 | 9 | 5 | 5 | 5 | — | — |
+| ai-sdk | qa | qa-03-continents | qa | 7427 | 275 | 8 | 5 | 5 | 5 | — | — |
+| ai-sdk | qa | qa-04-shakespeare | qa | 28920 | 275 | 13 | 5 | 5 | 5 | — | — |
+| ai-sdk | qa | qa-05-lightspeed | qa | 7311 | 283 | 20 | 5 | 5 | 5 | — | — |
+| ai-sdk | qa | qa-06-planets | qa | 7129 | 277 | 12 | 5 | 5 | 5 | — | — |
+| ai-sdk | rag | q1 | rag_grounded | 17689 | 636 | 31 | 5 | 4 | 5 | hit@1 ✓ | — |
+| ai-sdk | rag | q2 | rag_grounded | 15447 | 634 | 29 | 5 | 5 | 5 | hit@1 ✓ | — |
+| ai-sdk | rag | q3 | rag_grounded | 11316 | 651 | 49 | 5 | 5 | 5 | hit@1 ✓ | — |
+| ai-sdk | rag | q4 | rag_grounded | 19621 | 648 | 35 | 5 | 5 | 5 | hit@1 ✓ | — |
+| ai-sdk | rag | q5 | rag_grounded | 8511 | 637 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
+| ai-sdk | rag | q6 | rag_grounded | 28719 | 659 | 19 | 5 | 5 | 5 | hit@1 ✓ | — |
+| ai-sdk | rag | q7 | rag_grounded | 88236 | 629 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
+| ai-sdk | rag | q8 | rag_trap | 10167 | 646 | 6 | — | — | — | refused ✓ | — |
+| ai-sdk | rag | q9 | rag_trap | 7423 | 661 | 6 | — | — | — | refused ✓ | — |
+| ai-sdk | tools | tool-mul | tools | 18291 | 1311 | 46 | — | — | — | no-exec, right # | — |
+| ai-sdk | tools | tool-expr | tools | 30934 | 1337 | 64 | — | — | — | no-exec, right # | — |
+| ai-sdk | tools | tool-add | tools | 19650 | 1325 | 57 | — | — | — | no-exec, right # | — |
+| ai-sdk | memory | mem-01-color | memory | 16271 | 950 | 21 | 5 | 5 | 5 | — | — |
+| ai-sdk | memory | mem-02-pets | memory | 7178 | 1350 | 30 | 5 | 5 | 5 | — | — |
+| ai-sdk | memory | mem-03-deadline | memory | 7007 | 1217 | 23 | 5 | 5 | 5 | — | — |
+| ai-sdk | structured | qa-01-capital | structured | 7696 | 274 | 49 | 5 | 4 | 5 | valid JSON ✓ | — |
+| ai-sdk | structured | qa-02-gold | structured | 7660 | 275 | 54 | 5 | 4 | 5 | valid JSON ✓ | — |
+| ai-sdk | structured | qa-03-continents | structured | 10794 | 275 | 53 | 5 | 4 | 5 | valid JSON ✓ | — |
+| ai-sdk | structured | qa-04-shakespeare | structured | 7412 | 275 | 49 | 5 | 4 | 5 | valid JSON ✓ | — |
+| ai-sdk | structured | qa-05-lightspeed | structured | 8740 | 283 | 56 | 5 | 4 | 5 | valid JSON ✓ | — |
+| ai-sdk | structured | qa-06-planets | structured | 7340 | 277 | 51 | 5 | 4 | 5 | valid JSON ✓ | — |
+| ai-sdk | stream | qa-01-capital | stream | 7091 | 274 | 8 | 5 | 5 | 5 | ttft 6815ms | — |
+| ai-sdk | stream | qa-02-gold | stream | 7456 | 275 | 9 | 5 | 5 | 5 | ttft 7166ms | — |
+| ai-sdk | stream | qa-03-continents | stream | 18248 | 275 | 8 | 5 | 5 | 5 | ttft 17741ms | — |
+| ai-sdk | stream | qa-04-shakespeare | stream | 7437 | 275 | 10 | 5 | 5 | 5 | ttft 7191ms | — |
+| ai-sdk | stream | qa-05-lightspeed | stream | 7069 | 283 | 20 | 5 | 5 | 5 | ttft 6712ms | — |
+| ai-sdk | stream | qa-06-planets | stream | 7837 | 277 | 12 | 5 | 5 | 5 | ttft 7525ms | — |
+| aisotropy | qa | qa-01-capital | qa | 9503 | 353 | 6 | 5 | 5 | 5 | — | — |
+| aisotropy | qa | qa-02-gold | qa | 7211 | 354 | 12 | 5 | 5 | 5 | — | — |
+| aisotropy | qa | qa-03-continents | qa | 7218 | 354 | 17 | 5 | 5 | 5 | — | — |
+| aisotropy | qa | qa-04-shakespeare | qa | 11599 | 354 | 8 | 5 | 5 | 5 | — | — |
+| aisotropy | qa | qa-05-lightspeed | qa | 7180 | 362 | 12 | 5 | 4 | 5 | — | — |
+| aisotropy | qa | qa-06-planets | qa | 8237 | 356 | 13 | 5 | 5 | 5 | — | — |
+| aisotropy | rag | q1 | rag_grounded | 8701 | 743 | 43 | 5 | 5 | 5 | hit@1 ✓ | — |
+| aisotropy | rag | q2 | rag_grounded | 14756 | 737 | 27 | 5 | 5 | 5 | hit@1 ✓ | — |
+| aisotropy | rag | q3 | rag_grounded | 13354 | 760 | 56 | 5 | 5 | 5 | hit@1 ✓ | — |
+| aisotropy | rag | q4 | rag_grounded | 18846 | 763 | 35 | 5 | 5 | 5 | hit@1 ✓ | — |
+| aisotropy | rag | q5 | rag_grounded | 26083 | 735 | 29 | 5 | 5 | 5 | hit@1 ✓ | — |
+| aisotropy | rag | q6 | rag_grounded | 19541 | 635 | 19 | 5 | 5 | 5 | hit@1 ✓ | — |
+| aisotropy | rag | q7 | rag_grounded | 19446 | 737 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
+| aisotropy | rag | q8 | rag_trap | 8317 | 739 | 5 | — | — | — | refused ✓ | — |
+| aisotropy | rag | q9 | rag_trap | 8121 | 765 | 5 | — | — | — | refused ✓ | — |
+| aisotropy | tools | tool-mul | tools | 16828 | 809 | 31 | — | — | — | exec+correct ✓ | — |
+| aisotropy | tools | tool-expr | tools | 23691 | 819 | 38 | — | — | — | exec+correct ✓ | — |
+| aisotropy | tools | tool-add | tools | 24848 | 815 | 35 | — | — | — | exec+correct ✓ | — |
+| aisotropy | memory | mem-01-color | memory | 3561 | 1066 | 26 | 5 | 5 | 5 | — | — |
+| aisotropy | memory | mem-02-pets | memory | 23482 | 2141 | 71 | 5 | 5 | 5 | — | — |
+| aisotropy | memory | mem-03-deadline | memory | 49488 | 1132 | 41 | 5 | 5 | 5 | — | — |
+| aisotropy | structured | qa-01-capital | structured | 22246 | 1293 | 60 | 5 | 5 | 5 | valid JSON ✓ | — |
+| aisotropy | structured | qa-02-gold | structured | 14578 | 841 | 35 | 5 | 5 | 5 | valid JSON ✓ | — |
+| aisotropy | structured | qa-03-continents | structured | 23201 | 871 | 78 | 5 | 5 | 5 | valid JSON ✓ | — |
+| aisotropy | structured | qa-04-shakespeare | structured | 34978 | 842 | 36 | 5 | 5 | 5 | valid JSON ✓ | — |
+| aisotropy | structured | qa-05-lightspeed | structured | 18672 | 865 | 58 | 5 | 5 | 5 | valid JSON ✓ | — |
+| aisotropy | structured | qa-06-planets | structured | 18062 | 846 | 51 | 5 | 5 | 5 | valid JSON ✓ | — |
+| aisotropy | stream | qa-01-capital | stream | 8891 | 608 | 8 | 5 | 5 | 5 | ttft 8586ms | — |
+| aisotropy | stream | qa-02-gold | stream | 7401 | 544 | 9 | 5 | 5 | 5 | ttft 7112ms | — |
+| aisotropy | stream | qa-03-continents | stream | 7487 | 620 | 8 | 5 | 5 | 5 | ttft 7216ms | — |
+| aisotropy | stream | qa-04-shakespeare | stream | 11749 | 496 | 13 | 5 | 5 | 5 | ttft 10696ms | — |
+| aisotropy | stream | qa-05-lightspeed | stream | 9391 | 687 | 20 | 5 | 5 | 5 | ttft 9147ms | — |
+| aisotropy | stream | qa-06-planets | stream | 14722 | 512 | 12 | 5 | 5 | 5 | ttft 14486ms | — |
+| eino | qa | qa-01-capital | qa | 13937 | 274 | 8 | 5 | 5 | 5 | — | — |
+| eino | qa | qa-02-gold | qa | 9532 | 275 | 9 | 5 | 5 | 5 | — | — |
+| eino | qa | qa-03-continents | qa | 8748 | 275 | 25 | 5 | 5 | 5 | — | — |
+| eino | qa | qa-04-shakespeare | qa | 7991 | 275 | 10 | 5 | 5 | 5 | — | — |
+| eino | qa | qa-05-lightspeed | qa | 7486 | 283 | 20 | 5 | 5 | 5 | — | — |
+| eino | qa | qa-06-planets | qa | 7893 | 277 | 12 | 5 | 5 | 5 | — | — |
+| eino | rag | q1 | rag_grounded | 8891 | 636 | 31 | 5 | 4 | 5 | hit@1 ✓ | — |
+| eino | rag | q2 | rag_grounded | 7889 | 634 | 29 | 5 | 5 | 5 | hit@1 ✓ | — |
+| eino | rag | q3 | rag_grounded | 14261 | 651 | 56 | 5 | 5 | 5 | hit@1 ✓ | — |
+| eino | rag | q4 | rag_grounded | 7799 | 648 | 35 | 5 | 5 | 5 | hit@1 ✓ | — |
+| eino | rag | q5 | rag_grounded | 8627 | 637 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
+| eino | rag | q6 | rag_grounded | 7538 | 659 | 18 | 5 | 5 | 5 | hit@1 ✓ | — |
+| eino | rag | q7 | rag_grounded | 20991 | 629 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
+| eino | rag | q8 | rag_trap | 8099 | 646 | 6 | — | — | — | refused ✓ | — |
+| eino | rag | q9 | rag_trap | 7416 | 661 | 6 | — | — | — | refused ✓ | — |
+| eino | tools | tool-mul | tools | 33963 | 1262 | 47 | — | — | — | exec+correct ✓ | — |
+| eino | tools | tool-expr | tools | 48530 | 1280 | 64 | — | — | — | exec+correct ✓ | — |
+| eino | tools | tool-add | tools | 23597 | 1272 | 57 | — | — | — | exec+correct ✓ | — |
+| eino | memory | mem-01-color | memory | 34226 | 954 | 28 | 5 | 5 | 5 | — | — |
+| eino | memory | mem-02-pets | memory | 7002 | 880 | 29 | 5 | 5 | 5 | — | — |
+| eino | memory | mem-03-deadline | memory | 8512 | 833 | 34 | 5 | 5 | 5 | — | — |
+| eino | structured | qa-01-capital | structured | 13235 | 417 | 25 | 5 | 5 | 5 | valid JSON ✓ | — |
+| eino | structured | qa-02-gold | structured | 7265 | 418 | 20 | 5 | 5 | 5 | valid JSON ✓ | — |
+| eino | structured | qa-03-continents | structured | 11577 | 418 | 25 | 5 | 5 | 5 | valid JSON ✓ | — |
+| eino | structured | qa-04-shakespeare | structured | 8650 | 418 | 19 | 5 | 5 | 5 | valid JSON ✓ | — |
+| eino | structured | qa-05-lightspeed | structured | 8695 | 426 | 37 | 5 | 5 | 5 | valid JSON ✓ | — |
+| eino | structured | qa-06-planets | structured | 11275 | 420 | 29 | 5 | 5 | 5 | valid JSON ✓ | — |
+| eino | stream | qa-01-capital | stream | 8008 | 274 | 8 | 5 | 5 | 5 | ttft 7632ms | — |
+| eino | stream | qa-02-gold | stream | 10924 | 275 | 9 | 5 | 5 | 5 | ttft 10444ms | — |
+| eino | stream | qa-03-continents | stream | 10225 | 275 | 8 | 5 | 5 | 5 | ttft 9702ms | — |
+| eino | stream | qa-04-shakespeare | stream | 12889 | 275 | 10 | 5 | 5 | 5 | ttft 12550ms | — |
+| eino | stream | qa-05-lightspeed | stream | 8136 | 283 | 20 | 5 | 5 | 5 | ttft 7653ms | — |
+| eino | stream | qa-06-planets | stream | 14747 | 277 | 12 | 5 | 5 | 5 | ttft 14374ms | — |
+| genkit-go | qa | qa-01-capital | qa | 14620 | 274 | 8 | 5 | 5 | 5 | — | — |
+| genkit-go | qa | qa-02-gold | qa | 13103 | 275 | 9 | 5 | 5 | 5 | — | — |
+| genkit-go | qa | qa-03-continents | qa | 11337 | 275 | 12 | 5 | 5 | 5 | — | — |
+| genkit-go | qa | qa-04-shakespeare | qa | 8326 | 275 | 13 | 5 | 5 | 5 | — | — |
+| genkit-go | qa | qa-05-lightspeed | qa | 9188 | 283 | 20 | 5 | 5 | 5 | — | — |
+| genkit-go | qa | qa-06-planets | qa | 21509 | 277 | 12 | 5 | 5 | 5 | — | — |
+| genkit-go | rag | q1 | rag_grounded | 21300 | 635 | 31 | 5 | 4 | 5 | hit@1 ✓ | — |
+| genkit-go | rag | q2 | rag_grounded | 8861 | 628 | 27 | 5 | 5 | 5 | hit@1 ✓ | — |
+| genkit-go | rag | q3 | rag_grounded | 8604 | 646 | 56 | 5 | 5 | 5 | hit@1 ✓ | — |
+| genkit-go | rag | q4 | rag_grounded | 9526 | 654 | 35 | 5 | 5 | 5 | hit@1 ✓ | — |
+| genkit-go | rag | q5 | rag_grounded | 8369 | 632 | 28 | 5 | 5 | 5 | hit@1 ✓ | — |
+| genkit-go | rag | q6 | rag_grounded | 8299 | 654 | 19 | 5 | 5 | 5 | hit@1 ✓ | — |
+| genkit-go | rag | q7 | rag_grounded | 9775 | 629 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
+| genkit-go | rag | q8 | rag_trap | 7781 | 645 | 12 | — | — | — | refused ✓ | — |
+| genkit-go | rag | q9 | rag_trap | 7900 | 656 | 26 | — | — | — | refused ✓ | — |
+| genkit-go | tools | tool-mul | tools | 628 | n/a | n/a | — | — | — | no tool ✗ | adapter: tools mode: request has no tool definitions |
+| genkit-go | tools | tool-expr | tools | 558 | n/a | n/a | — | — | — | no tool ✗ | adapter: tools mode: request has no tool definitions |
+| genkit-go | tools | tool-add | tools | 206 | n/a | n/a | — | — | — | no tool ✗ | adapter: tools mode: request has no tool definitions |
+| genkit-go | memory | mem-01-color | memory | 7422 | 767 | 21 | 5 | 5 | 5 | — | — |
+| genkit-go | memory | mem-02-pets | memory | 7666 | 899 | 35 | 5 | 5 | 5 | — | — |
+| genkit-go | memory | mem-03-deadline | memory | 10284 | 894 | 26 | 5 | 5 | 5 | — | — |
+| genkit-go | structured | qa-01-capital | structured | 8579 | 394 | 66 | 5 | 5 | 5 | valid JSON ✓ | — |
+| genkit-go | structured | qa-02-gold | structured | 7812 | 395 | 63 | 5 | 5 | 5 | valid JSON ✓ | — |
+| genkit-go | structured | qa-03-continents | structured | 9148 | 395 | 113 | 5 | 5 | 5 | valid JSON ✓ | — |
+| genkit-go | structured | qa-04-shakespeare | structured | 8570 | 395 | 88 | 5 | 5 | 5 | valid JSON ✓ | — |
+| genkit-go | structured | qa-05-lightspeed | structured | 8354 | 403 | 105 | 5 | 5 | 5 | valid JSON ✓ | — |
+| genkit-go | structured | qa-06-planets | structured | 8110 | 397 | 79 | 5 | 5 | 5 | valid JSON ✓ | — |
+| genkit-go | stream | qa-01-capital | stream | 7559 | 39 | 9 | 5 | 5 | 5 | ttft 6829ms | — |
+| genkit-go | stream | qa-02-gold | stream | 7451 | 40 | 11 | 5 | 5 | 5 | ttft 6679ms | — |
+| genkit-go | stream | qa-03-continents | stream | 7582 | 40 | 15 | 5 | 5 | 5 | ttft 6747ms | — |
+| genkit-go | stream | qa-04-shakespeare | stream | 19058 | 40 | 12 | 5 | 5 | 5 | ttft 18325ms | — |
+| genkit-go | stream | qa-05-lightspeed | stream | 8271 | 49 | 19 | 5 | 5 | 5 | ttft 6870ms | — |
+| genkit-go | stream | qa-06-planets | stream | 7867 | 43 | 13 | 5 | 5 | 5 | ttft 6844ms | — |
+| langgraph | qa | qa-01-capital | qa | 14619 | 274 | 8 | 5 | 5 | 5 | — | — |
+| langgraph | qa | qa-02-gold | qa | 10372 | 275 | 9 | 5 | 5 | 5 | — | — |
+| langgraph | qa | qa-03-continents | qa | 2393 | 275 | 8 | 5 | 5 | 5 | — | — |
+| langgraph | qa | qa-04-shakespeare | qa | 11230 | 275 | 13 | 5 | 5 | 5 | — | — |
+| langgraph | qa | qa-05-lightspeed | qa | 8245 | 283 | 20 | 5 | 5 | 5 | — | — |
+| langgraph | qa | qa-06-planets | qa | 9113 | 277 | 12 | 5 | 5 | 5 | — | — |
+| langgraph | rag | q1 | rag_grounded | 10527 | 664 | 44 | 5 | 5 | 5 | hit@1 ✓ | — |
+| langgraph | rag | q2 | rag_grounded | 9102 | 659 | 29 | 5 | 5 | 5 | hit@1 ✓ | — |
+| langgraph | rag | q3 | rag_grounded | 9541 | 676 | 49 | 5 | 5 | 5 | hit@1 ✓ | — |
+| langgraph | rag | q4 | rag_grounded | 11268 | 674 | 34 | 5 | 5 | 5 | hit@1 ✓ | — |
+| langgraph | rag | q5 | rag_grounded | 9170 | 669 | 29 | 5 | 5 | 5 | hit@1 ✓ | — |
+| langgraph | rag | q6 | rag_grounded | 9375 | 689 | 19 | 5 | 5 | 5 | hit@1 ✓ | — |
+| langgraph | rag | q7 | rag_grounded | 11416 | 657 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
+| langgraph | rag | q8 | rag_trap | 10859 | 676 | 15 | — | — | — | refused ✓ | — |
+| langgraph | rag | q9 | rag_trap | 9365 | 688 | 25 | — | — | — | refused ✓ | — |
+| langgraph | tools | tool-mul | tools | 15144 | 1202 | 36 | — | — | — | exec+correct ✓ | — |
+| langgraph | tools | tool-expr | tools | 35235 | 1222 | 64 | — | — | — | exec+correct ✓ | — |
+| langgraph | tools | tool-add | tools | 16746 | 1212 | 57 | — | — | — | exec+correct ✓ | — |
+| langgraph | memory | mem-01-color | memory | 65 | n/a | n/a | — | — | — | — | adapter: memory mode requires a non-empty string 'thread_id' field |
+| langgraph | memory | mem-02-pets | memory | 65 | n/a | n/a | — | — | — | — | adapter: memory mode requires a non-empty string 'thread_id' field |
+| langgraph | memory | mem-03-deadline | memory | 48 | n/a | n/a | — | — | — | — | adapter: memory mode requires a non-empty string 'thread_id' field |
+| langgraph | structured | qa-01-capital | structured | 9407 | 274 | 28 | 5 | 5 | 5 | valid JSON ✓ | — |
+| langgraph | structured | qa-02-gold | structured | 8968 | 275 | 24 | 5 | 5 | 5 | valid JSON ✓ | — |
+| langgraph | structured | qa-03-continents | structured | 10986 | 275 | 29 | 5 | 5 | 5 | valid JSON ✓ | — |
+| langgraph | structured | qa-04-shakespeare | structured | 2736 | 275 | 29 | 5 | 5 | 5 | valid JSON ✓ | — |
+| langgraph | structured | qa-05-lightspeed | structured | 8909 | 283 | 40 | 5 | 5 | 5 | valid JSON ✓ | — |
+| langgraph | structured | qa-06-planets | structured | 8488 | 277 | 33 | 5 | 5 | 5 | valid JSON ✓ | — |
+| langgraph | stream | qa-01-capital | stream | 43270 | 274 | 8 | 5 | 5 | 5 | ttft 41700ms | — |
+| langgraph | stream | qa-02-gold | stream | 8557 | 275 | 9 | 5 | 5 | 5 | ttft 6846ms | — |
+| langgraph | stream | qa-03-continents | stream | 8337 | 275 | 12 | 5 | 5 | 5 | ttft 6926ms | — |
+| langgraph | stream | qa-04-shakespeare | stream | 12306 | 275 | 10 | 5 | 5 | 5 | ttft 10833ms | — |
+| langgraph | stream | qa-05-lightspeed | stream | 8453 | 283 | 20 | 5 | 5 | 5 | ttft 6831ms | — |
+| langgraph | stream | qa-06-planets | stream | 8127 | 277 | 12 | 5 | 5 | 5 | ttft 6760ms | — |
+| llamaindex | qa | qa-01-capital | qa | 25779 | 274 | 8 | 5 | 5 | 5 | — | — |
+| llamaindex | qa | qa-02-gold | qa | 10507 | 275 | 9 | 5 | 5 | 5 | — | — |
+| llamaindex | qa | qa-03-continents | qa | 8604 | 275 | 25 | 5 | 5 | 5 | — | — |
+| llamaindex | qa | qa-04-shakespeare | qa | 53945 | 275 | 10 | 5 | 5 | 5 | — | — |
+| llamaindex | qa | qa-05-lightspeed | qa | 13695 | 283 | 20 | 5 | 5 | 5 | — | — |
+| llamaindex | qa | qa-06-planets | qa | 10048 | 277 | 12 | 5 | 5 | 5 | — | — |
 | llamaindex | rag | q1 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …ivery and Branding"], "structured": null, "ttft_ms": -1, "error": ""}) |
 | llamaindex | rag | q2 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …ibility Commitment"], "structured": null, "ttft_ms": -1, "error": ""}) |
 | llamaindex | rag | q3 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …ibility Commitment"], "structured": null, "ttft_ms": -1, "error": ""}) |
@@ -454,90 +458,90 @@ Runs where usage was unavailable report `-1` and are excluded from the sums.
 | llamaindex | rag | q7 | rag_grounded | 0 | n/a | n/a | — | — | — | hit@1 ✗ | run: …icy)", "Fare Zones"], "structured": null, "ttft_ms": -1, "error": ""}) |
 | llamaindex | rag | q8 | rag_trap | 0 | n/a | n/a | — | — | — | invented ✗ | run: …ivery and Branding"], "structured": null, "ttft_ms": -1, "error": ""}) |
 | llamaindex | rag | q9 | rag_trap | 0 | n/a | n/a | — | — | — | invented ✗ | run: … "The Skylark Line"], "structured": null, "ttft_ms": -1, "error": ""}) |
-| llamaindex | tools | tool-mul | tools | 40336 | 513 | 29 | — | — | — | exec+correct ✓ | — |
-| llamaindex | tools | tool-expr | tools | 53782 | 525 | 47 | — | — | — | exec+correct ✓ | — |
-| llamaindex | tools | tool-add | tools | 19792 | 511 | 32 | — | — | — | exec+correct ✓ | — |
-| llamaindex | memory | mem-01-color | memory | 16885 | 713 | 21 | 5 | 5 | 5 | — | — |
-| llamaindex | memory | mem-02-pets | memory | 23591 | 798 | 86 | 1 | 2 | 1 | — | — |
-| llamaindex | memory | mem-03-deadline | memory | 84962 | 756 | 25 | 5 | 5 | 5 | — | — |
-| llamaindex | structured | qa-01-capital | structured | 15496 | 587 | 28 | 1 | 1 | 1 | valid JSON ✓ | — |
-| llamaindex | structured | qa-02-gold | structured | 8729 | 588 | 29 | 1 | 1 | 1 | valid JSON ✓ | — |
-| llamaindex | structured | qa-03-continents | structured | 8555 | 588 | 30 | 1 | 1 | 1 | valid JSON ✓ | — |
-| llamaindex | structured | qa-04-shakespeare | structured | 22388 | 588 | 32 | 1 | 1 | 1 | valid JSON ✓ | — |
-| llamaindex | structured | qa-05-lightspeed | structured | 14254 | 596 | 36 | 1 | 1 | 1 | valid JSON ✓ | — |
-| llamaindex | structured | qa-06-planets | structured | 11518 | 590 | 29 | 1 | 1 | 1 | valid JSON ✓ | — |
-| llamaindex | stream | qa-01-capital | stream | 10041 | 39 | 9 | 5 | 5 | 5 | ttft 8606ms | — |
-| llamaindex | stream | qa-02-gold | stream | 14982 | 40 | 11 | 5 | 5 | 5 | ttft 13316ms | — |
-| llamaindex | stream | qa-03-continents | stream | 10092 | 40 | 9 | 5 | 5 | 5 | ttft 8840ms | — |
-| llamaindex | stream | qa-04-shakespeare | stream | 9103 | 40 | 12 | 5 | 5 | 5 | ttft 7364ms | — |
-| llamaindex | stream | qa-05-lightspeed | stream | 9083 | 49 | 19 | 5 | 5 | 5 | ttft 7763ms | — |
-| llamaindex | stream | qa-06-planets | stream | 8345 | 43 | 13 | 5 | 5 | 5 | ttft 7062ms | — |
-| mastra | qa | qa-01-capital | qa | 7643 | 274 | 8 | 5 | 5 | 5 | — | — |
-| mastra | qa | qa-02-gold | qa | 42587 | 275 | 9 | 5 | 5 | 5 | — | — |
-| mastra | qa | qa-03-continents | qa | 8109 | 275 | 12 | 5 | 5 | 5 | — | — |
-| mastra | qa | qa-04-shakespeare | qa | 20863 | 275 | 10 | 5 | 5 | 5 | — | — |
-| mastra | qa | qa-05-lightspeed | qa | 10903 | 283 | 20 | 5 | 5 | 5 | — | — |
-| mastra | qa | qa-06-planets | qa | 15644 | 277 | 12 | 5 | 5 | 5 | — | — |
-| mastra | rag | q1 | rag_grounded | 13064 | 636 | 31 | — | — | — | hit@1 ✓ | — |
-| mastra | rag | q2 | rag_grounded | 67233 | 634 | 29 | 5 | 5 | 5 | hit@1 ✓ | — |
-| mastra | rag | q3 | rag_grounded | 7960 | 651 | 52 | 5 | 5 | 5 | hit@1 ✓ | — |
-| mastra | rag | q4 | rag_grounded | 7911 | 648 | 35 | 5 | 5 | 5 | hit@1 ✓ | — |
-| mastra | rag | q5 | rag_grounded | 1383 | n/a | n/a | — | — | — | hit@1 ✗ | adapter: …PI without interruption. (request id: 20260718045010375815443HLdFGRip) |
-| mastra | rag | q6 | rag_grounded | 864 | n/a | n/a | — | — | — | hit@1 ✗ | adapter: …PI without interruption. (request id: 20260718045011329733507jzpslFeY) |
-| mastra | rag | q7 | rag_grounded | 886 | n/a | n/a | — | — | — | hit@1 ✗ | adapter: …PI without interruption. (request id: 2026071804501218885130667L2f5gR) |
-| mastra | rag | q8 | rag_trap | 895 | n/a | n/a | — | — | — | invented ✗ | adapter: …API without interruption. (request id: 2026071804501378509878huK7kwjt) |
-| mastra | rag | q9 | rag_trap | 808 | n/a | n/a | — | — | — | invented ✗ | adapter: …PI without interruption. (request id: 202607180450139585182462rVGbBDn) |
-| mastra | tools | tool-mul | tools | 845 | n/a | n/a | — | — | — | no tool ✗ | adapter: …PI without interruption. (request id: 20260718045014809684142qdsDv847) |
-| mastra | tools | tool-expr | tools | 882 | n/a | n/a | — | — | — | no tool ✗ | adapter: …PI without interruption. (request id: 20260718045015623553699senBBJdR) |
-| mastra | tools | tool-add | tools | 804 | n/a | n/a | — | — | — | no tool ✗ | adapter: …PI without interruption. (request id: 20260718045016499309181ADsE7f5L) |
-| mastra | memory | mem-01-color | memory | 826 | n/a | n/a | — | — | — | — | adapter: …PI without interruption. (request id: 20260718045017301743032BaYH2Bin) |
-| mastra | memory | mem-02-pets | memory | 824 | n/a | n/a | — | — | — | — | adapter: …PI without interruption. (request id: 20260718045018134364507qCyvIbMf) |
-| mastra | memory | mem-03-deadline | memory | 1036 | n/a | n/a | — | — | — | — | adapter: …PI without interruption. (request id: 20260718045019184081517TM2E0Ila) |
-| mastra | structured | qa-01-capital | structured | 7706 | 274 | 49 | 5 | 4 | 5 | valid JSON ✓ | — |
-| mastra | structured | qa-02-gold | structured | 8612 | 275 | 51 | 5 | 5 | 5 | valid JSON ✓ | — |
-| mastra | structured | qa-03-continents | structured | 14989 | 275 | 50 | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-04-shakespeare | structured | 8716 | 275 | 49 | 5 | 5 | 5 | valid JSON ✓ | — |
-| mastra | structured | qa-05-lightspeed | structured | 904 | n/a | n/a | — | — | — | no structured ✗ | adapter: …PI without interruption. (request id: 20260718045136495032557XYdIpENa) |
-| mastra | structured | qa-06-planets | structured | 793 | n/a | n/a | — | — | — | no structured ✗ | adapter: …PI without interruption. (request id: 20260718045137291255635H9nPKLuh) |
-| mastra | stream | qa-01-capital | stream | 7700 | 274 | 8 | 5 | 5 | 5 | ttft 7196ms | — |
-| mastra | stream | qa-02-gold | stream | 29902 | 275 | 9 | 5 | 5 | 5 | ttft 29411ms | — |
-| mastra | stream | qa-03-continents | stream | 10650 | 275 | 25 | 5 | 5 | 5 | ttft 10015ms | — |
-| mastra | stream | qa-04-shakespeare | stream | 13657 | 275 | 10 | 5 | 5 | 5 | ttft 13166ms | — |
-| mastra | stream | qa-05-lightspeed | stream | 55920 | 283 | 20 | 5 | 5 | 5 | ttft 55382ms | — |
-| mastra | stream | qa-06-planets | stream | 17394 | 277 | 12 | 5 | 5 | 5 | ttft 16818ms | — |
-| pydantic-ai | qa | qa-01-capital | qa | 23532 | 274 | 8 | 5 | 5 | 5 | — | — |
-| pydantic-ai | qa | qa-02-gold | qa | 45800 | 275 | 9 | 5 | 5 | 5 | — | — |
-| pydantic-ai | qa | qa-03-continents | qa | 14322 | 275 | 8 | 5 | 5 | 5 | — | — |
-| pydantic-ai | qa | qa-04-shakespeare | qa | 10198 | 275 | 13 | 5 | 5 | 5 | — | — |
-| pydantic-ai | qa | qa-05-lightspeed | qa | 37128 | 283 | 20 | 5 | 5 | 5 | — | — |
-| pydantic-ai | qa | qa-06-planets | qa | 6509 | 277 | 12 | 5 | 5 | 5 | — | — |
-| pydantic-ai | rag | q1 | rag_grounded | 9464 | 660 | 36 | 5 | 4 | 5 | hit@1 ✓ | — |
-| pydantic-ai | rag | q2 | rag_grounded | 9203 | 655 | 27 | 5 | 5 | 5 | hit@1 ✓ | — |
-| pydantic-ai | rag | q3 | rag_grounded | 9524 | 672 | 56 | 5 | 5 | 5 | hit@1 ✓ | — |
-| pydantic-ai | rag | q4 | rag_grounded | 20493 | 670 | 35 | 5 | 5 | 5 | hit@1 ✓ | — |
-| pydantic-ai | rag | q5 | rag_grounded | 17811 | 665 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
-| pydantic-ai | rag | q6 | rag_grounded | 31056 | 685 | 19 | 5 | 5 | 5 | hit@1 ✓ | — |
-| pydantic-ai | rag | q7 | rag_grounded | 10137 | 653 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
-| pydantic-ai | rag | q8 | rag_trap | 9342 | 672 | 30 | — | — | — | refused ✓ | — |
-| pydantic-ai | rag | q9 | rag_trap | 14768 | 684 | 13 | — | — | — | refused ✓ | — |
+| llamaindex | tools | tool-mul | tools | 33668 | 513 | 29 | — | — | — | exec+correct ✓ | — |
+| llamaindex | tools | tool-expr | tools | 47995 | 525 | 48 | — | — | — | exec+correct ✓ | — |
+| llamaindex | tools | tool-add | tools | 21034 | 511 | 32 | — | — | — | exec+correct ✓ | — |
+| llamaindex | memory | mem-01-color | memory | 9371 | 829 | 21 | 5 | 5 | 5 | — | — |
+| llamaindex | memory | mem-02-pets | memory | 8480 | 1037 | 62 | 1 | 1 | 1 | — | — |
+| llamaindex | memory | mem-03-deadline | memory | 8334 | 900 | 25 | 5 | 5 | 5 | — | — |
+| llamaindex | structured | qa-01-capital | structured | 8414 | 587 | 28 | 1 | 1 | 1 | valid JSON ✓ | — |
+| llamaindex | structured | qa-02-gold | structured | 8512 | 588 | 29 | 1 | 1 | 1 | valid JSON ✓ | — |
+| llamaindex | structured | qa-03-continents | structured | 9236 | 588 | 30 | 1 | 1 | 1 | valid JSON ✓ | — |
+| llamaindex | structured | qa-04-shakespeare | structured | 11084 | 588 | 32 | 1 | 1 | 1 | valid JSON ✓ | — |
+| llamaindex | structured | qa-05-lightspeed | structured | 8393 | 596 | 32 | 1 | 1 | 1 | valid JSON ✓ | — |
+| llamaindex | structured | qa-06-planets | structured | 15641 | 590 | 29 | 1 | 1 | 1 | valid JSON ✓ | — |
+| llamaindex | stream | qa-01-capital | stream | 23108 | 39 | 9 | 5 | 5 | 5 | ttft 21720ms | — |
+| llamaindex | stream | qa-02-gold | stream | 8524 | 40 | 11 | 5 | 5 | 5 | ttft 7244ms | — |
+| llamaindex | stream | qa-03-continents | stream | 8547 | 40 | 27 | 5 | 5 | 5 | ttft 7214ms | — |
+| llamaindex | stream | qa-04-shakespeare | stream | 8436 | 40 | 12 | 5 | 5 | 5 | ttft 6958ms | — |
+| llamaindex | stream | qa-05-lightspeed | stream | 3668 | 49 | 19 | 5 | 5 | 5 | ttft 1954ms | — |
+| llamaindex | stream | qa-06-planets | stream | 8540 | 43 | 13 | 5 | 5 | 5 | ttft 7221ms | — |
+| mastra | qa | qa-01-capital | qa | 17663 | 274 | 8 | 5 | 5 | 5 | — | — |
+| mastra | qa | qa-02-gold | qa | 7307 | 275 | 9 | 5 | 5 | 5 | — | — |
+| mastra | qa | qa-03-continents | qa | 7950 | 275 | 8 | 5 | 5 | 5 | — | — |
+| mastra | qa | qa-04-shakespeare | qa | 7340 | 275 | 10 | 5 | 5 | 5 | — | — |
+| mastra | qa | qa-05-lightspeed | qa | 8343 | 283 | 20 | 5 | 5 | 5 | — | — |
+| mastra | qa | qa-06-planets | qa | 7335 | 277 | 12 | 5 | 5 | 5 | — | — |
+| mastra | rag | q1 | rag_grounded | 8032 | 636 | 37 | 5 | 5 | 5 | hit@1 ✓ | — |
+| mastra | rag | q2 | rag_grounded | 7826 | 634 | 27 | 5 | 5 | 5 | hit@1 ✓ | — |
+| mastra | rag | q3 | rag_grounded | 9571 | 651 | 56 | 5 | 5 | 5 | hit@1 ✓ | — |
+| mastra | rag | q4 | rag_grounded | 7768 | 648 | 35 | 5 | 5 | 5 | hit@1 ✓ | — |
+| mastra | rag | q5 | rag_grounded | 15239 | 637 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
+| mastra | rag | q6 | rag_grounded | 7820 | 659 | 19 | 5 | 5 | 5 | hit@1 ✓ | — |
+| mastra | rag | q7 | rag_grounded | 8874 | 629 | 25 | 5 | 5 | 5 | hit@1 ✓ | — |
+| mastra | rag | q8 | rag_trap | 10114 | 646 | 6 | — | — | — | refused ✓ | — |
+| mastra | rag | q9 | rag_trap | 11364 | 661 | 6 | — | — | — | refused ✓ | — |
+| mastra | tools | tool-mul | tools | 16097 | 1311 | 46 | — | — | — | no-exec, right # | — |
+| mastra | tools | tool-expr | tools | 16128 | 1337 | 64 | — | — | — | no-exec, right # | — |
+| mastra | tools | tool-add | tools | 33049 | 1325 | 57 | — | — | — | no-exec, right # | — |
+| mastra | memory | mem-01-color | memory | 7929 | 721 | 30 | 5 | 5 | 5 | — | — |
+| mastra | memory | mem-02-pets | memory | 8248 | 794 | 19 | 5 | 5 | 5 | — | — |
+| mastra | memory | mem-03-deadline | memory | 7351 | 706 | 24 | 5 | 5 | 5 | — | — |
+| mastra | structured | qa-01-capital | structured | 7591 | 274 | 44 | 5 | 4 | 5 | valid JSON ✓ | — |
+| mastra | structured | qa-02-gold | structured | 19891 | 275 | 55 | 5 | 4 | 5 | valid JSON ✓ | — |
+| mastra | structured | qa-03-continents | structured | 8326 | 275 | 61 | 5 | 4 | 5 | valid JSON ✓ | — |
+| mastra | structured | qa-04-shakespeare | structured | 7747 | 275 | 52 | 5 | 4 | 5 | valid JSON ✓ | — |
+| mastra | structured | qa-05-lightspeed | structured | 9407 | 283 | 55 | 5 | 4 | 5 | valid JSON ✓ | — |
+| mastra | structured | qa-06-planets | structured | 10076 | 277 | 52 | 5 | 4 | 5 | valid JSON ✓ | — |
+| mastra | stream | qa-01-capital | stream | 10638 | 274 | 8 | 5 | 5 | 5 | ttft 10115ms | — |
+| mastra | stream | qa-02-gold | stream | 7880 | 275 | 9 | 5 | 5 | 5 | ttft 6836ms | — |
+| mastra | stream | qa-03-continents | stream | 27895 | 275 | 8 | 5 | 5 | 5 | ttft 27370ms | — |
+| mastra | stream | qa-04-shakespeare | stream | 9151 | 275 | 10 | 5 | 5 | 5 | ttft 8625ms | — |
+| mastra | stream | qa-05-lightspeed | stream | 10097 | 283 | 20 | 5 | 5 | 5 | ttft 7722ms | — |
+| mastra | stream | qa-06-planets | stream | 7563 | 277 | 12 | 5 | 5 | 5 | ttft 6973ms | — |
+| pydantic-ai | qa | qa-01-capital | qa | 10173 | 274 | 8 | 5 | 5 | 5 | — | — |
+| pydantic-ai | qa | qa-02-gold | qa | 8711 | 275 | 9 | 5 | 5 | 5 | — | — |
+| pydantic-ai | qa | qa-03-continents | qa | 19664 | 275 | 25 | 5 | 5 | 5 | — | — |
+| pydantic-ai | qa | qa-04-shakespeare | qa | 8528 | 275 | 10 | 5 | 5 | 5 | — | — |
+| pydantic-ai | qa | qa-05-lightspeed | qa | 8605 | 283 | 20 | 5 | 5 | 5 | — | — |
+| pydantic-ai | qa | qa-06-planets | qa | 2905 | 277 | 12 | 5 | 5 | 5 | — | — |
+| pydantic-ai | rag | q1 | rag_grounded | 11530 | 660 | 33 | 5 | 5 | 5 | hit@1 ✓ | — |
+| pydantic-ai | rag | q2 | rag_grounded | 13252 | 655 | 29 | 5 | 5 | 5 | hit@1 ✓ | — |
+| pydantic-ai | rag | q3 | rag_grounded | 9561 | 672 | 56 | 5 | 5 | 5 | hit@1 ✓ | — |
+| pydantic-ai | rag | q4 | rag_grounded | 9348 | 670 | 35 | 5 | 5 | 5 | hit@1 ✓ | — |
+| pydantic-ai | rag | q5 | rag_grounded | 9193 | 665 | 28 | 5 | 5 | 5 | hit@1 ✓ | — |
+| pydantic-ai | rag | q6 | rag_grounded | 9304 | 685 | 19 | 5 | 5 | 5 | hit@1 ✓ | — |
+| pydantic-ai | rag | q7 | rag_grounded | 9018 | 653 | 26 | 5 | 5 | 5 | hit@1 ✓ | — |
+| pydantic-ai | rag | q8 | rag_trap | 9067 | 672 | 13 | — | — | — | refused ✓ | — |
+| pydantic-ai | rag | q9 | rag_trap | 14437 | 684 | 25 | — | — | — | refused ✓ | — |
 | pydantic-ai | tools | tool-mul | tools | 0 | n/a | n/a | — | — | — | no tool ✗ | run: … "logs_structured": null, "log_sample": "", "notes": "", "error": ""}) |
 | pydantic-ai | tools | tool-expr | tools | 0 | n/a | n/a | — | — | — | no tool ✗ | run: … "logs_structured": null, "log_sample": "", "notes": "", "error": ""}) |
 | pydantic-ai | tools | tool-add | tools | 0 | n/a | n/a | — | — | — | no tool ✗ | run: … "logs_structured": null, "log_sample": "", "notes": "", "error": ""}) |
-| pydantic-ai | memory | mem-01-color | memory | 9095 | 771 | 50 | 3 | 4 | 2 | — | — |
-| pydantic-ai | memory | mem-02-pets | memory | 12374 | 804 | 38 | 5 | 5 | 5 | — | — |
-| pydantic-ai | memory | mem-03-deadline | memory | 8586 | 764 | 26 | 5 | 5 | 5 | — | — |
-| pydantic-ai | structured | qa-01-capital | structured | 13692 | 428 | 77 | 5 | 5 | 5 | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-02-gold | structured | 12740 | 429 | 70 | 5 | 5 | 5 | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-03-continents | structured | 6634 | 429 | 66 | 5 | 5 | 5 | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-04-shakespeare | structured | 19202 | 429 | 71 | 5 | 5 | 5 | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-05-lightspeed | structured | 6806 | 437 | 84 | 5 | 5 | 5 | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-06-planets | structured | 11616 | 431 | 86 | 5 | 5 | 5 | valid JSON ✓ | — |
-| pydantic-ai | stream | qa-01-capital | stream | 10181 | 274 | 8 | 5 | 5 | 5 | ttft 8715ms | — |
-| pydantic-ai | stream | qa-02-gold | stream | 15377 | 275 | 9 | 5 | 5 | 5 | ttft 14012ms | — |
-| pydantic-ai | stream | qa-03-continents | stream | 20215 | 275 | 8 | 5 | 5 | 5 | ttft 18826ms | — |
-| pydantic-ai | stream | qa-04-shakespeare | stream | 54761 | 275 | 10 | 5 | 5 | 5 | ttft 53248ms | — |
-| pydantic-ai | stream | qa-05-lightspeed | stream | 26835 | 283 | 20 | 5 | 5 | 5 | ttft 25300ms | — |
-| pydantic-ai | stream | qa-06-planets | stream | 31712 | 277 | 12 | 5 | 5 | 5 | ttft 30216ms | — |
+| pydantic-ai | memory | mem-01-color | memory | 9407 | 945 | 40 | 1 | 1 | 1 | — | — |
+| pydantic-ai | memory | mem-02-pets | memory | 8391 | 964 | 36 | 5 | 5 | 5 | — | — |
+| pydantic-ai | memory | mem-03-deadline | memory | 8524 | 912 | 26 | 5 | 5 | 5 | — | — |
+| pydantic-ai | structured | qa-01-capital | structured | 8817 | 428 | 64 | 5 | 5 | 5 | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-02-gold | structured | 8729 | 429 | 60 | 5 | 5 | 5 | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-03-continents | structured | 11658 | 429 | 57 | 5 | 5 | 5 | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-04-shakespeare | structured | 9657 | 429 | 77 | 5 | 5 | 5 | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-05-lightspeed | structured | 9012 | 437 | 98 | 5 | 5 | 5 | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-06-planets | structured | 9074 | 431 | 93 | 5 | 5 | 5 | valid JSON ✓ | — |
+| pydantic-ai | stream | qa-01-capital | stream | 8288 | 274 | 8 | 5 | 5 | 5 | ttft 6981ms | — |
+| pydantic-ai | stream | qa-02-gold | stream | 12805 | 275 | 9 | 5 | 5 | 5 | ttft 11516ms | — |
+| pydantic-ai | stream | qa-03-continents | stream | 8381 | 275 | 8 | 5 | 5 | 5 | ttft 7023ms | — |
+| pydantic-ai | stream | qa-04-shakespeare | stream | 9782 | 275 | 10 | 5 | 5 | 5 | ttft 8426ms | — |
+| pydantic-ai | stream | qa-05-lightspeed | stream | 10729 | 283 | 20 | 5 | 5 | 5 | ttft 9145ms | — |
+| pydantic-ai | stream | qa-06-planets | stream | 9201 | 277 | 12 | 5 | 5 | 5 | ttft 7558ms | — |
 
 ## Notes
 
