@@ -111,8 +111,8 @@
     },
     "structured": {
       "stub": {
-        "native": "fail",
-        "docker": "fail",
+        "native": "pass",
+        "docker": "pass",
         "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
       },
       "real": {
@@ -123,8 +123,8 @@
     },
     "tools": {
       "stub": {
-        "native": "fail",
-        "docker": "fail",
+        "native": "pass",
+        "docker": "pass",
         "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
       },
       "real": {

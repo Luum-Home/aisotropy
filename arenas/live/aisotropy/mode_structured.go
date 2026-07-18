@@ -84,10 +84,18 @@ func runStructured(req *request, out *result) error {
 		RequiredScope: "structured",
 		Parameters:    json.RawMessage(emitParamsSchema),
 	}
-	srv, err := bootServer(agnes, structuredPersona,
+	opts := []aisotropy.Option{
 		aisotropy.WithTool(emitTool),
 		aisotropy.WithToolExecutor(structuredExecutor{}),
-	)
+	}
+	if agnes == nil {
+		// ARENA_STUB=1: inject the adapter-local tool-capable stub (tool_stub.go)
+		// instead of falling through to aisotropy's internal keyless StubClient,
+		// which does not implement llm.ToolCaller and cannot drive the
+		// /chat/agent route offline (see tool_stub.go's doc comment).
+		opts = append(opts, aisotropy.WithLLM(toolStub{}))
+	}
+	srv, err := bootServer(agnes, structuredPersona, opts...)
 	if err != nil {
 		return err
 	}

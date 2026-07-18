@@ -345,6 +345,54 @@ env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u OPENROUTER_API_KEY ARENA_STUB=1 \
 #     "outbound_fired":true,"invocations":1,"supported":true}}
 ```
 
+### `tools` / `structured` under the stub: a SECOND, tool-capable stub client (`tool_stub.go`)
+
+The uniform `newAgnesClient()` choke point above is not the whole story for these two
+modes. Both drive the `/chat/agent` route (`internal/api/chat_agent.go`), which prefers
+a client's **native** tool-calling capability (`llm.ToolCaller.CallTools`) and only falls
+back to the homegrown structured-output `agentloop` (`internal/agentloop`) for a plain
+`StreamChat`-only client. `internal/llm.StubClient` — the client every other mode's stub
+run resolves to — does **not** implement `ToolCaller`, and its one structured-output
+recognizer is keyed to `GollemReflect`'s schema marker, which `agentloop`'s system prompt
+never emits. Under the stub, `agentloop` therefore asked `StubClient` for a bare
+`{"tool":...}` JSON decision and got back `StubClient`'s default free-text echo instead —
+not parseable as a `Decision`, so `/chat/agent` 500s (`agentloop.ErrMalformedDecision`).
+`tools`/`structured` stub mode (native **and** docker, 4 cells) genuinely failed on this
+until fixed — see `matrix.json`'s prior `git log` for the exact failing runs.
+
+The fix is `tool_stub.go`'s `toolStub`: an ADAPTER-LOCAL type (not a change to the shared
+`internal/llm.StubClient`, which many unrelated tests depend on) implementing both
+`aisotropy.LLMClient` and the optional `aisotropy.ToolCaller` capability. `mode_tools.go`
+and `mode_structured.go` inject it via `aisotropy.WithLLM(toolStub{})` specifically when
+`agnes == nil` (i.e. only under `ARENA_STUB=1`, only for these two modes). Once injected,
+`/chat/agent`'s `client.(llm.ToolCaller)` assertion succeeds and the route drives the
+NATIVE tool-calling path (`internal/llm.RunToolAgent`) instead of `agentloop` — the exact
+seam every sibling adapter's own stub already exercises for its `tools`/`structured`
+modes (`arenas/live/eino/stub.go`, `arenas/live/langgraph/modes/common.py`, Mastra's
+`lib/stub-model.mjs`), bringing aisotropy to parity rather than inventing a shortcut.
+
+The tool DECISION is canned (deterministic, no reasoning) like every sibling stub — the
+tool itself (`calcExecutor` / `structuredExecutor`) always genuinely executes. Unlike the
+sibling stubs, which use one fixed canned expression regardless of the actual question,
+`toolStub.deriveExpression` extracts a genuinely-evaluable arithmetic expression from the
+real question text (`"What is 47 multiplied by 89?"` -> `"47*89"`), falling back to a
+fixed expression only when extraction fails — so the runner's numeric correctness check
+(`numberPresent`, `arenas/live/runner/eval.go`) genuinely passes under the stub too, not
+merely "a tool executed":
+
+```bash
+env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u OPENROUTER_API_KEY ARENA_STUB=1 \
+  ./adapter-bin <<< '{"mode":"tools","system":"You are an assistant that uses tools for arithmetic. When the user asks for a calculation, call the calculate tool with the expression, then report the numeric result.","messages":[{"role":"user","content":"What is 47 multiplied by 89? Use the calculator tool."}]}'
+# -> {"framework":"aisotropy","mode":"tools","model":"aisotropy-stub",
+#     "reply":"The calculate tool was executed and returned 4183.",
+#     "tool_calls":[{"name":"calculate","arguments":{"expression":"47*89"},"result":"4183"}], "error":""}
+
+env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u OPENROUTER_API_KEY ARENA_STUB=1 \
+  ./adapter-bin <<< '{"mode":"structured","messages":[{"role":"user","content":"What is the capital of France?"}]}'
+# -> {"framework":"aisotropy","mode":"structured","model":"aisotropy-stub",
+#     "structured":{"answer":"[ARENA_STUB] canned structured answer for: \"What is the capital of France?\"","confidence":"medium"}, "error":""}
+```
+
 ## Usage
 
 ```bash

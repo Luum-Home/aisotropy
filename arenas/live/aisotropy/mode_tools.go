@@ -66,10 +66,18 @@ func runTools(req *request, out *result) error {
 		RequiredScope: "calc",
 		Parameters:    json.RawMessage(calcParamsSchema),
 	}
-	srv, err := bootServer(agnes, toolsPersona,
+	opts := []aisotropy.Option{
 		aisotropy.WithTool(calcTool),
 		aisotropy.WithToolExecutor(calcExecutor{}),
-	)
+	}
+	if agnes == nil {
+		// ARENA_STUB=1: inject the adapter-local tool-capable stub (tool_stub.go)
+		// instead of falling through to aisotropy's internal keyless StubClient,
+		// which does not implement llm.ToolCaller and cannot drive the
+		// /chat/agent route offline (see tool_stub.go's doc comment).
+		opts = append(opts, aisotropy.WithLLM(toolStub{}))
+	}
+	srv, err := bootServer(agnes, toolsPersona, opts...)
 	if err != nil {
 		return err
 	}
