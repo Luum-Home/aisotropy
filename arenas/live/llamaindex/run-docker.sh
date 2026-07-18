@@ -52,4 +52,5 @@ exec docker run --rm -i \
   -e OPENAI_MODEL \
   -e EMBED_URL="${EMBED_URL:-http://host.docker.internal:8899}" \
   -e QDRANT_URL="${QDRANT_URL:-http://host.docker.internal:6333}" \
+  -e ARENA_STUB="${ARENA_STUB:-}" \
   "$IMAGE_TAG"

@@ -10,7 +10,6 @@
 #
 # Usage:
 #   echo '{"mode":"qa", ...}' | bash arenas/live/eino/run-docker.sh
-#   bash arenas/live/eino/run-docker.sh --build   # force a rebuild first
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,15 +35,13 @@ if [ "${ARENA_STUB:-}" != "1" ]; then
   done
 fi
 
-FORCE_BUILD=0
-if [ "${1:-}" = "--build" ]; then
-  FORCE_BUILD=1
-fi
-
-if [ "$FORCE_BUILD" = "1" ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "eino-live-arena: building $IMAGE ..." >&2
-  docker build -t "$IMAGE" "$SCRIPT_DIR" >&2
-fi
+# Always build (not "only if no cached image exists"): docker's own layer
+# cache already makes a no-op rebuild cheap when source is unchanged, but a
+# tag-existence check alone left a stale image running old adapter code
+# indefinitely once *any* image with this tag had been built once — source
+# changes must always be picked up.
+echo "eino-live-arena: building $IMAGE ..." >&2
+docker build -t "$IMAGE" "$SCRIPT_DIR" >&2
 
 # host.docker.internal resolves on Docker Desktop (macOS/Windows) and on
 # Linux via --add-host below; EMBED_URL/QDRANT_URL stay overridable so a CI

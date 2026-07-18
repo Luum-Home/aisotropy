@@ -45,4 +45,5 @@ exec docker run --rm -i \
   -e OPENAI_MODEL \
   -e EMBED_URL="${EMBED_URL}" \
   -e QDRANT_URL="${QDRANT_URL}" \
+  -e ARENA_STUB="${ARENA_STUB:-}" \
   "${IMAGE}"

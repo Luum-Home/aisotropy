@@ -42,10 +42,13 @@ EMBED_URL_DOCKER="${EMBED_URL_DOCKER:-http://host.docker.internal:8899}"
 QDRANT_URL_DOCKER="${QDRANT_URL_DOCKER:-http://host.docker.internal:6333}"
 RQLITE_URL_DOCKER="${RQLITE_URL_DOCKER:-http://host.docker.internal:4001}"
 
-if ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
-  echo "PROGRESS: building $IMAGE_TAG (first use)..." >&2
-  docker build -t "$IMAGE_TAG" "$SCRIPT_DIR" >&2
-fi
+# Always build (not "only if no cached image exists"): docker's own layer
+# cache already makes a no-op rebuild cheap when source is unchanged, but a
+# tag-existence check alone left a stale image running old adapter code
+# indefinitely once *any* image with this tag had been built once -- source
+# changes must always be picked up.
+echo "PROGRESS: building $IMAGE_TAG" >&2
+docker build -t "$IMAGE_TAG" "$SCRIPT_DIR" >&2
 
 exec docker run --rm -i \
   --add-host=host.docker.internal:host-gateway \
@@ -55,4 +58,5 @@ exec docker run --rm -i \
   -e EMBED_URL="$EMBED_URL_DOCKER" \
   -e QDRANT_URL="$QDRANT_URL_DOCKER" \
   -e RQLITE_URL="$RQLITE_URL_DOCKER" \
+  -e ARENA_STUB="${ARENA_STUB:-}" \
   "$IMAGE_TAG"

@@ -2,7 +2,7 @@
   "framework": "ai-sdk",
   "dimensions": {
     "crash_recovery": {
-      "stub": {"native":"pass","docker":"fail","wasm":"infeasible:WASI has no sockets — the AI SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the AI SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
       "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the AI SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
     },
     "isolation_leak": {

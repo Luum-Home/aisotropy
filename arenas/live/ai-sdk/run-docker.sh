@@ -56,6 +56,19 @@ if [ -n "$PRE_RQLITE_URL" ]; then RQLITE_URL="$PRE_RQLITE_URL"; else
 fi
 QDRANT_COLLECTION="${QDRANT_COLLECTION:-arena_rag}"
 
+# Under ARENA_STUB=1, lib/rqlite-stub.mjs persists each "table" as one JSON
+# file under os.tmpdir() (node:22-alpine's os.tmpdir() is /tmp) specifically
+# so a SEPARATE process invocation observes what an earlier invocation
+# committed (see that file's header comment). `docker run --rm` gives every
+# invocation of this script its OWN ephemeral container filesystem, so
+# without a shared mount, crash_recovery's role:"resume" container never sees
+# what role:"run"'s container wrote -- a false "state lost" failure, not a
+# real one. A named volume bind-mounted at that exact path makes the stub
+# store durable ACROSS separate `docker run` invocations (matching what real
+# networked rqlite already gives the "real" lane for free), while staying a
+# no-op for the "real" lane (which never touches this path).
+STUB_VOLUME="aisotropy-arena-ai-sdk-stub"
+
 # Always build (not "only if no cached image exists"): docker's own layer
 # cache already makes a no-op rebuild cheap when index.mjs/lib/ are
 # unchanged, but a tag-existence check alone left a stale image running old
@@ -73,6 +86,7 @@ docker build -t "$IMAGE_TAG" "$SCRIPT_DIR" >&2
 # stub mode instead of silently falling through to the real model.
 exec docker run --rm -i \
   --add-host=host.docker.internal:host-gateway \
+  -v "${STUB_VOLUME}:/tmp/aisotropy-arena-ai-sdk-stub" \
   -e OPENAI_API_KEY="$OPENAI_API_KEY" \
   -e OPENAI_BASE_URL="$OPENAI_BASE_URL" \
   -e OPENAI_MODEL="$OPENAI_MODEL" \

@@ -53,4 +53,5 @@ exec docker run --rm -i \
   -e EMBED_URL="${EMBED_URL:-http://host.docker.internal:8899}" \
   -e QDRANT_URL="${QDRANT_URL:-http://host.docker.internal:6333}" \
   -e RQLITE_URL="${RQLITE_URL:-http://host.docker.internal:4001}" \
+  -e ARENA_STUB="${ARENA_STUB:-}" \
   "${IMAGE}"

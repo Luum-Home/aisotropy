@@ -64,10 +64,13 @@ fi
 QDRANT_COLLECTION="${QDRANT_COLLECTION:-arena_rag}"
 MASTRA_LIBSQL="${AISOTROPY_MASTRA_LIBSQL:-file:/tmp/mastra_arena_memory.db}"
 
-if [ -z "$(docker images -q "$IMAGE_TAG" 2>/dev/null)" ]; then
-  echo "PROGRESS: building $IMAGE_TAG (no cached image found)" >&2
-  docker build -t "$IMAGE_TAG" "$SCRIPT_DIR" >&2
-fi
+# Always build (not "only if no cached image exists"): docker's own layer
+# cache already makes a no-op rebuild cheap when index.mjs/lib/ are
+# unchanged, but a tag-existence check alone left a stale image running old
+# adapter code indefinitely once *any* image with this tag had been built
+# once -- source changes must always be picked up.
+echo "PROGRESS: building $IMAGE_TAG" >&2
+docker build -t "$IMAGE_TAG" "$SCRIPT_DIR" >&2
 
 # Explicit `-e VAR="$VAR"` (not bare `-e VAR`) so this does not depend on shell
 # export state -- EMBED_URL/QDRANT_URL/RQLITE_URL above are plain local variables
@@ -82,4 +85,5 @@ exec docker run --rm -i \
   -e QDRANT_COLLECTION="$QDRANT_COLLECTION" \
   -e RQLITE_URL="$RQLITE_URL" \
   -e AISOTROPY_MASTRA_LIBSQL="$MASTRA_LIBSQL" \
+  -e ARENA_STUB="${ARENA_STUB:-}" \
   "$IMAGE_TAG"

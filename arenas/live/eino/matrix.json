@@ -2,7 +2,7 @@
   "framework": "eino",
   "dimensions": {
     "crash_recovery": {
-      "stub": {"native":"fail","docker":"fail","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
+      "stub": {"native":"infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)","docker":"infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
       "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
     },
     "isolation_leak": {
@@ -42,7 +42,7 @@
       "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
     },
     "tools": {
-      "stub": {"native":"fail","docker":"fail","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
       "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
     }
   }

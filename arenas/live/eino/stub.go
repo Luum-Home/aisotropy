@@ -24,15 +24,22 @@ import (
 // still populated on the wire (a word-count approximation, loudly fake —
 // never a fabricated *real* provider number, and never silently -1 either).
 //
-// Honest scope note (this is a PURE echo, not a tool-calling simulator): it
-// never decides to call a bound tool on its own. Modes whose OWN correctness
-// assertion requires the model to actually invoke a tool — mode_tools.go's
-// `len(out.ToolCalls) == 0` check, and mode_observability.go's scenario that
-// depends on the same ReAct loop — will surface that honestly as an `error`
-// field under ARENA_STUB=1 rather than fabricating a tool decision. That is
-// still a fully offline, zero-network run (the contract's rule 5, "errors
-// are data, not crashes," covers exactly this); it is just not a PASSing run
-// for those two modes' own internal assertions. See README.md#stub-mode.
+// Tool-calling scope note: when tools are bound (WithTools) and the input
+// does not yet carry a tool-result message, Generate emits a CANNED
+// ToolCall for "calculate" (or the first bound tool, if not named
+// "calculate") with a fixed, genuinely-evaluable expression — mirroring the
+// Mastra adapter's stub (lib/stub-model.mjs), which takes the same approach
+// for the same reason: mode_tools.go's `len(out.ToolCalls) == 0` check and
+// mode_observability.go's scenario both depend on Eino's REAL ReAct loop
+// (flow/agent/react) actually executing a tool, not on this fake "deciding"
+// anything intelligently. Once the tool result comes back (a Tool-role
+// message present in the next Generate call), the stub finishes with a
+// plain text reply that echoes that real result — the tool itself (and its
+// execution) is always genuine, only the DECISION to call it is canned.
+// This keeps the run fully offline (zero network calls) while letting both
+// modes exercise their real multi-step tool-execution code path under
+// ARENA_STUB=1, the same way the other six adapters' stubs already do. See
+// README.md#stub-mode.
 //
 // Callback wiring: this type manually calls the same
 // github.com/cloudwego/eino/callbacks sequence
@@ -116,6 +123,92 @@ func (m *stubChatModel) reply(in []*schema.Message) *schema.Message {
 	}
 }
 
+// stubToolCallID is fixed (not random) — deterministic output, same spirit
+// as every other canned value this stub produces, and there is only ever
+// one in-flight tool call per stub-driven ReAct step.
+const stubToolCallID = "arena-stub-call-1"
+
+// hasToolResultMessage returns the most recent Tool-role message in the
+// conversation, or nil if none is present yet — i.e. nil means "this
+// Generate call is deciding whether to call a tool", non-nil means "a bound
+// tool already ran; time to answer using its real result."
+func hasToolResultMessage(in []*schema.Message) *schema.Message {
+	for i := len(in) - 1; i >= 0; i-- {
+		if in[i].Role == schema.Tool {
+			return in[i]
+		}
+	}
+	return nil
+}
+
+// stubToolCallArgs returns canned, genuinely-evaluable arguments for the
+// named tool. "calculate" (this adapter's one real tool, mode_tools.go) is
+// special-cased with a real arithmetic expression so the tool actually
+// computes something, not just echoes a placeholder — same convention the
+// Mastra and genkit-go stubs use for the identical tool shape.
+func stubToolCallArgs(name string) string {
+	if name == "calculate" {
+		return `{"expression":"2 + 2"}`
+	}
+	return "{}"
+}
+
+// toolCallMessage builds a canned ToolCall targeting "calculate" (or the
+// first bound tool, if "calculate" is not among them) — see the type-level
+// "Tool-calling scope note" above for why this fake decides deterministically
+// rather than trying to reason about when to call a tool.
+func (m *stubChatModel) toolCallMessage() *schema.Message {
+	target := m.tools[0]
+	for _, t := range m.tools {
+		if t.Name == "calculate" {
+			target = t
+			break
+		}
+	}
+	args := stubToolCallArgs(target.Name)
+	return &schema.Message{
+		Role: schema.Assistant,
+		ToolCalls: []schema.ToolCall{{
+			ID:   stubToolCallID,
+			Type: "function",
+			Function: schema.FunctionCall{
+				Name:      target.Name,
+				Arguments: args,
+			},
+		}},
+		ResponseMeta: &schema.ResponseMeta{
+			FinishReason: "tool_calls",
+			Usage: &schema.TokenUsage{
+				PromptTokens:     len(strings.Fields(args)),
+				CompletionTokens: len(strings.Fields(args)),
+				TotalTokens:      2 * len(strings.Fields(args)),
+			},
+		},
+	}
+}
+
+// toolResultReply finishes the turn with a plain text reply that echoes the
+// REAL tool's output (tr.Content is whatever the actually-executed
+// "calculate" tool actually returned — see mode_tools.go/newCalculateTool —
+// never fabricated here), prefixed like every other stub reply so it is
+// unmistakably synthetic.
+func (m *stubChatModel) toolResultReply(tr *schema.Message) *schema.Message {
+	content := stubEchoPrefix + "tool result: " + tr.Content
+	tokens := len(strings.Fields(content))
+	return &schema.Message{
+		Role:    schema.Assistant,
+		Content: content,
+		ResponseMeta: &schema.ResponseMeta{
+			FinishReason: "stop",
+			Usage: &schema.TokenUsage{
+				PromptTokens:     tokens,
+				CompletionTokens: tokens,
+				TotalTokens:      2 * tokens,
+			},
+		},
+	}
+}
+
 // Generate mirrors the real vendored client's own callback sequence
 // (EnsureRunInfo -> OnStart -> OnEnd, github.com/cloudwego/eino-ext/libs/acl/openai's
 // Client.Generate) so a standalone (non-graph) caller that attaches a
@@ -126,7 +219,15 @@ func (m *stubChatModel) Generate(ctx context.Context, in []*schema.Message, _ ..
 	ctx = callbacks.EnsureRunInfo(ctx, stubModelType, components.ComponentOfChatModel)
 	ctx = callbacks.OnStart(ctx, &model.CallbackInput{Messages: in, Tools: m.tools})
 
-	out := m.reply(in)
+	var out *schema.Message
+	switch {
+	case len(m.tools) > 0 && hasToolResultMessage(in) == nil:
+		out = m.toolCallMessage()
+	case len(m.tools) > 0:
+		out = m.toolResultReply(hasToolResultMessage(in))
+	default:
+		out = m.reply(in)
+	}
 
 	callbacks.OnEnd(ctx, &model.CallbackOutput{
 		Message: out,
