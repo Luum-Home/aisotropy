@@ -35,6 +35,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -73,19 +74,38 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := run(ctx, *dataPath, *outPath, *judgeN); err != nil {
+	if err := run(ctx, os.Stdout, *dataPath, *outPath, *judgeN); err != nil {
 		fmt.Fprintf(os.Stderr, "rag-quality: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, dataPath, outPath string, judgeN int) error {
+// run resolves the real environment-derived embedder (semantic.EmbedderFromEnv)
+// and judge client (eval.JudgeClientFromEnv) — the only two external seams the
+// harness has — and hands off to runHarness, which takes both as plain
+// parameters. This split is what makes the harness testable with zero real
+// infra: a test calls runHarness directly with a fake Embedder and/or a fake
+// eval.JudgeClient (e.g. llm.NewStubClient() marked Real, or a client that
+// deterministically errors) and exercises the full pipeline — corpus
+// embedding, retrieval scoring, report rendering, the optional judge pass —
+// with no network and no real model.
+func run(ctx context.Context, w io.Writer, dataPath, outPath string, judgeN int) error {
+	emb := semantic.EmbedderFromEnv()
+	jc := eval.JudgeClientFromEnv()
+	return runHarness(ctx, w, dataPath, outPath, judgeN, emb, jc)
+}
+
+// runHarness executes the full rag-quality eval: load the gold set, embed and
+// index each corpus language, score every slice against the real
+// eval.EvalRetrieval/internal/eval metrics, run the optional judge pass, and
+// render + write the report. Every external dependency is a parameter (emb,
+// jc), so this func has no hidden environment or network reads of its own.
+func runHarness(ctx context.Context, w io.Writer, dataPath, outPath string, judgeN int, emb semantic.Embedder, jc eval.JudgeClient) error {
 	gs, err := loadGoldSet(dataPath)
 	if err != nil {
 		return err
 	}
 
-	emb := semantic.EmbedderFromEnv()
 	backend, roleAware, realQuality := classifyEmbedder(ctx, emb)
 	dim := emb.Dimension()
 
@@ -128,10 +148,10 @@ func run(ctx context.Context, dataPath, outPath string, judgeN int) error {
 	rep.finishedAt = time.Now()
 
 	// Optional, gated answer/context-quality pass — skipped cleanly with no key.
-	rep.judge = runJudgePass(ctx, gs, stores, emb, dim, judgeN)
+	rep.judge = runJudgePass(ctx, gs, stores, emb, judgeN, jc)
 
 	rendered := rep.render()
-	fmt.Print(rendered)
+	fmt.Fprint(w, rendered)
 	if err := os.WriteFile(outPath, []byte(rendered), 0o644); err != nil {
 		return fmt.Errorf("write report: %w", err)
 	}

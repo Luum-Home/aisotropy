@@ -44,19 +44,20 @@ var retrievedContextRelevanceRubric = eval.Rubric{
 // judgeThreshold is the pass bar for the optional judge aggregate.
 const judgeThreshold = 0.7
 
-// runJudgePass runs the optional judge, gated the PROVIDER-AGNOSTIC way — via
-// eval.JudgeClientFromEnv, which mirrors llm.RegistryFromEnv precedence
-// (OPENROUTER_API_KEY > OPENAI_API_KEY > ANTHROPIC_API_KEY > stub, ADR-0009),
-// NOT a hardcoded ANTHROPIC_API_KEY gate. With no real provider key it is
-// skipped cleanly (never an error, never the stub masquerading as a real
-// judge). With any provider key it drives the SAME kind of llm.Client the
-// product serves with, retrieves the top passage for a sample of queries from
-// the en_monolingual slice, and scores retrieved-context relevance via the
-// shared internal/eval LLM-judge + RunSuite machinery.
-func runJudgePass(ctx context.Context, gs *goldSet, stores map[string]semantic.Store, emb semantic.Embedder, dim, n int) *judgeReport {
+// runJudgePass runs the optional judge, gated the PROVIDER-AGNOSTIC way. The
+// caller resolves jc — normally via eval.JudgeClientFromEnv, which mirrors
+// llm.RegistryFromEnv precedence (OPENROUTER_API_KEY > OPENAI_API_KEY >
+// ANTHROPIC_API_KEY > stub, ADR-0009), NOT a hardcoded ANTHROPIC_API_KEY gate
+// — and passes it in, so this func has no direct environment dependency and a
+// test can inject any eval.JudgeClient (a real provider, the keyless stub, or
+// a fake) with no network. With no real provider key it is skipped cleanly
+// (never an error, never the stub masquerading as a real judge). With any
+// provider key it drives the SAME kind of llm.Client the product serves with,
+// retrieves the top passage for a sample of queries from the en_monolingual
+// slice, and scores retrieved-context relevance via the shared internal/eval
+// LLM-judge + RunSuite machinery.
+func runJudgePass(ctx context.Context, gs *goldSet, stores map[string]semantic.Store, emb semantic.Embedder, n int, jc eval.JudgeClient) *judgeReport {
 	jr := &judgeReport{criterion: retrievedContextRelevance.Name, threshold: judgeThreshold}
-
-	jc := eval.JudgeClientFromEnv()
 	jr.provider = jc.Provider
 	if !jc.Real {
 		jr.skippedReason = "no LLM provider key set (OPENROUTER_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY) — LLM-judge is optional; objective IR metrics above are unaffected"

@@ -1,0 +1,42 @@
+{
+  "name": "mini-test-gold",
+  "source": "synthetic-test-fixture",
+  "source_url": "",
+  "license": "CC0",
+  "license_url": "",
+  "attribution": "",
+  "generated_by": "test-fixture",
+  "aligned_pairs": 2,
+  "corpus_sizes": {"en": 2, "es": 2},
+  "corpora": {
+    "en": [
+      {"id": "en-0", "text": "The quick brown fox jumps over the lazy dog."},
+      {"id": "en-1", "text": "Go channels let goroutines communicate safely."}
+    ],
+    "es": [
+      {"id": "es-0", "text": "El zorro marron salta sobre el perro perezoso."},
+      {"id": "es-1", "text": "Los canales de Go permiten comunicacion segura."}
+    ]
+  },
+  "slices": [
+    {
+      "name": "en_monolingual",
+      "description": "English query against English corpus",
+      "query_lang": "en",
+      "corpus_lang": "en",
+      "cases": [
+        {"name": "fox", "query": "The quick brown fox jumps over the lazy dog.", "relevant_ids": ["en-0"]},
+        {"name": "channels", "query": "Go channels let goroutines communicate safely.", "relevant_ids": ["en-1"]}
+      ]
+    },
+    {
+      "name": "es_monolingual",
+      "description": "Spanish query against Spanish corpus",
+      "query_lang": "es",
+      "corpus_lang": "es",
+      "cases": [
+        {"name": "zorro", "query": "El zorro marron salta sobre el perro perezoso.", "relevant_ids": ["es-0"]}
+      ]
+    }
+  ]
+}
