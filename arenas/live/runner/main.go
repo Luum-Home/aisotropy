@@ -53,6 +53,7 @@ func main() {
 	dockerOnly := flag.Bool("docker", false, "benchmark the docker execution form only")
 	maxTasks := flag.Int("max-tasks", 0, "cap tasks per correctness mode (0 = all; bounds real spend on a re-run)")
 	concurrency := flag.Int("concurrency", 4, "max frameworks to run concurrently during the correctness/quality pass (1 = fully sequential, exact old behavior; the benchmark pass always stays sequential/uncontended)")
+	retry := flag.Int("retry", 1, "max retries per adapter invocation (correctness/quality pass) on a TRANSIENT failure — timeout/deadline/connection-reset/EOF or a 429/500/502/503/'unavailable' adapter error; a deterministic adapter/contract error never retries. 0 = no retry, exact old behavior")
 	skipJudge := flag.Bool("skip-judge", false, "skip the LLM-as-judge scoring pass")
 	skipBench := flag.Bool("skip-bench", false, "skip the benchmark pass entirely")
 	skipCorrect := flag.Bool("skip-correctness", false, "skip the correctness/quality pass entirely")
@@ -65,6 +66,9 @@ func main() {
 	}
 	if *concurrency < 1 {
 		fatal("-concurrency must be >= 1 (got %d)", *concurrency)
+	}
+	if *retry < 0 {
+		fatal("-retry must be >= 0 (got %d)", *retry)
 	}
 	forms := []string{"native", "docker"}
 	switch {
@@ -111,8 +115,8 @@ func main() {
 		fatal("no adapters found under %s/*/run.sh", *liveDir)
 	}
 	logf("adapters: %s", strings.Join(fwNames(frameworks), ", "))
-	logf("modes: %s | bench-modes: %s | forms: %s | bench-iters: %d | correctness concurrency: %d",
-		strings.Join(modes, ","), strings.Join(benchModes, ","), strings.Join(forms, ","), *benchIters, *concurrency)
+	logf("modes: %s | bench-modes: %s | forms: %s | bench-iters: %d | correctness concurrency: %d | retry: %d",
+		strings.Join(modes, ","), strings.Join(benchModes, ","), strings.Join(forms, ","), *benchIters, *concurrency, *retry)
 	if len(dims) > 0 && !*skipDims {
 		logf("dimensions: %s", strings.Join(dims, ","))
 	}
@@ -144,7 +148,7 @@ func main() {
 	// ---- pass 1: correctness/quality (native) ------------------------------
 	var records []record
 	if !*skipCorrect {
-		records = runCorrectnessPass(frameworks, modes, tasks, rag, *maxTasks, judge, callBudget, *concurrency)
+		records = runCorrectnessPass(frameworks, modes, tasks, rag, *maxTasks, judge, callBudget, *concurrency, *retry)
 	}
 
 	// ---- pass 2: benchmarks (native + docker) ------------------------------
@@ -203,9 +207,12 @@ func main() {
 // particular the per-item detail table, which walks the slice directly) stays
 // deterministic regardless of goroutine completion order. concurrency=1
 // reproduces the exact old sequential loop and ordering.
-func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag []ragQuestion, maxTasks int, judge *judgeClient, budget *callCounter, concurrency int) []record {
+func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag []ragQuestion, maxTasks int, judge *judgeClient, budget *callCounter, concurrency int, retries int) []record {
 	if concurrency < 1 {
 		concurrency = 1
+	}
+	if retries < 0 {
+		retries = 0
 	}
 
 	perFW := make([][]record, len(frameworks))
@@ -224,7 +231,7 @@ func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag 
 				items := buildWork(fw.name, mode, tasks, rag, maxTasks)
 				for _, it := range items {
 					logf("[correctness] %s/%s %s ...", fw.name, mode, it.ID)
-					rec := runWorkItem(fw, it, budget)
+					rec := runWorkItem(fw, it, budget, retries)
 					if !rec.failed() {
 						scoreRecord(&rec, it, judge, budget)
 					}
@@ -390,6 +397,124 @@ func runAdapter(script string, in adapterInput, timeout time.Duration) execResul
 	return res
 }
 
+// retrySleep is the backoff sleep used between retry attempts. It is a
+// package var (not a literal time.Sleep call) purely so tests can stub it to
+// a no-op and exercise the retry loop instantly instead of burning several
+// real seconds per test case.
+var retrySleep = time.Sleep
+
+// retryBackoff returns the backoff before retry attempt `attempt` (0-based:
+// the sleep before the FIRST retry, i.e. after the initial attempt failed).
+// Exponential-ish and short by design — the transient failures this targets
+// (agnes latency spikes, shared-infra 429/502 under load) clear in seconds,
+// not minutes: 1s, 2s, 4s, capped at 8s.
+func retryBackoff(attempt int) time.Duration {
+	d := time.Second << uint(attempt)
+	if d > 8*time.Second {
+		d = 8 * time.Second
+	}
+	return d
+}
+
+// transientRunErrMarkers match process-level failures on execResult.runErr —
+// the adapter process itself timed out, was killed, or its connection to
+// agnes dropped mid-call. Matched case-insensitively as substrings against
+// the full runErr string (which embeds the exec error plus a tail of
+// stderr), since a shared-infra timeout surfaces either as the outer
+// exec.CommandContext deadline or as text the adapter itself logged to
+// stderr before a non-zero exit.
+var transientRunErrMarkers = []string{
+	"context deadline exceeded",
+	"timeout",
+	"connection reset",
+	"eof",
+}
+
+// transientOutErrMarkers match adapter-REPORTED failures on
+// adapterOutput.Error (valid JSON, exit 0 or 1, but the adapter's own call to
+// agnes failed) — HTTP status codes and text agnes/the adapter's HTTP client
+// uses for retryable conditions. Matched case-insensitively as substrings.
+var transientOutErrMarkers = []string{
+	"429",
+	"500",
+	"502",
+	"503",
+	"deadline",
+	"timeout",
+	"unavailable",
+}
+
+// isTransientFailure classifies a failed execResult as TRANSIENT (worth a
+// retry — real agnes latency variance or shared-infra 429/5xx) vs.
+// DETERMINISTIC (a malformed contract, a 400, an adapter logic error like
+// "unknown mode" — retrying wastes a billable call and will never succeed).
+// A successful result (no runErr, no out.Error) is never transient — callers
+// only reach this after confirming failure, but it is safe to call directly.
+func isTransientFailure(res execResult) bool {
+	if res.runErr != "" {
+		return containsAnyFold(res.runErr, transientRunErrMarkers)
+	}
+	if res.out.Error != "" {
+		return containsAnyFold(res.out.Error, transientOutErrMarkers)
+	}
+	return false
+}
+
+// containsAnyFold reports whether s contains any of markers, case-insensitive.
+func containsAnyFold(s string, markers []string) bool {
+	low := strings.ToLower(s)
+	for _, m := range markers {
+		if strings.Contains(low, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// runAdapterRetry invokes runAdapter once, then retries up to `retries`
+// additional times ONLY when the failure classifies as TRANSIENT
+// (isTransientFailure) — a deterministic failure (malformed contract, bad
+// request, adapter logic error) returns immediately on attempt 1, since
+// retrying it wastes a billable call for a guaranteed-repeat failure.
+//
+// Every attempt — the first and every retry — is a real billable agnes call
+// and is counted via budget.add(1); retries=0 makes this call exactly one
+// runAdapter invocation plus one budget.add(1), i.e. the exact pre-retry
+// behavior. On exhaustion the LAST attempt's result (still failed) is
+// returned unchanged — a persistent failure is never hidden.
+func runAdapterRetry(script string, in adapterInput, timeout time.Duration, retries int, budget *callCounter) execResult {
+	var res execResult
+	for attempt := 0; ; attempt++ {
+		res = runAdapter(script, in, timeout)
+		budget.add(1)
+		if !res.failed() || !isTransientFailure(res) {
+			return res
+		}
+		if attempt >= retries {
+			return res // exhausted retries; last (still-transient) failure stands
+		}
+		backoff := retryBackoff(attempt)
+		logf("transient failure on attempt %d/%d (%s) — retrying in %s",
+			attempt+1, retries+1, execResultErrSummary(res), backoff)
+		retrySleep(backoff)
+	}
+}
+
+// failed reports whether an execResult represents a failed invocation, by
+// the same rule record.failed() uses: a runner-side error, or an
+// adapter-reported logical error.
+func (r execResult) failed() bool { return r.runErr != "" || r.out.Error != "" }
+
+// execResultErrSummary returns a short human-readable reason for a log line,
+// preferring the runner-side error and falling back to the adapter-reported
+// one.
+func execResultErrSummary(res execResult) string {
+	if res.runErr != "" {
+		return res.runErr
+	}
+	return res.out.Error
+}
+
 // execStdin runs a bash script with the given stdin, returning its raw stdout,
 // exit code and any runner-side failure string. Unlike runAdapter it does not
 // parse or interpret stdout — the caller owns that (used by the new dimensions:
@@ -439,14 +564,15 @@ func runScript(script string, timeout time.Duration) (stdout string, exitCode in
 
 // runWorkItem runs every invocation of a work item natively (the correctness
 // pass is native-only), summing provider token usage across invocations and
-// scoring against the FINAL invocation's output.
-func runWorkItem(fw adapter, it workItem, budget *callCounter) record {
+// scoring against the FINAL invocation's output. Each invocation is retried
+// up to `retries` times on a TRANSIENT failure (see runAdapterRetry);
+// retries=0 reproduces the exact pre-retry behavior.
+func runWorkItem(fw adapter, it workItem, budget *callCounter, retries int) record {
 	rec := record{Framework: fw.name, Mode: it.Mode, ID: it.ID, Kind: it.Kind}
 	sumIn, sumOut := 0, 0
 	hasTok := true
 	for i, in := range it.Invocations {
-		res := runAdapter(fw.runSh, in, 180*time.Second)
-		budget.add(1)
+		res := runAdapterRetry(fw.runSh, in, 180*time.Second, retries, budget)
 		if res.runErr != "" {
 			rec.RunErr = fmt.Sprintf("invocation %d/%d: %s", i+1, len(it.Invocations), res.runErr)
 			return rec
