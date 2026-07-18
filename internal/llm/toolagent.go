@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/otel"
@@ -28,6 +29,22 @@ import (
 // its abort (a *core.GuardrailError carrying this name), so a run that simply
 // did not converge within maxSteps is treated as a graceful stop, not a failure.
 const maxToolStepsGuardrailName = "max-tool-steps"
+
+// Gollem-native safety rails for the native tool-agent loop (gollem-exploitation
+// audit P1, docs/research/gollem-exploitation-audit-SYNTHESIS-2026-07-17.md).
+// gollem ships these AgentOptions; this loop previously left them unset. All are
+// behavior-preserving for normal runs and only engage on pathological inputs.
+const (
+	// maxToolConcurrency caps per-turn tool fan-out (gollem default is
+	// unbounded). Generous enough to be invisible in normal single/few-tool
+	// turns; it only bounds a model that requests many tools at once so it
+	// cannot spawn unbounded goroutines.
+	maxToolConcurrency = 8
+	// defaultToolTimeout is a generous per-tool deadline. Only a genuinely hung
+	// tool hits it; ctx cancellation still stops the whole run first, and normal
+	// tool calls complete far under this bound.
+	defaultToolTimeout = 120 * time.Second
+)
 
 // ToolStep is one executed tool during a RunToolAgent run: the tool the model
 // chose, the decoded string-keyed arguments it passed, and the executor's
@@ -148,6 +165,23 @@ func RunToolAgentWithOutput(
 		opts = append(opts, core.WithTurnGuardrail[string](maxToolStepsGuardrailName, core.MaxTurns(maxSteps)))
 	}
 	opts = append(opts, gollemGuardrailOptions[string](tracker)...)
+
+	// Gollem-native safety rails the loop previously left unset (audit P1):
+	//   - tool-output truncation: head/tail-truncate a tool result over ~64KB
+	//     (16k-token default) before buildGollemPrompt re-flattens the whole
+	//     history into the prompt each turn — bounds context blow-up; normal
+	//     outputs pass through untouched.
+	//   - history normalization: non-lossy pruning of orphaned/duplicate history
+	//     entries per turn (NOT lossy in-loop autocontext summarization, which
+	//     ADR-0010 lists DO-NOT-ADOPT).
+	//   - max tool concurrency + default tool timeout: bound pathological per-turn
+	//     fan-out and a hung tool, respectively.
+	opts = append(opts,
+		core.WithToolOutputTruncation[string](core.DefaultTruncationConfig()),
+		core.WithHistoryProcessor[string](core.NormalizeHistory()),
+		core.WithMaxConcurrency[string](maxToolConcurrency),
+		core.WithDefaultToolTimeout[string](defaultToolTimeout),
+	)
 
 	agent := core.NewAgent[string](model, opts...)
 
