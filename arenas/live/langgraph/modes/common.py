@@ -159,31 +159,80 @@ def build_chat_model(
     ``langchain_core.language_models.fake_chat_models.FakeListChatModel``
     (cycles through a fixed list of canned string responses; documented at
     https://python.langchain.com/api_reference/core/language_models/langchain_core.language_models.fake_chat_models.FakeListChatModel.html)
-    — never a hand-rolled mock class. It is subclassed here ONLY to override
-    ``bind_tools()``: ``FakeListChatModel`` inherits ``BaseChatModel``'s
-    default ``bind_tools()``, which raises ``NotImplementedError`` (verified
-    against this arena's pinned ``langchain-core==1.4.9``), and several
-    modes (``tools``, ``observability``, ``qa`` with request-supplied
-    ``tools``) call ``.bind_tools(...)`` unconditionally. The override makes
-    that call a no-op passthrough so those modes stay importable/runnable
-    offline — it does NOT simulate real tool-call reasoning: the stub model
-    still only ever returns its canned text, so ``tool_calls`` is empty
-    under ``ARENA_STUB=1`` even for tool-using modes. That is an honest,
-    documented reduction in fidelity for those modes' stub path, not a
-    fabricated tool call.
+    — never a hand-rolled mock class. It is subclassed here to override
+    ``bind_tools()`` (``FakeListChatModel`` inherits ``BaseChatModel``'s
+    default ``bind_tools()``, which raises ``NotImplementedError`` — verified
+    against this arena's pinned ``langchain-core==1.4.9``) and ``_generate()``.
+
+    Tool-calling scope note (mirrors the Eino adapter's ``stub.go`` and the
+    Mastra adapter's ``lib/stub-model.mjs`` — same approach, same reason):
+    when tools are bound and the input messages do NOT yet contain a
+    ``ToolMessage`` (i.e. no tool has been executed for this turn yet), the
+    stub emits a CANNED ``tool_calls`` entry for the first bound tool with a
+    fixed, genuinely-evaluable expression (``"(482 * 17) + 391"`` for a tool
+    named ``calculate``, empty args otherwise) — this is what lets
+    ``modes.tools``' and ``modes.observability``'s real LangGraph
+    ``ToolNode``/``tools_condition`` ReAct loop actually execute the real
+    tool offline, instead of the loop never entering the tools branch at
+    all. Once a ``ToolMessage`` IS present (the real tool already ran and
+    its result was fed back), the stub falls back to its plain canned text
+    reply so the loop terminates via ``tools_condition`` -> END exactly like
+    the real model would after answering from the tool result. The stub
+    never simulates real tool-call REASONING (it does not read the
+    expression/arguments the caller asked for) — only the DECISION to call
+    the tool and the loop's terminating shape are canned; the tool itself
+    (and its execution) is always genuine. This is documented, not a
+    fabricated real answer.
     """
     if is_stub():
         from langchain_core.language_models.fake_chat_models import FakeListChatModel
+        from pydantic import PrivateAttr
 
         class _StubChatModel(FakeListChatModel):
-            """FakeListChatModel + a documented no-op bind_tools() override.
+            """FakeListChatModel + tool-call-aware bind_tools()/_generate().
 
             See build_chat_model()'s docstring above for why this override
             exists and what it does (and does not) simulate.
             """
 
+            _stub_tools: list[Any] = PrivateAttr(default_factory=list)
+
             def bind_tools(self, tools: Any, **kwargs: Any) -> "_StubChatModel":  # noqa: ARG002
+                self._stub_tools = list(tools)
                 return self
+
+            @staticmethod
+            def _tool_name(tool: Any) -> str:
+                if isinstance(tool, dict):
+                    fn = tool.get("function") or {}
+                    return fn.get("name") or tool.get("name") or "calculate"
+                return getattr(tool, "name", None) or "calculate"
+
+            def _generate(  # type: ignore[override]
+                self,
+                messages: Any,
+                stop: list[str] | None = None,
+                run_manager: Any = None,
+                **kwargs: Any,
+            ) -> Any:
+                if self._stub_tools:
+                    from langchain_core.messages import ToolMessage
+
+                    already_ran = any(isinstance(m, ToolMessage) for m in messages)
+                    if not already_ran:
+                        from langchain_core.messages import AIMessage
+                        from langchain_core.outputs import ChatGeneration, ChatResult
+
+                        name = self._tool_name(self._stub_tools[0])
+                        args = {"expression": "(482 * 17) + 391"} if name == "calculate" else {}
+                        ai_msg = AIMessage(
+                            content="",
+                            tool_calls=[
+                                {"name": name, "args": args, "id": "arena-stub-call-1", "type": "tool_call"}
+                            ],
+                        )
+                        return ChatResult(generations=[ChatGeneration(message=ai_msg)])
+                return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
         return _StubChatModel(responses=list(responses or _DEFAULT_STUB_RESPONSES))
 
