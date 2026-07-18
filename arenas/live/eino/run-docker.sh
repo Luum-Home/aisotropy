@@ -27,12 +27,14 @@ else
   echo "eino-live-arena: warning: $ENV_FILE not found — relying on already-exported env vars" >&2
 fi
 
-for var in OPENAI_API_KEY OPENAI_BASE_URL OPENAI_MODEL; do
-  if [ -z "${!var:-}" ]; then
-    echo "eino-live-arena: required env var $var is not set" >&2
-    exit 1
-  fi
-done
+if [ "${ARENA_STUB:-}" != "1" ]; then
+  for var in OPENAI_API_KEY OPENAI_BASE_URL OPENAI_MODEL; do
+    if [ -z "${!var:-}" ]; then
+      echo "eino-live-arena: required env var $var is not set" >&2
+      exit 1
+    fi
+  done
+fi
 
 FORCE_BUILD=0
 if [ "${1:-}" = "--build" ]; then
@@ -52,6 +54,7 @@ docker run --rm -i \
   -e OPENAI_API_KEY \
   -e OPENAI_BASE_URL \
   -e OPENAI_MODEL \
+  -e ARENA_STUB="${ARENA_STUB:-}" \
   -e EMBED_URL="${EMBED_URL:-http://host.docker.internal:8899}" \
   -e QDRANT_URL="${QDRANT_URL:-http://host.docker.internal:6333}" \
   -e QDRANT_GRPC_PORT="${QDRANT_GRPC_PORT:-6334}" \

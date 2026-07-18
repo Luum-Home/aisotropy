@@ -205,24 +205,15 @@ def _report(
 
 
 def run(payload: dict[str, Any]) -> dict[str, Any]:
-    model_name = __import__("os").environ.get("OPENAI_MODEL", common.DEFAULT_MODEL)
-    api_key = __import__("os").environ.get("OPENAI_API_KEY")
-    base_url = __import__("os").environ.get("OPENAI_BASE_URL")
-    if not api_key:
+    model_name, api_key, base_url, err = common.resolve_chat_env("observability")
+    if err:
         return _report(
             otel_supported=False, span_count=0, span_names=[], span_timings_ms={},
             logs_structured=False, log_sample="", notes="",
-            error="OPENAI_API_KEY is not set",
-        )
-    if not base_url:
-        return _report(
-            otel_supported=False, span_count=0, span_names=[], span_timings_ms={},
-            logs_structured=False, log_sample="", notes="",
-            error="OPENAI_BASE_URL is not set",
+            error=err.get("error", "missing chat env"),
         )
 
     try:
-        from langchain_openai import ChatOpenAI
         from langgraph.graph import END, START, MessagesState, StateGraph
         from langgraph.prebuilt import ToolNode, tools_condition
         from openinference.instrumentation.langchain import LangChainInstrumentor
@@ -267,7 +258,7 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
 
     try:
         calculate = _make_calculate_tool()
-        llm = ChatOpenAI(model=model_name, base_url=base_url, api_key=api_key)
+        llm = common.build_chat_model(model_name, api_key, base_url)
         bound_llm = llm.bind_tools([calculate])
 
         def call_agent(state: MessagesState) -> dict[str, Any]:

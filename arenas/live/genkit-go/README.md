@@ -33,18 +33,19 @@ so requests with no `mode` field behave exactly as before.
 | `structured` | Native structured output (`ai.WithOutputType`) — a Go struct, schema-validated by Genkit, not ad-hoc JSON parsing. |
 | `stream` | Native streaming generation (`ai.WithStreaming`); records `ttft_ms` (time to first chunk). |
 | `observability` | Genkit's OWN native OpenTelemetry tracing + structured (`log/slog`) logging, captured in-process across one representative multi-op turn. Uses a **different stdout contract** — see "`observability` — Genkit's native OTel tracing + structured logs" below. |
+| `middleware` | Genkit's NATIVE `ai.ModelMiddleware` (`func(ai.ModelFunc) ai.ModelFunc`), attached via `ai.WithMiddleware`: one real, observable inbound (pre-model) transform and outbound (post-model) observation around one qa-shaped turn. Uses a **different stdout contract** — see "`middleware` — native `ai.ModelMiddleware`" below. |
 
 ## Contract
 
-`mode=observability` is the one exception to everything in this section — it does not
-use the shared envelope described here at all. See its own per-mode design section
-below for its stdout contract.
+`mode=observability` and `mode=middleware` are the two exceptions to everything in
+this section — neither uses the shared envelope described here at all. See their own
+per-mode design sections below for their stdout contracts.
 
 **stdin** — one JSON object:
 
 ```json
 {
-  "mode": "qa | rag | tools | memory | memory_scoped | isolation_leak | crash_recovery | structured | stream | observability",
+  "mode": "qa | rag | tools | memory | memory_scoped | isolation_leak | crash_recovery | structured | stream | observability | middleware",
   "system": "string",
   "messages": [{"role": "user|assistant", "content": "string"}],
   "tools": [{"name": "string", "description": "string", "parameters": { /* JSON Schema */ }}],
@@ -371,6 +372,118 @@ them, exactly as a real integrator wiring log aggregation would.
 }
 ```
 
+### `middleware` — native `ai.ModelMiddleware`
+
+`middleware.go` exercises Genkit-Go's native model-middleware mechanism, confirmed by
+reading the pinned `v1.10.0` module source directly (per `.claude/rules/prune-evidence-gate.md`'s
+code-truth discipline — this is what the code actually is, not a doc claim):
+
+```go
+// ai/generate.go
+type ModelFunc = core.StreamingFunc[*ModelRequest, *ModelResponse, *ModelResponseChunk]
+type ModelMiddleware = core.Middleware[*ModelRequest, *ModelResponse, *ModelResponseChunk]
+
+// core/middleware.go
+type Middleware[In, Out, Stream any] = func(StreamingFunc[In, Out, Stream]) StreamingFunc[In, Out, Stream]
+```
+
+i.e. `ai.ModelMiddleware` is **exactly** `func(ai.ModelFunc) ai.ModelFunc` — a function that
+takes the next step in the chain and returns a new one, the same shape as Go's own
+`net/http` middleware convention. It attaches to one `genkit.Generate` call via
+`ai.WithMiddleware(mw...)` (`ai/option.go`), which `v1.10.0` still ships and applies —
+marked `// Deprecated: Use WithUse instead, which supports Generate, Model, and Tool
+hooks`, but not removed. `ai.WithUse(ai.Hooks{WrapModel: ...})` is the newer, non-deprecated
+way to reach the same wrapping point; this mode deliberately uses the literal
+`func(ModelFunc) ModelFunc` shape via `WithMiddleware` because that shape **is** the
+artifact under test (the task explicitly asked for `ai.ModelMiddleware` as
+`func(ModelFunc) ModelFunc`, applied via `WithMiddleware`).
+
+`newArenaMiddleware` (`middleware.go`) builds one middleware with two independently
+observable transforms, both proven by a shared, mutex-guarded `middlewareState`:
+
+- **INBOUND** — before calling `next(ctx, req, cb)`, it appends the sentinel
+  `"\n[ARENA_MW]"` to the text of the request's `ai.RoleSystem` message (or, if the
+  request has no system message at all, injects a new leading one carrying only the
+  sentinel). This mutates `req` **before** anything downstream — including the model
+  itself — ever sees it.
+- **OUTBOUND** — after `next` returns, it sets `outboundFired = true`, proving this
+  middleware's own code ran **again**, on the response path, after the full chain
+  underneath (every other middleware plus the model call) completed — not merely once
+  "around" the call.
+
+`runMiddleware` drives one qa-shaped turn (`buildBaseOpts` + `ai.WithMiddleware(mw)`)
+and reports `inbound_fired`/`outbound_fired`/`invocations` read back from that shared
+state — the executable proof, not a doc claim, that the mechanism is real and wired
+correctly in this Genkit-Go version.
+
+**stdout contract** (mode-specific — NOT the shared envelope above):
+
+```json
+{"text": "string — the model's final reply", "middleware": {"mechanism": "ai.ModelMiddleware", "inbound_fired": true, "outbound_fired": true, "invocations": 1, "supported": true}, "error": ""}
+```
+
+**Verified smoke output (this pass, live, real agnes):**
+
+```jsonc
+{"text":"OK","middleware":{"mechanism":"ai.ModelMiddleware","inbound_fired":true,"outbound_fired":true,"invocations":1,"supported":true}}
+```
+
+## ARENA_STUB — fully offline toggle (every mode)
+
+`ARENA_STUB=1` swaps every piece of real infrastructure this adapter talks to for a
+deterministic, in-process fake, so **every** mode above (including `middleware`) runs
+with zero network calls — no `OPENAI_API_KEY`/`OPENAI_BASE_URL`, no `EMBED_URL`, no
+`QDRANT_URL`, no `RQLITE_URL` required or read. Implemented additively in `stub.go` (the
+toggle + model/embedding/search fakes) plus small `if stubMode`/`if c.stub` branches at
+the top of `embed_client.go`'s `embed`, `qdrant_client.go`'s `searchQdrant`, and every
+business method on `rqlite_client.go`'s `rqliteClient` — every non-stub code path is
+byte-for-byte unchanged.
+
+| Real dependency | Fake used (`stub.go` unless noted) |
+|---|---|
+| agnes chat model (`oai.DefineModel`) | A locally **`genkit.DefineModel`'d echo model** (`stubModelFunc`), registered under the same `OPENAI_MODEL` name every mode already expects — see main.go's `run()`. Echoes `"[stub-echo] " + <last user message>` by default; when the request carries `ai.WithOutputType`'s JSON-Schema instructions it instead emits schema-conforming placeholder JSON (`stubJSONForSchema`); when the request offers tools and hasn't already received a tool response this turn, it emits one native `ToolRequest` for the first offered tool with synthesized arguments (`stubArgsForSchema`) — genuinely driving Genkit's real tool-execution loop offline. |
+| e5 embeddings server (`embed_client.go`'s `embed`) | `stubEmbedding` — a deterministic 384-dim pseudo-vector seeded from an FNV-1a hash of the input text (same input → same vector, every run). **Not semantically meaningful** — unrelated inputs do not cluster; only used so downstream code has *a* vector to pass around. |
+| Qdrant `arena_rag` collection (`qdrant_client.go`'s `searchQdrant`) | `stubQdrantSearch` — a small, canned, Nimbus-Rail-themed in-process "corpus" (3 docs, fixed content/scores). Returns the same docs in the same order every call — it does **not** rank by similarity to the query (`stubEmbedding`'s vectors are pseudo-random, so a real cosine ranking over them would be theater, not a fake search). |
+| rqlite (`rqlite_client.go`'s `rqliteClient`) | Package-level in-memory maps (`stubTurns`, `stubCrashTurns`, `stubScoped`), guarded by one mutex, standing in for the `memory`/`crash_recovery`/`memory_scoped`/`isolation_leak` tables. |
+
+**Honest limitation — cross-process persistence is NOT stubbed:** `memory` mode's whole
+point is proving a **separate, later `run.sh` invocation** (a fresh OS process) recalls
+what an earlier, already-exited process wrote to a real, shared rqlite node.
+`ARENA_STUB`'s in-memory maps are package-level Go variables — they live only for the
+lifetime of **one** process and reset on every new invocation, so two separate
+`ARENA_STUB=1` invocations sharing a `session_id` will **not** recall each other's state
+the way two real-rqlite invocations do. This is a structural consequence of "fully
+offline" (no real, externally-durable store is reachable), not a bug — `crash_recovery`
+inherits the same limitation for the same reason. Every other mode's within-one-process
+behavior (including two-tool `tools`/`observability` loops, `structured`'s schema
+validation, and `middleware`'s inbound/outbound proof) is unaffected.
+
+**Verified smoke output (this pass, `ARENA_STUB=1`, zero network calls):**
+
+```jsonc
+// qa
+{"framework":"genkit-go","mode":"qa","model":"agnes-2.0-flash","reply":"[stub-echo] Say OK.","input_tokens":2,"output_tokens":3,"latency_ms":0,"tool_calls":[],"retrieved":[],"structured":null,"ttft_ms":0,"error":""}
+
+// middleware
+{"text":"[stub-echo] Say OK.","middleware":{"mechanism":"ai.ModelMiddleware","inbound_fired":true,"outbound_fired":true,"invocations":1,"supported":true}}
+
+// structured (schema-conforming placeholder JSON, validated by Genkit's own format handler)
+{"framework":"genkit-go","mode":"structured","reply":"stub","structured":{"answer":"stub","confidence":0.5,"key_points":["stub"]},"error":""}
+
+// tools (real tool-execution loop, offline: calculator actually evaluates "2 + 2")
+{"framework":"genkit-go","mode":"tools","reply":"[stub-echo] What is 23 times 19?","tool_calls":[{"name":"calculator","arguments":{"expression":"2 + 2"}}],"error":""}
+
+// observability (real spans captured from the stub model + real calculator tool)
+{"framework":"genkit-go","mode":"observability","otel_supported":true,"span_count":5,"span_names":["agnes-2.0-flash","agnes-2.0-flash","calculator","generate","generate"],"error":""}
+```
+
+Usage:
+
+```bash
+echo '{"mode":"qa","messages":[{"role":"user","content":"Say OK."}]}' \
+  | ARENA_STUB=1 bash arenas/live/genkit-go/run.sh
+```
+
 ## agnes wiring (chat)
 
 Unchanged from the original single-shot adapter — see `main.go`:
@@ -395,6 +508,7 @@ m := oai.DefineModel(model, ai.ModelOptions{Label: "agnes/" + model, Supports: &
 | `QDRANT_URL` | Qdrant REST base (host is reused for the gRPC client; see `qdrant_client.go`) | `http://localhost:6333` |
 | `QDRANT_GRPC_PORT` | override the derived gRPC port (default: REST port + 1, i.e. `6334`) | unset |
 | `RQLITE_URL` | rqlite HTTP base | `http://localhost:4001` |
+| `ARENA_STUB` | `1` runs every mode fully offline against fakes (see "ARENA_STUB" above); any other value/unset uses real infra | unset |
 
 All four host-shaped vars (`OPENAI_BASE_URL`, `EMBED_URL`, `QDRANT_URL`, `RQLITE_URL`)
 are read fresh on every run, which is how `run-docker.sh` repoints the last three at
@@ -451,6 +565,14 @@ echo '{"mode":"stream","messages":[{"role":"user","content":"Write two sentences
 
 # observability (bare request — defaults to a 2-tool representative turn)
 echo '{"mode":"observability"}' | bash arenas/live/genkit-go/run.sh
+
+# middleware (native ai.ModelMiddleware, inbound + outbound proof)
+echo '{"mode":"middleware","system":"You are a rail assistant.","messages":[{"role":"user","content":"Say OK."}]}' \
+  | bash arenas/live/genkit-go/run.sh
+
+# ARENA_STUB (any mode, fully offline — no OPENAI_*/EMBED_URL/QDRANT_URL/RQLITE_URL needed)
+echo '{"mode":"qa","messages":[{"role":"user","content":"Say OK."}]}' \
+  | ARENA_STUB=1 bash arenas/live/genkit-go/run.sh
 ```
 
 `run.sh` sources the repo-root `.env`, builds, and forwards stdin → stdout. The API key
@@ -731,11 +853,18 @@ same Genkit/agnes call surface. `go.mod`/`go.sum` are unchanged by this addition
   `TracerProvider` + in-memory span exporter (no collector) before `genkit.Init`, drives one
   representative `tools`-mode turn, and reports Genkit's own captured span names/counts/timings
   plus a structured-log sample (see its own README section above).
-- `embed_client.go` — HTTP client for the real e5 embeddings server.
-- `qdrant_client.go` — real Qdrant search via `github.com/qdrant/go-client` (gRPC).
-- `rqlite_client.go` — HTTP client for rqlite's `/db/execute` / `/db/query`; also the compound-scope
-  table (`arena_genkit_go_scoped_memory`) used by `scoped_memory.go` and the crash-recovery
-  checkpoint table (`arena_genkit_go_crash_recovery`) used by `crash_recovery.go`.
+- `middleware.go` — `middleware` mode: a real `ai.ModelMiddleware` (`func(ai.ModelFunc) ai.ModelFunc`)
+  attached via `ai.WithMiddleware`, proving one inbound (pre-model, sentinel-injecting) and one
+  outbound (post-model) transform actually fired around one qa-shaped turn.
+- `stub.go` — the `ARENA_STUB` toggle: `stubMode` (read from the env once), the locally
+  `genkit.DefineModel`'d echo model (`stubModelFunc`) with schema-conforming structured-output and
+  offline tool-call synthesis, `stubEmbedding`, and `stubQdrantSearch`'s canned corpus.
+- `embed_client.go` — HTTP client for the real e5 embeddings server (stub-aware: see `stub.go`).
+- `qdrant_client.go` — real Qdrant search via `github.com/qdrant/go-client` (gRPC; stub-aware: see `stub.go`).
+- `rqlite_client.go` — HTTP client for rqlite's `/db/execute` / `/db/query` (stub-aware: see `stub.go`'s
+  "ARENA_STUB in-memory backing" comment); also the compound-scope table
+  (`arena_genkit_go_scoped_memory`) used by `scoped_memory.go` and the crash-recovery checkpoint
+  table (`arena_genkit_go_crash_recovery`) used by `crash_recovery.go`.
 - `run.sh` — native runner: sources repo-root `.env`, builds, forwards stdin → stdout.
 - `Dockerfile` — multi-stage static build on `distroless/static-debian12:nonroot`.
 - `run-docker.sh` — builds + runs the Docker image, repointing infra URLs at `host.docker.internal` and passing `OPENAI_*` as runtime-only env.

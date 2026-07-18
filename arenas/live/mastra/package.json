@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Live arena adapter: Mastra (TypeScript/Node AI framework, Apache-2.0) driven against the real agnes-2.0-flash model via an OpenAI-compatible endpoint. Exhaustive multi-mode stdin/stdout adapter (qa, rag, tools, memory, memory_scoped, isolation_leak, crash_recovery, structured, stream, observability) for the aisotropy arena harness, exercising Mastra native features (Agent, Memory, tools, structured output, streaming, native OpenTelemetry) against real infra (agnes chat, e5 embeddings, Qdrant, rqlite, libsql).",
+  "description": "Live arena adapter: Mastra (TypeScript/Node AI framework, Apache-2.0) driven against the real agnes-2.0-flash model via an OpenAI-compatible endpoint. Exhaustive multi-mode stdin/stdout adapter (qa, rag, tools, memory, memory_scoped, isolation_leak, crash_recovery, structured, stream, observability, middleware) for the aisotropy arena harness, exercising Mastra native features (Agent, Memory, tools, structured output, streaming, native OpenTelemetry, AI SDK model middleware) against real infra (agnes chat, e5 embeddings, Qdrant, rqlite, libsql). ARENA_STUB=1 runs every mode fully offline via an in-process AI SDK MockLanguageModelV4 plus file-backed/in-process substitutes for rqlite and Qdrant.",
   "main": "index.mjs",
   "scripts": {
     "start": "node index.mjs"
@@ -17,10 +17,11 @@
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/sdk-trace-node": "^2.9.0",
     "@qdrant/js-client-rest": "^1.18.0",
+    "ai": "^7.0.31",
     "zod": "^4.4.3"
   },
   "engines": {
-    "node": ">=20.9"
+    "node": ">=22"
   },
   "license": "Apache-2.0"
 }

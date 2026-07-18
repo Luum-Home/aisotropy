@@ -67,7 +67,6 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
         return err
 
     try:
-        from langchain_openai import ChatOpenAI
         from langgraph.graph import END, START, MessagesState, StateGraph
         from langgraph.prebuilt import ToolNode, tools_condition
     except Exception as exc:  # pragma: no cover - import failure path
@@ -82,7 +81,7 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
 
     try:
         calculate = _make_calculate_tool()
-        llm = ChatOpenAI(model=model_name, base_url=base_url, api_key=api_key)
+        llm = common.build_chat_model(model_name, api_key, base_url)
         bound_llm = llm.bind_tools([calculate])
 
         def call_agent(state: MessagesState) -> dict[str, Any]:

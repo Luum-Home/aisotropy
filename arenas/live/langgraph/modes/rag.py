@@ -41,6 +41,33 @@ class RagState(TypedDict):
     output_tokens: int
 
 
+_STUB_CONTEXT: list[dict[str, Any]] = [
+    {
+        "doc_id": "stub-doc-1.md",
+        "title": "ARENA_STUB Canned Document One",
+        "text": "This is canned offline context injected because ARENA_STUB=1. No real embed server or Qdrant call was made.",
+        "score": 0.99,
+    },
+    {
+        "doc_id": "stub-doc-2.md",
+        "title": "ARENA_STUB Canned Document Two",
+        "text": "Second canned offline context chunk, same shape as a real retrieval hit.",
+        "score": 0.5,
+    },
+]
+
+
+def _stub_retrieve(top_k: int) -> list[dict[str, Any]]:
+    """Offline stand-in for the real embed-server + Qdrant retrieval below.
+
+    Not a real vector search: fixed synthetic docs in the exact ``context``
+    shape ``retrieve()`` normally produces, so ``generate()`` and the
+    envelope's ``retrieved`` field downstream are unaffected by whether the
+    real or stub path ran.
+    """
+    return _STUB_CONTEXT[: max(1, top_k)]
+
+
 def _build_vector_store(embed_url: str, qdrant_url: str, collection: str, api_key: str):
     from langchain_openai import OpenAIEmbeddings
     from langchain_qdrant import QdrantVectorStore
@@ -73,7 +100,6 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
 
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
-        from langchain_openai import ChatOpenAI
         from langgraph.graph import END, START, StateGraph
     except Exception as exc:  # pragma: no cover - import failure path
         return common.envelope(mode=MODE, model=model_name, error=f"import failure: {exc}")
@@ -88,35 +114,43 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
     collection = payload.get("qdrant_collection") or common.DEFAULT_QDRANT_COLLECTION
 
     try:
-        vector_store = _build_vector_store(embed_url, qdrant_url, collection, api_key)
-        llm = ChatOpenAI(model=model_name, base_url=base_url, api_key=api_key)
+        llm = common.build_chat_model(model_name, api_key, base_url)
         caller_system = (payload.get("system") or "").strip()
 
-        def retrieve(state: RagState) -> dict[str, Any]:
-            hits = vector_store.similarity_search_with_score(state["question"], k=state["top_k"])
-            ids = [doc.metadata.get("_id") for doc, _ in hits]
-            # QdrantVectorStore only surfaces content_payload_key +
-            # metadata_payload_key (default "metadata", absent in our flat
-            # {doc_id,title,text} payload) onto the Document. Re-fetch the
-            # full payload by point id from the same real Qdrant collection
-            # so `retrieved` can name the gold doc_id/title, not just text.
-            points = vector_store.client.retrieve(
-                collection_name=collection, ids=[i for i in ids if i is not None], with_payload=True
-            )
-            payload_by_id = {p.id: p.payload for p in points}
-            context = []
-            for doc, score in hits:
-                pid = doc.metadata.get("_id")
-                pt_payload = payload_by_id.get(pid, {})
-                context.append(
-                    {
-                        "doc_id": pt_payload.get("doc_id", ""),
-                        "title": pt_payload.get("title", ""),
-                        "text": doc.page_content,
-                        "score": float(score),
-                    }
+        if common.is_stub():
+            # ARENA_STUB=1: no real embed-server / Qdrant HTTP call. See
+            # _stub_retrieve()'s docstring.
+            def retrieve(state: RagState) -> dict[str, Any]:
+                return {"context": _stub_retrieve(state["top_k"])}
+        else:
+            vector_store = _build_vector_store(embed_url, qdrant_url, collection, api_key)
+
+            def retrieve(state: RagState) -> dict[str, Any]:
+                hits = vector_store.similarity_search_with_score(state["question"], k=state["top_k"])
+                ids = [doc.metadata.get("_id") for doc, _ in hits]
+                # QdrantVectorStore only surfaces content_payload_key +
+                # metadata_payload_key (default "metadata", absent in our
+                # flat {doc_id,title,text} payload) onto the Document.
+                # Re-fetch the full payload by point id from the same real
+                # Qdrant collection so `retrieved` can name the gold
+                # doc_id/title, not just text.
+                points = vector_store.client.retrieve(
+                    collection_name=collection, ids=[i for i in ids if i is not None], with_payload=True
                 )
-            return {"context": context}
+                payload_by_id = {p.id: p.payload for p in points}
+                context = []
+                for doc, score in hits:
+                    pid = doc.metadata.get("_id")
+                    pt_payload = payload_by_id.get(pid, {})
+                    context.append(
+                        {
+                            "doc_id": pt_payload.get("doc_id", ""),
+                            "title": pt_payload.get("title", ""),
+                            "text": doc.page_content,
+                            "score": float(score),
+                        }
+                    )
+                return {"context": context}
 
         def generate(state: RagState) -> dict[str, Any]:
             context_block = "\n\n".join(

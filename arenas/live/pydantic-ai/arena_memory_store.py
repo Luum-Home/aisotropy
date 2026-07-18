@@ -39,10 +39,21 @@ import datetime
 import json
 import urllib.request
 
-from arena_common import log, rqlite_base_url
+from arena_common import is_stub, log, rqlite_base_url
 
 _TABLE = "arena_pydantic_memory"
 _SCOPED_TABLE = "arena_pydantic_scoped_memory"
+
+# --------------------------------------------------------------------------
+# ARENA_STUB=1 in-process fallback stores. Deliberately process-local (module
+# globals, not a file or rqlite) -- stub mode is for offline single-invocation
+# smoke testing, not for proving cross-process durability the way the real
+# rqlite-backed `memory` mode does. Two SEPARATE `python adapter.py` runs with
+# ARENA_STUB=1 do NOT share state -- that is the real `memory`/`crash_recovery`
+# modes' claim, not this offline substitute's.
+# --------------------------------------------------------------------------
+_stub_history: dict[str, bytes] = {}
+_stub_scoped: dict[str, str] = {}
 
 
 def _request(method: str, path: str, body=None, timeout: float = 15.0) -> dict:
@@ -71,6 +82,13 @@ def _ensure_table() -> None:
 
 def load_history_json(session_id: str) -> bytes | None:
     """Return the raw persisted message-history JSON blob for session_id, or None if unseen."""
+    if is_stub():
+        blob = _stub_history.get(session_id)
+        log(
+            f"memory: [ARENA_STUB] {'loaded' if blob else 'no'} in-process history for "
+            f"session_id={session_id!r}, no rqlite call"
+        )
+        return blob
     _ensure_table()
     result = _request(
         "POST",
@@ -89,6 +107,13 @@ def load_history_json(session_id: str) -> bytes | None:
 
 def save_history_json(session_id: str, history_json: bytes) -> None:
     """Upsert the persisted history blob for session_id into rqlite (survives process exit)."""
+    if is_stub():
+        _stub_history[session_id] = history_json
+        log(
+            f"memory: [ARENA_STUB] persisted history in-process for session_id={session_id!r} "
+            f"({len(history_json)} bytes), no rqlite call"
+        )
+        return
     _ensure_table()
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     _request(
@@ -163,6 +188,14 @@ def save_scoped_fact(scope: str, fact_text: str) -> None:
     real fact journal would. Logs only the byte length, never the fact
     content -- the fact may itself be test secret material.
     """
+    if is_stub():
+        prev = _stub_scoped.get(scope)
+        _stub_scoped[scope] = f"{prev}\n{fact_text}" if prev else fact_text
+        log(
+            f"memory_scoped: [ARENA_STUB] wrote fact in-process scope_key_len={len(scope)} "
+            f"({len(fact_text)} bytes), no rqlite call"
+        )
+        return
     _ensure_scoped_table()
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     _request(
@@ -191,6 +224,13 @@ def load_scoped_facts(scope: str) -> str | None:
     rows for a scope this adapter never wrote to. This exact-match property
     is what `isolation_leak` mode's `leak_detected` check relies on.
     """
+    if is_stub():
+        text = _stub_scoped.get(scope)
+        log(
+            f"memory_scoped: [ARENA_STUB] {'loaded' if text else 'no'} in-process facts for "
+            f"scope_key_len={len(scope)}, no rqlite call"
+        )
+        return text
     _ensure_scoped_table()
     result = _request(
         "POST",

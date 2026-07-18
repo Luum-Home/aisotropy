@@ -198,12 +198,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[genkit-go] error: %v\n", err)
 	}
 
-	// mode=observability does NOT use the shared arenaOutput envelope (see
-	// observability.go's observabilityOutput doc comment) — runObservability
-	// stashes its own *observabilityOutput in out.Structured, which is encoded
-	// here instead of out itself.
+	// mode=observability and mode=middleware do NOT use the shared
+	// arenaOutput envelope (see observability.go's observabilityOutput doc
+	// comment and middleware.go's middlewareOutput doc comment) —
+	// runObservability/runMiddleware stash their own struct in
+	// out.Structured, which is encoded here instead of out itself.
 	var encodeErr error
-	if out.Mode == "observability" {
+	switch out.Mode {
+	case "observability":
 		obs, ok := out.Structured.(*observabilityOutput)
 		if !ok {
 			// run() failed before reaching runObservability (e.g. missing
@@ -212,7 +214,15 @@ func main() {
 			obs = &observabilityOutput{Framework: framework, Mode: "observability", Error: out.Error}
 		}
 		encodeErr = json.NewEncoder(os.Stdout).Encode(obs)
-	} else {
+	case "middleware":
+		mw, ok := out.Structured.(*middlewareOutput)
+		if !ok {
+			// run() failed before reaching runMiddleware — still emit a
+			// valid middleware-shaped envelope rather than the generic one.
+			mw = &middlewareOutput{Middleware: &middlewareInfo{Mechanism: "ai.ModelMiddleware", Supported: true}, Error: out.Error}
+		}
+		encodeErr = json.NewEncoder(os.Stdout).Encode(mw)
+	default:
 		encodeErr = json.NewEncoder(os.Stdout).Encode(out)
 	}
 	if encodeErr != nil {
@@ -240,16 +250,22 @@ func run(out *arenaOutput, model string) error {
 	fmt.Fprintf(os.Stderr, "PROGRESS: mode=%s\n", mode)
 
 	// 2. Resolve the real chat endpoint from the environment. The API key is
-	//    read from OPENAI_API_KEY and NEVER logged or echoed.
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		return fmt.Errorf("OPENAI_API_KEY is not set")
+	//    read from OPENAI_API_KEY and NEVER logged or echoed. ARENA_STUB=1
+	//    (stub.go's stubMode) skips this requirement entirely — every mode
+	//    runs offline against a locally DefineModel'd echo model instead, see
+	//    step 3 below.
+	var apiKey, baseURL string
+	if !stubMode {
+		apiKey = os.Getenv("OPENAI_API_KEY")
+		if apiKey == "" {
+			return fmt.Errorf("OPENAI_API_KEY is not set (set ARENA_STUB=1 to run fully offline against a fake model instead)")
+		}
+		baseURL = os.Getenv("OPENAI_BASE_URL")
+		if baseURL == "" {
+			return fmt.Errorf("OPENAI_BASE_URL is not set (set ARENA_STUB=1 to run fully offline against a fake model instead)")
+		}
 	}
-	baseURL := os.Getenv("OPENAI_BASE_URL")
-	if baseURL == "" {
-		return fmt.Errorf("OPENAI_BASE_URL is not set")
-	}
-	fmt.Fprintf(os.Stderr, "PROGRESS: model=%s base_url=%s mode=%s\n", model, baseURL, mode)
+	fmt.Fprintf(os.Stderr, "PROGRESS: model=%s base_url=%s mode=%s stub=%v\n", model, baseURL, mode, stubMode)
 
 	ctx := context.Background()
 
@@ -263,17 +279,32 @@ func run(out *arenaOutput, model string) error {
 		obs = setupObservabilityTracing()
 	}
 
-	// 3. Wire Genkit's official OpenAI-compatible plugin to agnes.
-	oai := &oaiplugin.OpenAI{
-		APIKey: apiKey,
-		Opts:   []option.RequestOption{option.WithBaseURL(baseURL)},
+	// 3. Wire the chat model. ARENA_STUB=1 registers a local, offline echo
+	//    model (stub.go's stubModelFunc) via genkit.DefineModel under the
+	//    SAME name every mode already expects (OPENAI_MODEL), so no mode
+	//    handler needs to know or care which one is live — otherwise wire
+	//    Genkit's official OpenAI-compatible plugin to the real agnes
+	//    endpoint, unchanged from the original single-shot adapter.
+	var g *genkit.Genkit
+	var m ai.Model
+	if stubMode {
+		g = genkit.Init(ctx)
+		m = genkit.DefineModel(g, model, &ai.ModelOptions{
+			Label:    "stub/" + model,
+			Supports: stubModelSupports,
+		}, stubModelFunc)
+		fmt.Fprintln(os.Stderr, "PROGRESS: ARENA_STUB=1 — using a locally genkit.DefineModel'd echo model + in-memory rqlite/qdrant/embed fakes (no network); see stub.go")
+	} else {
+		oai := &oaiplugin.OpenAI{
+			APIKey: apiKey,
+			Opts:   []option.RequestOption{option.WithBaseURL(baseURL)},
+		}
+		g = genkit.Init(ctx, genkit.WithPlugins(oai))
+		m = oai.DefineModel(model, ai.ModelOptions{
+			Label:    "agnes/" + model,
+			Supports: &compat_oai.Multimodal,
+		})
 	}
-	g := genkit.Init(ctx, genkit.WithPlugins(oai))
-
-	m := oai.DefineModel(model, ai.ModelOptions{
-		Label:    "agnes/" + model,
-		Supports: &compat_oai.Multimodal,
-	})
 
 	rc := &runCtx{
 		ctx:       ctx,
@@ -307,8 +338,10 @@ func run(out *arenaOutput, model string) error {
 		return runStream(rc, out)
 	case "observability":
 		return runObservability(rc, out, obs)
+	case "middleware":
+		return runMiddleware(rc, out)
 	default:
-		return fmt.Errorf("unknown mode %q (want one of: qa, rag, tools, memory, memory_scoped, isolation_leak, crash_recovery, structured, stream, observability)", mode)
+		return fmt.Errorf("unknown mode %q (want one of: qa, rag, tools, memory, memory_scoped, isolation_leak, crash_recovery, structured, stream, observability, middleware)", mode)
 	}
 }
 

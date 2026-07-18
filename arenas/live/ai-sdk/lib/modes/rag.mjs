@@ -11,6 +11,7 @@
 import { embed, generateText } from 'ai';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { buildMessages, extractTokenCounts, lastUserContent, msSince } from '../output.mjs';
+import { stubSearchCorpus } from '../stub.mjs';
 
 const EMBEDDING_MODEL_ID = 'multilingual-e5-small-query';
 const RETRIEVAL_LIMIT = 4;
@@ -27,26 +28,35 @@ export async function runRag(input, env) {
     throw new Error('rag mode requires at least one message with role "user"');
   }
 
-  const embeddingModel = env.embedProvider.embedding(EMBEDDING_MODEL_ID);
-  const embedResult = await embed({ model: embeddingModel, value: query });
-  const vector = embedResult.embedding;
+  let retrieved;
+  if (env.stub) {
+    // ARENA_STUB=1 -- skip the real e5 embed server + Qdrant search round
+    // trip entirely; see `lib/stub.mjs` for the honest caveat (keyword
+    // overlap over a tiny fixed corpus, not a real similarity search).
+    console.error('PROGRESS: rag -- ARENA_STUB=1, using local stub corpus instead of embed()+Qdrant');
+    retrieved = stubSearchCorpus(query, RETRIEVAL_LIMIT);
+  } else {
+    const embeddingModel = env.embedProvider.embedding(EMBEDDING_MODEL_ID);
+    const embedResult = await embed({ model: embeddingModel, value: query });
+    const vector = embedResult.embedding;
 
-  // checkCompatibility: false -- the local Qdrant server may run an older minor
-  // version than the installed client; that mismatch is cosmetic for the plain
-  // REST `search` call this adapter makes, so skip the noisy startup warning.
-  const qdrant = new QdrantClient({ url: env.qdrantUrl, checkCompatibility: false });
-  const searchResult = await qdrant.search(env.qdrantCollection, {
-    vector,
-    limit: RETRIEVAL_LIMIT,
-    with_payload: true,
-  });
+    // checkCompatibility: false -- the local Qdrant server may run an older minor
+    // version than the installed client; that mismatch is cosmetic for the plain
+    // REST `search` call this adapter makes, so skip the noisy startup warning.
+    const qdrant = new QdrantClient({ url: env.qdrantUrl, checkCompatibility: false });
+    const searchResult = await qdrant.search(env.qdrantCollection, {
+      vector,
+      limit: RETRIEVAL_LIMIT,
+      with_payload: true,
+    });
 
-  const retrieved = searchResult.map((point) => ({
-    doc_id: (point.payload && point.payload.doc_id) || null,
-    title: (point.payload && point.payload.title) || null,
-    text: (point.payload && point.payload.text) || null,
-    score: point.score,
-  }));
+    retrieved = searchResult.map((point) => ({
+      doc_id: (point.payload && point.payload.doc_id) || null,
+      title: (point.payload && point.payload.title) || null,
+      text: (point.payload && point.payload.text) || null,
+      score: point.score,
+    }));
+  }
 
   const contextBlock = retrieved.length
     ? retrieved.map((r, i) => `[${i + 1}] ${r.title}\n${r.text}`).join('\n\n')

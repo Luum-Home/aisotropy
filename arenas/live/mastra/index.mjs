@@ -27,6 +27,15 @@
 //   crash_recovery- proves survival of a HARD SIGKILL mid-conversation: role "run"
 //                   checkpoints turns to real rqlite one by one; role "resume" is a
 //                   fresh process that reloads and recalls the pre-crash fact
+//   middleware    - AI SDK `wrapLanguageModel` middleware wrapping the Mastra
+//                   Agent's model: an inbound `transformParams` sentinel on the
+//                   system prompt, an outbound `wrapGenerate` invocation counter
+//
+// ARENA_STUB=1 -- every mode above runs fully offline: an in-process
+// MockLanguageModelV4 (lib/stub-model.mjs) replaces the real agnes model, and
+// rqlite/Qdrant/the e5 embed server are replaced by file-backed or in-process
+// substitutes (lib/stub-store.mjs, lib/stub-qdrant.mjs, lib/embed.mjs). See
+// README.md "Offline / ARENA_STUB mode".
 //
 // Contract:
 //   stdin  -> ONE JSON object, always including "mode" (defaults to "qa" when
@@ -48,6 +57,7 @@ import { runMemoryScoped } from './lib/modes/memory-scoped.mjs';
 import { runIsolationLeak } from './lib/modes/isolation-leak.mjs';
 import { runObservability } from './lib/modes/observability.mjs';
 import { runCrashRecovery } from './lib/modes/crash-recovery.mjs';
+import { runMiddleware } from './lib/modes/middleware.mjs';
 
 const MODE_HANDLERS = {
   qa: runQa,
@@ -60,6 +70,7 @@ const MODE_HANDLERS = {
   isolation_leak: runIsolationLeak,
   observability: runObservability,
   crash_recovery: runCrashRecovery,
+  middleware: runMiddleware,
 };
 
 /** Read the entire stdin stream and return it as a UTF-8 string. */

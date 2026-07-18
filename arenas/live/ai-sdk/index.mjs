@@ -22,6 +22,16 @@
 //                clean exit like `memory`): "role":"run" checkpoints turns to rqlite
 //                one by one; "role":"resume" is a completely fresh process that loads
 //                whatever committed and continues, recalling the pre-crash fact
+//   middleware - the REFERENCE demo of the AI SDK NATIVE wrapLanguageModel()
+//                mechanism: an inbound transformParams() (mutates the system prompt
+//                before the model sees it) and an outbound wrapGenerate()/wrapStream()
+//                (intercepts the real call) wired around ONE real generateText() turn
+//
+// STUB TOGGLE: set ARENA_STUB=1 to run ANY mode fully offline -- the AI SDK's own
+// MockLanguageModelV4 (ai/test) replaces the real agnes chat model, and rqlite/Qdrant
+// are replaced by an in-process/local-file stub and a local keyword-search corpus
+// respectively (see lib/stub.mjs, lib/rqlite-stub.mjs). Quality is NOT scored in this
+// lane -- it only proves the AI SDK wiring runs with zero network egress.
 //
 // Contract:
 //   stdin  -> ONE JSON object, always including "mode" (defaults to "qa" when
@@ -42,6 +52,7 @@ import { runMemoryScoped } from './lib/modes/memory-scoped.mjs';
 import { runIsolationLeak } from './lib/modes/isolation-leak.mjs';
 import { runObservability } from './lib/modes/observability.mjs';
 import { runCrashRecovery } from './lib/modes/crash-recovery.mjs';
+import { runMiddleware } from './lib/modes/middleware.mjs';
 
 const MODE_HANDLERS = {
   qa: runQa,
@@ -54,6 +65,7 @@ const MODE_HANDLERS = {
   isolation_leak: runIsolationLeak,
   observability: runObservability,
   crash_recovery: runCrashRecovery,
+  middleware: runMiddleware,
 };
 
 /**

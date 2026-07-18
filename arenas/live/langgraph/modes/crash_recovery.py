@@ -53,10 +53,9 @@ MODE = "crash_recovery"
 
 
 def _build_graph(model_name: str, api_key: str, base_url: str):
-    from langchain_openai import ChatOpenAI
     from langgraph.graph import END, START, MessagesState, StateGraph
 
-    llm = ChatOpenAI(model=model_name, base_url=base_url, api_key=api_key)
+    llm = common.build_chat_model(model_name, api_key, base_url)
 
     def call_model(state: MessagesState) -> dict[str, Any]:
         return {"messages": [llm.invoke(state["messages"])]}
@@ -90,13 +89,15 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
             mode=MODE, model=model_name, error=f"crash_recovery mode: unknown op {op!r}; supported: converse, resume"
         )
 
-    try:
-        from langgraph.checkpoint.sqlite import SqliteSaver
-    except Exception as exc:  # pragma: no cover - import failure path
-        return common.envelope(mode=MODE, model=model_name, error=f"import failure: {exc}")
-
     db_path = payload.get("checkpoint_db_path") or common.DEFAULT_CRASH_CHECKPOINT_DB
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    # ARENA_STUB=1 uses an in-memory checkpointer and never touches disk —
+    # see common.checkpointer_context()'s docstring. Note: the whole point
+    # of this mode (surviving a real kill -9) does NOT hold under the stub,
+    # since in-memory state cannot survive a killed process; the stub path
+    # exists purely so this mode's code runs end-to-end offline (e.g. for
+    # import/smoke checks), not to simulate crash durability.
+    if not common.is_stub():
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
     try:
         graph_builder = _build_graph(model_name, api_key, base_url)
@@ -104,11 +105,11 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
         return common.envelope(mode=MODE, model=model_name, error=f"failed to build graph: {exc}")
 
     if op == "converse":
-        return _run_converse(graph_builder, SqliteSaver, db_path, thread_id, payload, model_name)
-    return _run_resume(graph_builder, SqliteSaver, db_path, thread_id, payload, model_name)
+        return _run_converse(graph_builder, db_path, thread_id, payload, model_name)
+    return _run_resume(graph_builder, db_path, thread_id, payload, model_name)
 
 
-def _run_converse(graph_builder, SqliteSaver, db_path: str, thread_id: str, payload: dict[str, Any], model_name: str) -> dict[str, Any]:
+def _run_converse(graph_builder, db_path: str, thread_id: str, payload: dict[str, Any], model_name: str) -> dict[str, Any]:
     from langchain_core.messages import HumanMessage
 
     turns = payload.get("turns")
@@ -132,7 +133,7 @@ def _run_converse(graph_builder, SqliteSaver, db_path: str, thread_id: str, payl
             # what makes "killed after turn 1's checkpoint, mid turn 2's
             # network call" a real, verifiable boundary rather than a
             # best-effort guess about timing.
-            with SqliteSaver.from_conn_string(db_path) as saver:
+            with common.checkpointer_context(db_path) as saver:
                 graph = graph_builder.compile(checkpointer=saver)
                 result = graph.invoke(
                     {"messages": [HumanMessage(content=turn_text)]},
@@ -165,7 +166,7 @@ def _run_converse(graph_builder, SqliteSaver, db_path: str, thread_id: str, payl
         return common.envelope(mode=MODE, model=model_name, error=f"{type(exc).__name__}: {exc}")
 
 
-def _run_resume(graph_builder, SqliteSaver, db_path: str, thread_id: str, payload: dict[str, Any], model_name: str) -> dict[str, Any]:
+def _run_resume(graph_builder, db_path: str, thread_id: str, payload: dict[str, Any], model_name: str) -> dict[str, Any]:
     try:
         messages = common.build_messages(payload)
     except Exception as exc:
@@ -179,7 +180,7 @@ def _run_resume(graph_builder, SqliteSaver, db_path: str, thread_id: str, payloa
         # This process has no idea what happened before it — any recall it
         # produces comes exclusively from what was durably on disk when this
         # `with` block opened the file.
-        with SqliteSaver.from_conn_string(db_path) as saver:
+        with common.checkpointer_context(db_path) as saver:
             graph = graph_builder.compile(checkpointer=saver)
             result = graph.invoke(
                 {"messages": messages},

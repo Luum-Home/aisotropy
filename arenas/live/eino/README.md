@@ -11,16 +11,22 @@ persistence layer for `memory` mode, because Eino has no built-in persisted-memo
 
 This is separate from `arenas/eino/` (the stub-model feature-parity arena) and extends the
 original single-shot `arenas/live/eino/` adapter (`qa` mode below is that adapter, unchanged)
-into ten modes selected by a `"mode"` field on stdin: the original six (`qa`, `rag`, `tools`,
+into eleven modes selected by a `"mode"` field on stdin: the original six (`qa`, `rag`, `tools`,
 `memory`, `structured`, `stream`), two multi-tenant scoped-memory modes, `memory_scoped`
 and `isolation_leak` — see [Multi-tenant scoped memory](#multi-tenant-scoped-memory-memory_scoped-isolation_leak-modes)
 below for why these exist and what they prove — `crash_recovery`, which proves whether the
 app survives a **hard `kill -9` mid-conversation**, distinct from `memory` mode's clean-exit
-recall proof — see [`crash_recovery` mode](#crash_recovery-mode) below — and `observability`,
+recall proof — see [`crash_recovery` mode](#crash_recovery-mode) below — `observability`,
 which measures Eino's own tracing/logging surface (native `callbacks.Handler` vs. OTel-via-
 `eino-ext`) by actually running a multi-step turn through it — see
-[`observability` mode](#observability-mode) below. `observability` writes its own JSON contract,
-distinct from the shared one in [Contract](#contract) — see that section below.
+[`observability` mode](#observability-mode) below — and `middleware`, which proves whether Eino
+lets you intercept a chat call inbound and outbound, using its two native seams
+(`callbacks.Handler` for outbound observation, a `model.BaseChatModel` decorator for inbound
+mutation) — see [`middleware` mode](#middleware-mode) below. `observability` and `middleware`
+each write their OWN JSON contract, distinct from the shared one in [Contract](#contract) below.
+
+Separately, setting `ARENA_STUB=1` swaps every mode's chat model for a local, network-free fake
+(`stub.go`) — see [`stub` toggle](#stub-toggle-arena_stub1) below.
 
 ## Contract
 
@@ -28,7 +34,7 @@ Reads **one JSON object from stdin**:
 
 ```jsonc
 {
-  "mode": "qa | rag | tools | memory | structured | stream | memory_scoped | isolation_leak | crash_recovery | observability",  // default "qa"
+  "mode": "qa | rag | tools | memory | structured | stream | memory_scoped | isolation_leak | crash_recovery | observability | middleware",  // default "qa"
   "system": "string",                        // optional system prompt
   "messages": [{"role": "user|assistant", "content": "string"}],
   "tools": [{"name": "...", "description": "...", "parameters": {/* JSON-Schema */}}], // qa mode only
@@ -394,6 +400,122 @@ on top of the *same* raw callback data (`raw_callback_events`, `span_count`, `to
 what a hand-rolled structured log would look like — clearly not something Eino or the packaged
 OTel handler emits by itself.
 
+### `middleware` mode
+
+Proves whether Eino lets an integrator intercept a chat call — inbound (mutate what the model
+sees) and outbound (observe what came back) — and, unlike `observability` above, DOES answer the
+user's question: it runs one real qa-shaped turn AND reports what interception actually fired.
+Like `observability`, it writes its own JSON contract:
+
+```jsonc
+{
+  "text": "OK",
+  "middleware": {
+    "mechanism": "eino callbacks (outbound, native OnStart/OnEnd — observe-only by Eino's own contract) + model-wrapper (inbound, since callbacks cannot mutate shared Input)",
+    "inbound_fired": true,
+    "outbound_fired": true,
+    "invocations": 1,
+    "supported": true
+  }
+}
+```
+
+Implementation: `mode_middleware.go`.
+
+**Eino has no single "middleware" primitive.** It has two distinct native seams, and this mode
+uses BOTH — for a documented, evidence-based reason, not a guess:
+
+1. **`github.com/cloudwego/eino/callbacks`** — the same `OnStart`/`OnEnd`/`OnError` seam
+   `tools`/`observability` modes already drive (`mode_tools.go`'s `usageToolTracker`,
+   `observability.go`'s `obsRecorder`). Its own doc comment
+   (`callbacks/interface.go`) states plainly: *"do NOT mutate the Input or Output values. All
+   downstream nodes and handlers share the same pointer ... Mutations cause data races in
+   concurrent graph execution."* Verified by reading that source directly, not inferred: Eino's
+   callbacks are **observe-only**. They cannot be used to inject the inbound sentinel.
+2. **A `model.BaseChatModel` decorator** (`mwModel` in `mode_middleware.go`) — any type
+   implementing `Generate`/`Stream` can wrap a real one, exactly the shape
+   `ToolCallingChatModel.WithTools` itself already uses ("returns a new instance, does not mutate
+   the receiver," per `components/model/interface.go`). This CAN mutate what the model sees,
+   because it owns the message slice it builds before delegating to the wrapped model — there is
+   no shared-pointer hazard, since the decorator constructs its own copy.
+
+So: **INBOUND** goes through the model-wrapper (`mwModel.injectSentinel` appends
+`"\n[ARENA_MW]"` to the system message's content — or, if the request carries no system message,
+inserts a new leading one containing just the sentinel — into a **freshly cloned** message slice,
+never the caller's own); **OUTBOUND** goes through Eino's native `callbacks.Handler`, counting
+`ChatModel`-component `OnStart`/`OnEnd` firings. Because this mode calls `Generate` directly
+(no `compose.Graph` in between), the handler is attached via `callbacks.InitCallbacks` — the
+mechanism `callbacks.EnsureRunInfo`'s own doc comment documents for exactly this situation:
+*"Use this when running a component standalone outside a Graph — the Graph normally manages
+RunInfo injection automatically, but standalone callers must set it up themselves."*
+
+The `middleware.mechanism` field states both halves honestly rather than picking one label
+(`"eino callbacks"` alone would misrepresent how inbound interception actually works;
+`"model-wrapper"` alone would miss that outbound observation is genuinely native Eino callbacks,
+not a bespoke counter).
+
+`invocations` counts real `ChatModel`-component `OnStart` firings observed on the underlying
+model this run (1 for a single qa turn — this mode makes exactly one `Generate` call, same as `qa`
+mode). `inbound_fired`/`outbound_fired` are computed, not assumed: `inbound_fired` is set the
+instant `injectSentinel` actually appends the sentinel to (or inserts) a system message;
+`outbound_fired` is set only if the outbound handler's `OnEnd` actually observed a
+`*model.CallbackOutput` with a non-nil `Message` for the `ChatModel` component.
+
+## `stub` toggle (`ARENA_STUB=1`)
+
+Setting `ARENA_STUB=1` swaps the chat model **every mode** drives — real agnes via
+`eino-ext/components/model/openai` — for a local, network-free fake
+(`stubChatModel`, `stub.go`) implementing Eino's own `model.ToolCallingChatModel` interface
+(`Generate` + `Stream` + `WithTools`). This is a **single choke point**: `newChatModel()`
+(`clients.go`) is the one function every mode calls to get a chat model, and it now branches on
+`env.stub` — no mode-specific code changes were needed for `qa`, `rag`, `tools`, `memory`,
+`structured`, `stream`, `memory_scoped`, `isolation_leak`, `crash_recovery`, `observability`, or
+`middleware`; all ten mode files (plus `mode_middleware.go`) are unchanged by this feature besides
+the return type of `newChatModel()` moving from the concrete `*einochatopenai.ChatModel` to the
+`model.ToolCallingChatModel` **interface** it already satisfied.
+
+`run.sh`/`run-docker.sh` skip the `OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL` requirement
+entirely when `ARENA_STUB=1` — no `.env`, no real credentials, no network egress needed at all.
+`loadEnv()` (`clients.go`) defaults `model` to `"arena-stub-echo"` when unset under stub, so the
+wire contract's `model` field is never silently blank.
+
+**What the fake does.** `stubChatModel.Generate`/`.Stream` deterministically **echo** the last
+user message, prefixed `"[ARENA_STUB echo] "` so a stub reply is never confusable with a real
+agnes answer, with a synthesized `ResponseMeta.Usage` (a word-count approximation — loudly fake,
+never a fabricated *real* provider number, and never silently `-1` either). `Generate` also
+manually replays the same `callbacks.EnsureRunInfo`/`OnStart`/`OnEnd` sequence the real vendored
+client calls internally (`eino-ext/libs/acl/openai`'s `Client.Generate`), so a standalone
+(non-graph) caller attached via `callbacks.InitCallbacks` — `middleware` mode above — observes
+identical `outbound_fired`/`invocations` behavior whether the real model or this fake is behind
+`newChatModel()`. Graph-driven modes (`tools`, `observability`) do not need that: Eino's
+`compose.Graph` wraps every node's invocation with callbacks **generically at the graph layer**
+(`compose/utils.go`'s `invokeWithCallbacks`/`initGraphCallbacks` — verified by reading that source
+directly), independent of the node's own implementation, so those already fire correctly for
+**any** `model.BaseChatModel` dropped into a node, stub included.
+
+**In-memory stores.** `memory`, `memory_scoped`/`isolation_leak`, and `crash_recovery` persist to
+`EINO_ARENA_MEMORY_DB` (default `.data/memory.db`, an on-disk SQLite file). Under `ARENA_STUB=1`
+with no explicit override, `loadEnv()` defaults that path to `:memory:` instead — SQLite's
+in-process, in-memory database — so no on-disk file is created at all. `openMemoryStore`/
+`openScopedMemoryStore` pin the connection pool to exactly one connection (`SetMaxOpenConns(1)`)
+for `:memory:` specifically: `database/sql` pools multiple physical connections by default, and
+each connection to `:memory:` is its own SEPARATE, non-shared SQLite instance — without pinning,
+a second pooled connection would see an empty database mid-run.
+
+**Honest scope note — a pure echo, not a tool-calling simulator.** `stubChatModel` never decides
+to call a bound tool on its own. `tools` mode's own correctness assertion
+(`len(out.ToolCalls) == 0` → error, `mode_tools.go`) and `observability` mode's scenario (which
+depends on the same ReAct tool-call loop) will therefore surface an honest `error` field under
+`ARENA_STUB=1` rather than a fabricated tool decision — this is still a fully offline, zero-network
+run (SPEC.md's contract rule 5, "errors are data, not crashes," covers exactly this); it is simply
+not a PASSing run for those two modes' own internal assertions. Verified below.
+
+**Honest scope note — `rag` mode's embedder/Qdrant are NOT stubbed.** `ARENA_STUB` only replaces
+the chat-model call and the conversational stores. `rag` mode's real e5 embedding call
+(`EMBED_URL`) and real Qdrant search (`QDRANT_URL`) are untouched by this toggle and still require
+those services reachable — deliberately out of scope for this change (see the acceptance criteria
+this feature shipped against), not an oversight.
+
 ## Real infrastructure this adapter reaches
 
 | Service | Reached via | Env var (default) |
@@ -487,6 +609,51 @@ $ echo '{"mode":"observability"}' | bash run.sh
 {"framework":"eino","mode":"observability","otel_supported":true,"span_count":4,"span_names":["eino.ChatModel","eino.calculate","eino.ReActAgent","eino.ChatModel"],"span_timings_ms":{"eino.ChatModel":6949.314375,"eino.ChatModel#2":6763.638541,"eino.ReActAgent":6949.506416,"eino.calculate":0.082709},"logs_structured":false,"log_sample":"{\"time\":\"2026-07-18T00:09:47Z\",\"level\":\"INFO\",\"msg\":\"eino_observability_turn\",\"framework\":\"eino\",\"raw_callback_events\":10,\"span_count\":4,\"total_ms\":13713}","notes":"Eino ships NO built-in OTel exporter usable offline. Three community OTel options were evaluated ... This mode uses (b) github.com/braintrustdata/braintrust-sdk-go/trace/contrib/cloudwego/eino: Eino's NATIVE callbacks.Handler seam ... drives that packaged handler, wired to a real go.opentelemetry.io/otel/sdk/trace TracerProvider backed by tracetest.InMemoryExporter ... zero network I/O, zero external collector, and none of this mode's own span-construction code. Observed 10 raw callback firings ... converted ... into 4 real OTel spans: [eino.ChatModel eino.calculate eino.ReActAgent eino.ChatModel] — it only instruments ChatModel/Tool/Embedding callback payloads, so (honest scope note) it does NOT emit a span for the ... Tools-node graph wrapper ..."}
 ```
 (full `notes` text elided here for length — see [`observability` mode](#observability-mode) above for the complete write-up and the community-options evaluation table.) 4 real spans, real durations (the two `ChatModel` calls are ~6.9s/6.8s of genuine agnes network latency, not synthetic; `eino.calculate` is ~0.08ms, real in-process evaluator execution), exit code 0, exactly one JSON object on stdout — verified with `wc -l` on a captured stdout-only run. A parallel check with `source ../../../.env` confirmed `$OPENAI_API_KEY` appears in neither stdout nor stderr of this run.
+
+### `middleware` — real inbound+outbound interception, one qa turn
+
+```bash
+$ echo '{"mode":"middleware","system":"You are a rail assistant.","messages":[{"role":"user","content":"Say OK."}]}' | bash run.sh
+{"text":"OK","middleware":{"mechanism":"eino callbacks (outbound, native OnStart/OnEnd — observe-only by Eino's own contract) + model-wrapper (inbound, since callbacks cannot mutate shared Input)","inbound_fired":true,"outbound_fired":true,"invocations":1,"supported":true}}
+```
+`inbound_fired: true` — `mwModel.injectSentinel` appended `"\n[ARENA_MW]"` to the system message
+before the real agnes call. `outbound_fired: true` — the native `callbacks.Handler` attached via
+`callbacks.InitCallbacks` actually observed the `ChatModel` component's `OnEnd`. `invocations: 1`
+— exactly one real `Generate` call, matching the single qa turn. Exit code 0, exactly one JSON
+object on stdout, verified with `wc -l` on a captured stdout-only run (also confirmed under
+`ARENA_STUB=1` — see below).
+
+### `stub` toggle — fully offline, zero `.env`/`OPENAI_*` needed
+
+```bash
+$ echo '{"mode":"qa","system":"You are concise.","messages":[{"role":"user","content":"What is the capital of France?"}]}' \
+    | ARENA_STUB=1 bash run.sh
+{"framework":"eino","mode":"qa","model":"arena-stub-echo","reply":"[ARENA_STUB echo] What is the capital of France?","input_tokens":9,"output_tokens":8,"latency_ms":0,"tool_calls":[],"retrieved":[],"structured":null,"ttft_ms":0,"error":"","scoped_recall":null,"leak_detected":null,"resumed":null,"precrash_fact_recalled":null,"state_lost":null}
+```
+Run with the process environment **fully cleared** (`env -i`, no `.env` sourced, no
+`OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL` set at all) — `model` defaults to
+`"arena-stub-echo"`, the reply is the echo (never a real agnes answer), `latency_ms: 0` (no
+network round-trip happened), exit code 0.
+
+```bash
+$ echo '{"mode":"middleware","system":"You are a rail assistant.","messages":[{"role":"user","content":"Say OK."}]}' \
+    | ARENA_STUB=1 bash run.sh
+{"text":"[ARENA_STUB echo] Say OK.","middleware":{"mechanism":"eino callbacks (outbound, native OnStart/OnEnd — observe-only by Eino's own contract) + model-wrapper (inbound, since callbacks cannot mutate shared Input)","inbound_fired":true,"outbound_fired":true,"invocations":1,"supported":true}}
+```
+`inbound_fired`/`outbound_fired` both still `true` under `ARENA_STUB=1` — the fake replays the
+same `callbacks.EnsureRunInfo`/`OnStart`/`OnEnd` sequence the real client calls internally (see
+[`stub` toggle](#stub-toggle-arena_stub1) above), so `middleware` mode's own offline behavior is
+identical whether the real model or the fake is behind it.
+
+```bash
+$ echo '{"mode":"tools","messages":[{"role":"user","content":"What is (48 + 12) * 3 / 2? Use the calculator tool."}]}' \
+    | ARENA_STUB=1 bash run.sh; echo "exit=$?"
+{"framework":"eino","mode":"tools","model":"arena-stub-echo","reply":"[ARENA_STUB echo] What is (48 + 12) * 3 / 2? Use the calculator tool.","input_tokens":63,"output_tokens":15,"latency_ms":0,"tool_calls":[],"retrieved":[],"structured":null,"ttft_ms":0,"error":"Eino ReAct agent completed without executing the calculate tool — expected a multi-step tool call for an arithmetic request", ...}
+exit=1
+```
+The documented, honest degradation: zero network calls happened (`latency_ms: 0`, no agnes call),
+but the pure-echo fake never decided to call `calculate`, so `tools` mode's own assertion reports
+that honestly via `error` — data, not a crash, per SPEC.md's contract rule 5.
 
 ### `tools` — real multi-step execution
 
@@ -775,9 +942,19 @@ component performs every chat HTTP call:
 - `mode_observability.go` — `observability` mode's scenario (a real multi-step ReAct turn) and its
   own JSON wire contract (`observabilityOutput`, distinct from `adapterOutput`); owns its full
   stdout write and process exit code.
-- `run.sh` — sources `.env`, validates required env vars, runs the adapter natively.
+- `mode_middleware.go` — `middleware` mode: `mwModel` (inbound interception, a
+  `model.BaseChatModel` decorator) + a native `callbacks.Handler` attached via
+  `callbacks.InitCallbacks` (outbound observation), and its own JSON wire contract
+  (`middlewareOutput`, distinct from `adapterOutput`); owns its full stdout write and process exit
+  code. See [`middleware` mode](#middleware-mode).
+- `stub.go` — `ARENA_STUB=1`'s fake chat model (`stubChatModel`), implementing Eino's native
+  `model.ToolCallingChatModel` interface with a network-free echo; the single-choke-point swap
+  target for `clients.go`'s `newChatModel()`. See [`stub` toggle](#stub-toggle-arena_stub1).
+- `run.sh` — sources `.env`, validates required env vars (skipped when `ARENA_STUB=1`), runs the
+  adapter natively.
 - `Dockerfile` — multi-stage build, no baked credentials, distroless nonroot runtime.
-- `run-docker.sh` — builds (if needed) and runs the containerized adapter.
+- `run-docker.sh` — builds (if needed) and runs the containerized adapter; passes through
+  `ARENA_STUB`.
 - `test-env.sh` — automated credential/env PASS/FAIL assertions (native + Docker).
 - `test-isolation.sh` — automated multi-tenant isolation PASS/FAIL assertions (same-scope hit,
   cross-tenant miss, zero leak) using real agnes recall/probe calls.

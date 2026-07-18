@@ -6,6 +6,7 @@
 // (via host.docker.internal) or natively on the host.
 
 import { createOpenAI } from '@ai-sdk/openai';
+import { STUB_ENABLED, STUB_MODEL_ID, STUB_RQLITE_URL, createStubChatModel } from './stub.mjs';
 
 const DEFAULT_EMBED_URL = 'http://127.0.0.1:8899';
 const DEFAULT_QDRANT_URL = 'http://localhost:6333';
@@ -17,8 +18,30 @@ const DEFAULT_RQLITE_URL = 'http://localhost:4001';
  * from environment variables. Throws a descriptive error (never crashes silently)
  * when a required chat credential is missing -- the caller wraps this in the
  * top-level try/catch so the error lands in the contract's `error` field.
+ *
+ * STUB TOGGLE (ARENA_STUB=1): skips every real-credential/network requirement
+ * below and returns an env built entirely from offline doubles (see
+ * `lib/stub.mjs`) -- `env.chatModel` is a `MockLanguageModelV4`, `env.stub`
+ * is `true` (checked by `lib/modes/rag.mjs` to skip the real embed+Qdrant
+ * round trip), and `env.rqliteUrl` is the `stub:local` sentinel `lib/rqlite.mjs`
+ * routes to its local table engine instead of `fetch()`. No `OPENAI_API_KEY`,
+ * `OPENAI_MODEL`, `EMBED_URL`, `QDRANT_URL`, or `RQLITE_URL` is read in this
+ * branch, so the adapter runs the full mode suite with zero network egress.
  */
 export function resolveEnv() {
+  if (STUB_ENABLED) {
+    return {
+      modelName: STUB_MODEL_ID,
+      chatModel: createStubChatModel(),
+      embedProvider: null,
+      embedUrl: '',
+      qdrantUrl: '',
+      qdrantCollection: '',
+      rqliteUrl: STUB_RQLITE_URL,
+      stub: true,
+    };
+  }
+
   const apiKey = process.env.OPENAI_API_KEY;
   const baseURL = process.env.OPENAI_BASE_URL;
   const modelName = process.env.OPENAI_MODEL || '';
@@ -62,5 +85,6 @@ export function resolveEnv() {
     qdrantUrl,
     qdrantCollection,
     rqliteUrl,
+    stub: false,
   };
 }

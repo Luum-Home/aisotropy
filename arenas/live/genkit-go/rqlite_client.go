@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -19,17 +20,43 @@ import (
 // stable, so adding a dependency for it would not buy anything.
 const memoryTable = "arena_genkit_go_memory"
 
+// ---- ARENA_STUB in-memory backing (stub.go sets stubMode from the env) ----
+//
+// When stubMode is true, every table below is backed by a package-level
+// in-process map instead of a real HTTP round-trip to rqlite, so every
+// rqlite-touching mode (memory/memory_scoped/isolation_leak/crash_recovery)
+// runs fully offline. HONEST limitation: this can only ever prove
+// WITHIN-PROCESS behavior — rqlite's whole point for "memory"/
+// "crash_recovery" is CROSS-PROCESS persistence (a second, separate `run.sh`
+// invocation recalling what an earlier, exited process wrote), and an
+// in-memory map does not survive process exit. See README.md "ARENA_STUB".
+var (
+	stubStoreMu    sync.Mutex
+	stubTurns      = map[string][]turn{} // memory table: session_id -> turns
+	stubCrashTurns = map[string][]turn{} // crash-recovery table: session_id -> turns
+	stubScoped     []stubScopedRow       // scoped-memory table: append-only, filtered on read
+)
+
+// stubScopedRow mirrors one row of arena_genkit_go_scoped_memory.
+type stubScopedRow struct {
+	tenantID, userID, productID, sessionID, fact string
+}
+
 type rqliteClient struct {
 	baseURL string
 	http    *http.Client
+	stub    bool
 }
 
 func newRqliteClient(baseURL string) *rqliteClient {
-	return &rqliteClient{baseURL: baseURL, http: &http.Client{Timeout: 15 * time.Second}}
+	return &rqliteClient{baseURL: baseURL, http: &http.Client{Timeout: 15 * time.Second}, stub: stubMode}
 }
 
 // ensureTable creates the conversation-turn table if absent. Idempotent.
 func (c *rqliteClient) ensureTable(ctx context.Context) error {
+	if c.stub {
+		return nil // the in-memory map needs no schema
+	}
 	stmt := fmt.Sprintf(
 		`CREATE TABLE IF NOT EXISTS %s (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +71,12 @@ func (c *rqliteClient) ensureTable(ctx context.Context) error {
 
 // appendTurn persists one conversation turn for sessionID.
 func (c *rqliteClient) appendTurn(ctx context.Context, sessionID, role, content string) error {
+	if c.stub {
+		stubStoreMu.Lock()
+		stubTurns[sessionID] = append(stubTurns[sessionID], turn{Role: role, Content: content})
+		stubStoreMu.Unlock()
+		return nil
+	}
 	stmt := []any{
 		fmt.Sprintf("INSERT INTO %s(session_id, role, content, created_at) VALUES(?, ?, ?, ?)", memoryTable),
 		sessionID, role, content, time.Now().UnixMilli(),
@@ -61,6 +94,13 @@ type turn struct {
 // loadTurns returns every turn previously persisted for sessionID, oldest
 // first — the cross-process recall this mode exists to prove.
 func (c *rqliteClient) loadTurns(ctx context.Context, sessionID string) ([]turn, error) {
+	if c.stub {
+		stubStoreMu.Lock()
+		defer stubStoreMu.Unlock()
+		out := make([]turn, len(stubTurns[sessionID]))
+		copy(out, stubTurns[sessionID])
+		return out, nil
+	}
 	stmt := []any{
 		fmt.Sprintf("SELECT role, content FROM %s WHERE session_id = ? ORDER BY id ASC", memoryTable),
 		sessionID,
@@ -100,6 +140,9 @@ const scopedMemoryTable = "arena_genkit_go_scoped_memory"
 // ensureScopedTable creates the compound-scope fact table if absent.
 // Idempotent.
 func (c *rqliteClient) ensureScopedTable(ctx context.Context) error {
+	if c.stub {
+		return nil
+	}
 	stmt := fmt.Sprintf(
 		`CREATE TABLE IF NOT EXISTS %s (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,6 +161,12 @@ func (c *rqliteClient) ensureScopedTable(ctx context.Context) error {
 // (tenantID, userID, productID, sessionID). Every scope component is bound
 // as a SQL parameter, never string-concatenated.
 func (c *rqliteClient) writeScopedFact(ctx context.Context, tenantID, userID, productID, sessionID, fact string) error {
+	if c.stub {
+		stubStoreMu.Lock()
+		stubScoped = append(stubScoped, stubScopedRow{tenantID: tenantID, userID: userID, productID: productID, sessionID: sessionID, fact: fact})
+		stubStoreMu.Unlock()
+		return nil
+	}
 	stmt := []any{
 		fmt.Sprintf("INSERT INTO %s(tenant_id, user_id, product_id, session_id, fact, created_at) VALUES(?, ?, ?, ?, ?, ?)", scopedMemoryTable),
 		tenantID, userID, productID, sessionID, fact, time.Now().UnixMilli(),
@@ -134,6 +183,18 @@ func (c *rqliteClient) writeScopedFact(ctx context.Context, tenantID, userID, pr
 // prevents that by construction. The caller (this adapter) is fully
 // responsible for supplying every scope column on every read and write.
 func (c *rqliteClient) recallScopedFacts(ctx context.Context, tenantID, userID, productID, sessionID string) ([]string, error) {
+	if c.stub {
+		stubStoreMu.Lock()
+		defer stubStoreMu.Unlock()
+		var facts []string
+		for i := len(stubScoped) - 1; i >= 0; i-- { // newest first, matching ORDER BY id DESC
+			r := stubScoped[i]
+			if r.tenantID == tenantID && r.userID == userID && r.productID == productID && r.sessionID == sessionID {
+				facts = append(facts, r.fact)
+			}
+		}
+		return facts, nil
+	}
 	stmt := []any{
 		fmt.Sprintf("SELECT fact FROM %s WHERE tenant_id = ? AND user_id = ? AND product_id = ? AND session_id = ? ORDER BY id DESC", scopedMemoryTable),
 		tenantID, userID, productID, sessionID,
@@ -167,6 +228,9 @@ const crashRecoveryTable = "arena_genkit_go_crash_recovery"
 // ensureCrashTable creates the crash-recovery checkpoint table if absent.
 // Idempotent.
 func (c *rqliteClient) ensureCrashTable(ctx context.Context) error {
+	if c.stub {
+		return nil
+	}
 	stmt := fmt.Sprintf(
 		`CREATE TABLE IF NOT EXISTS %s (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,6 +248,12 @@ func (c *rqliteClient) ensureCrashTable(ctx context.Context) error {
 // crash_recovery.go for why that ordering IS the crash-safety boundary this
 // mode proves: a turn killed mid-Generate never reaches this call at all.
 func (c *rqliteClient) appendCrashTurn(ctx context.Context, sessionID, role, content string) error {
+	if c.stub {
+		stubStoreMu.Lock()
+		stubCrashTurns[sessionID] = append(stubCrashTurns[sessionID], turn{Role: role, Content: content})
+		stubStoreMu.Unlock()
+		return nil
+	}
 	stmt := []any{
 		fmt.Sprintf("INSERT INTO %s(session_id, role, content, created_at) VALUES(?, ?, ?, ?)", crashRecoveryTable),
 		sessionID, role, content, time.Now().UnixMilli(),
@@ -197,6 +267,13 @@ func (c *rqliteClient) appendCrashTurn(ctx context.Context, sessionID, role, con
 // generated it survived long enough to call appendCrashTurn — a turn killed
 // mid-genkit.Generate leaves zero rows here, by construction.
 func (c *rqliteClient) loadCrashTurns(ctx context.Context, sessionID string) ([]turn, error) {
+	if c.stub {
+		stubStoreMu.Lock()
+		defer stubStoreMu.Unlock()
+		out := make([]turn, len(stubCrashTurns[sessionID]))
+		copy(out, stubCrashTurns[sessionID])
+		return out, nil
+	}
 	stmt := []any{
 		fmt.Sprintf("SELECT role, content FROM %s WHERE session_id = ? ORDER BY id ASC", crashRecoveryTable),
 		sessionID,

@@ -2,8 +2,11 @@
 
 A full-parity, multi-mode **live** arena adapter for [Mastra](https://mastra.ai)
 (TypeScript AI framework, **Apache-2.0**), driven against the **real**
-`agnes-2.0-flash` model and the arena's **real** infrastructure — no mocks, no
-stubs. It mirrors the uniform stdin/stdout contract of the other seven live
+`agnes-2.0-flash` model and the arena's **real** infrastructure by default — no
+mocks, no stubs. Setting `ARENA_STUB=1` is the one opt-in exception: it swaps
+every real dependency for an offline substitute so the full mode suite can run
+with no network access at all (see "Offline / ARENA_STUB mode" below). It
+mirrors the uniform stdin/stdout contract of the other seven live
 adapters (`ai-sdk`, `llamaindex`, `pydantic-ai`, `langgraph`, `eino`,
 `genkit-go`, and the `aisotropy` reference), so the shared Go runner
 (`arenas/live/runner`) scores it identically.
@@ -38,8 +41,14 @@ input_tokens, output_tokens, latency_ms, tool_calls[], retrieved[],
 structured, ttft_ms, recalled, scoped_recall, leak_detected,
 attacker_visible_facts[], otel_supported, span_count, span_names[],
 span_timings_ms, logs_structured, log_sample, notes, resumed,
-state_lost, precrash_fact_recalled, error
+state_lost, precrash_fact_recalled, text, middleware, error
 ```
+
+`text` and `middleware` are additive fields populated only by `middleware` mode
+(see below) — every field above is present with its neutral default
+(`text:""`, `middleware:null`) on every other mode's response, so the shared Go
+runner (which ignores unknown fields) scores this adapter identically either
+way.
 
 Handled errors (bad input, API/network failure, missing scope) land in the
 `error` field and still exit 0 — errors are **data**, not crashes.
@@ -219,6 +228,90 @@ Native metrics emitted in the same pass:
 `mastra_model_total_input_tokens`, `mastra_model_total_output_tokens`,
 `mastra_model_duration_ms`, `mastra_tool_duration_ms`, `mastra_agent_duration_ms`.
 
+### `middleware` — AI SDK model middleware (inbound + outbound)
+
+**Mechanism (honest disclosure): `wrapLanguageModel` from the `ai` package, NOT
+Mastra's `inputProcessors`/`outputProcessors`.** Mastra ships both seams — its
+own Agent-level processor pipeline, and (because an Agent's `model` is a plain
+AI SDK `LanguageModel`) standard AI SDK model middleware. This mode uses the
+latter: `wrapLanguageModel({ model: chatModel, middleware })` wraps the exact
+model object handed to `new Agent({ model })`, giving one middleware object
+both an inbound and an outbound hook against the real call:
+
+- **Inbound** — `transformParams` runs before the model ever sees the call. It
+  finds the `{ role: 'system', ... }` message Mastra compiled from
+  `instructions` and appends the sentinel `"\n[ARENA_MW]"` to its content.
+- **Outbound** — `wrapGenerate` runs once per real `doGenerate` call and
+  increments an invocation counter before delegating to the real call
+  unchanged.
+
+One `qa`-style turn through the wrapped model returns:
+
+```json
+{"text":"OK","middleware":{"mechanism":"wrapLanguageModel","inbound_fired":true,"outbound_fired":true,"invocations":1,"supported":true}}
+```
+
+(as additive top-level fields alongside this adapter's normal
+`framework`/`mode`/`model`/`reply`/... envelope — see "Contract" above).
+Verified against real `agnes-2.0-flash`:
+
+```bash
+echo '{"mode":"middleware","system":"You are a rail assistant.","messages":[{"role":"user","content":"Say OK."}]}' \
+  | bash arenas/live/mastra/run.sh
+# {"...","model":"agnes-2.0-flash","reply":"OK","...",
+#  "text":"OK","middleware":{"mechanism":"wrapLanguageModel","inbound_fired":true,"outbound_fired":true,"invocations":1,"supported":true},"error":""}
+```
+
+---
+
+## Offline / ARENA_STUB mode
+
+Setting `ARENA_STUB=1` runs **every mode** (including `middleware`) fully
+offline — no `OPENAI_API_KEY`/`OPENAI_MODEL`, no real agnes call, no e5 embed
+server, no Qdrant, no rqlite:
+
+```bash
+echo '{"mode":"qa","messages":[{"role":"user","content":"Say OK."}]}' \
+  | ARENA_STUB=1 node arenas/live/mastra/index.mjs
+```
+
+| Real infra | Offline substitute | File |
+|---|---|---|
+| agnes chat model (`createOpenAI(...).chat(...)`) | `MockLanguageModelV4` from `ai/test` | `lib/stub-model.mjs` |
+| rqlite (`memory_scoped`, `isolation_leak`, `crash_recovery`) | file-backed JSON store under `os.tmpdir()` (survives across separate `node index.mjs` processes, matching what those modes test) | `lib/stub-store.mjs` |
+| e5 embed server (`rag`) | deterministic hash-based pseudo-vector (no semantic meaning) | `lib/embed.mjs` |
+| Qdrant `arena_rag` collection (`rag`) | small hardcoded corpus + keyword-overlap search (not vector similarity — a hash embedding has none) | `lib/stub-qdrant.mjs` |
+| on-disk libsql `memory` store | unchanged — already a local file (`file:/tmp/...`), no network involved either way | `lib/modes/memory.mjs` |
+
+**Why `MockLanguageModelV4`, not `MockLanguageModelV2`.** Checked against the
+installed packages rather than assumed: `createOpenAI({...}).chat(modelName)`
+from the pinned `@ai-sdk/openai@4.0.16` reports
+`model.specificationVersion === 'v4'` at runtime, backed by
+`@ai-sdk/provider@4.0.3` — exactly what `ai@7.0.31` (added as a new direct
+dependency here, matching the "provider-v7" generation `@mastra/core@1.51.0`
+already vendors internally) depends on. `ai@7.0.31`'s `ai/test` subpath does
+not even export a `MockLanguageModelV2` — only `MockLanguageModelV3`/`V4` mock
+classes exist at this pin — so `MockLanguageModelV4` is the correct offline
+stand-in, not a looser interpretation of the ask.
+
+**Honest limitations of the stub** (documented, not hidden):
+- The mock model does not reason: `qa`/`rag`/`memory`/etc. get a fixed canned
+  reply text regardless of history or context, so `crash_recovery`'s
+  `precrash_fact_recalled` is legitimately `false` under the stub (durable
+  *state* recovery — `resumed`/`state_lost` — still works correctly, because
+  that check is against what was loaded from the file-backed store, not
+  against model output).
+- The mock DOES branch correctly on tool declarations (emits a real
+  `calculate` tool call with a valid arithmetic expression so the real,
+  executing `calculate` tool in `tools`/`observability` modes still runs) and
+  on `structuredOutput` JSON-schema requests (fabricates a schema-shaped
+  placeholder object), so those modes exercise their real Mastra wiring even
+  offline.
+- `lib/stub-store.mjs` is not a SQL engine — it pattern-matches the exact
+  `CREATE TABLE`/`INSERT`/`SELECT` shapes this adapter's own code emits (see
+  its header comment) and throws on anything else, rather than silently
+  returning wrong results.
+
 ---
 
 ## Running
@@ -297,6 +390,7 @@ policy (`.claude/rules/cos/license-policy.md`).
 | `@mastra/libsql` | Apache-2.0 |
 | `@mastra/observability` | Apache-2.0 |
 | `@ai-sdk/openai` | Apache-2.0 |
+| `ai` | Apache-2.0 |
 | `@qdrant/js-client-rest` | Apache-2.0 |
 | `@opentelemetry/api` | Apache-2.0 |
 | `@opentelemetry/sdk-trace-node` | Apache-2.0 |
@@ -315,14 +409,17 @@ arenas/live/mastra/
   lib/
     env.mjs                 env + Mastra-compatible model resolution
     output.mjs              base output shape, token/toolCall/message helpers
-    embed.mjs               real e5 embedding client (fetch)
+    embed.mjs               real e5 embedding client (fetch); ARENA_STUB=1 offline pseudo-vector
     calculator.mjs          recursive-descent arithmetic (no eval)
     calculate-tool.mjs      the executed `calculate` Mastra tool
-    rqlite.mjs              minimal rqlite HTTP client
+    rqlite.mjs              minimal rqlite HTTP client; ARENA_STUB=1 routes to stub-store.mjs
     scoped-store.mjs        hand-rolled compound-scope store (honest isolation note)
     observability.mjs       in-process Mastra AI-tracing wiring (TestExporter)
+    stub-model.mjs          ARENA_STUB=1 offline chat model (MockLanguageModelV4)
+    stub-store.mjs          ARENA_STUB=1 offline rqlite substitute (file-backed JSON)
+    stub-qdrant.mjs         ARENA_STUB=1 offline Qdrant substitute (keyword search)
     modes/                  qa, rag, tools, memory, memory_scoped, isolation_leak,
-                            structured, stream, observability, crash_recovery
+                            structured, stream, observability, crash_recovery, middleware
   run.sh / run-docker.sh    native / containerized entrypoints
   Dockerfile                no baked credentials; runtime -e only
   test-env.sh / test-isolation.sh / test-crash.sh

@@ -40,8 +40,6 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     try:
-        from langchain_openai import ChatOpenAI
-        from langgraph.checkpoint.sqlite import SqliteSaver
         from langgraph.graph import END, START, MessagesState, StateGraph
     except Exception as exc:  # pragma: no cover - import failure path
         return common.envelope(mode=MODE, model=model_name, error=f"import failure: {exc}")
@@ -54,10 +52,13 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
         return common.envelope(mode=MODE, model=model_name, error="no messages in request")
 
     db_path = payload.get("checkpoint_db_path") or common.DEFAULT_CHECKPOINT_DB
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    # ARENA_STUB=1 uses an in-memory checkpointer (common.checkpointer_context)
+    # and never touches disk — see that function's docstring.
+    if not common.is_stub():
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
     try:
-        llm = ChatOpenAI(model=model_name, base_url=base_url, api_key=api_key)
+        llm = common.build_chat_model(model_name, api_key, base_url)
 
         def call_model(state: MessagesState) -> dict[str, Any]:
             return {"messages": [llm.invoke(state["messages"])]}
@@ -68,12 +69,13 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
         graph_builder.add_edge("agent", END)
 
         start = time.monotonic()
-        # SqliteSaver.from_conn_string is a context manager; a single
-        # invocation opens the on-disk file, runs the one graph.invoke()
-        # for this turn (which both reads the prior checkpoint for
-        # thread_id, if any, and durably writes the new one), then closes
-        # the connection cleanly before the process exits.
-        with SqliteSaver.from_conn_string(db_path) as saver:
+        # checkpointer_context is a context manager; a single invocation
+        # opens the checkpointer (real on-disk file, or ARENA_STUB=1's
+        # in-memory saver), runs the one graph.invoke() for this turn (which
+        # both reads the prior checkpoint for thread_id, if any, and
+        # durably writes the new one), then closes cleanly before the
+        # process exits.
+        with common.checkpointer_context(db_path) as saver:
             graph = graph_builder.compile(checkpointer=saver)
             result = graph.invoke(
                 {"messages": messages},

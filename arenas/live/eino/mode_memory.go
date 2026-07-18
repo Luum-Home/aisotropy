@@ -80,14 +80,26 @@ type memoryStore struct {
 }
 
 func openMemoryStore(path string) (*memoryStore, error) {
-	if dir := filepath.Dir(path); dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("creating memory db directory %q: %w", dir, err)
+	if path != ":memory:" {
+		if dir := filepath.Dir(path); dir != "." && dir != "" {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, fmt.Errorf("creating memory db directory %q: %w", dir, err)
+			}
 		}
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("opening on-disk sqlite %q: %w", path, err)
+	}
+	if path == ":memory:" {
+		// ARENA_STUB=1's in-memory store (see clients.go/README.md#stub-mode):
+		// database/sql pools multiple physical connections by default, and
+		// each connection to ":memory:" is its OWN separate, non-shared
+		// SQLite instance — a second connection would see an empty database.
+		// Pinning the pool to exactly one connection makes load()/append()
+		// within a single process invocation see one consistent in-memory
+		// store, matching what a single on-disk file already guarantees.
+		db.SetMaxOpenConns(1)
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS turns (
 		session_id TEXT NOT NULL,

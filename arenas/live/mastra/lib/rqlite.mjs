@@ -3,6 +3,18 @@
 // persist conversation turns to the REAL, networked rqlite service so a fact
 // stated in one process invocation can be recalled by a completely separate,
 // later process invocation (real persistence, not an in-memory Map).
+//
+// ARENA_STUB=1 (see lib/env.mjs): both functions below route to
+// lib/stub-store.mjs, a file-backed offline substitute, instead of making any
+// HTTP call -- every mode that ultimately depends on rqlite (memory_scoped,
+// isolation_leak via lib/scoped-store.mjs; crash_recovery directly) stays
+// fully offline with zero code changes in those callers.
+
+import { stubExecute, stubQuery } from './stub-store.mjs';
+
+function isStub() {
+  return process.env.ARENA_STUB === '1';
+}
 
 /**
  * Run one or more write statements. Each statement is either a bare SQL string
@@ -10,6 +22,9 @@
  * rqlite's request body shape. Throws on any transport or per-statement error.
  */
 export async function rqliteExecute(rqliteUrl, statements) {
+  if (isStub()) {
+    return stubExecute(statements);
+  }
   const res = await fetch(`${rqliteUrl}/db/execute`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -34,6 +49,9 @@ export async function rqliteExecute(rqliteUrl, statements) {
  * on the same single-node rqlite always observes that write.
  */
 export async function rqliteQuery(rqliteUrl, statement) {
+  if (isStub()) {
+    return stubQuery(statement);
+  }
   const res = await fetch(`${rqliteUrl}/db/query?level=strong`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

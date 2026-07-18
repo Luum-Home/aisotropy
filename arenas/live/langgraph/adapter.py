@@ -36,6 +36,19 @@ Modes (dispatched by the request's ``"mode"`` field, default ``"qa"``):
                       in-process OTel span exporter (InMemorySpanExporter,
                       no external collector), and reports the real spans it
                       produces. See modes/observability.py.
+    middleware     - a real LangGraph create_react_agent pre_model_hook
+                      (inbound system-prompt mutation) plus a real
+                      BaseCallbackHandler (outbound invocation counter)
+                      around one real chat turn. See modes/middleware.py.
+
+Offline toggle (every mode): setting ``ARENA_STUB=1`` swaps the real
+``ChatOpenAI``/agnes call for a real LangChain-native
+``langchain_core.language_models.fake_chat_models.FakeListChatModel``, and
+swaps any on-disk LangGraph checkpointer for the real in-memory
+``langgraph.checkpoint.memory.InMemorySaver`` — no real network call, no
+``OPENAI_API_KEY``/``OPENAI_BASE_URL`` required, no real Qdrant/embed-server
+call, no ``.data/*.sqlite`` file touched. See ``modes/common.py``'s
+``is_stub()``/``build_chat_model()``/``checkpointer_context()``.
 
 Security: never print, log, or persist the API key. All diagnostics go to
 stderr; stdout carries exactly one JSON object and nothing else.
@@ -52,6 +65,7 @@ from modes import (
     isolation_leak,
     memory,
     memory_scoped,
+    middleware,
     observability,
     qa,
     rag,
@@ -71,6 +85,7 @@ MODES = {
     "memory_scoped": memory_scoped.run,
     "isolation_leak": isolation_leak.run,
     "observability": observability.run,
+    "middleware": middleware.run,
 }
 
 

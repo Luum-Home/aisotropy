@@ -10,6 +10,7 @@ import (
 
 	einoembedopenai "github.com/cloudwego/eino-ext/components/embedding/openai"
 	einochatopenai "github.com/cloudwego/eino-ext/components/model/openai"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/qdrant/go-client/qdrant"
 )
 
@@ -35,13 +36,31 @@ type arenaEnv struct {
 
 	// on-disk SQLite (memory mode)
 	memoryDBPath string
+
+	// stub is true when ARENA_STUB=1 — every mode routes through the local,
+	// network-free fake chat model (stub.go) instead of the real agnes
+	// endpoint, and memory-backed modes default to an in-memory SQLite store
+	// instead of an on-disk file. See README.md#stub-mode.
+	stub bool
 }
 
 func loadEnv() (*arenaEnv, error) {
+	stub := os.Getenv("ARENA_STUB") == "1"
+
+	defaultMemoryDBPath := ".data/memory.db"
+	if stub {
+		// In-memory store: every process invocation starts from a clean
+		// slate (no cross-process persistence — that is inherent to
+		// "in-memory", not a bug; see README.md#stub-mode for what this
+		// means for memory/memory_scoped/crash_recovery under ARENA_STUB).
+		defaultMemoryDBPath = ":memory:"
+	}
+
 	env := &arenaEnv{
 		apiKey:  os.Getenv("OPENAI_API_KEY"),
 		baseURL: os.Getenv("OPENAI_BASE_URL"),
 		model:   os.Getenv("OPENAI_MODEL"),
+		stub:    stub,
 
 		embedURL:   getenvDefault("EMBED_URL", "http://127.0.0.1:8899"),
 		embedModel: getenvDefault("EMBED_MODEL", "multilingual-e5-small-query"),
@@ -49,14 +68,23 @@ func loadEnv() (*arenaEnv, error) {
 		qdrantURL:        getenvDefault("QDRANT_URL", "http://localhost:6333"),
 		qdrantCollection: getenvDefault("QDRANT_COLLECTION", "arena_rag"),
 
-		memoryDBPath: getenvDefault("EINO_ARENA_MEMORY_DB", ".data/memory.db"),
+		memoryDBPath: getenvDefault("EINO_ARENA_MEMORY_DB", defaultMemoryDBPath),
 	}
 
-	if env.apiKey == "" {
-		return nil, errors.New("OPENAI_API_KEY is not set")
-	}
-	if env.model == "" {
-		return nil, errors.New("OPENAI_MODEL is not set")
+	if stub {
+		// Offline: no real agnes endpoint is ever dialed, so OPENAI_* is not
+		// required. A model name is still echoed on the wire contract so a
+		// stub run is unmistakable in output, never silently blank.
+		if env.model == "" {
+			env.model = "arena-stub-echo"
+		}
+	} else {
+		if env.apiKey == "" {
+			return nil, errors.New("OPENAI_API_KEY is not set")
+		}
+		if env.model == "" {
+			return nil, errors.New("OPENAI_MODEL is not set")
+		}
 	}
 
 	grpcPort := 6334
@@ -79,11 +107,26 @@ func getenvDefault(key, fallback string) string {
 	return fallback
 }
 
-// newChatModel constructs Eino's real OpenAI-compatible chat model component
-// pointed at agnes-2.0-flash. This is the exact mechanism the single-shot
-// adapter already used: einoopenai.NewChatModel overrides the vendored
-// go-openai client's BaseURL so it talks to any OpenAI-compatible endpoint.
-func newChatModel(ctx context.Context, env *arenaEnv, cfg *einochatopenai.ChatModelConfig) (*einochatopenai.ChatModel, error) {
+// newChatModel constructs the chat model every mode drives: Eino's REAL
+// OpenAI-compatible chat model component pointed at agnes-2.0-flash
+// (einoopenai.NewChatModel overrides the vendored go-openai client's BaseURL
+// so it talks to any OpenAI-compatible endpoint — the exact mechanism the
+// original single-shot adapter already used), UNLESS env.stub is true
+// (ARENA_STUB=1), in which case it returns the local, network-free fake
+// model.ToolCallingChatModel from stub.go instead — see README.md#stub-mode.
+//
+// The return type is the model.ToolCallingChatModel INTERFACE (Generate +
+// Stream + WithTools), not the concrete *einochatopenai.ChatModel struct, so
+// every call site (mode_qa.go, mode_tools.go, mode_rag.go, mode_memory.go,
+// mode_structured.go, mode_stream.go, mode_scoped_memory.go, mode_crash.go,
+// mode_observability.go, mode_middleware.go) is unaffected by which
+// implementation is behind it — none of them use anything outside this
+// interface, so this single choke point is where ARENA_STUB fans out to
+// every mode without a single mode-specific code change.
+func newChatModel(ctx context.Context, env *arenaEnv, cfg *einochatopenai.ChatModelConfig) (model.ToolCallingChatModel, error) {
+	if env.stub {
+		return newStubChatModel(), nil
+	}
 	if cfg == nil {
 		cfg = &einochatopenai.ChatModelConfig{}
 	}

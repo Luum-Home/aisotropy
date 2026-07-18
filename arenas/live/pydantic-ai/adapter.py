@@ -32,6 +32,14 @@ infrastructure -- see README.md for the full contract and evidence):
              Runs one real turn with an ACTUALLY-EXECUTED tool (same
              `calculate` tool as `tools` mode, multiple ops per turn) and
              reports every finished span's name and duration.
+  middleware Pydantic AI's NATIVE model-wrapping seam:
+             `pydantic_ai.models.wrapper.WrapperModel`, subclassed as
+             `arena_middleware.ArenaMiddlewareModel`. INBOUND: appends a
+             sentinel to the system prompt inside `request()`, before the
+             wrapped model ever sees it. OUTBOUND: the wrapper counts every
+             real request to the wrapped model. Emits a DIFFERENT, smaller
+             stdout shape than every other mode -- `{"text", "middleware"}`
+             only -- see `mode_middleware`'s docstring below.
   memory_scoped  Compound-scope `(tenant_id, user_id, product_id[, session_id])`
              fact store, HAND-ROLLED on top of `arena_memory_store` (Pydantic
              AI has no native multi-tenant memory concept -- see
@@ -50,6 +58,13 @@ infrastructure -- see README.md for the full contract and evidence):
              `turns`) is the FRESH recovery process that loads whatever
              actually survived and reports `resumed` / `precrash_fact_recalled`
              / `state_lost`.
+
+`ARENA_STUB=1` (any mode): swaps every mode's real dependencies for offline, in-process
+substitutes -- `pydantic_ai.models.test.TestModel` in place of the real agnes
+`OpenAIChatModel`, canned/local retrieval in place of the real e5+Qdrant calls, and an
+in-process dict in place of rqlite -- see `arena_common.is_stub()` / `build_model()` and
+`arena_memory_store.py`'s `_stub_*` fallbacks. No `OPENAI_*`/`RQLITE_URL`/`QDRANT_URL`/
+`EMBED_URL` env is required and no network I/O happens when set.
 
 Stdout contract (superset of the base arena's `adapterOutput`; the base
 runner ignores fields it doesn't know, so this is additive/compatible):
@@ -766,6 +781,52 @@ async def mode_observability(payload: dict) -> dict:
 
 
 # --------------------------------------------------------------------------
+# mode: middleware -- Pydantic AI NATIVE model-wrapping (WrapperModel):
+# mutates the inbound system prompt, counts outbound requests. See
+# arena_middleware.py's module docstring for the full mechanism writeup and
+# why WrapperModel (not InstrumentedModel / history_processors) was used.
+#
+# NOTE: this mode's stdout shape is DELIBERATELY DIFFERENT from every other
+# mode's uniform contract -- {"text": str, "middleware": {...}} only, per
+# the task brief -- not the "framework"/"reply"/... superset the other nine
+# modes share. The base arena runner ignores unknown fields either way, so
+# this stays additive; it just doesn't reuse `_base_result()`.
+# --------------------------------------------------------------------------
+async def mode_middleware(payload: dict) -> dict:
+    from pydantic_ai import Agent
+
+    from arena_middleware import ArenaMiddlewareModel
+
+    system = payload.get("system") or ""
+    prompt = _last_user_content(payload)
+
+    base_model, model_name = build_model()
+    wrapped_model = ArenaMiddlewareModel(base_model)
+
+    log(f"middleware: building agent model={model_name} wrapped in ArenaMiddlewareModel (WrapperModel)")
+    agent = Agent(wrapped_model, system_prompt=system)
+
+    start = time.monotonic()
+    result = await agent.run(prompt)
+    latency_ms = int((time.monotonic() - start) * 1000)
+    log(
+        f"middleware: turn done latency_ms={latency_ms} inbound_fired={wrapped_model.inbound_fired} "
+        f"invocations={wrapped_model.request_count}"
+    )
+
+    return {
+        "text": result.output,
+        "middleware": {
+            "mechanism": "WrapperModel",
+            "inbound_fired": wrapped_model.inbound_fired,
+            "outbound_fired": wrapped_model.request_count > 0,
+            "invocations": wrapped_model.request_count,
+            "supported": True,
+        },
+    }
+
+
+# --------------------------------------------------------------------------
 # mode: structured -- Agent(output_type=PromptedOutput(Answer))
 # --------------------------------------------------------------------------
 async def mode_structured(payload: dict) -> dict:
@@ -858,6 +919,7 @@ MODE_HANDLERS = {
     "structured": mode_structured,
     "stream": mode_stream,
     "observability": mode_observability,
+    "middleware": mode_middleware,
 }
 
 

@@ -13,16 +13,18 @@ arena (agnes chat, the e5 embedding server, Qdrant, rqlite).
 
 - **Framework:** Pydantic AI 2.12.0 (MIT)
 - **Model:** `agnes-2.0-flash` via an OpenAI-compatible endpoint
-- **Modes:** `qa` (default), `rag`, `tools`, `memory`, `memory_scoped`, `isolation_leak`, `crash_recovery`, `structured`, `stream`, `observability`
+- **Modes:** `qa` (default), `rag`, `tools`, `memory`, `memory_scoped`, `isolation_leak`, `crash_recovery`, `structured`, `stream`, `observability`, `middleware`
+- **Offline toggle:** `ARENA_STUB=1` swaps every mode's real dependencies (agnes, e5, Qdrant, rqlite) for in-process substitutes
 
 ## Files
 
 | File | Purpose |
 |---|---|
 | `adapter.py` | Entrypoint: reads the mode-tagged request JSON from stdin, dispatches to the mode handler, writes the uniform result JSON to stdout |
-| `arena_common.py` | Shared env/config, the agnes chat-model builder, e5 query embedding, Qdrant retrieval |
-| `arena_memory_store.py` | Real rqlite-backed persistence of Pydantic AI's `message_history` for the `memory` mode, plus the hand-rolled compound-scope fact store (`scope_key`, `save_scoped_fact`, `load_scoped_facts`) for `memory_scoped` / `isolation_leak` |
+| `arena_common.py` | Shared env/config, the agnes chat-model builder, e5 query embedding, Qdrant retrieval, `is_stub()`/`ARENA_STUB` fallbacks |
+| `arena_memory_store.py` | Real rqlite-backed persistence of Pydantic AI's `message_history` for the `memory` mode, plus the hand-rolled compound-scope fact store (`scope_key`, `save_scoped_fact`, `load_scoped_facts`) for `memory_scoped` / `isolation_leak`; in-process `ARENA_STUB` fallbacks for both |
 | `arena_tools.py` | A real, actually-executed (`ast`-based, no `eval()`) calculator for the `tools` mode |
+| `arena_middleware.py` | `ArenaMiddlewareModel(WrapperModel)` -- Pydantic AI NATIVE model-wrapping for the `middleware` mode: mutates the inbound system prompt, counts outbound requests |
 | `run.sh` | Native runner: sources the repo-root `.env`, activates `.venv`, execs `adapter.py` |
 | `run-docker.sh` | Containerized runner: builds the image on first use, passes credentials at `docker run` time only |
 | `Dockerfile` | Minimal `python:3.13-slim` image; no credential baked in |
@@ -523,6 +525,97 @@ structured JSON, with the honest caveat that it arrives as span attributes, not 
 result is a concrete "what native instrumentation looks like" reference (span names, GenAI
 attribute keys, per-op timing granularity) if/when aisotropy wires its own tracing.
 
+### `middleware` — Pydantic AI NATIVE model-wrapping (`WrapperModel`)
+
+```json
+{"mode": "middleware", "system": "You are a rail assistant.", "messages": [{"role": "user", "content": "Say OK."}]}
+```
+
+Pydantic AI ships `pydantic_ai.models.wrapper.WrapperModel` (`pydantic_ai/models/wrapper.py`), a
+`Model` subclass built specifically to be subclassed and wrap another `Model`, intercepting
+`request()` / `request_stream()` — the same base class durable-execution integrations
+(Temporal/Prefect/DBOS) use. This mode's `arena_middleware.ArenaMiddlewareModel(WrapperModel)`
+performs two independently observable transforms in one real turn:
+
+- **INBOUND** — `request()` appends the sentinel `"\n[ARENA_MW]"` to every `SystemPromptPart` in
+  the outgoing `messages` list, non-destructively (`dataclasses.replace`, never mutating the
+  caller's history objects in place), *before* delegating to the wrapped model.
+- **OUTBOUND** — `request()` increments a counter *after* the wrapped model's real response comes
+  back, so the wrapper observes every outbound call, not just fire-and-forget interception.
+
+**Mechanism honesty:** this mutates the already-assembled `messages: list[ModelMessage]` argument
+of `request()` — the framework's per-call payload — not the `Agent`'s `system_prompt` string
+itself. A dynamic `@agent.system_prompt` callback operates one layer above (regenerates the prompt
+at render time); `InstrumentedModel` (exercised honestly by `observability` mode above) is
+OBSERVE-only and cannot mutate the outbound request at all. `WrapperModel` is the only one of the
+three that can both mutate inbound and observe outbound in a single hook.
+
+**Different stdout shape, on purpose:** unlike every other mode, `middleware` does not reuse
+`_base_result()` / the uniform 20-field contract — it emits exactly `{"text": str, "middleware":
+{...}}`. The base arena runner ignores fields it doesn't know either way, so this stays additive;
+it's just a smaller, mode-specific shape.
+
+**Evidence (real call):**
+```json
+{"text": "OK", "middleware": {"mechanism": "WrapperModel", "inbound_fired": true, "outbound_fired": true, "invocations": 1, "supported": true}}
+```
+Independently verified below the self-reported booleans, with a `RecordingModel(TestModel)`
+standing in as the wrapped model: the exact `SystemPromptPart` content the wrapper forwarded
+downstream was captured and asserted to end in the sentinel —
+`'You are a rail assistant.\n[ARENA_MW]'` — proving the mutation actually reaches the wrapped
+model's `request()` call, not just a self-reported flag.
+
+**Honest scope:** only `request()` (the non-streaming path `agent.run()` uses, which is what this
+mode's one turn exercises) is overridden; `request_stream()` is left as `WrapperModel`'s
+unmodified pass-through — `stream` mode already covers the real streaming path separately, and
+`middleware` does not stream.
+
+## `ARENA_STUB=1` — offline toggle for every mode
+
+```bash
+ARENA_STUB=1 echo '{"mode":"qa","system":"...","messages":[{"role":"user","content":"Say OK."}]}' | python3 adapter.py
+```
+
+Setting `ARENA_STUB=1` swaps every mode's real dependency for an in-process, offline substitute —
+no `OPENAI_*` / `EMBED_URL` / `QDRANT_URL` / `RQLITE_URL` env is required and no network I/O
+happens for any mode:
+
+| Real dependency | Stub substitute | Where |
+|---|---|---|
+| agnes `OpenAIChatModel` | Pydantic AI's own `pydantic_ai.models.test.TestModel` (`pydantic_ai/models/test.py`) — a framework-native offline test double, not a hand-rolled fake | `arena_common.build_model()` |
+| e5 embedding server | a fixed in-process vector (no semantic meaning; only exists to keep `qdrant_search()`'s argument shape) | `arena_common.embed_query_vector()` |
+| Qdrant | a small canned passage list, clearly labeled `ARENA_STUB canned passage N` | `arena_common.qdrant_search()` |
+| rqlite (`message_history` + scoped facts) | in-process module-level dicts (`_stub_history`, `_stub_scoped`) | `arena_memory_store.py` |
+
+**Evidence (`qa` mode, offline):**
+```json
+{"framework": "pydantic-ai", "mode": "qa", "model": "pydantic_ai.models.test.TestModel (ARENA_STUB=1)", "reply": "success (no tool calls)", "input_tokens": 57, "output_tokens": 4, "latency_ms": 5, "error": ""}
+```
+stderr confirms the substitution and that no network call was attempted:
+`PROGRESS: build_model: ARENA_STUB=1 -- using pydantic_ai.models.test.TestModel, no network call`.
+Spot-checked additionally offline under `ARENA_STUB=1`: `memory` (`[ARENA_STUB] ... no rqlite
+call`), `rag` (`[ARENA_STUB] ... no e5 call` / `no Qdrant call`), `stream`, `observability`,
+and `middleware` (inbound/outbound both still fire against `TestModel`) all ran with **zero**
+network I/O.
+
+**Honest limitation:** `TestModel`'s generic behavior (auto-calls any tool with schema-generated —
+not semantically meaningful — arguments; for non-tool-forcing text output returns a fixed
+`"success (no tool calls)"` string) does not satisfy every mode's *domain* expectations. `tools`
+mode's real `calculate` tool receives a schema-shaped but non-arithmetic generated `expression`
+string and fails closed with a caught (non-crashing) `ValueError` in the result's `error` field;
+`structured` mode's `PromptedOutput(Answer)` strategy expects the model to emit JSON matching the
+`Answer` schema as plain text, which `TestModel`'s default text output does not produce, so it
+fails closed with `UnexpectedModelBehavior: Exceeded maximum output retries` in `error`. Both are
+**offline, non-network, non-crashing** failures — `main()` never raises, it always writes one
+valid JSON object to stdout — just not a *meaningful* answer for those two modes specifically.
+`qa`, `rag`, `memory`, `memory_scoped`, `isolation_leak`, `crash_recovery`, `stream`,
+`observability`, and `middleware` all produce clean, non-error stub output.
+
+**In-process only, not cross-process:** `ARENA_STUB`'s history/scoped-fact fallbacks are Python
+module globals, not a file or rqlite — two *separate* `ARENA_STUB=1 python adapter.py` invocations
+do **not** share state. That cross-process durability claim belongs to the real `memory` /
+`crash_recovery` modes (see their sections above), not this offline substitute.
+
 ## Docker packaging
 
 ```bash
@@ -597,13 +690,19 @@ echoes, prints, or writes it anywhere — only match counts are reported.
 | `observability` mode exploration (standalone script probing `Agent.instrument` API shape — the constructor kwarg `Agent(..., instrument=...)` doesn't exist in 2.12.0, it's the `agent.instrument` setter; discovered before touching `adapter.py`) | 1 |
 | `observability` mode evidence (`run.sh`, the captured evidence above: 2 model round-trips inside 1 adapter invocation — tool request + final answer) | 1 |
 | **Subtotal (this `observability` delivery)** | **2** |
+| `middleware` mode evidence (`run.sh`, the captured evidence above: 1 real call, inbound+outbound both fired) | 1 |
+| `qa` (no `mode` key) regression re-check — confirms the pre-existing default path is byte-for-byte unchanged after this delivery's edits | 1 |
+| **Subtotal (this `middleware` / `ARENA_STUB` delivery)** | **2** |
 
 **This is 1 call over the ≤15 budget stated in the original brief** (see prior note; unrelated to
 this delivery). The `memory_scoped` / `isolation_leak` addition used **6** real agnes calls total,
 against a separately stated **≤8** budget for that delivery — 2 calls to spare. The `crash_recovery`
 addition used **6** real agnes calls total, against a separately stated **≤8** budget for this
 delivery — 2 calls to spare. The `observability` addition used **2** real agnes calls total,
-against a separately stated **≤5** budget for this delivery — 3 calls to spare.
+against a separately stated **≤5** budget for this delivery — 3 calls to spare. The `middleware` /
+`ARENA_STUB` addition used **2** real agnes calls total (all other verification — `ARENA_STUB=1`
+smoke across 7 modes, the independent `RecordingModel` sentinel-forwarding proof — was offline and
+cost zero real calls).
 
 ## Dependencies and licenses
 
@@ -666,3 +765,15 @@ capability to exist at all). All three are Apache-2.0 — permitted under
   Apache-2.0, verified above), and this README. No other arena and no `internal/` code was touched.
   Real agnes API key never printed/logged for this mode either — confirmed by grepping the real
   `run.sh` invocation's captured stdout+stderr for the key value: 0 occurrences.
+- `middleware` / `ARENA_STUB` likewise touches only `arenas/live/pydantic-ai/`: `adapter.py` (one
+  new mode handler + dispatch entry, intentionally NOT reusing `_base_result()` — see the mode's
+  own docstring for why), `arena_middleware.py` (new — `ArenaMiddlewareModel(WrapperModel)`),
+  `arena_common.py` (`is_stub()` + `ARENA_STUB` branches added to `build_model()` /
+  `embed_query_vector()` / `qdrant_search()`, additive — every existing non-stub code path is
+  unchanged), `arena_memory_store.py` (`ARENA_STUB` in-process fallbacks added to all four
+  persistence functions, additive), and this README. No other arena and no `internal/` code was
+  touched. `requirements.txt` is unchanged — both features reuse `pydantic_ai` (already a
+  dependency; `WrapperModel` and `TestModel` ship inside `pydantic-ai-slim` itself, no new
+  package). Existing modes' real (non-stub) behavior verified byte-for-byte unchanged: the `qa`
+  mode's real evidence call above (`"reply": "Paris"`) reproduces the pre-existing README evidence
+  exactly.

@@ -16,6 +16,7 @@ export function baseOutput(mode, modelName) {
     mode: mode || 'qa',
     model: modelName || '',
     reply: '',
+    text: '',
     input_tokens: -1,
     output_tokens: -1,
     latency_ms: -1,
@@ -37,6 +38,7 @@ export function baseOutput(mode, modelName) {
     resumed: null,
     state_lost: null,
     precrash_fact_recalled: null,
+    middleware: null,
     error: '',
   };
 }

@@ -11,7 +11,7 @@ Contract
 Reads ONE JSON object from stdin:
     {
       "mode": "qa"|"rag"|"tools"|"memory"|"structured"|"stream"|"memory_scoped"|"isolation_leak"
-              |"crash_recovery",                                 # optional, defaults "qa"
+              |"crash_recovery"|"observability"|"middleware",    # optional, defaults "qa"
       "system": str,
       "messages": [{"role": "user"|"assistant", "content": str}, ...],
       "tools": [{"name": str, "description": str, "parameters": <JSON Schema>}, ...],  # qa only
@@ -98,6 +98,18 @@ Modes (see README.md for the exact LlamaIndex classes/source lines backing each 
                  a FRESH process that reopens the SAME db and proves whether the pre-crash fact
                  survives. See README "Honest note" for exactly what kill -9 durability this
                  does and does not prove.
+  middleware     LlamaIndex NATIVE interception, two independent + HONEST mechanisms around ONE
+                 qa turn. INBOUND (prompt mutation): a thin `_MiddlewareLLM` wrapper subclassing
+                 `llama_index.core.llms.llm.LLM` appends the sentinel "\n[ARENA_MW]" to the
+                 outbound system message before delegating to the real wired LLM — this is a
+                 genuine LlamaIndex extension point (every real LLM integration, e.g.
+                 `OpenAILike`, subclasses this same base), not a monkeypatch. OUTBOUND (call
+                 counting): the NATIVE `llama_index.core.instrumentation` dispatcher (same seam
+                 `observability` mode uses) is OBSERVE-ONLY — a `BaseEventHandler` on the root
+                 dispatcher counts every `LLMChatStartEvent` the wrapped call fires; it observes
+                 the mutation the wrapper performs, it does not (and cannot) perform it. Emits
+                 its OWN JSON shape on stdout (see `run_middleware()` docstring), NOT the uniform
+                 envelope above.
   observability  Measures LlamaIndex's OWN observability surface — NOT a chat-quality mode.
                  Wires (1) the NATIVE `llama_index.core.instrumentation` dispatcher (a
                  `SimpleSpanHandler` + a custom `BaseEventHandler` attached to the root
@@ -108,6 +120,30 @@ Modes (see README.md for the exact LlamaIndex classes/source lines backing each 
                  counts, names, and per-span timings from BOTH telemetry paths. Emits its OWN
                  JSON shape on stdout (see `run_observability()` docstring), NOT the uniform
                  envelope above — the two are evaluating different things.
+
+Offline stub toggle
+--------------------
+`ARENA_STUB=1` (any of `1`/`true`/`yes`, case-insensitive) swaps every real backend for an
+in-process LlamaIndex-native mock so the ENTIRE adapter runs with zero network egress:
+  - LLM: `llama_index.core.llms.MockLLM` (`llama_index.core.llms.mock.MockLLM`) instead of the
+    agnes-backed `OpenAILike` — `OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL` are NOT
+    required in this mode.
+  - Embeddings: `llama_index.core.embeddings.MockEmbedding` (`llama_index.core.embeddings.
+    mock_embed_model.MockEmbedding`) instead of the real e5 server (`rag`/`tools`/
+    `observability` — the only modes that embed).
+  - Vector store: an in-memory `VectorStoreIndex.from_documents()` over a tiny fixed stub
+    corpus instead of the real Qdrant `arena_rag` collection — no `QdrantClient` connection is
+    constructed at all (`rag`/`tools`/`observability`).
+  - `memory`/`memory_scoped`/`isolation_leak`/`crash_recovery` already persist to a local
+    on-disk SQLite file (never a network store), so they need no swap to be offline.
+Both mock classes ship in `llama-index-core` (already a pinned dependency) — no new package is
+added for this toggle. `MockLLM.chat()`/`.complete()` return deterministic non-network text
+(echoes the prompt, or "text text ..." if `max_tokens` is set) — good enough to prove every mode
+executes end-to-end offline, but NOT a stand-in for real model quality: `tools` mode's
+`FunctionAgent` requires a `FunctionCallingLLM` and fails fast (cleanly, offline, no network
+attempted) against a plain `MockLLM`; `structured` mode's `PydanticOutputParser` likewise fails
+its JSON validation against MockLLM's non-JSON echoed text. Both failures are caught by `main()`
+and reported as `error` in a valid JSON envelope — never a crash, never a network call.
 
 Token usage is captured uniformly across every mode via a `BaseCallbackHandler` attached to the
 single shared `OpenAILike` instance: it reads the provider's raw `usage` object off every
@@ -143,6 +179,17 @@ EMBED_QUERY_MODEL = "multilingual-e5-small-query"  # "-query" suffix -> e5 query
 
 MEMORY_DIR = Path(os.environ.get("LLAMAINDEX_MEMORY_DIR", str(SCRIPT_DIR / ".memory")))
 
+# Offline stub toggle (see module docstring "Offline stub toggle") — swaps the agnes-backed LLM
+# for llama_index.core.llms.MockLLM, the real e5/Qdrant RAG backends for llama_index.core.
+# embeddings.MockEmbedding + an in-memory VectorStoreIndex, everywhere this adapter would
+# otherwise make a network call. Never affects on-disk SQLite memory modes — those are already
+# local-only.
+ARENA_STUB = os.environ.get("ARENA_STUB", "").strip().lower() in ("1", "true", "yes")
+
+# Sentinel appended to the outbound system prompt by `middleware` mode's INBOUND LLM wrapper —
+# see run_middleware()'s docstring for the mechanism.
+MIDDLEWARE_INBOUND_SENTINEL = "\n[ARENA_MW]"
+
 VALID_MODES = {
     "qa",
     "rag",
@@ -154,6 +201,7 @@ VALID_MODES = {
     "isolation_leak",
     "observability",
     "crash_recovery",
+    "middleware",
 }
 
 
@@ -337,6 +385,49 @@ class _UsageCapture:
 
 
 # --------------------------------------------------------------------------------------
+# ARENA_STUB helpers — offline replacements for the real e5-embed-server + Qdrant RAG backend.
+# Used by run_rag(), corpus_lookup(), and run_observability() ONLY when ARENA_STUB is set; the
+# real-backend code path in each of those is untouched so non-stub behavior is unchanged.
+# --------------------------------------------------------------------------------------
+
+_STUB_RAG_DOCS = [
+    {
+        "title": "Blue Guarantee Policy (ARENA_STUB)",
+        "text": (
+            "Nimbus Rail's Blue Guarantee gives passengers an automatic full refund when a "
+            "trainset arrives more than 30 minutes late. The refund is sent to the original "
+            "payment method within 5 business days."
+        ),
+    },
+    {
+        "title": "Nimbus Rail Network Overview (ARENA_STUB)",
+        "text": (
+            "Nimbus Rail operates high-speed trainsets across the northern corridor, with "
+            "three daily departures connecting the capital to the coast."
+        ),
+    },
+]
+
+
+def _stub_embed_model() -> Any:
+    """`llama_index.core.embeddings.MockEmbedding` — deterministic, in-process, no HTTP call to
+    an embedding server. Ships in `llama-index-core` (already pinned); no new dependency."""
+    from llama_index.core.embeddings import MockEmbedding
+
+    return MockEmbedding(embed_dim=8)
+
+
+def _stub_index(embed_model: Any) -> Any:
+    """In-memory `VectorStoreIndex` seeded with a tiny fixed corpus — the ARENA_STUB replacement
+    for the real `arena_rag` Qdrant collection. No `QdrantClient`/network connection is
+    constructed anywhere in this path."""
+    from llama_index.core import Document, VectorStoreIndex
+
+    docs = [Document(text=d["text"], metadata={"title": d["title"]}) for d in _STUB_RAG_DOCS]
+    return VectorStoreIndex.from_documents(docs, embed_model=embed_model)
+
+
+# --------------------------------------------------------------------------------------
 # Real, executable tools for `tools` mode (per arenas/live/_shared/README.md convention: no
 # stubbed tool that returns a canned value — these actually run).
 # --------------------------------------------------------------------------------------
@@ -379,6 +470,17 @@ def calculate(expr: str) -> str:
 
 def corpus_lookup(query: str) -> str:
     """Search the Nimbus Rail knowledge base for the given query and return the best-matching passage's title and full text. Use this for any question about Nimbus Rail trains, policies, staff, or routes."""
+    if ARENA_STUB:
+        # ARENA_STUB=1: MockEmbedding + in-memory stub corpus, no e5/Qdrant network call.
+        embed_model = _stub_embed_model()
+        index = _stub_index(embed_model)
+        nodes = index.as_retriever(similarity_top_k=1).retrieve(query)
+        if not nodes:
+            return "No matching passage found in the Nimbus Rail knowledge base."
+        node = nodes[0].node
+        title = node.metadata.get("title", "unknown")
+        return f"{title}: {node.get_content()}"
+
     from qdrant_client import QdrantClient
     from llama_index.core.vector_stores.types import VectorStoreQuery
     from llama_index.embeddings.openai_like import OpenAILikeEmbedding
@@ -453,13 +555,18 @@ def run_rag(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
     if not question:
         raise RuntimeError("rag mode requires at least one user message")
 
-    _progress(f"[rag] embedding query via {EMBED_URL} (model={EMBED_QUERY_MODEL})")
-    embed_model = OpenAILikeEmbedding(model_name=EMBED_QUERY_MODEL, api_base=EMBED_URL, api_key="none", timeout=30.0)
+    if ARENA_STUB:
+        _progress("[rag] ARENA_STUB=1: MockEmbedding + in-memory stub corpus, no e5/Qdrant network calls")
+        embed_model = _stub_embed_model()
+        index = _stub_index(embed_model)
+    else:
+        _progress(f"[rag] embedding query via {EMBED_URL} (model={EMBED_QUERY_MODEL})")
+        embed_model = OpenAILikeEmbedding(model_name=EMBED_QUERY_MODEL, api_base=EMBED_URL, api_key="none", timeout=30.0)
 
-    _progress(f"[rag] connecting to Qdrant at {QDRANT_URL} collection={ARENA_COLLECTION!r}")
-    client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
-    vector_store = QdrantVectorStore(client=client, collection_name=ARENA_COLLECTION)
-    index = VectorStoreIndex.from_vector_store(vector_store=vector_store, embed_model=embed_model)
+        _progress(f"[rag] connecting to Qdrant at {QDRANT_URL} collection={ARENA_COLLECTION!r}")
+        client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
+        vector_store = QdrantVectorStore(client=client, collection_name=ARENA_COLLECTION)
+        index = VectorStoreIndex.from_vector_store(vector_store=vector_store, embed_model=embed_model)
     retriever = index.as_retriever(similarity_top_k=3)
 
     system_prompt = payload.get("system") or ""
@@ -1192,11 +1299,16 @@ def run_observability(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
         "passenger an automatic full refund, and where is the refund sent?"
     )
 
-    _progress(f"[observability] embed+retrieve+synthesize via real e5/Qdrant/agnes: {question!r}")
-    embed_model = OpenAILikeEmbedding(model_name=EMBED_QUERY_MODEL, api_base=EMBED_URL, api_key="none", timeout=30.0)
-    client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
-    vector_store = QdrantVectorStore(client=client, collection_name=ARENA_COLLECTION)
-    index = VectorStoreIndex.from_vector_store(vector_store=vector_store, embed_model=embed_model)
+    if ARENA_STUB:
+        _progress(f"[observability] ARENA_STUB=1: MockEmbedding + in-memory stub corpus, no e5/Qdrant network calls: {question!r}")
+        embed_model = _stub_embed_model()
+        index = _stub_index(embed_model)
+    else:
+        _progress(f"[observability] embed+retrieve+synthesize via real e5/Qdrant/agnes: {question!r}")
+        embed_model = OpenAILikeEmbedding(model_name=EMBED_QUERY_MODEL, api_base=EMBED_URL, api_key="none", timeout=30.0)
+        client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
+        vector_store = QdrantVectorStore(client=client, collection_name=ARENA_COLLECTION)
+        index = VectorStoreIndex.from_vector_store(vector_store=vector_store, embed_model=embed_model)
     retriever = index.as_retriever(similarity_top_k=3)
     qa_template = PromptTemplate(
         "Answer ONLY from the retrieved context below. If the answer is not present, say "
@@ -1371,6 +1483,171 @@ def run_stream(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
     return {"reply": reply_text, "ttft_ms": ttft_ms, "latency_ms": latency_ms}
 
 
+# --------------------------------------------------------------------------------------
+# middleware — LlamaIndex NATIVE interception: an LLM wrapper (inbound mutation) + the
+# observe-only instrumentation dispatcher (outbound call counting).
+# --------------------------------------------------------------------------------------
+
+
+def run_middleware(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
+    """Two independent, HONEST interception mechanisms around ONE real qa turn.
+
+    LlamaIndex's `llama_index.core.instrumentation` dispatcher — the same seam `observability`
+    mode above uses — is OBSERVE-ONLY: a `BaseEventHandler.handle()` receives a `BaseEvent`
+    instance (e.g. `LLMChatStartEvent`) as a side-effecting listener; there is no supported way
+    for a handler to rewrite the request that produced the event. There is NO native LlamaIndex
+    mechanism to mutate a prompt from an event handler. So this mode uses TWO DIFFERENT
+    mechanisms for its two DIFFERENT transforms, and says so honestly instead of overclaiming
+    one mechanism does both:
+
+      INBOUND (prompt mutation) -> LLM WRAPPER. `_MiddlewareLLM` below subclasses
+        `llama_index.core.llms.llm.LLM` — the SAME abstract base every real LlamaIndex LLM
+        integration subclasses (e.g. `llama_index.llms.openai_like.OpenAILike`, which `main()`
+        wires as `llm` for every other mode in this file). It wraps the real `llm` passed in,
+        and its `chat`/`achat`/`stream_chat`/`astream_chat` append the sentinel
+        `MIDDLEWARE_INBOUND_SENTINEL` ("\\n[ARENA_MW]") to the outbound system `ChatMessage`
+        (injecting one if none was provided) before delegating to the wrapped LLM. This is a
+        genuine LlamaIndex extension point, not a monkeypatch — every other abstract method
+        (`complete`/`acomplete`/`stream_complete`/`astream_complete`/`metadata`) delegates to
+        the wrapped LLM unchanged.
+
+      OUTBOUND (call counting) -> INSTRUMENTATION EVENT HANDLER. A `BaseEventHandler` is
+        attached to the ROOT dispatcher (`get_dispatcher()`, same call `run_observability()`
+        uses) and counts every `LLMChatStartEvent` it sees. `llm_chat_callback()` — the
+        decorator every `LLM.chat()`/`.achat()` implementation carries, including the wrapped
+        real LLM's — fires `dispatcher.event(LLMChatStartEvent(...))` on every call
+        (`llama_index/core/llms/callbacks.py::llm_chat_callback`, verified directly against
+        this adapter's pinned `llama-index-core` install, not assumed from docs). The handler
+        OBSERVES the call the wrapper above triggers; per the dispatcher's own design it cannot
+        alter it — that is the honest reading `mechanism` reports.
+
+    Returns its OWN JSON shape (like `observability` mode) — `text` + `middleware`, not the
+    uniform qa/rag/tools-shaped envelope `_envelope()` builds.
+    """
+    from pydantic import PrivateAttr
+
+    from llama_index.core.instrumentation import get_dispatcher
+    from llama_index.core.instrumentation.event_handlers.base import BaseEventHandler
+    from llama_index.core.instrumentation.events.llm import LLMChatStartEvent
+    from llama_index.core.llms import ChatMessage, MessageRole
+    from llama_index.core.llms.llm import LLM as LlamaLLM
+
+    system_prompt = payload.get("system") or ""
+    messages_in = payload.get("messages") or []
+    chat_messages = _build_chat_messages(system_prompt, messages_in)
+
+    class _MiddlewareLLM(LlamaLLM):
+        """INBOUND mechanism: a thin wrapper subclassing LlamaIndex's `LLM` base. See
+        run_middleware()'s docstring for why the observe-only instrumentation dispatcher
+        cannot do this job instead."""
+
+        _inner: Any = PrivateAttr()
+        _sentinel: str = PrivateAttr()
+        _inbound_fired: bool = PrivateAttr(default=False)
+
+        def __init__(self, inner: Any, sentinel: str) -> None:
+            super().__init__()
+            self._inner = inner
+            self._sentinel = sentinel
+
+        @property
+        def inbound_fired(self) -> bool:
+            return self._inbound_fired
+
+        @classmethod
+        def class_name(cls) -> str:
+            return "ArenaMiddlewareLLM"
+
+        @property
+        def metadata(self) -> Any:
+            return self._inner.metadata
+
+        def _mutate(self, messages: Any) -> list[Any]:
+            mutated = list(messages)
+            for i, m in enumerate(mutated):
+                if m.role == MessageRole.SYSTEM:
+                    mutated[i] = ChatMessage(role=MessageRole.SYSTEM, content=(m.content or "") + self._sentinel)
+                    self._inbound_fired = True
+                    return mutated
+            mutated.insert(0, ChatMessage(role=MessageRole.SYSTEM, content=self._sentinel))
+            self._inbound_fired = True
+            return mutated
+
+        def chat(self, messages: Any, **kwargs: Any) -> Any:
+            return self._inner.chat(self._mutate(messages), **kwargs)
+
+        async def achat(self, messages: Any, **kwargs: Any) -> Any:
+            return await self._inner.achat(self._mutate(messages), **kwargs)
+
+        def stream_chat(self, messages: Any, **kwargs: Any) -> Any:
+            return self._inner.stream_chat(self._mutate(messages), **kwargs)
+
+        async def astream_chat(self, messages: Any, **kwargs: Any) -> Any:
+            return await self._inner.astream_chat(self._mutate(messages), **kwargs)
+
+        def complete(self, prompt: str, formatted: bool = False, **kwargs: Any) -> Any:
+            return self._inner.complete(prompt, formatted=formatted, **kwargs)
+
+        async def acomplete(self, prompt: str, formatted: bool = False, **kwargs: Any) -> Any:
+            return await self._inner.acomplete(prompt, formatted=formatted, **kwargs)
+
+        def stream_complete(self, prompt: str, formatted: bool = False, **kwargs: Any) -> Any:
+            return self._inner.stream_complete(prompt, formatted=formatted, **kwargs)
+
+        async def astream_complete(self, prompt: str, formatted: bool = False, **kwargs: Any) -> Any:
+            return await self._inner.astream_complete(prompt, formatted=formatted, **kwargs)
+
+    invocations = {"n": 0}
+
+    class _MWOutboundCounter(BaseEventHandler):
+        """OUTBOUND mechanism: observe-only instrumentation event handler, counts real LLM
+        calls. Never mutates anything — see run_middleware()'s docstring."""
+
+        @classmethod
+        def class_name(cls) -> str:
+            return "ArenaMiddlewareOutboundCounter"
+
+        def handle(self, event: Any, **kwargs: Any) -> Any:
+            if isinstance(event, LLMChatStartEvent):
+                invocations["n"] += 1
+
+    dispatcher = get_dispatcher()
+    outbound_handler = _MWOutboundCounter()
+    dispatcher.add_event_handler(outbound_handler)
+
+    mw_llm = _MiddlewareLLM(llm, MIDDLEWARE_INBOUND_SENTINEL)
+
+    _progress(
+        "[middleware] inbound=llm-wrapper (_MiddlewareLLM subclasses llama_index.core.llms.llm.LLM) "
+        "outbound=instrumentation-handlers (BaseEventHandler on the root dispatcher, observe-only)"
+    )
+    try:
+        response = mw_llm.chat(chat_messages)
+    finally:
+        dispatcher.event_handlers.remove(outbound_handler)
+
+    reply_text = response.message.content or ""
+    outbound_fired = invocations["n"] > 0
+
+    _progress(
+        f"[middleware] inbound_fired={mw_llm.inbound_fired} outbound_fired={outbound_fired} "
+        f"invocations={invocations['n']}"
+    )
+
+    return {
+        "framework": FRAMEWORK,
+        "mode": "middleware",
+        "text": reply_text,
+        "middleware": {
+            "mechanism": "llm-wrapper (inbound) + instrumentation-handlers (outbound)",
+            "inbound_fired": mw_llm.inbound_fired,
+            "outbound_fired": outbound_fired,
+            "invocations": invocations["n"],
+            "supported": True,
+        },
+    }
+
+
 MODE_HANDLERS: dict[str, Callable[[dict[str, Any], Any], dict[str, Any]]] = {
     "qa": run_qa,
     "rag": run_rag,
@@ -1382,12 +1659,14 @@ MODE_HANDLERS: dict[str, Callable[[dict[str, Any], Any], dict[str, Any]]] = {
     "isolation_leak": run_isolation_leak,
     "observability": run_observability,
     "crash_recovery": run_crash_recovery,
+    "middleware": run_middleware,
 }
 
 # Modes whose handler returns its OWN complete JSON shape (not envelope overrides to merge
 # into `_envelope()`) — `main()` emits their return value verbatim instead of building the
-# uniform envelope. See `run_observability()`'s docstring for why this mode differs.
-SELF_CONTAINED_MODES = {"observability"}
+# uniform envelope. See `run_observability()`'s / `run_middleware()`'s docstrings for why these
+# modes differ.
+SELF_CONTAINED_MODES = {"observability", "middleware"}
 
 
 # --------------------------------------------------------------------------------------
@@ -1407,27 +1686,34 @@ def main() -> None:
     api_key = os.environ.get("OPENAI_API_KEY", "")
     base_url = os.environ.get("OPENAI_BASE_URL", "")
 
-    missing = [
-        name
-        for name, val in (
-            ("OPENAI_API_KEY", api_key),
-            ("OPENAI_BASE_URL", base_url),
-            ("OPENAI_MODEL", model_name),
-        )
-        if not val
-    ]
-    if missing:
-        _fail(mode, f"missing required env var(s): {', '.join(missing)}", model_name)
-        return
-
-    _progress(
-        f"mode={mode} wiring OpenAILike model={model_name!r} base_url={base_url!r} "
-        f"embed_url={EMBED_URL!r} qdrant_url={QDRANT_URL!r}"
-    )
+    if not ARENA_STUB:
+        missing = [
+            name
+            for name, val in (
+                ("OPENAI_API_KEY", api_key),
+                ("OPENAI_BASE_URL", base_url),
+                ("OPENAI_MODEL", model_name),
+            )
+            if not val
+        ]
+        if missing:
+            _fail(mode, f"missing required env var(s): {', '.join(missing)}", model_name)
+            return
+    else:
+        # ARENA_STUB=1 (see module docstring "Offline stub toggle"): OPENAI_*/EMBED_URL/
+        # QDRANT_URL are irrelevant — every backend is swapped for an in-process LlamaIndex
+        # mock, so no OPENAI_* env var is required. Force the reported model name to reflect
+        # what actually served the request (a leftover OPENAI_MODEL in the environment must
+        # never make the envelope claim a real model handled this call).
+        model_name = "mock-llm"
 
     try:
         from llama_index.core import Settings
-        from llama_index.llms.openai_like import OpenAILike
+
+        if ARENA_STUB:
+            from llama_index.core.llms import MockLLM
+        else:
+            from llama_index.llms.openai_like import OpenAILike
     except Exception as exc:  # import-time failure (bad install, etc.)
         _fail(mode, f"failed to import llama_index: {exc}", model_name)
         return
@@ -1437,15 +1723,27 @@ def main() -> None:
     # Global fallback for components that don't inherit callback_manager off `llm` (see
     # _UsageCapture.build_callback_manager docstring) — e.g. RetrieverQueryEngine.from_args.
     Settings.callback_manager = cb_manager
-    llm = OpenAILike(
-        model=model_name,
-        api_base=base_url,
-        api_key=api_key,
-        is_chat_model=True,
-        is_function_calling_model=True,
-        timeout=60.0,
-        callback_manager=cb_manager,
-    )
+
+    if ARENA_STUB:
+        _progress(
+            f"mode={mode} ARENA_STUB=1: wiring llama_index.core.llms.MockLLM — no OPENAI_*/"
+            f"EMBED_URL/QDRANT_URL network calls in any mode"
+        )
+        llm = MockLLM(is_chat_model=True, callback_manager=cb_manager)
+    else:
+        _progress(
+            f"mode={mode} wiring OpenAILike model={model_name!r} base_url={base_url!r} "
+            f"embed_url={EMBED_URL!r} qdrant_url={QDRANT_URL!r}"
+        )
+        llm = OpenAILike(
+            model=model_name,
+            api_base=base_url,
+            api_key=api_key,
+            is_chat_model=True,
+            is_function_calling_model=True,
+            timeout=60.0,
+            callback_manager=cb_manager,
+        )
 
     try:
         result = MODE_HANDLERS[mode](payload, llm)
@@ -1458,10 +1756,13 @@ def main() -> None:
         # This mode's handler already returned its complete, self-describing JSON shape (see
         # MODE_HANDLERS / SELF_CONTAINED_MODES comment above) — emit it verbatim, do not force
         # it through the qa/rag/tools-shaped `_envelope()`.
-        _progress(
-            f"done: mode={mode} span_count={result.get('span_count')} "
-            f"otel_supported={result.get('otel_supported')} logs_structured={result.get('logs_structured')}"
-        )
+        if mode == "middleware":
+            _progress(f"done: mode={mode} middleware={result.get('middleware')}")
+        else:
+            _progress(
+                f"done: mode={mode} span_count={result.get('span_count')} "
+                f"otel_supported={result.get('otel_supported')} logs_structured={result.get('logs_structured')}"
+            )
         _emit(result)
         return
 

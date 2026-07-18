@@ -83,7 +83,6 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
 
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
-        from langchain_openai import ChatOpenAI
         from langgraph.graph import END, START, MessagesState, StateGraph
     except Exception as exc:  # pragma: no cover - import failure path
         return common.envelope(mode=MODE, model=model_name, error=f"import failure: {exc}")
@@ -113,7 +112,7 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
             f"it.\n\nContext:\n{context_block}"
         )
 
-        llm = ChatOpenAI(model=model_name, base_url=base_url, api_key=api_key)
+        llm = common.build_chat_model(model_name, api_key, base_url)
 
         def call_model(state: MessagesState) -> dict[str, Any]:
             return {"messages": [llm.invoke(state["messages"])]}

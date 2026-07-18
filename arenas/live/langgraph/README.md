@@ -1,7 +1,7 @@
 # LangGraph — Live Arena Adapter (multi-mode)
 
 A LIVE arena adapter for [LangGraph](https://github.com/langchain-ai/langgraph) / [LangChain](https://github.com/langchain-ai/langchain)
-that drives **ten modes**, each exercising a different LangGraph/LangChain-native capability
+that drives **eleven modes**, each exercising a different LangGraph/LangChain-native capability
 against **real infrastructure**: the real OpenAI-compatible model ("agnes-2.0-flash"), a real e5
 embeddings server, a real Qdrant collection, a real on-disk checkpointer, and (for the scoped-memory
 modes) a hand-rolled on-disk compound-scope fact store. This directory is fully additive and does
@@ -9,6 +9,10 @@ not touch the pre-existing `arenas/langgraph/` arena (a separate, unrelated benc
 base single-mode contract in `arenas/live/SPEC.md`, or anything outside `arenas/live/langgraph/`.
 
 The original single-shot adapter (`qa` mode) is unchanged in behavior; everything else is new.
+
+**Every mode can also run fully offline**: setting `ARENA_STUB=1` swaps the real `ChatOpenAI`/agnes
+call and any on-disk LangGraph checkpointer for real, in-process LangChain/LangGraph stand-ins — no
+API key, no network, no `.data/*.sqlite` file. See "Offline mode — `ARENA_STUB=1`" below.
 
 ## Multi-tenant honesty (read this before using `memory_scoped` / `isolation_leak`)
 
@@ -59,6 +63,49 @@ set -a; source <repo-root>/.env; set +a
 unmodified in Docker, where `localhost`/`127.0.0.1` would resolve to the *container* instead of the
 host running the real embed server and Qdrant — see "Docker" below.
 
+## Offline mode — `ARENA_STUB=1`
+
+Setting `ARENA_STUB=1` makes **every mode** runnable with zero real network calls and zero real
+credentials — useful for CI/import smoke checks that shouldn't spend a real agnes call or depend on
+`OPENAI_API_KEY`/`.env` being present at all:
+
+```bash
+echo '{"mode":"qa","messages":[{"role":"user","content":"hi"}]}' \
+  | ARENA_STUB=1 bash arenas/live/langgraph/run.sh
+```
+
+Two seams in `modes/common.py` are what every mode actually routes through — this is centralized,
+not a per-mode reimplementation:
+
+| Real (default) | `ARENA_STUB=1` | Seam |
+|---|---|---|
+| `langchain_openai.ChatOpenAI` against the real agnes endpoint | `langchain_core.language_models.fake_chat_models.FakeListChatModel` — a REAL LangChain-native fake chat model (cycles a fixed list of canned string responses), never a hand-rolled mock. Subclassed only to override `bind_tools()` as a no-op passthrough (`FakeListChatModel` inherits `BaseChatModel`'s default `bind_tools()`, which raises `NotImplementedError` — verified against this arena's pinned `langchain-core==1.4.9`), so tool-binding modes (`tools`, `observability`, `middleware`) stay runnable offline. The stub never simulates real tool-call reasoning — `tool_calls` is empty under the stub even for those modes; this is documented, not fabricated. | `common.build_chat_model()` |
+| `langgraph.checkpoint.sqlite.SqliteSaver` against an on-disk file | `langgraph.checkpoint.memory.InMemorySaver` — LangGraph's own real in-memory checkpointer, not a hand-rolled dict. No `.data/*.sqlite` file is created or touched. Does **not** preserve state across separate OS processes (that cross-process guarantee is the entire point of `memory`/`crash_recovery` in the real path) — the stub only proves those modes' code paths run end-to-end offline. | `common.checkpointer_context()` |
+
+Two modes have their own additional stub-specific fallback, documented inline where they diverge
+from "swap the model, keep the same code path":
+
+- **`rag`**: no real embed-server/Qdrant HTTP call under the stub — `retrieve()` returns a fixed
+  two-document canned `context` list in the exact shape a real retrieval hit has (see
+  `modes/rag.py`'s `_stub_retrieve()`), so `generate()` and the envelope's `retrieved` field are
+  otherwise unaffected by which path ran.
+- **`structured`**: `FakeListChatModel` inherits `BaseChatModel`'s default
+  `with_structured_output()`, which also raises `NotImplementedError` (it builds on top of
+  `bind_tools()`/native structured-output support neither of which the stub implements). Under the
+  stub, `modes/structured.py` invokes the stub plainly and best-effort JSON-parses its canned reply
+  instead of exercising the real `method="json_schema"` native path — an honest, documented
+  reduction in fidelity, not a claim that real provider-side schema validation occurred.
+
+`memory_scoped` and `isolation_leak`'s hand-rolled `ScopedStore` (`modes/scoped_store.py`) was
+already 100% local/on-disk SQLite with no dependency on Qdrant/rqlite/any external service, so
+`ARENA_STUB` does not change it — it was offline by construction from the start.
+
+`crash_recovery` is worth calling out explicitly: its entire point is proving survival of a real
+`kill -9`, which is meaningless against an in-memory checkpointer (there is nothing on disk to
+survive a kill). Under `ARENA_STUB=1` this mode's `op=converse`/`op=resume` code paths still run
+end-to-end without error — useful for a smoke/import check — but the crash-durability property
+itself does not, and is not claimed to, hold in stub mode.
+
 ## How to run (native)
 
 ```bash
@@ -85,7 +132,7 @@ changed.
 
 ```json
 {
-  "mode": "qa | rag | tools | memory | crash_recovery | structured | stream | memory_scoped | isolation_leak | observability",
+  "mode": "qa | rag | tools | memory | crash_recovery | structured | stream | memory_scoped | isolation_leak | observability | middleware",
   "system": "string",
   "messages": [{"role": "user" | "assistant", "content": "string"}],
   "tools": [{"name": "string", "description": "string", "parameters": {"...": "JSON Schema"}}]
@@ -393,6 +440,73 @@ prompt); every other field is the same request shape as every other mode.
 
 ```bash
 echo '{"mode":"observability","messages":[{"role":"user","content":"Use the calculate tool to compute (482 * 17) + 391, then state the result plainly."}]}' \
+  | bash run.sh
+```
+
+### `middleware` (real LangGraph/LangChain-native model middleware — NOT the shared envelope)
+
+**This mode returns a different JSON shape than every other mode** — like `observability`, it is a
+diagnostic/report mode, not a chat turn:
+
+```json
+{
+  "framework": "langgraph",
+  "mode": "middleware",
+  "text": "string",
+  "middleware": {
+    "mechanism": "pre_model_hook",
+    "inbound_fired": true,
+    "outbound_fired": true,
+    "invocations": 1,
+    "supported": true
+  },
+  "error": "string"
+}
+```
+
+**Contract**: request shape is identical to `qa` mode's base contract (`"system"`, `"messages"`) —
+no new required fields.
+
+This mode exercises TWO independently observable transforms around one real (or `ARENA_STUB=1`
+offline — see "Offline mode" above) chat-model turn:
+
+- **INBOUND**: appends the sentinel `"\n[ARENA_MW]"` to the system prompt BEFORE the model call.
+- **OUTBOUND**: counts real model invocations.
+
+Three LangChain/LangGraph-native "model middleware" mechanisms exist; `modes/middleware.py`'s module
+docstring documents all three so the choice made here is verifiable against the pinned dependency
+set, not asserted:
+
+1. **A `RunnableLambda` wrapper** (LCEL composition) around the chat model — CAN mutate the outbound
+   prompt, since a `Runnable` transforms its own input before delegating to the wrapped model.
+2. **`langchain_core.callbacks.BaseCallbackHandler`** — OBSERVE-ONLY. Its
+   `on_chat_model_start(serialized, messages, **kwargs)` hook receives the messages the model is
+   about to see, but LangChain never reads a callback method's return value to rewrite the call —
+   verified directly against the pinned `langchain-core==1.4.9` source. Callbacks CANNOT do inbound
+   mutation; this mode uses them correctly, below, for OUTBOUND observation only.
+3. **`langgraph.prebuilt.create_react_agent`'s `pre_model_hook` parameter** — a real graph node
+   inserted before the `agent` node, contractually returning `{"llm_input_messages": [...]}`
+   (confirmed directly against this arena's pinned `langgraph==1.2.9`/`langgraph-prebuilt==1.1.0`
+   installed source, `langgraph/prebuilt/chat_agent_executor.py` lines ~396-424), which supplies the
+   model's ACTUAL input for that turn WITHOUT overwriting the graph's persisted `"messages"` state —
+   a genuine, framework-native inbound mutation seam, not a hand-rolled workaround.
+
+This mode uses **mechanism 3 for INBOUND** (`"mechanism": "pre_model_hook"` in the response) — of the
+three, it is the only one that genuinely rewrites what the model sees, and it is a first-class
+LangGraph-native primitive, not this adapter's own bridge. `create_react_agent` itself is deprecated
+since LangGraph v1.0 in favor of `langchain.agents.create_agent` (fires a runtime
+`LangGraphDeprecatedSinceV10` warning, suppressed here from stdout/stderr noise but documented, never
+hidden) — but that successor lives in the separate top-level `langchain` package, which is confirmed
+**NOT installed** in this arena's pinned `.venv` (only `langchain-core`/`langchain-openai`/`langgraph`
+are pinned in `requirements.txt`; `python -c "import langchain"` fails with `ModuleNotFoundError`).
+`create_react_agent`'s `pre_model_hook` is therefore the mechanism actually available and used
+here — fully functional against the pinned version, deprecation notwithstanding (verified live
+below). For **OUTBOUND**, a `BaseCallbackHandler.on_chat_model_start` override (mechanism 2, used as
+designed) counts real chat-model invocations, attached via `config={"callbacks": [...]}` on
+`.invoke(...)` with zero change to the graph/agent under test.
+
+```bash
+echo '{"mode":"middleware","system":"You are a rail assistant.","messages":[{"role":"user","content":"Say OK."}]}' \
   | bash run.sh
 ```
 
@@ -743,6 +857,37 @@ assumed): **`License-Expression: Apache-2.0`** — see the updated dependency ta
 four new packages this pulls in (`openinference-instrumentation`, `openinference-semantic-
 conventions`, `opentelemetry-instrumentation`, all Apache-2.0; `wrapt`, BSD-2-Clause).
 
+### `middleware` — real `pre_model_hook` inbound mutation + real callback outbound counter (1 real agnes call)
+
+Real run against the live agnes endpoint (`bash run.sh`), zero new dependencies (`langgraph.prebuilt`
+and `langchain_core.callbacks` are both already-pinned transitive surface):
+
+```json
+{"framework": "langgraph", "mode": "middleware", "text": "OK", "middleware": {"mechanism": "pre_model_hook", "inbound_fired": true, "outbound_fired": true, "invocations": 1, "supported": true}, "error": ""}
+```
+
+`inbound_fired=true`: the `pre_model_hook` node ran and appended `"\n[ARENA_MW]"` to the system
+message before the real agnes call — confirmed directly in a pre-integration offline prototype (not
+just inferred from the boolean) by inspecting the exact `llm_input_messages` list handed to the
+model, which showed `"You are a rail assistant.\n[ARENA_MW]"`. `outbound_fired=true`,
+`invocations=1`: the `BaseCallbackHandler.on_chat_model_start` override fired exactly once, matching
+the one real `ChatOpenAI` call this turn makes (`tools=[]`, so no ReAct tool round-trip). API key
+literal verified to appear zero times in this run's stdout/stderr (same `grep`-based proof pattern as
+`test-env.sh`'s assertion (c)). `ARENA_STUB=1` regression (same request, zero real calls) also
+verified passing in the same session, confirming both mechanisms fire identically offline:
+
+```json
+{"framework": "langgraph", "mode": "middleware", "text": "OK (ARENA_STUB offline stub reply)", "middleware": {"mechanism": "pre_model_hook", "inbound_fired": true, "outbound_fired": true, "invocations": 1, "supported": true}, "error": ""}
+```
+
+A same-session regression pass (offline, `ARENA_STUB=1`) also confirmed all ten pre-existing modes
+still return `error: ""` end-to-end after routing through `common.build_chat_model()`/
+`common.checkpointer_context()`, and a follow-up REAL (non-stub) regression pass re-verified `qa`
+(single call), `tools` (real `calculate(12*7+3)=87` executed by the ReAct loop), and `memory`
+(cross-process recall of "Teal" purely from the on-disk checkpoint written by a separate `run.sh`
+process) — 3 more real agnes calls, all still passing after the refactor that centralized every
+mode's `ChatOpenAI(...)`/`SqliteSaver(...)` construction through the two new `common.py` seams.
+
 ### `test-isolation.sh` (full output)
 
 ```text
@@ -772,6 +917,8 @@ crash_recovery, missing turns      -> {"error": "crash_recovery mode op='convers
 crash_recovery, unknown op         -> {"error": "crash_recovery mode: unknown op 'bogus'; supported: converse, resume", ...}
 memory_scoped, missing product_id  -> {"error": "memory_scoped mode requires non-empty string fields: ['product_id']", ...}
 isolation_leak, missing fields     -> {"error": "isolation_leak mode requires non-empty string fields: ['product_id', 'secret_key', 'secret_value']", ...}
+middleware,     missing OPENAI_API_KEY -> {"error": "OPENAI_API_KEY is not set", "middleware": {"supported": false, ...}, ...}
+middleware,     messages=[]        -> {"error": "no messages in request", "middleware": {"supported": false, ...}, ...}
 ```
 
 ## Dependencies and licenses
@@ -783,7 +930,13 @@ All **direct** dependencies are MIT or Apache-2.0. License data below is transcr
 only `sqlite3` (Python standard library, PSF License) and stdlib `os`/`time`; `requirements.txt`
 is unchanged by this build. `crash_recovery` also adds **zero new dependencies** — it reuses the
 same `langgraph-checkpoint-sqlite` package `memory` mode already depends on, against a separate
-on-disk file.
+on-disk file. `middleware` and the `ARENA_STUB=1` offline toggle likewise add **zero new
+dependencies** to `requirements.txt` — `langgraph.prebuilt.create_react_agent`,
+`langchain_core.callbacks.BaseCallbackHandler`,
+`langchain_core.language_models.fake_chat_models.FakeListChatModel`, and
+`langgraph.checkpoint.memory.InMemorySaver` are all already-installed surface of the pinned
+`langgraph`/`langchain-core`/`langgraph-checkpoint-sqlite` packages (verified via
+`python -c "import ..."` against this arena's `.venv`, not assumed).
 
 ### LangChain suite: what this entrant uses vs the rest of the ecosystem
 

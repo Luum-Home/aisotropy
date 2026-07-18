@@ -10,8 +10,9 @@ This is an additive arena directory: it does not modify any other `arenas/<name>
 
 `qa` mode keeps the original single-shot behavior of this adapter, byte-compatible with the
 `arenas/live/SPEC.md` base contract and `arenas/live/tasks/suite.jsonl` (which never sets `mode`,
-so it defaults to `qa`). Nine more modes are additive, each exercising a different AI SDK **native**
-feature against **real** infrastructure — no mocks, no stubs anywhere in the request path.
+so it defaults to `qa`). Ten more modes are additive, each exercising a different AI SDK **native**
+feature against **real** infrastructure — no mocks, no stubs anywhere in the request path (unless
+`ARENA_STUB=1`, see "Offline stub toggle" below).
 
 ## Modes
 
@@ -27,6 +28,33 @@ feature against **real** infrastructure — no mocks, no stubs anywhere in the r
 | `isolation_leak` | `generateText()` grounded in an attacker-scope recall, adversarially probing for a secret planted under a different (victim) scope | agnes, rqlite |
 | `observability` | in-process OTel SDK (`@ai-sdk/otel` + `InMemorySpanExporter`) wired around a real, executed tool-loop `generateText()` call | agnes (multi-step) |
 | `crash_recovery` | `generateText()`, turns checkpointed to rqlite one-by-one; a SIGKILL-tested `role:"run"`/`role:"resume"` pair proves survival of a hard process kill mid-conversation, not just a clean exit | agnes, rqlite |
+| `middleware` | `wrapLanguageModel({ model, middleware })` — a `transformParams` (inbound) + `wrapGenerate`/`wrapStream` (outbound) pair wired around one real `generateText()` turn | agnes |
+
+## Offline stub toggle (`ARENA_STUB=1`)
+
+Set `ARENA_STUB=1` in the environment to run **any** mode with **zero network egress** — a
+wiring/smoke lane, not a quality lane:
+
+- `env.chatModel` becomes the AI SDK's own `MockLanguageModelV4` (from `ai/test`, see
+  `lib/stub.mjs`) instead of the real agnes model. Its `doGenerate`/`doStream` inspect the actual
+  call params (`tools`, `responseFormat`, `prompt`) so every mode's own code (real, local
+  `calculate` tool execution, `generateObject()` JSON-schema validation, `streamText()` chunk
+  assembly) still runs — only the model call itself is canned.
+- `rag` mode skips the real e5 embed server + Qdrant search and instead does a keyword-overlap
+  "search" over a tiny fixed local corpus (`stubSearchCorpus()` in `lib/stub.mjs`).
+- `memory`/`memory_scoped`/`isolation_leak`/`crash_recovery` modes are unmodified — `lib/rqlite.mjs`
+  transparently routes to a local table engine (`lib/rqlite-stub.mjs`) instead of `fetch()`-ing a
+  real rqlite whenever `rqliteUrl === 'stub:local'`. That engine persists each table to a JSON file
+  under the OS temp dir, so `crash_recovery`'s `role:"run"`/`role:"resume"` pair (two **separate**
+  process invocations) still observes cross-process persistence with zero network egress.
+- `observability` mode needs no change — its OTel pipeline is already in-process only.
+
+```bash
+ARENA_STUB=1 node index.mjs <<< '{"mode":"qa","system":"You are concise.","messages":[{"role":"user","content":"Say OK."}]}'
+```
+
+Quality is **not** scored under this toggle — canned replies (`"[stub reply, ARENA_STUB=1] ..."`)
+only prove the AI SDK integration code path runs end to end offline.
 
 ### Honest note: multi-tenant memory isolation is NOT an AI SDK feature
 
@@ -89,7 +117,7 @@ echo '{"mode":"qa","messages":[{"role":"user","content":"Hello"}]}' \
 
 ```json
 {
-  "mode": "qa | rag | tools | memory | structured | stream | memory_scoped | isolation_leak | observability | crash_recovery",
+  "mode": "qa | rag | tools | memory | structured | stream | memory_scoped | isolation_leak | observability | crash_recovery | middleware",
   "system": "string, optional",
   "messages": [{"role": "user" | "assistant", "content": "string"}],
   "tools": [{"name": "string", "description": "string", "parameters": {"...JSON-Schema..."}}],
@@ -139,6 +167,9 @@ echo '{"mode":"qa","messages":[{"role":"user","content":"Hello"}]}' \
   loads whatever rqlite has for `session_id` (in a brand-new process) and asks one more real
   question. `expected_fact` is optional but required in practice to get non-`null`
   `state_lost`/`precrash_fact_recalled` values.
+- `middleware` requires at least one message in `messages`; `system` is optional (defaults to
+  `undefined`, exactly like `qa` mode). Runs ONE `generateText()` turn through a model wrapped via
+  `wrapLanguageModel()` — see "`middleware`" below.
 
 ### Output contract (stdout, exactly one JSON object; all logs go to stderr)
 
@@ -148,6 +179,7 @@ echo '{"mode":"qa","messages":[{"role":"user","content":"Hello"}]}' \
   "mode": "qa",
   "model": "agnes-2.0-flash",
   "reply": "string",
+  "text": "string",
   "input_tokens": 0,
   "output_tokens": 0,
   "latency_ms": 0,
@@ -169,14 +201,16 @@ echo '{"mode":"qa","messages":[{"role":"user","content":"Hello"}]}' \
   "resumed": null,
   "state_lost": null,
   "precrash_fact_recalled": null,
+  "middleware": null,
   "error": "string"
 }
 ```
 
 `mode`, `retrieved`, `structured`, `ttft_ms`, `recalled`, `scoped_recall`, `leak_detected`,
 `attacker_visible_facts`, `otel_supported`, `span_count`, `span_names`, `span_timings_ms`,
-`logs_structured`, `log_sample`, `notes`, `resumed`, `state_lost`, and `precrash_fact_recalled` are
-**additive** to the base `arenas/live/SPEC.md` contract: the shared Go runner (`arenas/live/runner`)
+`logs_structured`, `log_sample`, `notes`, `resumed`, `state_lost`, `precrash_fact_recalled`, `text`,
+and `middleware` are **additive** to the base `arenas/live/SPEC.md` contract: the shared Go runner
+(`arenas/live/runner`)
 decodes adapter stdout into a struct that silently ignores unknown JSON fields, so this stays
 backward compatible. Fields not populated by a given mode keep their zero value (`[]`, `{}`, `null`,
 `''`, `0`, or `-1`).
@@ -205,6 +239,14 @@ backward compatible. Fields not populated by a given mode keep their zero value 
   distinct from `state_lost`'s storage-level check). See "`crash_recovery`" below for why
   `state_lost=false` is the expected, honest outcome of this design even though the in-flight turn
   process A was killed during is genuinely gone.
+- `text` (populated by `middleware` only; other modes leave it `""`): the same reply text also
+  carried in `reply`, matching the mode's documented `{"text": "...", "middleware": {...}}` shape.
+- `middleware` (populated by `middleware` only): `mechanism` — always `"wrapLanguageModel"`, the AI
+  SDK native API used; `inbound_fired` — `transformParams` ran before the model call;
+  `outbound_fired` — `wrapGenerate` (or `wrapStream`) ran around the model call; `invocations` — how
+  many times the outbound wrapper fired (1 for this mode's single `generateText()` turn);
+  `supported` — always `true` here (this is the reference implementation of a mechanism the AI SDK
+  documents natively — see "`middleware`" below).
 
 On any error (network, API, malformed stdin, bad mode), the adapter catches it, fills in `error`,
 and still writes one valid JSON object to stdout with exit code 0 — the `error` field is the
@@ -376,6 +418,33 @@ uses the recovered fact (`precrash_fact_recalled`).
   that had ALREADY finished and checkpointed before the kill — and unconditionally discards the one
   turn that was in flight at the moment of the kill. The AI SDK contributes nothing to either
   guarantee; both come entirely from this adapter's rqlite checkpoint discipline.
+
+### `middleware`
+
+The REFERENCE demonstration of the AI SDK's native `wrapLanguageModel({ model, middleware })`
+mechanism (`ai` package — [docs](https://ai-sdk.dev/docs/ai-sdk-core/middleware)), exactly the
+pattern the AI SDK itself documents for intercepting a language model call. `lib/modes/middleware.mjs`
+builds a plain `LanguageModelMiddleware` object with two hooks and wraps `env.chatModel` in it:
+
+- **INBOUND — `transformParams`**: runs before the underlying model ever sees the call. It appends
+  the sentinel `"\n[ARENA_MW]"` to the `role: 'system'` entry of `params.prompt` — the AI SDK folds
+  the high-level `system` string option into that entry before handing params to
+  `transformParams`, so mutating it there is a real, provable "the model call itself changed"
+  interception, not a side-channel.
+- **OUTBOUND — `wrapGenerate`/`wrapStream`**: runs around the real `doGenerate`/`doStream` call.
+  Both simply call through to the real function, but first increment a counter and set a fired flag
+  — proving the middleware actually executed around the call, rather than being a middleware object
+  that's declared but never invoked. `wrapStream` is wired for completeness (fires if the same
+  wrapped model is ever driven through `streamText()`), but this mode's own turn uses
+  `generateText()`, so `wrapGenerate` is what's expected to fire.
+
+One real `generateText()` turn runs through the wrapped model. `middleware.inbound_fired` and
+`middleware.outbound_fired` are read directly off the counters set by the two hooks above — not
+inferred from the reply text — so a regression that silently stopped `wrapLanguageModel()` from
+actually wrapping the model (e.g. an AI SDK version bump that changed the mechanism's shape) would
+show up as `false`/`false` here, not a false positive. Contrast with `qa` mode: it calls
+`generateText()` directly against the unwrapped `env.chatModel`, with no middleware at all — the
+two modes are the honest A/B for "does `wrapLanguageModel()` change anything."
 
 ## AI SDK version quirks handled
 
@@ -689,6 +758,8 @@ this repo's stack policy.
 | `lib/rqlite.mjs` | minimal rqlite HTTP client (native `fetch`, no extra dependency) backing `memory` mode |
 | `lib/scoped-store.mjs` | hand-rolled compound-scope (`tenant_id`/`user_id`/`product_id`/`session_id`) rqlite store backing `memory_scoped` and `isolation_leak` |
 | `lib/otel.mjs` | in-process OTel wiring (`NodeTracerProvider` + `InMemorySpanExporter` + `@ai-sdk/otel` registration) backing `observability` |
+| `lib/stub.mjs` | `ARENA_STUB=1` offline doubles: `MockLanguageModelV4`-backed chat model + a local keyword-search corpus for `rag` |
+| `lib/rqlite-stub.mjs` | local, file-persisted table engine `lib/rqlite.mjs` routes to when `rqliteUrl === 'stub:local'` |
 | `lib/modes/qa.mjs` | original single-shot mode |
 | `lib/modes/rag.mjs` | real RAG: embed → Qdrant search → grounded `generateText()` |
 | `lib/modes/tools.mjs` | real multi-step tool execution loop |
@@ -699,6 +770,7 @@ this repo's stack policy.
 | `lib/modes/isolation-leak.mjs` | plant a secret under a victim scope, recall under an attacker scope, prove (or disprove) a real leak |
 | `lib/modes/observability.mjs` | wires the in-process OTel SDK, runs a real tool-loop turn, reports native span count/names/timings |
 | `lib/modes/crash-recovery.mjs` | `role:"run"` checkpoints a short conversation to rqlite turn-by-turn (meant to be SIGKILLed mid-turn); `role:"resume"` is a fresh process proving recovery + recall |
+| `lib/modes/middleware.mjs` | reference `wrapLanguageModel()` demo: inbound `transformParams` + outbound `wrapGenerate`/`wrapStream` around one real turn |
 | `run.sh` | native entrypoint (sources repo-root `.env`) |
 | `Dockerfile` | container image, no baked-in credentials |
 | `run-docker.sh` | build + run the container against real local infra via `host.docker.internal` |

@@ -36,6 +36,8 @@ export function baseOutput(mode, modelName) {
     resumed: null,
     state_lost: null,
     precrash_fact_recalled: null,
+    text: '',
+    middleware: null,
     error: '',
   };
 }

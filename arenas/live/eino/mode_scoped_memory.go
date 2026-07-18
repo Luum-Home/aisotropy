@@ -79,14 +79,22 @@ type scopedMemoryStore struct {
 // the isolation proof meaningful across separate process invocations, the
 // same way memory mode's cross-process recall is proven in README.md.
 func openScopedMemoryStore(path string) (*scopedMemoryStore, error) {
-	if dir := filepath.Dir(path); dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("creating scoped memory db directory %q: %w", dir, err)
+	if path != ":memory:" {
+		if dir := filepath.Dir(path); dir != "." && dir != "" {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, fmt.Errorf("creating scoped memory db directory %q: %w", dir, err)
+			}
 		}
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("opening on-disk sqlite %q: %w", path, err)
+	}
+	if path == ":memory:" {
+		// See openMemoryStore's identical comment (mode_memory.go) — a
+		// second pooled connection to ":memory:" would see an empty
+		// database, so the pool is pinned to exactly one connection.
+		db.SetMaxOpenConns(1)
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS scoped_facts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,

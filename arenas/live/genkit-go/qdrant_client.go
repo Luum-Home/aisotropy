@@ -26,6 +26,9 @@ import (
 // env var change (e.g. host.docker.internal for the Docker packaging) moves
 // both the embed-side REST convention and this gRPC client together.
 func searchQdrant(ctx context.Context, qdrantURL, collection string, vector []float32, limit int) ([]retrievedDoc, error) {
+	if stubMode {
+		return stubQdrantSearch(limit), nil
+	}
 	host, restPort, err := parseQdrantHost(qdrantURL)
 	if err != nil {
 		return nil, fmt.Errorf("qdrant: %w", err)

@@ -31,6 +31,9 @@ func embedQuery(ctx context.Context, embedURL, text string) ([]float32, error) {
 }
 
 func embed(ctx context.Context, embedURL, model, text string) ([]float32, error) {
+	if stubMode {
+		return stubEmbedding(text), nil
+	}
 	body, err := json.Marshal(embedRequest{Model: model, Input: text})
 	if err != nil {
 		return nil, fmt.Errorf("embed: marshal request: %w", err)

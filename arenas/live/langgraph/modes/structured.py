@@ -15,6 +15,7 @@ extra configuration.
 """
 from __future__ import annotations
 
+import json
 import time
 import traceback
 from typing import Any, TypedDict
@@ -49,7 +50,6 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
         return err
 
     try:
-        from langchain_openai import ChatOpenAI
         from langgraph.graph import END, START, StateGraph
     except Exception as exc:  # pragma: no cover - import failure path
         return common.envelope(mode=MODE, model=model_name, error=f"import failure: {exc}")
@@ -64,23 +64,59 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
     schema = payload.get("schema") or DEFAULT_SCHEMA
 
     try:
-        llm = ChatOpenAI(model=model_name, base_url=base_url, api_key=api_key)
-        structured_llm = llm.with_structured_output(schema, method="json_schema", include_raw=True)
+        llm = common.build_chat_model(
+            model_name,
+            api_key,
+            base_url,
+            # Canned JSON reply matching DEFAULT_SCHEMA, used only when
+            # ARENA_STUB=1 AND the caller did not supply a custom "schema"
+            # (see the stub branch in call_model below).
+            responses=['{"answer": "OK (ARENA_STUB offline stub reply)", "confidence": 1.0}'],
+        )
 
-        def call_model(_state: StructuredState) -> dict[str, Any]:
-            out = structured_llm.invoke(messages)
-            raw = out["raw"]
-            parsed = out["parsed"]
-            parsing_error = out["parsing_error"]
-            inp, outp = common.extract_usage(raw)
-            content = raw.content if isinstance(raw.content, str) else str(raw.content)
-            return {
-                "parsed": parsed,
-                "reply": content,
-                "input_tokens": inp,
-                "output_tokens": outp,
-                "parsing_error": str(parsing_error) if parsing_error else "",
-            }
+        if common.is_stub():
+            # FakeListChatModel (the stub chat model) inherits
+            # BaseChatModel's default with_structured_output(), which
+            # raises NotImplementedError (verified against this arena's
+            # pinned langchain-core==1.4.9 — it only builds on top of
+            # bind_tools()/native structured-output support neither of
+            # which the stub implements). Offline path: invoke the stub
+            # plainly and best-effort JSON-parse its canned reply instead
+            # of exercising the real method="json_schema" native path.
+            # This is an honest, documented reduction in fidelity — it does
+            # NOT claim real provider-side schema validation occurred.
+            def call_model(_state: StructuredState) -> dict[str, Any]:
+                raw = llm.invoke(messages)
+                content = raw.content if isinstance(raw.content, str) else str(raw.content)
+                try:
+                    parsed: Any = json.loads(content)
+                except Exception:
+                    parsed = {k: None for k in schema.get("required", [])}
+                inp, outp = common.extract_usage(raw)
+                return {
+                    "parsed": parsed,
+                    "reply": content,
+                    "input_tokens": inp,
+                    "output_tokens": outp,
+                    "parsing_error": "",
+                }
+        else:
+            structured_llm = llm.with_structured_output(schema, method="json_schema", include_raw=True)
+
+            def call_model(_state: StructuredState) -> dict[str, Any]:
+                out = structured_llm.invoke(messages)
+                raw = out["raw"]
+                parsed = out["parsed"]
+                parsing_error = out["parsing_error"]
+                inp, outp = common.extract_usage(raw)
+                content = raw.content if isinstance(raw.content, str) else str(raw.content)
+                return {
+                    "parsed": parsed,
+                    "reply": content,
+                    "input_tokens": inp,
+                    "output_tokens": outp,
+                    "parsing_error": str(parsing_error) if parsing_error else "",
+                }
 
         graph_builder = StateGraph(StructuredState)
         graph_builder.add_node("structured", call_model)

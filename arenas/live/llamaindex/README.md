@@ -69,6 +69,15 @@ that exits cleanly?
 |---|---|---|
 | `crash_recovery` | Same `Memory` store as `memory`, driven by two real OS processes with a real `kill -9` in between | agnes, on-disk SQLite (same `.memory/<session_id>.db` file `memory` mode uses) |
 
+A FOURTH, later upgrade adds `middleware` (LlamaIndex NATIVE interception, two honest
+mechanisms — see its own section below) and an `ARENA_STUB=1` offline toggle that swaps every
+real backend (agnes, e5, Qdrant) for an in-process LlamaIndex mock (`MockLLM`/`MockEmbedding`)
+so the whole adapter — every mode — can run with zero network egress:
+
+| Mode | LlamaIndex feature under test | Real infra it touches |
+|---|---|---|
+| `middleware` | `_MiddlewareLLM` (subclasses `llama_index.core.llms.llm.LLM`) for inbound prompt mutation + the native instrumentation dispatcher (observe-only) for outbound call counting | agnes only |
+
 ## The uniform envelope
 
 ```json
@@ -113,11 +122,12 @@ successful output) — every other mode's envelope is unchanged from before this
 
 | Env var | Default | Used by |
 |---|---|---|
-| `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` | *(required, from repo-root `.env`)* | all modes |
-| `EMBED_URL` | `http://127.0.0.1:8899` | `rag`, `tools` (`corpus_lookup`) |
-| `QDRANT_URL` | `http://localhost:6333` | `rag`, `tools` (`corpus_lookup`) |
-| `ARENA_COLLECTION` | `arena_rag` | `rag`, `tools` (`corpus_lookup`) |
-| `LLAMAINDEX_MEMORY_DIR` | `<script_dir>/.memory` | `memory`, `memory_scoped`, `isolation_leak` |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` | *(required, from repo-root `.env`, UNLESS `ARENA_STUB=1`)* | all modes |
+| `EMBED_URL` | `http://127.0.0.1:8899` | `rag`, `tools` (`corpus_lookup`), `observability` — ignored under `ARENA_STUB=1` |
+| `QDRANT_URL` | `http://localhost:6333` | `rag`, `tools` (`corpus_lookup`), `observability` — ignored under `ARENA_STUB=1` |
+| `ARENA_COLLECTION` | `arena_rag` | `rag`, `tools` (`corpus_lookup`), `observability` — ignored under `ARENA_STUB=1` |
+| `LLAMAINDEX_MEMORY_DIR` | `<script_dir>/.memory` | `memory`, `memory_scoped`, `isolation_leak`, `crash_recovery` |
+| `ARENA_STUB` | unset (`0`) | ALL modes — `1`/`true`/`yes` swaps agnes for `llama_index.core.llms.MockLLM` and the real e5/Qdrant RAG backend for `llama_index.core.embeddings.MockEmbedding` + an in-memory `VectorStoreIndex`, so the whole adapter runs offline. See "Offline stub toggle" below. |
 
 `run-docker.sh` overrides `EMBED_URL`/`QDRANT_URL` to `http://host.docker.internal:{8899,6333}`
 so the containerized adapter reaches the host-run embed server and Qdrant; `OPENAI_BASE_URL`
@@ -309,6 +319,11 @@ See the dedicated "Observability mode" section below for the full write-up — t
 different enough from every other mode (it measures LlamaIndex's own telemetry, not chat
 quality) that it gets its own top-level section rather than a paragraph here.
 
+### `middleware` — LlamaIndex NATIVE interception, two honest mechanisms
+
+See the dedicated "Middleware mode" section below for the full write-up — like `observability`,
+this mode emits its own JSON shape (`text` + `middleware`), not the uniform envelope.
+
 ## Token usage — captured uniformly across every mode
 
 All six modes share one `OpenAILike` instance built once per invocation with a
@@ -425,6 +440,115 @@ not an assumption about LlamaIndex's logging in general.
 `llama_index.core.instrumentation`'s native path (`llama-index-instrumentation` package, MIT)
 was already a transitive dependency of `llama-index-core` before this mode — zero new
 dependency for the native half of this mode.
+
+## Middleware mode — LlamaIndex NATIVE interception, two honest mechanisms
+
+`middleware` runs ONE qa turn (`system` + `messages`, same request shape as `qa`) through two
+INDEPENDENT interception mechanisms and reports whether each fired. It emits its own JSON shape
+on stdout (NOT the uniform envelope — chosen deliberately, see below):
+
+```json
+{
+  "framework": "llamaindex",
+  "mode": "middleware",
+  "text": "OK",
+  "middleware": {
+    "mechanism": "llm-wrapper (inbound) + instrumentation-handlers (outbound)",
+    "inbound_fired": true,
+    "outbound_fired": true,
+    "invocations": 1,
+    "supported": true
+  }
+}
+```
+
+### Why two mechanisms, not one
+
+LlamaIndex's `llama_index.core.instrumentation` dispatcher — the exact seam `observability`
+mode above wires — is **OBSERVE-ONLY**. A `BaseEventHandler.handle(event)` receives a typed
+`BaseEvent` (e.g. `LLMChatStartEvent`) as a side-effecting listener call; there is no supported
+API for a handler to rewrite the request that produced the event, and no LlamaIndex-native
+"middleware" or "interceptor" concept that mutates a prompt in flight. Claiming the
+instrumentation dispatcher performs the inbound mutation would be dishonest, so this mode uses
+the mechanism that actually CAN mutate a prompt for the inbound transform, and the observe-only
+dispatcher — used honestly, for observation — for the outbound transform:
+
+- **INBOUND (prompt mutation) → LLM wrapper.** `_MiddlewareLLM` (defined inside
+  `run_middleware()` in `adapter.py`) subclasses `llama_index.core.llms.llm.LLM` — the SAME
+  abstract base every real LlamaIndex LLM integration subclasses, including
+  `llama_index.llms.openai_like.OpenAILike` (the class every other mode in this adapter wires
+  as `llm`). It wraps the real, already-constructed `llm` and its `chat`/`achat`/`stream_chat`/
+  `astream_chat` append the sentinel `MIDDLEWARE_INBOUND_SENTINEL = "\n[ARENA_MW]"` to the
+  outbound system `ChatMessage` (or inject one if the request had none) before delegating to
+  the wrapped LLM's own method. Every other abstract method (`complete`/`acomplete`/
+  `stream_complete`/`astream_complete`/`metadata`) delegates unchanged — this is a genuine
+  LlamaIndex extension point, not a monkeypatch of `OpenAILike` internals.
+
+- **OUTBOUND (call counting) → instrumentation event handler.** A `BaseEventHandler` is
+  attached to the ROOT dispatcher (`get_dispatcher()`, the same call `observability` mode
+  uses) and counts every `LLMChatStartEvent` it observes. `llm_chat_callback()` — the decorator
+  every `LLM.chat()`/`.achat()` implementation carries, including the real wrapped LLM's —
+  fires `dispatcher.event(LLMChatStartEvent(...))` on every call
+  (`llama_index/core/llms/callbacks.py::llm_chat_callback`, read directly off this adapter's
+  pinned `llama-index-core==0.14.23` install, not assumed from docs). The handler is a pure
+  observer of the call the wrapper above triggers — consistent with the dispatcher's own
+  observe-only design, and with how `observability` mode uses the same seam.
+
+`mechanism` reports both, honestly, rather than collapsing them into one label that would
+overclaim what either piece does alone.
+
+### Verified output (real agnes backend, no `ARENA_STUB`)
+
+```bash
+$ echo '{"mode":"middleware","system":"You are a rail assistant.","messages":[{"role":"user","content":"Say OK."}]}' | bash run.sh
+{"framework": "llamaindex", "mode": "middleware", "text": "OK", "middleware": {"mechanism": "llm-wrapper (inbound) + instrumentation-handlers (outbound)", "inbound_fired": true, "outbound_fired": true, "invocations": 1, "supported": true}}
+```
+
+## Offline stub toggle — `ARENA_STUB=1`
+
+Setting `ARENA_STUB=1` (also accepts `true`/`yes`, case-insensitive) swaps every real backend
+this adapter can call for an in-process LlamaIndex-native mock, so the WHOLE adapter — every
+mode, not just one — runs with zero network egress:
+
+| Real backend | Stub replacement | Modes affected |
+|---|---|---|
+| agnes (`OpenAILike`) | `llama_index.core.llms.MockLLM` (`llama_index.core.llms.mock.MockLLM`), `is_chat_model=True` | ALL modes |
+| e5 embed server (`OpenAILikeEmbedding`) | `llama_index.core.embeddings.MockEmbedding` (`llama_index.core.embeddings.mock_embed_model.MockEmbedding`), `embed_dim=8` | `rag`, `tools` (`corpus_lookup`), `observability` |
+| Qdrant `arena_rag` collection (`QdrantVectorStore`) | In-memory `VectorStoreIndex.from_documents()` over a tiny fixed 2-document stub corpus (`adapter.py::_STUB_RAG_DOCS`) — no `QdrantClient` is constructed at all | `rag`, `tools` (`corpus_lookup`), `observability` |
+
+Both mock classes ship inside `llama-index-core==0.14.23` (already a pinned direct dependency,
+confirmed by import against the arena's own `.venv`) — **no new package** is added for this
+toggle. `memory`/`memory_scoped`/`isolation_leak`/`crash_recovery` already persist to a local
+on-disk SQLite file under `LLAMAINDEX_MEMORY_DIR`, never a network store, so they need no swap
+to already be offline; `ARENA_STUB=1` only changes which `llm` they call.
+
+`OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL` are NOT required under `ARENA_STUB=1` — the
+envelope's `model` field reports `"mock-llm"` (never a leftover real `OPENAI_MODEL` value from
+the environment, even if one happens to be set) so the output is never dishonest about what
+actually served the request.
+
+**Honest limitation:** `MockLLM` returns deterministic, non-network text (it echoes the prompt
+back, or emits `"text text ..."` if `max_tokens` is set) — enough to prove every mode executes
+end-to-end offline, but not a stand-in for real model quality. Two modes have a real, structural
+dependency on the model actually doing something MockLLM cannot:
+- `tools` mode's `FunctionAgent` requires a `FunctionCallingLLM` and raises
+  `ValueError: LLM must be a FunctionCallingLLM` immediately — caught by `main()`, reported as
+  `error` in a valid JSON envelope, zero network attempted.
+- `structured` mode's `PydanticOutputParser` fails Pydantic validation against MockLLM's
+  non-JSON echoed text — same clean, offline, caught-and-reported failure path.
+
+### Verified output (`ARENA_STUB=1`, qa mode)
+
+```bash
+$ echo '{"mode":"qa","system":"You are a rail assistant.","messages":[{"role":"user","content":"Say OK."}]}' | ARENA_STUB=1 bash run.sh
+{"framework": "llamaindex", "mode": "qa", "model": "mock-llm", "reply": "system: You are a rail assistant.\nuser: Say OK.\nassistant: ", "input_tokens": -1, "output_tokens": -1, "latency_ms": 0, "tool_calls": [], "retrieved": [], "structured": null, "ttft_ms": -1, "error": ""}
+```
+
+`rag`, `stream`, `memory`, `memory_scoped`, and `observability` were also exercised under
+`ARENA_STUB=1` during acceptance and confirmed to complete offline with valid JSON output
+(`observability`'s native span/event counts and OTel span count are identical in shape to the
+real-backend run, just over the 2-document stub corpus and `MockLLM`/`MockEmbedding` instead of
+agnes/e5/Qdrant).
 
 ## Files
 

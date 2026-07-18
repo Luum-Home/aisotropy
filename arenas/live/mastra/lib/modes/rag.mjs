@@ -12,6 +12,7 @@
 import { Agent } from '@mastra/core/agent';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { embedQuery } from '../embed.mjs';
+import { stubQdrantSearch } from '../stub-qdrant.mjs';
 import { buildMessages, extractTokenCounts, lastUserContent, msSince } from '../output.mjs';
 
 const RETRIEVAL_LIMIT = 4;
@@ -30,15 +31,23 @@ export async function runRag(input, env) {
 
   const vector = await embedQuery(env.embedUrl, query);
 
-  // checkCompatibility: false -- the local Qdrant server may run an older minor
-  // version than the installed client; that mismatch is cosmetic for the plain
-  // REST `search` call this adapter makes, so skip the noisy startup warning.
-  const qdrant = new QdrantClient({ url: env.qdrantUrl, checkCompatibility: false });
-  const searchResult = await qdrant.search(env.qdrantCollection, {
-    vector,
-    limit: RETRIEVAL_LIMIT,
-    with_payload: true,
-  });
+  // ARENA_STUB=1 -- lib/stub-qdrant.mjs is a keyword-overlap search over a
+  // small hardcoded corpus, not a real Qdrant collection; see its header
+  // comment for why it does not use `vector` for real similarity.
+  let searchResult;
+  if (env.stub) {
+    searchResult = stubQdrantSearch(query, RETRIEVAL_LIMIT);
+  } else {
+    // checkCompatibility: false -- the local Qdrant server may run an older minor
+    // version than the installed client; that mismatch is cosmetic for the plain
+    // REST `search` call this adapter makes, so skip the noisy startup warning.
+    const qdrant = new QdrantClient({ url: env.qdrantUrl, checkCompatibility: false });
+    searchResult = await qdrant.search(env.qdrantCollection, {
+      vector,
+      limit: RETRIEVAL_LIMIT,
+      with_payload: true,
+    });
+  }
 
   const retrieved = searchResult.map((point) => ({
     doc_id: (point.payload && point.payload.doc_id) || null,

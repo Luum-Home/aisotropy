@@ -112,6 +112,7 @@ const (
 	modeIsolationLeak = "isolation_leak"
 	modeCrashRecovery = "crash_recovery"
 	modeObservability = "observability"
+	modeMiddleware    = "middleware"
 )
 
 func main() {
@@ -183,8 +184,15 @@ func dispatch(out *adapterOutput) error {
 		// simply never reached for this mode.
 		runObservability(ctx, env, in)
 		return nil
+	case modeMiddleware:
+		// middlewareOutput is ALSO its own wire contract, deliberately not
+		// adapterOutput (see mode_middleware.go) — same pattern as
+		// observability above: runMiddleware owns the entire stdout write
+		// and process exit code and never returns here.
+		runMiddleware(ctx, env, in)
+		return nil
 	default:
-		return fmt.Errorf("unknown mode %q (want one of qa|rag|tools|memory|structured|stream|memory_scoped|isolation_leak|crash_recovery|observability)", in.Mode)
+		return fmt.Errorf("unknown mode %q (want one of qa|rag|tools|memory|structured|stream|memory_scoped|isolation_leak|crash_recovery|observability|middleware)", in.Mode)
 	}
 }
 
