@@ -65,3 +65,10 @@ crates/*/target/
 /examples/domain-assistant/domain-assistant
 
 examples/graphbot/graphbot
+
+# stray build artifacts (binaries built from cmd/* and bench/* into repo root)
+/aisotropy-backup
+/audit-verify
+/load
+/rag-quality
+/wasm-vs-docker
