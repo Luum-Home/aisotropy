@@ -1,0 +1,49 @@
+{
+  "framework": "mastra",
+  "dimensions": {
+    "crash_recovery": {
+      "stub": {"native":"infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)","docker":"infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+    },
+    "isolation_leak": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+    },
+    "memory": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+    },
+    "memory_scoped": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+    },
+    "middleware": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+    },
+    "observability": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+    },
+    "qa": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+    },
+    "rag": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+    },
+    "stream": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+    },
+    "structured": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+    },
+    "tools": {
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+    }
+  }
+}
