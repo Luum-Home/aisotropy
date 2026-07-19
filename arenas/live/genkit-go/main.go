@@ -188,6 +188,13 @@ type runCtx struct {
 
 func main() {
 	model := envOr("OPENAI_MODEL", "agnes-2.0-flash")
+	if stubMode {
+		// Never report the real model name in a stub run: the offline echo model
+		// (stub.go's stubModelFunc) is what actually answers, so the wire
+		// contract must say so. run.sh sets OPENAI_MODEL even for a stub run, so
+		// this override is required — the runner's lane-leak guard reads this field.
+		model = "genkit-stub-echo (ARENA_STUB)"
+	}
 
 	// The output is always emitted as a single JSON object on stdout, even on
 	// failure. Fields are best-effort/zero-valued when an error is set.

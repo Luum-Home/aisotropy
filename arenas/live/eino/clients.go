@@ -73,11 +73,11 @@ func loadEnv() (*arenaEnv, error) {
 
 	if stub {
 		// Offline: no real agnes endpoint is ever dialed, so OPENAI_* is not
-		// required. A model name is still echoed on the wire contract so a
-		// stub run is unmistakable in output, never silently blank.
-		if env.model == "" {
-			env.model = "arena-stub-echo"
-		}
+		// required. ALWAYS report the offline stub model on the wire contract,
+		// never the real OPENAI_MODEL: run.sh sets OPENAI_MODEL even for a stub
+		// run, so overriding only-when-empty left the real "agnes-2.0-flash" on
+		// the wire (the runner's lane-leak guard reads this field).
+		env.model = "arena-stub-echo"
 	} else {
 		if env.apiKey == "" {
 			return nil, errors.New("OPENAI_API_KEY is not set")

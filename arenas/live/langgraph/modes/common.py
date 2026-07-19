@@ -126,7 +126,11 @@ def resolve_chat_env(mode: str) -> tuple[str, str | None, str | None, dict[str, 
     """
     model_name = os.environ.get("OPENAI_MODEL", DEFAULT_MODEL)
     if is_stub():
-        return model_name, "stub-key-not-a-real-credential", "http://arena-stub.invalid", None
+        # Report the OFFLINE stub model (FakeListChatModel), never the real
+        # OPENAI_MODEL — a stub run must be self-evidently offline in its output
+        # (the runner's lane-leak guard reads the model field). run.sh sets
+        # OPENAI_MODEL even for a stub run, so this must override it, not echo it.
+        return "FakeListChatModel (ARENA_STUB)", "stub-key-not-a-real-credential", "http://arena-stub.invalid", None
     api_key = os.environ.get("OPENAI_API_KEY")
     base_url = os.environ.get("OPENAI_BASE_URL")
     if not api_key:
