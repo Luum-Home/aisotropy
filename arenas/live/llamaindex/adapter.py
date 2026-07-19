@@ -53,7 +53,7 @@ markers, tracebacks):
       "output_tokens": int,
       "latency_ms": int,
       "tool_calls": [{"name": str, "arguments": object, "result": str}, ...],
-      "retrieved": [str, ...],
+      "retrieved": [{"doc_id": str, "title": str, "text": str, "score": float}, ...],
       "structured": object | null,
       "ttft_ms": int,
       "error": str,
@@ -754,11 +754,25 @@ def run_rag(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
     response = query_engine.query(question)
     latency_ms = int((time.monotonic() - start) * 1000)
 
+    # Emit the SAME object shape every other arena adapter emits and the runner
+    # decodes into its `retrievedDoc` struct ({doc_id,title,score,text} — see
+    # arenas/live/runner/types.go). hit@1 (ScoreRAG in
+    # arenas/live/runner/scoring/scoring.go) compares the TOP entry's `doc_id`
+    # against the gold `supporting_docs` (basenames like "08-blue-guarantee.md",
+    # the SAME value populate-qdrant.py seeds as the flat `doc_id` payload key).
+    # The prior code emitted a list of bare strings PREFERRING the human `title`
+    # ("Blue Guarantee Policy"), which the runner could not read a doc_id from —
+    # every grounded question scored miss@1. `doc_id` must come first.
     retrieved = [
-        sn.node.metadata.get("title") or sn.node.metadata.get("doc_id") or sn.node.node_id
+        {
+            "doc_id": sn.node.metadata.get("doc_id") or sn.node.node_id,
+            "title": sn.node.metadata.get("title") or "",
+            "text": sn.node.metadata.get("text") or sn.node.get_content() or "",
+            "score": float(sn.score) if sn.score is not None else 0.0,
+        }
         for sn in response.source_nodes
     ]
-    _progress(f"[rag] retrieved {len(retrieved)} passage(s): {retrieved}")
+    _progress(f"[rag] retrieved {len(retrieved)} passage(s): {[r['doc_id'] for r in retrieved]}")
 
     return {"reply": str(response), "retrieved": retrieved, "latency_ms": latency_ms}
 
