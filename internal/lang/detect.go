@@ -9,11 +9,11 @@ import (
 
 // defaultLanguages is the subset the shared detector is restricted to. lingua-go
 // is deliberately NOT loaded with all 75 languages: FromAllLanguages in
-// high-accuracy mode holds ~1.8 GB of n-gram models resident, which is
-// unacceptable for an in-process µs-cheap request-path seam. Restricting the set
-// to the languages we actually care about AND enabling low-accuracy mode (see
-// newDetector) bounds the loaded models — the memory cost scales with the number
-// of selected languages, not the full catalogue.
+// high-accuracy mode holds ~1.8 GB of n-gram models resident. Restricting the
+// set to the ~11 languages we actually care about bounds the resident models to
+// a few hundred MB (the memory cost scales with the number of selected
+// languages, not the full catalogue) — which is what makes high-accuracy mode
+// affordable here (see newDetector).
 //
 // The set covers the Phase-2 multilingual corpus (research §4): Latin-script
 // ES/PT/FR/DE/IT, CJK JA/ZH/KO, Cyrillic RU, Arabic AR, plus the English
@@ -43,14 +43,22 @@ var (
 	detector     lingua.LanguageDetector
 )
 
-// newDetector builds a low-accuracy, language-restricted lingua-go detector.
-// Low-accuracy mode trades a small amount of precision for a large memory
-// reduction and is the documented choice for short text (the chat case) — the
-// n-gram models loaded are a fraction of the high-accuracy set.
+// newDetector builds a HIGH-accuracy, language-restricted lingua-go detector.
+//
+// It is deliberately NOT low-accuracy. Low-accuracy mode loads only the trigram
+// model, which is measurably WORSE on SHORT text — the exact chat case — not
+// better: on the arena's own English prompts it misclassifies "What is the
+// capital of France?", "Which planet … is the largest?" and "What is my favorite
+// color?" as German with high confidence (0.54–0.98), while high-accuracy mode
+// (full uni–fivegram models) classifies all of them correctly as English. The
+// earlier comment had the trade-off backwards; lingua-go documents low-accuracy
+// as a speed/memory knob for LONG text, and confidence thresholding cannot
+// rescue it here because the wrong language scores confidently. Memory stays
+// bounded because the language set is restricted to defaultLanguages (~11), not
+// the full 75-language catalogue. Regression: TestDetect_ShortEnglishPrompts.
 func newDetector() lingua.LanguageDetector {
 	return lingua.NewLanguageDetectorBuilder().
 		FromLanguages(defaultLanguages...).
-		WithLowAccuracyMode().
 		Build()
 }
 
