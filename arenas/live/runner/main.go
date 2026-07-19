@@ -1071,14 +1071,27 @@ func intersect(want, allowed []string) []string {
 	return out
 }
 
+// leakLatencyMs is the wall-clock floor, in ms, above which a stub-run record
+// that also reports the real model name is treated as a genuine leak (an actual
+// real-model call). A real agnes round-trip is seconds (~5–40s); an offline stub
+// answers in well under a second even when it mislabels its model. The
+// model-name signal ALONE false-positives: several adapters' stubs honestly run
+// offline yet report `model: "agnes-2.0-flash"` (they register their fake model
+// under the real name), which is a labelling wart, not a leak. Requiring a
+// real-call-like latency too makes the guard fire on the behaviour that matters
+// — actually spending a real call (the aisotropy P0.2 bug was ~20s) — not on a
+// name. 2000ms sits an order of magnitude above the fast stubs and well below a
+// real round-trip.
+const leakLatencyMs = 2000
+
 // laneLeakFrameworks returns the distinct frameworks whose correctness records
-// reported the REAL provider model during a STUB run — an adapter that was
-// supposed to be offline but actually called the real model (billable, quota-
-// burning). This is the guard that would have caught aisotropy's stub calling
-// agnes-2.0-flash. Deterministic: a pure, case-insensitive scan of the records'
-// reported model names against the configured real model. Stub adapters report
-// mock/stub model names (e.g. "mock-llm", "stub"), which never contain the real
-// model string, so a match is an unambiguous leak.
+// reported the REAL provider model during a STUB run AND took a real-call-like
+// wall time — i.e. an adapter that was supposed to be offline but actually
+// called the real model (billable, quota-burning). This is the guard that would
+// have caught aisotropy's stub calling agnes-2.0-flash (~20s/call). Deterministic:
+// a pure, case-insensitive scan of the records' reported model + wall time. The
+// latency cross-check is what keeps it from crying wolf on a fast offline stub
+// that merely reports the real model name (see leakLatencyMs).
 func laneLeakFrameworks(records []record, realModel string) []string {
 	real := strings.ToLower(strings.TrimSpace(realModel))
 	if real == "" {
@@ -1091,7 +1104,7 @@ func laneLeakFrameworks(records []record, realModel string) []string {
 		if m == "" {
 			continue
 		}
-		if m == real || strings.Contains(m, real) {
+		if (m == real || strings.Contains(m, real)) && r.WallMs >= leakLatencyMs {
 			if !seen[r.Framework] {
 				seen[r.Framework] = true
 				out = append(out, r.Framework)
