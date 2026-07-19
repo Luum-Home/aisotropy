@@ -76,6 +76,7 @@ type task struct {
 	Messages     []inMessage     `json:"messages"`
 	Tools        json.RawMessage `json:"tools"`
 	Reference    string          `json:"reference"`
+	Answer       []string        `json:"answer"` // qa/memory: objectively-correct answer key(s); any one suffices, a multi-token key requires all its tokens (see scoring.ScoreQA)
 	ExpectedTool string          `json:"expected_tool"`
 	ExpectedArgs map[string]any  `json:"expected_args"`
 }
@@ -108,6 +109,7 @@ type workItem struct {
 	// judge inputs
 	Question  string
 	Reference string
+	Answer    []string // qa/memory answer key(s) for the deterministic scorer
 
 	// rag
 	SupportingDocs []string

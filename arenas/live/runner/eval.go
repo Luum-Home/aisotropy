@@ -64,9 +64,9 @@ func scoreDeterministic(rec *record, it workItem) scoring.Score {
 	case "stream":
 		return scoring.ScoreStream(rec.Out.TTFTMs)
 	case "memory":
-		return scoring.ScoreMemory(rec.Out.Reply, it.Reference)
+		return scoring.ScoreMemory(rec.Out.Reply, it.Reference, it.Answer)
 	default: // "qa"
-		return scoring.ScoreQA(rec.Out.Reply, it.Reference)
+		return scoring.ScoreQA(rec.Out.Reply, it.Reference, it.Answer)
 	}
 }
 

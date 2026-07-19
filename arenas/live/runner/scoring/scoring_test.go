@@ -7,54 +7,124 @@ import (
 // ---- ScoreQA ----------------------------------------------------------------
 
 func TestScoreQA_ExactMatch(t *testing.T) {
-	sc := ScoreQA("Paris is the capital of France.", "Paris is the capital of France.")
+	sc := ScoreQA("Paris is the capital of France.", "Paris is the capital of France.", nil)
 	if !sc.Pass || sc.Value != 1 {
 		t.Fatalf("want pass=true value=1, got %+v", sc)
 	}
 }
 
 func TestScoreQA_ExactMatch_CaseAndPunctuationInsensitive(t *testing.T) {
-	sc := ScoreQA("PARIS is the CAPITAL of France!!", "Paris is the capital of France.")
+	sc := ScoreQA("PARIS is the CAPITAL of France!!", "Paris is the capital of France.", nil)
 	if !sc.Pass || sc.Value != 1 {
 		t.Fatalf("want pass=true value=1, got %+v", sc)
 	}
 }
 
 func TestScoreQA_ContainmentPass(t *testing.T) {
-	// Reply extends the reference with extra correct detail — should still pass.
-	sc := ScoreQA("The chemical symbol for gold is Au, atomic number 79.", "The chemical symbol for gold is Au.")
+	// Legacy fallback (no answer key): reply extends the reference — still passes.
+	sc := ScoreQA("The chemical symbol for gold is Au, atomic number 79.", "The chemical symbol for gold is Au.", nil)
 	if !sc.Pass {
-		t.Fatalf("want pass=true (containment), got %+v", sc)
+		t.Fatalf("want pass=true (legacy containment), got %+v", sc)
 	}
 }
 
 func TestScoreQA_Mismatch(t *testing.T) {
-	sc := ScoreQA("The capital of Germany is Berlin.", "Paris is the capital of France.")
+	sc := ScoreQA("The capital of Germany is Berlin.", "Paris is the capital of France.", nil)
 	if sc.Pass {
 		t.Fatalf("want pass=false for unrelated answer, got %+v", sc)
 	}
 }
 
 func TestScoreQA_EmptyReference(t *testing.T) {
-	sc := ScoreQA("anything", "")
+	sc := ScoreQA("anything", "", nil)
 	if sc.Pass {
-		t.Fatalf("want pass=false with no reference, got %+v", sc)
+		t.Fatalf("want pass=false with no reference or answer key, got %+v", sc)
+	}
+}
+
+// ---- ScoreQA answer-key fairness -------------------------------------------
+//
+// The core fairness property: with an explicit answer key, a CORRECT reply
+// PASSES whether it is terse or verbose, and a WRONG / question-echoing / non-
+// answer reply FAILS — so the score measures correctness, not verbosity. This
+// is framework-agnostic: the same terse/verbose replies pass regardless of who
+// produced them. Regression guard for docs/architecture/arena-qa-answer-key-scoring.md.
+
+func TestScoreQA_AnswerKey_ConciseAndVerboseBothPass(t *testing.T) {
+	ref, key := "Paris is the capital of France.", []string{"Paris"}
+	for _, reply := range []string{
+		"Paris",                          // terse-correct (was unfairly failed at 0.33 by legacy containment)
+		"The capital of France is Paris", // verbose-correct
+		"It's Paris.",                    // short sentence
+	} {
+		if sc := ScoreQA(reply, ref, key); !sc.Pass {
+			t.Errorf("reply %q should PASS against answer key %v, got %+v", reply, key, sc)
+		}
+	}
+}
+
+func TestScoreQA_AnswerKey_WrongAndQuestionEchoFail(t *testing.T) {
+	ref, key := "Paris is the capital of France.", []string{"Paris"}
+	for _, reply := range []string{
+		"France",                // echoes the question's subject — NOT the answer
+		"The capital is Berlin", // wrong answer
+		"I don't know.",         // non-answer
+	} {
+		if sc := ScoreQA(reply, ref, key); sc.Pass {
+			t.Errorf("reply %q should FAIL against answer key %v, got %+v", reply, key, sc)
+		}
+	}
+}
+
+func TestScoreQA_AnswerKey_EquivalentNumberForms(t *testing.T) {
+	// Either the exact figure or the rounded one, comma or not, is acceptable.
+	ref := "Light travels at approximately 299,792 kilometers per second (about 300,000 km/s) in a vacuum."
+	key := []string{"299792", "299,792", "300000", "300,000"}
+	for _, reply := range []string{"299792", "About 299,792 km/s", "roughly 300,000 km/s", "300000"} {
+		if sc := ScoreQA(reply, ref, key); !sc.Pass {
+			t.Errorf("reply %q should PASS (equivalent number form), got %+v", reply, sc)
+		}
+	}
+	if sc := ScoreQA("about 150,000 km/s", ref, key); sc.Pass {
+		t.Errorf("a wrong number should FAIL, got %+v", sc)
 	}
 }
 
 // ---- ScoreMemory --------------------------------------------------------
 
 func TestScoreMemory_ExactRecall(t *testing.T) {
-	sc := ScoreMemory("Your favorite color is teal.", "Your favorite color is teal.")
+	sc := ScoreMemory("Your favorite color is teal.", "Your favorite color is teal.", nil)
 	if !sc.Pass || sc.Value != 1 {
 		t.Fatalf("want pass=true value=1, got %+v", sc)
 	}
 }
 
 func TestScoreMemory_ForgottenFact(t *testing.T) {
-	sc := ScoreMemory("I don't recall your favorite color.", "Your favorite color is teal.")
+	// Legacy fallback: a "forgotten fact" non-answer must still fail.
+	sc := ScoreMemory("I don't recall your favorite color.", "Your favorite color is teal.", nil)
 	if sc.Pass {
 		t.Fatalf("want pass=false for a forgotten fact, got %+v", sc)
+	}
+}
+
+func TestScoreMemory_AnswerKey_TerseRecallPasses(t *testing.T) {
+	// A terse correct recall ("teal") must pass — the legacy scorer failed it.
+	if sc := ScoreMemory("teal", "Your favorite color is teal.", []string{"teal"}); !sc.Pass {
+		t.Errorf("terse correct recall should PASS, got %+v", sc)
+	}
+	if sc := ScoreMemory("I don't remember.", "Your favorite color is teal.", []string{"teal"}); sc.Pass {
+		t.Errorf("a forgotten fact should FAIL against the answer key, got %+v", sc)
+	}
+}
+
+func TestScoreMemory_AnswerKey_MultiTokenRequiresAll(t *testing.T) {
+	// A two-fact recall key requires BOTH tokens — an incomplete recall fails.
+	ref, key := "Your two pets are Pepper (the dog) and Miso (the cat).", []string{"Pepper Miso"}
+	if sc := ScoreMemory("Your pets are Pepper and Miso.", ref, key); !sc.Pass {
+		t.Errorf("complete recall should PASS, got %+v", sc)
+	}
+	if sc := ScoreMemory("One of them is Pepper.", ref, key); sc.Pass {
+		t.Errorf("incomplete recall (missing Miso) should FAIL, got %+v", sc)
 	}
 }
 
@@ -277,12 +347,17 @@ func TestDeterministic_Reproducible(t *testing.T) {
 		run  func() Score
 	}
 	fixtures := []fixture{
-		{"qa-exact", func() Score { return ScoreQA("Paris is the capital of France.", "Paris is the capital of France.") }},
-		{"qa-containment", func() Score {
-			return ScoreQA("The chemical symbol for gold is Au, atomic number 79.", "The chemical symbol for gold is Au.")
+		{"qa-exact", func() Score {
+			return ScoreQA("Paris is the capital of France.", "Paris is the capital of France.", nil)
 		}},
-		{"qa-miss", func() Score { return ScoreQA("Berlin.", "Paris is the capital of France.") }},
-		{"memory", func() Score { return ScoreMemory("Your favorite color is teal.", "Your favorite color is teal.") }},
+		{"qa-containment", func() Score {
+			return ScoreQA("The chemical symbol for gold is Au, atomic number 79.", "The chemical symbol for gold is Au.", nil)
+		}},
+		{"qa-miss", func() Score { return ScoreQA("Berlin.", "Paris is the capital of France.", nil) }},
+		{"qa-answerkey-concise", func() Score { return ScoreQA("Paris", "Paris is the capital of France.", []string{"Paris"}) }},
+		{"qa-answerkey-echo-fail", func() Score { return ScoreQA("France", "Paris is the capital of France.", []string{"Paris"}) }},
+		{"memory", func() Score { return ScoreMemory("Your favorite color is teal.", "Your favorite color is teal.", nil) }},
+		{"memory-answerkey-terse", func() Score { return ScoreMemory("teal", "Your favorite color is teal.", []string{"teal"}) }},
 		{"rag-hit", func() Score {
 			return ScoreRAG("08-blue-guarantee.md", []string{"08-blue-guarantee.md", "09-quiet-car.md"}, "answer", false)
 		}},

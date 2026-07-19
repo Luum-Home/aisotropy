@@ -56,41 +56,74 @@ type Score struct {
 // deliberate, tested decision, not a silent drift.
 const passQAThreshold = 0.8
 
-// ScoreQA deterministically scores a free-text reply against a reference
-// answer: exact match (after normalization) scores 1.0; otherwise a
-// token-containment ratio (what fraction of the reference's significant
-// tokens appear in the reply) is used, since a correct reply typically
-// contains — and often extends — the reference wording. No LLM, no
-// embeddings, no network call: pure string normalization and set overlap.
-func ScoreQA(reply, reference string) Score {
-	if strings.TrimSpace(reference) == "" {
+// ScoreQA deterministically scores a free-text reply against a reference.
+// Exact normalized match scores 1.0. Otherwise, when explicit ANSWER KEYS are
+// provided (the objectively-correct answer string(s) for the question), the
+// reply PASSES iff it fully contains at least one acceptable answer key.
+//
+// WHY answer keys (and not pure reference token-containment): the old fallback
+// scored the fraction of the REFERENCE's tokens present in the reply, which
+// rewarded a VERBOSE answer that echoes the reference's framing ("The capital
+// of France is Paris" → 1.0) and unfairly FAILED a correct-but-CONCISE answer
+// ("Paris" → 0.33, missing "capital"/"France"). That is a verbosity bias, not a
+// correctness measure — it penalizes ANY framework that answers tersely, and
+// terse-correct is good QA behavior. It also can't tell a concise right answer
+// ("Paris") from an echo of the QUESTION's subject ("France"), both single
+// reference tokens. An explicit answer key fixes both fairly for every
+// framework: "Paris" and "The capital is Paris" both PASS (contain the key),
+// "France" and "I don't know" both FAIL (do not). See
+// docs/architecture/arena-qa-answer-key-scoring.md.
+//
+// A key with multiple tokens (e.g. "Pepper Miso" for a two-fact recall) requires
+// ALL its tokens — an incomplete answer correctly fails. Multiple keys are
+// alternatives (any one suffices), so equivalent phrasings ("299792",
+// "299,792", "300000") each pass. When NO answer key is given, it falls back to
+// the legacy reference token-containment (backward compatible). No LLM, no
+// embeddings, no network: pure normalization + set overlap.
+func ScoreQA(reply, reference string, answers []string) Score {
+	if strings.TrimSpace(reference) == "" && len(answers) == 0 {
 		return Score{Value: 0, Pass: false, Detail: "no reference to score against"}
 	}
-	nr, nf := normalize(reply), normalize(reference)
-	if nr == nf {
+	nr := normalize(reply)
+	if reference != "" && nr == normalize(reference) {
 		return Score{Value: 1, Pass: true, Detail: "exact match (normalized)"}
 	}
-	ratio := containmentRatio(tokenize(nf), tokenize(nr))
-	pass := ratio >= passQAThreshold
+	if len(answers) > 0 {
+		replyToks := tokenize(nr)
+		best := 0.0
+		bestKey := ""
+		for _, a := range answers {
+			at := tokenize(normalize(a))
+			if len(at) == 0 {
+				continue
+			}
+			// containmentRatio(want=answer tokens, have=reply tokens): fraction of
+			// THIS answer key present in the reply. 1.0 = the full answer is there.
+			if r := containmentRatio(at, replyToks); r > best {
+				best, bestKey = r, a
+			}
+		}
+		return Score{
+			Value:  best,
+			Pass:   best >= 1.0, // reply must contain a COMPLETE acceptable answer
+			Detail: fmt.Sprintf("answer-key containment %.2f (best key %q of %d)", best, bestKey, len(answers)),
+		}
+	}
+	// Legacy fallback: reference token-containment (tasks without an answer key).
+	ratio := containmentRatio(tokenize(normalize(reference)), tokenize(nr))
 	return Score{
 		Value:  ratio,
-		Pass:   pass,
+		Pass:   ratio >= passQAThreshold,
 		Detail: fmt.Sprintf("token-containment %.2f (threshold %.2f)", ratio, passQAThreshold),
 	}
 }
 
-// ScoreMemory deterministically scores a multi-turn memory recall reply
-// against the persisted fact's reference wording. Identical reduction to
-// ScoreQA (normalized exact match, else token-containment) — kept as its own
-// named entry point because memory recall is a distinct arena dimension with
-// its own documented pass rule (arenas/live/SPEC.md), even though the
-// underlying deterministic mechanics are shared.
-func ScoreMemory(reply, reference string) Score {
-	sc := ScoreQA(reply, reference)
-	if sc.Pass && sc.Value == 1 {
-		sc.Detail = "exact recall match (normalized)"
-	}
-	return sc
+// ScoreMemory deterministically scores a multi-turn memory recall reply against
+// the persisted fact's reference / answer key. Identical mechanics to ScoreQA —
+// kept as its own named entry point because memory recall is a distinct arena
+// dimension with its own documented pass rule (arenas/live/SPEC.md).
+func ScoreMemory(reply, reference string, answers []string) Score {
+	return ScoreQA(reply, reference, answers)
 }
 
 // ---- scoreRAG -----------------------------------------------------------

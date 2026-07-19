@@ -93,6 +93,7 @@ func buildQAStyle(framework, mode string, qa []task, maxTasks int) []workItem {
 			Invocations: []adapterInput{{Mode: mode, System: t.System, Messages: t.Messages}},
 			Question:    lastUser(t.Messages),
 			Reference:   t.Reference,
+			Answer:      t.Answer,
 		})
 	}
 	return out
@@ -126,6 +127,7 @@ func buildMemory(framework string, mem []task, maxTasks int) []workItem {
 			Invocations: invs,
 			Question:    t.Messages[idx].Content,
 			Reference:   t.Reference,
+			Answer:      t.Answer,
 		})
 	}
 	return out
