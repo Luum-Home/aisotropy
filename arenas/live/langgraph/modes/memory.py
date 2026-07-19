@@ -10,11 +10,14 @@ history even though they are different OS processes — the second process
 never sees the first turn's text on its own stdin, it recovers it from the
 checkpoint.
 
-Contract addition for this mode only: the request JSON MUST include a
-``"thread_id"`` string. ``"messages"`` should contain only the NEW turn(s)
-since the last checkpoint for that thread — history is recovered from the
-checkpoint, not replayed by the caller (that is the entire point of the
-mode).
+Contract for this mode: the request JSON MUST carry a conversation
+identifier — the arena sends it as ``"session_id"`` (SPEC.md, runner
+``ChatInput.SessionID`` -> ``json:"session_id"``), which this mode uses
+directly as the LangGraph checkpointer ``thread_id``. An explicit
+``"thread_id"`` is still accepted and takes precedence as an override for
+direct callers. ``"messages"`` should contain only the NEW turn(s) since the
+last checkpoint for that thread — history is recovered from the checkpoint,
+not replayed by the caller (that is the entire point of the mode).
 """
 from __future__ import annotations
 
@@ -33,10 +36,17 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
     if err:
         return err
 
-    thread_id = payload.get("thread_id")
+    # The live-arena contract (SPEC.md, runner types.go ChatInput.SessionID
+    # `json:"session_id"`) carries the conversation identifier as
+    # ``session_id`` — that IS this mode's LangGraph checkpointer thread key.
+    # An explicit ``thread_id`` remains accepted as an override for direct
+    # callers, but the arena's ``session_id`` must work on its own.
+    thread_id = payload.get("thread_id") or payload.get("session_id")
     if not thread_id or not isinstance(thread_id, str):
         return common.envelope(
-            mode=MODE, model=model_name, error="memory mode requires a non-empty string 'thread_id' field"
+            mode=MODE,
+            model=model_name,
+            error="memory mode requires a non-empty string 'session_id' (or 'thread_id') field",
         )
 
     try:
