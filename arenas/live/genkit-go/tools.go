@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -30,15 +31,25 @@ import (
 // neither pattern: it returns the real wall-clock time and the echoed
 // arguments — a genuinely executed, dynamic result, never a hardcoded value.
 func runTools(rc *runCtx, out *arenaOutput) error {
-	if len(rc.in.Tools) == 0 {
-		return fmt.Errorf("tools mode: request has no tool definitions")
+	// The arena's built-in arithmeticTasks (arenas/live/runner/tasks.go) send NO
+	// tool definitions in the request — the adapter is expected to register its
+	// OWN calculator, execute it, and report the executed call. When req.Tools is
+	// empty, register exactly one built-in `calculate` tool; any request that
+	// DOES carry req.Tools takes the generic name/shape-matching path below,
+	// unchanged. This mirrors the reference aisotropy adapter
+	// (arenas/live/aisotropy/mode_tools.go's calcTool fallback) and eino
+	// (arenas/live/eino/mode_tools.go, which always registers a calculate tool).
+	toolDefs := rc.in.Tools
+	if len(toolDefs) == 0 {
+		toolDefs = []inTool{defaultCalcTool()}
+		fmt.Fprintln(os.Stderr, "PROGRESS: tools: request carried no tool definitions — registering built-in calculate tool")
 	}
 
 	var mu sync.Mutex
 	var executed []outToolCall
 
-	toolRefs := make([]ai.ToolRef, 0, len(rc.in.Tools))
-	for _, t := range rc.in.Tools {
+	toolRefs := make([]ai.ToolRef, 0, len(toolDefs))
+	for _, t := range toolDefs {
 		t := t // capture for the closure below
 		schema := t.Parameters
 		if schema == nil {
@@ -49,12 +60,12 @@ func runTools(rc *runCtx, out *arenaOutput) error {
 				args := toArgsMap(input)
 				fmt.Fprintf(os.Stderr, "PROGRESS: tools: executing %q args=%v\n", t.Name, args)
 				result, err := executeRealTool(rc.ctx, rc, t.Name, args)
-				mu.Lock()
-				executed = append(executed, outToolCall{Name: t.Name, Arguments: args})
-				mu.Unlock()
 				if err != nil {
 					return nil, err
 				}
+				mu.Lock()
+				executed = append(executed, outToolCall{Name: t.Name, Arguments: args, Result: encodeToolResult(result)})
+				mu.Unlock()
 				return result, nil
 			})
 		toolRefs = append(toolRefs, def)
@@ -80,6 +91,45 @@ func runTools(rc *runCtx, out *arenaOutput) error {
 	}
 	fmt.Fprintf(os.Stderr, "PROGRESS: tools: %d real tool execution(s)\n", len(out.ToolCalls))
 	return nil
+}
+
+// defaultCalcTool is the built-in `calculate` tool registered when a tools-mode
+// request carries no tool definitions (the arena's arithmeticTasks path). Its
+// name/description/schema match the reference aisotropy and eino adapters so the
+// runner's toolSystem prompt ("call the calculate tool with the expression")
+// and numeric scoring apply identically across frameworks. Its body is the same
+// real arithmetic evaluator every offered calculator shape dispatches to via
+// executeRealTool (never a canned value).
+func defaultCalcTool() inTool {
+	return inTool{
+		Name:        "calculate",
+		Description: "Evaluates a plain arithmetic expression (+ - * / and parentheses) and returns the exact numeric result.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"expression": map[string]any{
+					"type":        "string",
+					"description": "A plain arithmetic expression to evaluate, e.g. '(12 + 30) * 7 / 2'.",
+				},
+			},
+			"required": []any{"expression"},
+		},
+	}
+}
+
+// encodeToolResult renders a tool's executed output as a compact JSON string for
+// the contract's tool_calls[].result field. A non-empty result is what the
+// arena's `exec` metric keys on (Executed = result != "" — see
+// arenas/live/runner/eval.go's toScoringCalls); for the calculator it carries
+// the numeric answer, e.g. {"expression":"47*89","result":4183}.
+func encodeToolResult(v any) string {
+	if v == nil {
+		return ""
+	}
+	if b, err := json.Marshal(v); err == nil {
+		return string(b)
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 // executeRealTool dispatches to a genuinely-executed implementation based on

@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"math/rand"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/firebase/genkit/go/ai"
@@ -94,7 +95,7 @@ func stubModelFunc(ctx context.Context, req *ai.ModelRequest, cb ai.ModelStreamC
 	case len(schema) > 0:
 		reply = stubJSONForSchema(schema)
 	case len(req.Tools) > 0 && !requestHasToolResponse(req):
-		part, err := stubToolRequestPart(req.Tools[0])
+		part, err := stubToolRequestPart(req.Tools[0], lastUser)
 		if err != nil {
 			return nil, fmt.Errorf("stub model: build tool request: %w", err)
 		}
@@ -206,35 +207,41 @@ func requestHasToolResponse(req *ai.ModelRequest) bool {
 // definition, synthesizing arguments generically from its InputSchema so it
 // works for any caller-supplied tool shape, not just the two this adapter's
 // own tools.go recognizes by name.
-func stubToolRequestPart(def *ai.ToolDefinition) (*ai.Part, error) {
-	args := stubArgsForSchema(def.InputSchema)
+func stubToolRequestPart(def *ai.ToolDefinition, userText string) (*ai.Part, error) {
+	args := stubArgsForSchema(def.InputSchema, userText)
 	return ai.NewToolRequestPart(&ai.ToolRequest{Name: def.Name, Input: args}), nil
 }
 
 // stubArgsForSchema fills a JSON-Schema "object" shape with deterministic
 // placeholder values good enough to drive a real tool body (e.g. tools.go's
 // calculator/corpus_lookup/clock-fallback dispatch, which matches on
-// argument key names and types, not their exact values).
-func stubArgsForSchema(schema map[string]any) map[string]any {
+// argument key names and types, not their exact values). userText is the
+// current user question, used to derive a real arithmetic expression for an
+// expression-shaped argument (see stubPlaceholderFor).
+func stubArgsForSchema(schema map[string]any, userText string) map[string]any {
 	out := map[string]any{}
 	props, _ := schema["properties"].(map[string]any)
 	for name, raw := range props {
 		propSchema, _ := raw.(map[string]any)
-		out[name] = stubPlaceholderFor(name, propSchema)
+		out[name] = stubPlaceholderFor(name, propSchema, userText)
 	}
 	return out
 }
 
 // stubPlaceholderFor returns a schema-appropriate placeholder value. Field
-// names containing "expr"/"expression"/"equation" get a real, evaluable
-// arithmetic expression so a calculator-shaped tool still does genuine work
-// offline; everything else gets a generic placeholder per JSON-Schema type.
-func stubPlaceholderFor(name string, schema map[string]any) any {
+// names containing "expr"/"expression"/"equation" get the arithmetic
+// expression DERIVED from the actual user question (deriveArithmetic), so a
+// calculator-shaped tool returns the CORRECT number offline (e.g. "What is 47
+// multiplied by 89?" -> "47*89" -> 4183) instead of a fixed constant — the same
+// higher bar the reference aisotropy stub holds itself to
+// (arenas/live/aisotropy/tool_stub.go's deriveExpression). Everything else gets
+// a generic placeholder per JSON-Schema type.
+func stubPlaceholderFor(name string, schema map[string]any, userText string) any {
 	lname := strings.ToLower(name)
 	t, _ := schema["type"].(string)
 	switch {
 	case strings.Contains(lname, "expr") || strings.Contains(lname, "equation"):
-		return "2 + 2"
+		return deriveArithmetic(userText)
 	case t == "number" || t == "integer":
 		return 1
 	case t == "boolean":
@@ -246,6 +253,50 @@ func stubPlaceholderFor(name string, schema map[string]any) any {
 	default:
 		return "arena-stub"
 	}
+}
+
+// stubWordArithmeticOps maps the English arithmetic phrases the arena's built-in
+// arithmeticTasks use (arenas/live/runner/tasks.go: "multiplied by", "plus",
+// ...) to their symbols, longest/most-specific first so "multiplied by" is
+// consumed whole before a shorter match could interfere. Parallels the
+// reference aisotropy stub's wordOperators (arenas/live/aisotropy/tool_stub.go).
+var stubWordArithmeticOps = []struct {
+	re  *regexp.Regexp
+	sym string
+}{
+	{regexp.MustCompile(`(?i)multiplied\s+by`), "*"},
+	{regexp.MustCompile(`(?i)divided\s+by`), "/"},
+	{regexp.MustCompile(`(?i)\btimes\b`), "*"},
+	{regexp.MustCompile(`(?i)\bplus\b`), "+"},
+	{regexp.MustCompile(`(?i)\bminus\b`), "-"},
+}
+
+// stubArithmeticTokenRe pulls the arithmetic-shaped tokens (numbers, parens,
+// + - * /) out of arbitrary surrounding prose, after the word operators above
+// have been turned into their symbols.
+var stubArithmeticTokenRe = regexp.MustCompile(`[0-9]+(?:\.[0-9]+)?|[()+\-*/]`)
+
+// deriveArithmetic extracts a genuinely-evaluable arithmetic expression from a
+// natural-language arithmetic question (e.g. "What is 47 multiplied by 89?" ->
+// "47*89"), so the stub-driven calculate tool computes the CORRECT answer
+// offline. Falls back to a fixed "2 + 2" when the text carries no evaluable
+// arithmetic (a non-arithmetic tool shape hitting an expression-named arg), so
+// the tool is never handed empty/malformed input. Validated with the same
+// evalArithmetic the tool body uses (tools.go). Mirrors
+// arenas/live/aisotropy/tool_stub.go's deriveExpression.
+func deriveArithmetic(text string) string {
+	for _, w := range stubWordArithmeticOps {
+		text = w.re.ReplaceAllString(text, " "+w.sym+" ")
+	}
+	toks := stubArithmeticTokenRe.FindAllString(text, -1)
+	if len(toks) == 0 {
+		return "2 + 2"
+	}
+	expr := strings.Join(toks, "")
+	if _, err := evalArithmetic(expr); err != nil {
+		return "2 + 2"
+	}
+	return expr
 }
 
 // stubJSONForSchema renders a minimal, schema-conforming JSON document for

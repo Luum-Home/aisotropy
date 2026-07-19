@@ -90,6 +90,13 @@ type arenaInput struct {
 type outToolCall struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
+	// Result is the tool's EXECUTED output, JSON-encoded (e.g. the calculator's
+	// {"expression":"47*89","result":4183}). Empty in qa mode's single-shot
+	// capture, where the tool is never run. It is load-bearing for the arena's
+	// `exec` metric: arenas/live/runner/eval.go marks a call Executed only when
+	// its result is non-empty (toScoringCalls -> scoring.ToolExecuted), so a
+	// tools-mode call MUST carry it to count as a real execution.
+	Result string `json:"result,omitempty"`
 }
 
 type retrievedDoc struct {
