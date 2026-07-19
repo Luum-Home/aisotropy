@@ -291,7 +291,13 @@ async def mode_tools(payload: dict) -> dict:
     def calculate(expression: str) -> str:
         """Evaluate a real arithmetic expression (+ - * / // % **, parentheses) and return it."""
         value = safe_eval_expr(expression)
-        executed.append({"name": "calculate", "arguments": {"expression": expression}, "result": value})
+        # Report `result` as a STRING: the runner's adapterOutput contract types
+        # toolCall.Result as a Go `string` (arenas/live/runner/types.go). Emitting a
+        # bare JSON number here makes json.Unmarshal fail the whole line, so the
+        # runner records "no valid result JSON object on stdout" and the tools row
+        # scores as `no tool ✗` even though the tool really executed. langgraph/eino/
+        # aisotropy all stringify their tool result for the same reason.
+        executed.append({"name": "calculate", "arguments": {"expression": expression}, "result": str(value)})
         log(f"tools: EXECUTED calculate({expression!r}) = {value}")
         return str(value)
 
@@ -697,7 +703,9 @@ async def mode_observability(payload: dict) -> dict:
     def calculate(expression: str) -> str:
         """Evaluate a real arithmetic expression (+ - * / // % **, parentheses) and return it."""
         value = safe_eval_expr(expression)
-        executed.append({"name": "calculate", "arguments": {"expression": expression}, "result": value})
+        # `result` must be a string to satisfy the runner's toolCall.Result contract
+        # (see the tools-mode note above / arenas/live/runner/types.go).
+        executed.append({"name": "calculate", "arguments": {"expression": expression}, "result": str(value)})
         log(f"observability: EXECUTED calculate({expression!r}) = {value}")
         return str(value)
 
