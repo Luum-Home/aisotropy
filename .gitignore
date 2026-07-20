@@ -38,6 +38,16 @@ coverage.out
 !.env.example
 *.key
 *.pem
+*.p12
+*.pfx
+*.jks
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+secrets.json
+credentials.json
+service-account*.json
 
 # ── SO / editor ──
 .DS_Store
