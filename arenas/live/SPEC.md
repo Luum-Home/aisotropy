@@ -109,7 +109,10 @@ object to STDOUT** (only that — all logs go to STDERR):
   "output_tokens": 0,
   "latency_ms": 0,
   "tool_calls": [
-    {"name": "string", "arguments": { /* object */ }}
+    {"name": "string", "arguments": { /* object */ },
+     "result": "string — the EXECUTED tool's output; empty string when the call was
+                only captured and not executed. MUST be a STRING (JSON-encode
+                structured output); a number or object breaks the whole record's parse."}
   ],
   "error": "string — empty when the run succeeded"
 }
@@ -120,12 +123,30 @@ Contract rules every adapter MUST honor:
 1. **Provider-reported tokens only.** `input_tokens` / `output_tokens` come from the
    provider's `usage` for the call(s) this run made. If usage is unavailable, report
    **`-1`** (never a fabricated estimate).
-2. **Single-shot tool-calling.** When `tools` are present and the model chooses to call
-   one, populate `tool_calls` with the name and arguments the model produced and **do
-   NOT execute** the tool (no second round-trip, no tool body runs).
+2. **Tool-calling is MODE-DEPENDENT — read this carefully, it is the single most
+   misimplemented rule in the contract.**
+   - **`tools` mode: EXECUTE the tool for real.** The `tools` dimension scores REAL
+     execution: the runner marks a call executed only when `tool_calls[].result` is a
+     **non-empty STRING** (`runner/eval.go`: `Executed = TrimSpace(c.Result) != ""`,
+     scored by `scoring.ScoreTools`). So run the tool body, feed the result back, and
+     report `{name, arguments, result}` with the executed output JSON-encoded **as a
+     string**. Emitting the value under any other field name (e.g. `output`), as a raw
+     number, or omitting it entirely, scores `exec 0/3` even though your tool ran —
+     this exact mistake shipped in four adapters (genkit-go, pydantic-ai, mastra,
+     ai-sdk) because an earlier version of this section said "do NOT execute".
+     If the request carries no `tools`, register your own calculator (see the
+     arithmetic tasks) — do not error out.
+   - **`qa` mode: single-shot capture.** Report the name and arguments the model
+     produced with `result: ""` and do NOT execute — an empty `result` is how the
+     scorer correctly records "captured, not executed".
 3. **STDOUT is JSON-only.** Exactly one object, nothing else. Diagnostics go to STDERR
    (prefix `PROGRESS:` is conventional).
-4. **`model` echoes `OPENAI_MODEL`** (`agnes-2.0-flash`) so a run can be audited.
+4. **`model` echoes `OPENAI_MODEL`** (`agnes-2.0-flash`) so a run can be audited —
+   **except under `ARENA_STUB=1`, where it MUST report your OFFLINE stub's name**
+   (e.g. `mock-llm`, `FakeListChatModel (ARENA_STUB)`, `arena-stub-echo`), never the
+   real model. A stub record claiming `agnes-2.0-flash` is dishonest output and trips
+   the runner's lane-leak guard; three adapters shipped this bug by following the
+   earlier, unqualified wording of this rule.
 5. **Errors are data, not crashes.** On failure, emit the JSON with `error` set and
    tokens `-1`; exit so the runner records the row rather than losing the task.
 
