@@ -322,6 +322,111 @@ async def mode_tools(payload: dict) -> dict:
 # --------------------------------------------------------------------------
 # mode: memory -- message_history persisted to REAL rqlite across processes
 # --------------------------------------------------------------------------
+#
+# The session_id the arena sends is DETERMINISTIC per task
+# (`arena-mem-<framework>-<task-id>`, see runner/tasks.go buildMemory), so the
+# same rqlite row is re-read and re-appended on every arena re-run. Two
+# consequences this mode has to defend against, and did not before:
+#
+#   1. The history grows without bound across runs (observed: a 28 KB row of
+#      48 accumulated messages), inflating every recall turn's prompt tokens
+#      and, eventually, blowing the model's context window. `_prune_history`
+#      bounds what is replayed AND what is persisted back.
+#   2. A row written by an earlier revision of this adapter (or a truncated /
+#      partial write) is not a reason to hard-fail the whole run: a blob that
+#      no longer validates against Pydantic AI's native
+#      `ModelMessagesTypeAdapter` is logged and dropped, and the turn starts a
+#      fresh session instead of raising.
+# --------------------------------------------------------------------------
+
+# Bound on the replayed/persisted native message list. 24 entries ~= 12 turns:
+# comfortably more than any arena memory task needs (the longest, mem-02-pets,
+# is 3 turns) while keeping a re-run's row from growing forever.
+_MEMORY_MAX_HISTORY_MESSAGES = 24
+
+
+def _split_memory_turn(payload: dict) -> tuple[list[dict], str]:
+    """Split payload.messages into (prior turns, the prompt to actually send).
+
+    The arena's persist invocation carries the WHOLE opening context --
+    `[user, assistant, user, assistant, ...]` (runner/tasks.go `buildMemory`
+    sends `messages[:lastUserIndex]`). The prompt is the LAST **user** message;
+    everything before it becomes real Pydantic AI history. A trailing canned
+    assistant line is dropped -- the model's own reply for this turn takes its
+    place in `result.all_messages()`.
+
+    The previous implementation used `_last_user_content()`, i.e. `messages[-1]`
+    REGARDLESS OF ROLE, which for a persist invocation sent the canned ASSISTANT
+    line as the user prompt and silently discarded every earlier turn -- so the
+    fact to remember ("my favorite color is teal", "I have a dog named Pepper")
+    was never persisted at all.
+    """
+    messages = payload.get("messages") or []
+    if not messages:
+        raise ValueError("payload.messages is empty")
+    idx = None
+    for i in range(len(messages) - 1, -1, -1):
+        if (messages[i].get("role") or "user") == "user":
+            idx = i
+            break
+    if idx is None:
+        raise ValueError("mode=memory requires at least one user message in payload.messages")
+    return messages[:idx], messages[idx].get("content", "")
+
+
+def _payload_history(specs: list[dict]) -> list:
+    """Map arena message specs onto Pydantic AI's native ModelRequest/ModelResponse."""
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+    history: list = []
+    for m in specs:
+        content = m.get("content", "")
+        if m.get("role") == "assistant":
+            history.append(ModelResponse(parts=[TextPart(content=content)]))
+        else:
+            history.append(ModelRequest(parts=[UserPromptPart(content=content)]))
+    return history
+
+
+def _prune_history(history: list) -> list:
+    """Bound the native history to the most recent `_MEMORY_MAX_HISTORY_MESSAGES` entries.
+
+    Keeps the tail (the freshest turns) and then drops any leading
+    `ModelResponse` so the replayed list still starts on a request boundary --
+    a history beginning with a bare model response is not a shape Pydantic AI
+    ever produces itself.
+    """
+    from pydantic_ai.messages import ModelResponse
+
+    if len(history) <= _MEMORY_MAX_HISTORY_MESSAGES:
+        return history
+    dropped = len(history) - _MEMORY_MAX_HISTORY_MESSAGES
+    trimmed = history[-_MEMORY_MAX_HISTORY_MESSAGES:]
+    while trimmed and isinstance(trimmed[0], ModelResponse):
+        trimmed.pop(0)
+        dropped += 1
+    log(f"memory: pruned {dropped} oldest message(s), replaying the most recent {len(trimmed)}")
+    return trimmed
+
+
+def _load_prior_history(session_id: str) -> list | None:
+    """Load + validate + prune the persisted history, tolerating an unreadable row."""
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    prior_json = load_history_json(session_id)
+    if not prior_json:
+        return None
+    try:
+        prior = ModelMessagesTypeAdapter.validate_json(prior_json)
+    except Exception as exc:  # noqa: BLE001 - a corrupt row must not fail the turn
+        log(
+            f"memory: stored history for session_id={session_id!r} is not valid Pydantic AI "
+            f"message JSON ({type(exc).__name__}: {exc}) -- discarding it and starting fresh"
+        )
+        return None
+    return _prune_history(prior) or None
+
+
 async def mode_memory(payload: dict) -> dict:
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -329,13 +434,18 @@ async def mode_memory(payload: dict) -> dict:
     session_id = payload.get("session_id")
     if not session_id:
         raise ValueError("mode=memory requires payload.session_id")
-    prompt = _last_user_content(payload)
+    prior_turns, prompt = _split_memory_turn(payload)
     system = payload.get("system") or "You are a helpful assistant with persistent memory across turns."
 
     model, model_name = build_model()
 
-    prior_json = load_history_json(session_id)
-    prior_history = ModelMessagesTypeAdapter.validate_json(prior_json) if prior_json else None
+    # Persisted (cross-process) history first, then any turns this invocation
+    # itself carries ahead of the prompt -- both as native Pydantic AI messages.
+    history = _load_prior_history(session_id) or []
+    if prior_turns:
+        log(f"memory: replaying {len(prior_turns)} in-payload turn(s) ahead of this prompt")
+        history = history + _payload_history(prior_turns)
+    prior_history = history or None
 
     agent = Agent(model, system_prompt=system)
     start = time.monotonic()
@@ -343,7 +453,11 @@ async def mode_memory(payload: dict) -> dict:
     latency_ms = int((time.monotonic() - start) * 1000)
     input_tokens, output_tokens = _usage_tokens(result.usage)
 
-    updated_json = ModelMessagesTypeAdapter.dump_json(result.all_messages())
+    # Persist the PRUNED list, not the raw accumulation: the deterministic
+    # session_id means this same row is re-opened on every arena re-run, so an
+    # unbounded append eventually makes the row (and every recall prompt) grow
+    # without limit.
+    updated_json = ModelMessagesTypeAdapter.dump_json(_prune_history(result.all_messages()))
     save_history_json(session_id, updated_json)
 
     out = _base_result("memory", model_name)

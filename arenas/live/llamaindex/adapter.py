@@ -822,17 +822,26 @@ def run_tools(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
 def run_memory(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
     """Persist chat turns to a REAL on-disk SQLite store (llama_index.core.memory.Memory).
 
-    Each invocation is one process: load history for `session_id` from disk, answer the new
-    user turn with that history in context, persist both turns, exit. Two separate `run.sh`
-    invocations with the same `session_id` therefore share real, on-disk state — not a
-    process-local variable.
+    Each invocation is one process: load history for `session_id` from disk, answer with that
+    history plus ALL of this invocation's new turns in context, persist every new turn, exit.
+    Two separate `run.sh` invocations with the same `session_id` therefore share real, on-disk
+    state — not a process-local variable.
+
+    An invocation may carry MORE than one new turn: the arena's persist invocation sends the
+    whole conversation prefix (SPEC.md / runner `buildMemory`), e.g. for mem-02-pets
+    `[user "I have a dog named Pepper.", assistant ..., user "I also have a cat named Miso.",
+    assistant ...]`. Every one of those messages must be appended to the store, otherwise a
+    fact stated in an EARLIER turn of the same invocation is silently lost and the later
+    recall invocation cannot answer it. (This adapter previously persisted only the LAST user
+    message of the payload, so "Pepper" never reached disk — verified in the on-disk store.)
     """
     from llama_index.core.llms import ChatMessage, MessageRole
     from llama_index.core.memory import Memory
 
-    question = _last_user_message(payload)
-    if not question:
+    new_messages = [m for m in (payload.get("messages") or []) if (m.get("content") or "").strip()]
+    if not any(m.get("role") == "user" for m in new_messages):
         raise RuntimeError("memory mode requires at least one user message")
+    question = _last_user_message(payload)
 
     session_id = payload.get("session_id") or "arena-default"
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
@@ -844,17 +853,27 @@ def run_memory(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
         "told you in earlier turns."
     )
 
+    role_map = {"user": MessageRole.USER, "assistant": MessageRole.ASSISTANT}
+    new_chat_messages = [
+        ChatMessage(role=role_map.get(m.get("role", "user"), MessageRole.USER), content=m.get("content", ""))
+        for m in new_messages
+    ]
+
     async def _run() -> tuple[str, int]:
         memory = Memory.from_defaults(session_id=session_id, token_limit=8000, async_database_uri=db_uri)
         history = await memory.aget()
         messages = (
             [ChatMessage(role=MessageRole.SYSTEM, content=system_prompt)]
             + list(history)
-            + [ChatMessage(role=MessageRole.USER, content=question)]
+            + new_chat_messages
         )
         response = await llm.achat(messages)
         reply_text = response.message.content or ""
-        await memory.aput(ChatMessage(role=MessageRole.USER, content=question))
+        # Persist EVERY new turn this invocation carried (not just the last user one), then
+        # the model's reply — otherwise an earlier fact in a multi-turn persist payload is
+        # dropped and a later recall invocation can never see it.
+        for msg in new_chat_messages:
+            await memory.aput(msg)
         await memory.aput(ChatMessage(role=MessageRole.ASSISTANT, content=reply_text))
         return reply_text, len(history)
 
