@@ -96,3 +96,33 @@ export function msSince(startedAt) {
   const endedAt = process.hrtime.bigint();
   return Number((endedAt - startedAt) / 1000000n);
 }
+
+/**
+ * Render a tool's EXECUTED output as the arena contract's `tool_calls[].result`
+ * — a non-empty JSON STRING.
+ *
+ * The AI SDK names the executed value `toolResults[].output` (see
+ * https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling: "By default, tools
+ * with an `execute` function run automatically as the model calls them"), but the
+ * arena runner types the field as a Go `string` (arenas/live/runner/types.go
+ * `toolCall.Result`) and keys its `exec` metric on it being non-empty
+ * (arenas/live/runner/eval.go `toScoringCalls`: `Executed = TrimSpace(Result) != ""`).
+ * Emitting the raw object under `output` therefore read as "tool never executed".
+ * Same convention as the Go adapters' `encodeToolResult` (arenas/live/genkit-go/tools.go).
+ *
+ * Returns "" for null/undefined so a decided-but-unexecuted call (qa mode's
+ * single-shot capture) still honestly reports exec=false.
+ */
+export function encodeToolResult(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}

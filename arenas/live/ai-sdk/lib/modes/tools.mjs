@@ -10,7 +10,7 @@
 import { generateText, tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { evaluateArithmetic } from '../calculator.mjs';
-import { buildMessages, extractTokenCounts, msSince } from '../output.mjs';
+import { buildMessages, encodeToolResult, extractTokenCounts, msSince } from '../output.mjs';
 
 const MAX_STEPS = 5;
 
@@ -57,12 +57,15 @@ export async function runTools(input, env) {
   const resultsByCallId = new Map(
     (result.toolResults || []).map((r) => [r.toolCallId, r])
   );
+  // The arena contract's EXECUTED-tool signal is `tool_calls[].result`, a
+  // non-empty STRING (arenas/live/runner/types.go `toolCall.Result`); the AI SDK
+  // names the executed value `toolResults[].output`, so encode it here.
   const tool_calls = (result.toolCalls || []).map((call) => ({
     name: call.toolName,
     arguments: call.input !== undefined ? call.input : {},
-    output: resultsByCallId.has(call.toolCallId)
-      ? resultsByCallId.get(call.toolCallId).output
-      : null,
+    result: resultsByCallId.has(call.toolCallId)
+      ? encodeToolResult(resultsByCallId.get(call.toolCallId).output)
+      : '',
   }));
 
   return {

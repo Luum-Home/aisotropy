@@ -68,7 +68,16 @@ export function extractTokenCounts(usage) {
  * Normalize a Mastra generate/stream result's tool calls (shape:
  * `{ type, runId, from, payload: { toolCallId, toolName, args } }`) plus optional
  * matching tool results (`{ payload: { toolCallId, result } }`) into the uniform
- * `tool_calls` contract shape `{ name, arguments, output? }`.
+ * `tool_calls` contract shape `{ name, arguments, result }`.
+ *
+ * `result` is the arena contract's EXECUTED-tool signal and MUST be a non-empty
+ * STRING: the runner types it as a Go `string` (arenas/live/runner/types.go
+ * `toolCall.Result`) and derives `exec` from it being non-empty
+ * (arenas/live/runner/eval.go `toScoringCalls`). Mastra executes `createTool`
+ * tools natively during `agent.generate()` and surfaces the value as an object,
+ * so it is JSON-encoded here. A call with no matching result (qa mode's
+ * single-shot capture, which passes no `toolResults`) keeps `result: ''` so it
+ * honestly reports exec=false.
  */
 export function mapToolCalls(toolCalls, toolResults) {
   const calls = Array.isArray(toolCalls) ? toolCalls : [];
@@ -85,9 +94,9 @@ export function mapToolCalls(toolCalls, toolResults) {
       name: p.toolName !== undefined ? p.toolName : call.toolName,
       arguments: p.args !== undefined ? p.args : call.args !== undefined ? call.args : {},
     };
-    if (resultsByCallId.has(p.toolCallId)) {
-      entry.output = resultsByCallId.get(p.toolCallId);
-    }
+    entry.result = resultsByCallId.has(p.toolCallId)
+      ? encodeToolResult(resultsByCallId.get(p.toolCallId))
+      : '';
     return entry;
   });
 }
@@ -122,4 +131,24 @@ export function lastUserContent(messages) {
 export function msSince(startedAt) {
   const endedAt = process.hrtime.bigint();
   return Number((endedAt - startedAt) / 1000000n);
+}
+
+/**
+ * Render a tool's EXECUTED output as the arena contract's `tool_calls[].result`
+ * — a non-empty JSON STRING. Same convention as the Go adapters'
+ * `encodeToolResult` (arenas/live/genkit-go/tools.go). Returns "" for
+ * null/undefined so an unexecuted call honestly reports exec=false.
+ */
+export function encodeToolResult(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }

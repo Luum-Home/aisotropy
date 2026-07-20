@@ -14,7 +14,7 @@
 import { generateText, tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { evaluateArithmetic } from '../calculator.mjs';
-import { buildMessages, extractTokenCounts, msSince } from '../output.mjs';
+import { buildMessages, encodeToolResult, extractTokenCounts, msSince } from '../output.mjs';
 import { startObservability, spanDurationMs, stopObservability } from '../otel.mjs';
 
 const MAX_STEPS = 5;
@@ -101,7 +101,9 @@ export async function runObservability(input, env) {
   const tool_calls = (result.toolCalls || []).map((call) => ({
     name: call.toolName,
     arguments: call.input !== undefined ? call.input : {},
-    output: resultsByCallId.has(call.toolCallId) ? resultsByCallId.get(call.toolCallId).output : null,
+    result: resultsByCallId.has(call.toolCallId)
+      ? encodeToolResult(resultsByCallId.get(call.toolCallId).output)
+      : '',
   }));
 
   console.error(`PROGRESS: observability -- span_count=${spans.length} names=${JSON.stringify(span_names)}`);
