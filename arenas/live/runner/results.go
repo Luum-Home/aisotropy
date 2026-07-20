@@ -236,6 +236,9 @@ func writeQualityTable(b *strings.Builder, rep reportData, aggs map[string]*mode
 	b.WriteString("retrieval hit@1 on the gold doc + trap-refusal; tools: real tool execution + numeric\n")
 	b.WriteString("correctness; structured: schema-valid JSON; stream: mean TTFT). Latency is end-to-end\n")
 	b.WriteString("wall-clock (native, correctness pass) including the real model round-trip(s).\n\n")
+
+	writeRunSummary(b, rep.Records)
+
 	if rep.Concurrency > 1 {
 		fmt.Fprintf(b, "_Ran under `-concurrency %d`: up to %d frameworks' correctness/quality sweeps executed\n", rep.Concurrency, rep.Concurrency)
 		b.WriteString("concurrently, so per-item latency in this pass reflects mild host contention — a\n")
@@ -268,18 +271,69 @@ func writeQualityTable(b *strings.Builder, rep reportData, aggs map[string]*mode
 		}
 	}
 	b.WriteString("\n")
+
+	writeQualityLegend(b)
 }
 
-// detScoreCell renders the primary deterministic pass/total cell, e.g. "4/5 ✓".
+// writeRunSummary renders the run-level aggregate (total / scored / errored)
+// near the TOP of the correctness section, before the 48-row table, so a
+// reader sees the scale of exclusion before reading individual cells. See
+// writeQualityLegend for the per-cell denominator explanation, and record's
+// failed() for what "errored" means (adapter crash / timeout / bad JSON /
+// retry exhaustion — an infrastructure signal, not a framework-quality one).
+func writeRunSummary(b *strings.Builder, records []record) {
+	total := len(records)
+	errored := 0
+	for _, r := range records {
+		if r.failed() {
+			errored++
+		}
+	}
+	scored := total - errored
+	fmt.Fprintf(b, "**Run summary (this pass):** %d total runs — %d scored, %d errored", total, scored, errored)
+	if total > 0 && errored > 0 {
+		fmt.Fprintf(b, " (%.1f%% of runs never produced a scoreable answer)", 100*float64(errored)/float64(total))
+	}
+	b.WriteString(".\n\n")
+}
+
+// writeQualityLegend explains the score cell's denominator and the meaning of
+// a trailing "(N err)" marker — see the honesty-defect fix this closes:
+// errored runs (adapter crash / timeout / retry exhaustion) were previously
+// silently dropped from the denominator, so e.g. "3/3 ✓" could mean 3 of 6
+// invocations never ran. The error count now renders INSIDE the score cell,
+// not only in the far-right "Err" column, so it cannot be missed at a glance.
+func writeQualityLegend(b *strings.Builder) {
+	b.WriteString("> **Denominator legend.** `pass/total` in the Deterministic score column counts only\n")
+	b.WriteString("> **scored** runs — invocations that completed and were graded by\n")
+	b.WriteString("> `arenas/live/runner/scoring`. A trailing `(N err)` marks runs that were EXCLUDED\n")
+	b.WriteString("> from that denominator because they never produced a scoreable answer (adapter\n")
+	b.WriteString("> crash, provider timeout, or retry exhaustion — see the `Runs`/`Err` columns for the\n")
+	b.WriteString("> raw counts). An errored run is an **infrastructure** signal, not a framework-quality\n")
+	b.WriteString("> one — it is never counted as a scoring failure and never silently dropped either.\n")
+	b.WriteString("> Read `3/3 ✓ (3 err)` as: \"the 3 runs that completed all scored a perfect pass; 3\n")
+	b.WriteString("> more runs of this cell never got that far.\" A `✓`/`✗` glyph always reflects only the\n")
+	b.WriteString("> scored subset — check the `(N err)` marker before reading a `✓` as full coverage.\n\n")
+}
+
+// detScoreCell renders the primary deterministic pass/total cell, e.g. "4/5 ✓",
+// with a trailing "(N err)" when this (framework, mode) cell also had runs
+// that never reached scoring (see writeQualityLegend). The error count is
+// rendered INSIDE the score cell — not only in the table's far-right "Err"
+// column — so a reader cannot mistake a perfect score for full coverage.
 func detScoreCell(a *modeAgg) string {
-	if a.detN == 0 {
-		return sigUnknown
+	base := sigUnknown
+	if a.detN > 0 {
+		glyph := sigFail
+		if a.detPassN == a.detN {
+			glyph = sigPass
+		}
+		base = fmt.Sprintf("%d/%d %s", a.detPassN, a.detN, glyph)
 	}
-	glyph := sigFail
-	if a.detPassN == a.detN {
-		glyph = sigPass
+	if a.errors > 0 {
+		return fmt.Sprintf("%s (%d err)", base, a.errors)
 	}
-	return fmt.Sprintf("%d/%d %s", a.detPassN, a.detN, glyph)
+	return base
 }
 
 // writeJudgeSection renders the SECONDARY, opt-in LLM-as-judge table. Only
