@@ -1,0 +1,2 @@
+# Skylark Line — Meridian Extension Proposal (not built)
+A proposed Meridian extension would add 19 stations across a further 121 kilometres to the Skylark Line, bringing the proposed total to 66 stations across 433 kilometres and extending end-to-end travel time to 104 minutes. The proposal has not been funded and no track has been laid. The Skylark Line as operated today is unchanged by this proposal.

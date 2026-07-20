@@ -51,15 +51,34 @@ func scoreRecord(rec *record, it workItem, judge *judgeClient, budget *callCount
 // LLM-free scorer. This is the single place the runner maps its own
 // record/workItem shapes onto the scoring package's plain input types; the
 // scoring package itself has no knowledge of the runner's types.
+// The Kind vocabulary is deliberately UNCHANGED by the hard tier: harder items
+// are discriminated by the workItem's own fields (an answer key on a rag item,
+// an empty ExpectedNumber on a tools item, a declared schema on a structured
+// item), not by new Kind strings. RESULTS.md's per-kind rendering therefore
+// needs no change to keep aggregating the new items correctly.
 func scoreDeterministic(rec *record, it workItem) scoring.Score {
 	switch it.Kind {
 	case "rag_grounded":
+		// MULTI-HOP when the question carries an answer key: hit@1 is the wrong
+		// signal for a question no single document answers (see
+		// scoring.ScoreRAGMultiHop). Single-hop questions keep hit@1 exactly.
+		if len(it.Answer) > 0 {
+			return scoring.ScoreRAGMultiHop(allDocIDs(rec.Out.Retrieved), it.SupportingDocs, rec.Out.Reply, it.Answer)
+		}
 		return scoring.ScoreRAG(topDocID(rec.Out.Retrieved), it.SupportingDocs, rec.Out.Reply, false)
 	case "rag_trap":
 		return scoring.ScoreRAG("", nil, rec.Out.Reply, true)
 	case "tools":
+		// ABSTAIN item: no expected number, an answer key instead — the correct
+		// behaviour is to NOT call the tool (see tasks.go arithmeticTasks).
+		if it.ExpectedNumber == "" && len(it.Answer) > 0 {
+			return scoring.ScoreToolsAbstain(toScoringCalls(rec.Out.ToolCalls), rec.Out.Reply, it.Answer)
+		}
 		return scoring.ScoreToolsNumeric(toScoringCalls(rec.Out.ToolCalls), rec.Out.Reply, it.ExpectedNumber)
 	case "structured":
+		if schema := taskSchema(it); len(schema) > 0 {
+			return scoring.ScoreStructuredWithSchema(rec.Out.Structured, schema)
+		}
 		return scoring.ScoreStructured(rec.Out.Structured)
 	case "stream":
 		return scoring.ScoreStream(rec.Out.TTFTMs)
@@ -87,6 +106,39 @@ func topDocID(docs []retrievedDoc) string {
 		return ""
 	}
 	return docs[0].DocID
+}
+
+// allDocIDs returns every retrieved doc ID in rank order — the recall@k input
+// a multi-hop question needs (all hops must be present in context, whatever
+// their rank).
+func allDocIDs(docs []retrievedDoc) []string {
+	out := make([]string, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, d.DocID)
+	}
+	return out
+}
+
+// strictStructuredEnabled reports whether the operator opted into STRICT,
+// schema-conformant structured scoring (and the matching schema delivery in
+// tasks.go). Default OFF: no adapter reads adapterInput.Schema today, so
+// enabling it before SPEC.md requires that would fail all eight frameworks for
+// a contract gap rather than a capability difference — see structuredSchemas.
+//
+// Read here (the runner), never inside the scoring package: the scoring
+// package's purity contract forbids environment/wall-clock/network reads, and
+// scripts/arena-determinism-guard.sh enforces it.
+func strictStructuredEnabled() bool { return os.Getenv("ARENA_STRICT_STRUCTURED") == "1" }
+
+// taskSchema returns the strict JSON Schema a structured item must conform to,
+// or nil when the item is not schema-scored. Sourced from the invocation the
+// runner actually sent, so the adapter and the scorer can never disagree about
+// which schema was in force.
+func taskSchema(it workItem) []byte {
+	if !strictStructuredEnabled() || len(it.Invocations) == 0 {
+		return nil
+	}
+	return it.Invocations[0].Schema
 }
 
 func judgeInto(rec *record, it workItem, judge *judgeClient, budget *callCounter) {

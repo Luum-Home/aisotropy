@@ -162,6 +162,75 @@ func ScoreRAG(topDocID string, goldDocs []string, reply string, trap bool) Score
 	return Score{Value: 0, Pass: false, Detail: "miss@1: top doc " + top + " is not a gold doc"}
 }
 
+// ScoreRAGMultiHop deterministically scores a MULTI-HOP grounded RAG turn — a
+// question whose answer cannot be produced from any single corpus document, so
+// hit@1 (ScoreRAG) is structurally the wrong signal: a framework can hit@1 on
+// ONE of the two gold docs and still be unable to answer, and a lexical
+// retriever that happens to rank one gold doc first scores identically to a
+// retriever that actually surfaced BOTH. This scorer therefore checks two
+// things at once:
+//
+//  1. RECALL over the whole retrieved set: EVERY gold doc must appear somewhere
+//     in retrievedDocIDs (order-independent — a multi-hop answer needs all the
+//     hops present in context, not one of them ranked first).
+//  2. ANSWER completeness: the reply must contain a COMPLETE answer key, using
+//     the identical answer-key semantics as ScoreQA (a multi-token key such as
+//     "T7 512" requires ALL its tokens; multiple keys are alternatives).
+//
+// Value is the mean of the two sub-signals (so a partial result is visible in
+// the number rather than collapsing to 0); Pass requires BOTH to be perfect.
+// Pure: string normalization and set membership only.
+func ScoreRAGMultiHop(retrievedDocIDs, goldDocs []string, reply string, answers []string) Score {
+	if len(goldDocs) == 0 {
+		return Score{Value: 0, Pass: false, Detail: "no gold docs to score multi-hop retrieval against"}
+	}
+	have := map[string]bool{}
+	for _, d := range retrievedDocIDs {
+		have[strings.ToLower(strings.TrimSpace(d))] = true
+	}
+	hit := 0
+	var missing []string
+	for _, g := range goldDocs {
+		if have[strings.ToLower(strings.TrimSpace(g))] {
+			hit++
+		} else {
+			missing = append(missing, g)
+		}
+	}
+	sort.Strings(missing)
+	recall := float64(hit) / float64(len(goldDocs))
+
+	ans := 0.0
+	bestKey := ""
+	if len(answers) > 0 {
+		replyToks := tokenize(normalize(reply))
+		for _, a := range answers {
+			at := tokenize(normalize(a))
+			if len(at) == 0 {
+				continue
+			}
+			if r := containmentRatio(at, replyToks); r > ans {
+				ans, bestKey = r, a
+			}
+		}
+	}
+	detail := fmt.Sprintf("multi-hop recall %d/%d gold docs", hit, len(goldDocs))
+	if len(missing) > 0 {
+		detail += " (missing: " + strings.Join(missing, ",") + ")"
+	}
+	if len(answers) == 0 {
+		// No answer key supplied: degrade to a pure retrieval-recall signal
+		// rather than silently failing the item.
+		return Score{Value: recall, Pass: recall >= 1.0, Detail: detail + "; no answer key supplied"}
+	}
+	detail += fmt.Sprintf("; answer-key containment %.2f (best key %q)", ans, bestKey)
+	return Score{
+		Value:  (recall + ans) / 2,
+		Pass:   recall >= 1.0 && ans >= 1.0,
+		Detail: detail,
+	}
+}
+
 // ---- scoreTools ---------------------------------------------------------
 
 // ToolCall is the scoring package's own minimal, dependency-free view of one
@@ -266,6 +335,56 @@ func ScoreToolsNumeric(calls []ToolCall, reply, expectedNumber string) Score {
 	}
 }
 
+// ScoreToolsAbstain deterministically scores a NEGATIVE tool-use task: a
+// question offered while a calculator tool is registered whose correct handling
+// is to NOT call the tool at all and answer directly (e.g. "What is the capital
+// of Australia?" with an arithmetic tool available).
+//
+// WHY THIS EXISTS: every other tools-mode signal rewards calling the tool, so a
+// framework hardwired to always invoke its tool scores identically to one that
+// exercises judgment. This is the only item where over-eager tool use is the
+// failure. PASS requires BOTH: (1) no tool call was emitted at all, and (2) the
+// reply contains a COMPLETE answer key (identical semantics to ScoreQA) — so a
+// framework cannot pass by abstaining AND being wrong. Value is the mean of the
+// two sub-signals so a partial result stays visible.
+func ScoreToolsAbstain(calls []ToolCall, reply string, answers []string) Score {
+	if len(answers) == 0 {
+		return Score{Value: 0, Pass: false, Detail: "no answer key to score an abstain task against"}
+	}
+	abstained := len(calls) == 0
+	var called []string
+	for _, c := range calls {
+		called = append(called, c.Name)
+	}
+	sort.Strings(called)
+
+	best := 0.0
+	bestKey := ""
+	replyToks := tokenize(normalize(reply))
+	for _, a := range answers {
+		at := tokenize(normalize(a))
+		if len(at) == 0 {
+			continue
+		}
+		if r := containmentRatio(at, replyToks); r > best {
+			best, bestKey = r, a
+		}
+	}
+	abstainVal := 0.0
+	detail := "tool correctly NOT called"
+	if !abstained {
+		detail = "tool wrongly called: " + strings.Join(called, ",")
+	} else {
+		abstainVal = 1.0
+	}
+	detail += fmt.Sprintf("; answer-key containment %.2f (best key %q)", best, bestKey)
+	return Score{
+		Value:  (abstainVal + best) / 2,
+		Pass:   abstained && best >= 1.0,
+		Detail: detail,
+	}
+}
+
 // numberPresent reports whether the expected number appears in the reply,
 // after stripping thousands separators from both sides.
 func numberPresent(reply, expected string) bool {
@@ -301,12 +420,28 @@ func ScoreStructured(structured any) Score {
 }
 
 // ScoreStructuredWithSchema is ScoreStructured plus a minimal, dependency-free
-// structural validation against a JSON Schema fragment (supports "type",
-// "required", and one level of "properties"/"items" type-checking — enough
-// to catch a missing required field or a wrong top-level type without
-// pulling in a full external JSON Schema validator). Reserved for when a
-// per-task schema is threaded into the scoring call (arenas/live/tasks
-// currently carries none); ScoreStructured is what the runner calls today.
+// structural validation against a JSON Schema fragment. Supported keywords —
+// deliberately the subset that makes "valid" mean "conforms to THIS schema"
+// rather than the far weaker "parses as JSON":
+//
+//   - "type"                  — object/array/string/number/integer/boolean/null
+//   - "required"              — named fields must be present
+//   - "properties"            — RECURSIVELY validated (nested objects included)
+//   - "items"                 — every array element validated against one schema
+//   - "enum"                  — the value must be one of a closed set
+//   - "minimum" / "maximum"   — inclusive numeric range
+//
+// Everything else in a supplied schema is ignored rather than failed, so an
+// unrecognised keyword can never manufacture a false failure. Output is sorted,
+// so the Detail string is byte-identical for identical inputs (the purity
+// contract). Recursion is depth-bounded (maxSchemaDepth) so a pathological or
+// self-referential schema fragment cannot make this function non-terminating —
+// a pure function must also be a TOTAL one.
+//
+// The runner calls this in place of ScoreStructured only for suite tasks that
+// declare a schema AND only when the operator opts in — see
+// arenas/live/runner/tasks.go (structuredSchemas) and eval.go
+// (ARENA_STRICT_STRUCTURED), which document why it is not on by default.
 func ScoreStructuredWithSchema(structured any, schema []byte) Score {
 	base := ScoreStructured(structured)
 	if !base.Pass || len(strings.TrimSpace(string(schema))) == 0 {
@@ -321,29 +456,67 @@ func ScoreStructuredWithSchema(structured any, schema []byte) Score {
 	if err := json.Unmarshal(b, &val); err != nil {
 		return Score{Value: 0, Pass: false, Detail: "structured value round-trip failed: " + err.Error()}
 	}
-	if problems := validateAgainstSchema(val, sch); len(problems) > 0 {
+	if problems := validateAgainstSchema(val, sch, "", 0); len(problems) > 0 {
 		return Score{Value: 0, Pass: false, Detail: "schema violations: " + strings.Join(problems, "; ")}
 	}
 	return Score{Value: 1, Pass: true, Detail: "valid JSON object/array, schema-conformant"}
 }
 
-func validateAgainstSchema(val any, schema map[string]any) []string {
+// maxSchemaDepth bounds validateAgainstSchema's recursion. A JSON Schema
+// fragment supplied by a task file is data, and data can be malformed or
+// adversarially deep; a pure scorer must terminate on every input, so beyond
+// this depth validation simply stops (reporting nothing) rather than
+// recursing further. 8 is far deeper than any arena schema.
+const maxSchemaDepth = 8
+
+// validateAgainstSchema returns the sorted list of schema violations for val.
+// `path` is the dotted field path used in messages ("" at the root), `depth`
+// is the current recursion depth.
+func validateAgainstSchema(val any, schema map[string]any, path string, depth int) []string {
+	if depth > maxSchemaDepth {
+		return nil
+	}
+	label := "value"
+	if path != "" {
+		label = "field " + path
+	}
 	var problems []string
 	if wantType, ok := schema["type"].(string); ok {
 		if !jsonTypeMatches(val, wantType) {
-			problems = append(problems, fmt.Sprintf("type: want %q, got %s", wantType, jsonTypeName(val)))
+			problems = append(problems, fmt.Sprintf("%s: want type %q, got %s", label, wantType, jsonTypeName(val)))
+			// A wrong type makes every nested check meaningless noise.
+			sort.Strings(problems)
+			return problems
+		}
+	}
+	if enum, ok := schema["enum"].([]any); ok && len(enum) > 0 {
+		if !enumContains(enum, val) {
+			problems = append(problems, fmt.Sprintf("%s: value %s is not one of the %d allowed enum values", label, formatScalar(val), len(enum)))
+		}
+	}
+	if num, isNum := val.(float64); isNum {
+		if min, ok := toFloat(schema["minimum"]); ok && num < min {
+			problems = append(problems, fmt.Sprintf("%s: %s is below minimum %s", label, formatFloat(num), formatFloat(min)))
+		}
+		if max, ok := toFloat(schema["maximum"]); ok && num > max {
+			problems = append(problems, fmt.Sprintf("%s: %s is above maximum %s", label, formatFloat(num), formatFloat(max)))
 		}
 	}
 	obj, isObj := val.(map[string]any)
 	if req, ok := schema["required"].([]any); ok && isObj {
+		var missing []string
 		for _, r := range req {
 			key, _ := r.(string)
 			if key == "" {
 				continue
 			}
 			if _, present := obj[key]; !present {
-				problems = append(problems, "missing required field "+key)
+				missing = append(missing, key)
 			}
+		}
+		sort.Strings(missing)
+		for _, key := range missing {
+			problems = append(problems, "missing required field "+joinPath(path, key))
 		}
 	}
 	if props, ok := schema["properties"].(map[string]any); ok && isObj {
@@ -356,13 +529,61 @@ func validateAgainstSchema(val any, schema map[string]any) []string {
 			if !present {
 				continue // absence is a "required" concern, handled above
 			}
-			if wantType, ok := propSchema["type"].(string); ok && !jsonTypeMatches(fieldVal, wantType) {
-				problems = append(problems, fmt.Sprintf("field %s: want type %q, got %s", key, wantType, jsonTypeName(fieldVal)))
+			problems = append(problems, validateAgainstSchema(fieldVal, propSchema, joinPath(path, key), depth+1)...)
+		}
+	}
+	if itemSchema, ok := schema["items"].(map[string]any); ok {
+		if arr, isArr := val.([]any); isArr {
+			for i, elem := range arr {
+				problems = append(problems, validateAgainstSchema(elem, itemSchema, fmt.Sprintf("%s[%d]", path, i), depth+1)...)
 			}
 		}
 	}
 	sort.Strings(problems)
 	return problems
+}
+
+func joinPath(path, key string) string {
+	if path == "" {
+		return key
+	}
+	return path + "." + key
+}
+
+// enumContains reports whether val equals one of the enum members. Scalars are
+// compared by their canonical JSON form so 5 and 5.0 (both float64 after a
+// round-trip) match, and strings compare exactly (JSON Schema enums are
+// case-SENSITIVE — lowering them would silently widen the closed set).
+func enumContains(enum []any, val any) bool {
+	want := formatScalar(val)
+	for _, e := range enum {
+		if formatScalar(e) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// formatScalar renders a JSON scalar deterministically for comparison and for
+// the Detail string. Non-scalars render as their type name (an enum of objects
+// is not something the arena's schemas use).
+func formatScalar(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return strconv.FormatBool(t)
+	case float64:
+		return formatFloat(t)
+	case string:
+		return strconv.Quote(t)
+	default:
+		return jsonTypeName(v)
+	}
+}
+
+func formatFloat(f float64) string {
+	return strconv.FormatFloat(f, 'g', -1, 64)
 }
 
 func jsonTypeName(v any) string {

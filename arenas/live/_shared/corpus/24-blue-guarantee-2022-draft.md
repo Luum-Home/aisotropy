@@ -1,0 +1,2 @@
+# Blue Guarantee — 2022 Draft Revision (WITHDRAWN, never took effect)
+This document is the withdrawn 2022 draft revision of the Blue Guarantee refund policy. The draft proposed that any passenger whose trainset arrived more than 25 minutes late would receive an automatic refund paid by cheque within 30 days, replacing the automatic HaloPay balance refund. The Headway Review Board rejected the draft in 2022 and it never took effect. The Blue Guarantee actually in force is unchanged and is described in the Blue Guarantee refund policy document.

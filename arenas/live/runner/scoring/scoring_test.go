@@ -1,6 +1,7 @@
 package scoring
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -388,6 +389,43 @@ func TestDeterministic_Reproducible(t *testing.T) {
 		}},
 		{"stream-measured", func() Score { return ScoreStream(842) }},
 		{"stream-zero", func() Score { return ScoreStream(0) }},
+
+		// ---- hard tier (discriminating suite) ---------------------------
+		{"rag-multihop-pass", func() Score {
+			return ScoreRAGMultiHop(
+				[]string{"21-maintenance-window.md", "09-quiet-car.md", "05-vireo-t7.md", "02-skylark-line.md"},
+				[]string{"21-maintenance-window.md", "05-vireo-t7.md"},
+				"The nightly track-sweep is run by an unoccupied Vireo T7, which seats 512 passengers in service.",
+				[]string{"T7 512"})
+		}},
+		{"rag-multihop-one-hop-missing", func() Score {
+			return ScoreRAGMultiHop(
+				[]string{"21-maintenance-window.md", "09-quiet-car.md"},
+				[]string{"21-maintenance-window.md", "05-vireo-t7.md"},
+				"A Vireo T7 runs the sweep.",
+				[]string{"T7 512"})
+		}},
+		{"rag-multihop-no-key", func() Score {
+			return ScoreRAGMultiHop([]string{"a.md"}, []string{"a.md"}, "x", nil)
+		}},
+		{"tools-abstain-pass", func() Score {
+			return ScoreToolsAbstain(nil, "The capital city of Australia is Canberra.", []string{"Canberra"})
+		}},
+		{"tools-abstain-overeager", func() Score {
+			calls := []ToolCall{{Name: "calculate", Arguments: map[string]any{"expression": "1+1"}, Executed: true}}
+			return ScoreToolsAbstain(calls, "Canberra.", []string{"Canberra"})
+		}},
+		{"structured-schema-strict-pass", func() Score {
+			return ScoreStructuredWithSchema(strictFixtureValue(), []byte(strictFixtureSchema))
+		}},
+		{"structured-schema-strict-violations", func() Score {
+			bad := strictFixtureValue()
+			bad["confidence"] = float64(1.5)             // above maximum
+			bad["category"] = "sportsball"               // outside enum
+			bad["meta"] = map[string]any{"unrelated": 1} // nested required missing
+			delete(bad, "sources")                       // required missing
+			return ScoreStructuredWithSchema(bad, []byte(strictFixtureSchema))
+		}},
 	}
 
 	// Establish the baseline on iteration 0, then assert every subsequent
@@ -407,5 +445,173 @@ func TestDeterministic_Reproducible(t *testing.T) {
 				t.Fatalf("non-deterministic score for fixture %q at iteration %d:\n  want %+v\n  got  %+v", f.name, i, want, got)
 			}
 		}
+	}
+}
+
+// ---- hard-tier scorers ----------------------------------------------------
+//
+// These cover the discriminating suite added alongside the original (saturated)
+// easy tier: multi-hop RAG recall, the negative "do not call the tool" item,
+// and strict JSON-Schema conformance (enum / numeric range / nested required).
+
+// strictFixtureSchema mirrors tasks.go strictAnswerSchema — kept as its own
+// literal so a change to the runner's schema shows up here as a deliberate
+// test edit rather than silently altering a determinism fixture.
+const strictFixtureSchema = `{
+  "type": "object",
+  "required": ["answer", "confidence", "category", "sources", "meta"],
+  "properties": {
+    "answer":     {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "category":   {"type": "string", "enum": ["geography","chemistry","physics","history","biology","astronomy","other"]},
+    "sources":    {"type": "array", "items": {"type": "string"}},
+    "meta": {
+      "type": "object",
+      "required": ["reasoning_steps"],
+      "properties": {"reasoning_steps": {"type": "integer", "minimum": 1, "maximum": 10}}
+    }
+  }
+}`
+
+func strictFixtureValue() map[string]any {
+	return map[string]any{
+		"answer":     "Canberra",
+		"confidence": float64(0.9),
+		"category":   "geography",
+		"sources":    []any{"general knowledge"},
+		"meta":       map[string]any{"reasoning_steps": float64(2)},
+	}
+}
+
+func TestScoreRAGMultiHop(t *testing.T) {
+	gold := []string{"21-maintenance-window.md", "05-vireo-t7.md"}
+	keys := []string{"T7 512"}
+
+	// Both hops retrieved (rank irrelevant) + complete answer => PASS.
+	got := ScoreRAGMultiHop([]string{"09-quiet-car.md", "05-vireo-t7.md", "21-maintenance-window.md"}, gold,
+		"An unoccupied Vireo T7 does the sweep; it seats 512 passengers.", keys)
+	if !got.Pass || got.Value != 1 {
+		t.Fatalf("both hops + complete answer should pass with 1.0, got %+v", got)
+	}
+
+	// hit@1 on ONE gold doc is exactly the case the old scorer over-credited.
+	got = ScoreRAGMultiHop([]string{"21-maintenance-window.md", "09-quiet-car.md"}, gold,
+		"An unoccupied Vireo T7 does the sweep; it seats 512 passengers.", keys)
+	if got.Pass {
+		t.Fatalf("missing a gold doc must NOT pass, got %+v", got)
+	}
+	if got.Value != 0.75 { // recall 0.5, answer 1.0
+		t.Fatalf("want partial value 0.75, got %v (%s)", got.Value, got.Detail)
+	}
+
+	// Both hops retrieved but the answer is incomplete (one fact only).
+	got = ScoreRAGMultiHop([]string{"21-maintenance-window.md", "05-vireo-t7.md"}, gold,
+		"An unoccupied Vireo T7 does the sweep.", keys)
+	if got.Pass {
+		t.Fatalf("incomplete answer must NOT pass, got %+v", got)
+	}
+
+	// No gold docs declared is a task-authoring error, not a framework failure.
+	if got := ScoreRAGMultiHop([]string{"a.md"}, nil, "x", keys); got.Pass {
+		t.Fatalf("no gold docs must not pass, got %+v", got)
+	}
+
+	// Doc ID comparison is case/whitespace-insensitive, as in ScoreRAG.
+	got = ScoreRAGMultiHop([]string{" 21-Maintenance-Window.MD ", "05-VIREO-T7.md"}, gold,
+		"Vireo T7, 512 seats.", keys)
+	if !got.Pass {
+		t.Fatalf("doc IDs should compare case/space-insensitively, got %+v", got)
+	}
+}
+
+func TestScoreToolsAbstain(t *testing.T) {
+	keys := []string{"Canberra"}
+
+	if got := ScoreToolsAbstain(nil, "The capital of Australia is Canberra.", keys); !got.Pass || got.Value != 1 {
+		t.Fatalf("no call + right answer should pass with 1.0, got %+v", got)
+	}
+
+	// Over-eager tool use: right answer, wrong behaviour.
+	calls := []ToolCall{{Name: "calculate", Executed: true}}
+	got := ScoreToolsAbstain(calls, "Canberra.", keys)
+	if got.Pass {
+		t.Fatalf("calling the tool on a non-arithmetic question must fail, got %+v", got)
+	}
+	if got.Value != 0.5 {
+		t.Fatalf("want 0.5 (answer right, abstain wrong), got %v", got.Value)
+	}
+
+	// Abstaining and being wrong must not pass either.
+	if got := ScoreToolsAbstain(nil, "Sydney.", keys); got.Pass {
+		t.Fatalf("abstain + wrong answer must fail, got %+v", got)
+	}
+
+	if got := ScoreToolsAbstain(nil, "Canberra", nil); got.Pass {
+		t.Fatalf("no answer key must not pass, got %+v", got)
+	}
+}
+
+func TestScoreStructuredWithSchema_Strict(t *testing.T) {
+	schema := []byte(strictFixtureSchema)
+
+	if got := ScoreStructuredWithSchema(strictFixtureValue(), schema); !got.Pass {
+		t.Fatalf("conformant value should pass, got %+v", got)
+	}
+
+	// A bare "valid JSON object" — what the pre-hard-tier scorer accepted from
+	// every framework — must now FAIL. This is the saturation fix.
+	if got := ScoreStructuredWithSchema(map[string]any{"note": "hello"}, schema); got.Pass {
+		t.Fatalf("a JSON object that ignores the schema must fail, got %+v", got)
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(m map[string]any)
+		want   string // substring expected in Detail
+	}{
+		{"enum", func(m map[string]any) { m["category"] = "sportsball" }, "enum"},
+		{"range-high", func(m map[string]any) { m["confidence"] = float64(1.5) }, "above maximum"},
+		{"range-low", func(m map[string]any) { m["confidence"] = float64(-0.1) }, "below minimum"},
+		{"required", func(m map[string]any) { delete(m, "sources") }, "missing required field sources"},
+		{"nested-required", func(m map[string]any) { m["meta"] = map[string]any{} }, "missing required field meta.reasoning_steps"},
+		{"nested-range", func(m map[string]any) { m["meta"] = map[string]any{"reasoning_steps": float64(99)} }, "field meta.reasoning_steps"},
+		{"wrong-type", func(m map[string]any) { m["answer"] = float64(3) }, `field answer: want type "string"`},
+		{"array-item-type", func(m map[string]any) { m["sources"] = []any{"ok", float64(2)} }, "sources[1]"},
+		{"integer-not-float", func(m map[string]any) { m["meta"] = map[string]any{"reasoning_steps": 2.5} }, `want type "integer"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			v := strictFixtureValue()
+			c.mutate(v)
+			got := ScoreStructuredWithSchema(v, schema)
+			if got.Pass {
+				t.Fatalf("violation %q should fail, got %+v", c.name, got)
+			}
+			if !strings.Contains(got.Detail, c.want) {
+				t.Fatalf("violation %q: want Detail containing %q, got %q", c.name, c.want, got.Detail)
+			}
+		})
+	}
+}
+
+// TestSchemaValidation_Terminates proves the depth bound: a self-referential
+// schema (legal JSON, pathological semantics) must not hang the pure scorer.
+func TestSchemaValidation_Terminates(t *testing.T) {
+	// A deeply nested schema and a deeply nested value.
+	schema := `{"type":"object","properties":{"n":`
+	value := map[string]any{}
+	cur := value
+	for i := 0; i < 20; i++ {
+		schema += `{"type":"object","properties":{"n":`
+		next := map[string]any{}
+		cur["n"] = next
+		cur = next
+	}
+	schema += `{"type":"string"}`
+	for i := 0; i < 21; i++ {
+		schema += `}}`
+	}
+	if got := ScoreStructuredWithSchema(value, []byte(schema)); got.Detail == "" {
+		t.Fatalf("expected a scored result, got %+v", got)
 	}
 }

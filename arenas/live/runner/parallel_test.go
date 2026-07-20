@@ -94,9 +94,13 @@ func TestRunCorrectnessPass_ConcurrentNoRace(t *testing.T) {
 	records := runCorrectnessPass(frameworks, modes, tasks, nil, 0, judge, budget, concurrency, 0)
 
 	// qa: 3 items * (1 runWorkItem call + 1 judge call) = 6 calls, 3 records.
-	// tools: fixed 3-item arithmeticTasks * 1 runWorkItem call = 3 calls, 3 records.
-	const wantRecordsPerFW = 6
-	const wantCallsPerFW = 9
+	// tools: the built-in arithmeticTasks set * 1 runWorkItem call each.
+	// Derived from len(arithmeticTasks) rather than hardcoded, so growing the
+	// tools task set (the hard tier) does not break a parallelism test that is
+	// about ordering and budget accounting, not about task counts.
+	nTools := len(arithmeticTasks)
+	wantRecordsPerFW := 3 + nTools
+	wantCallsPerFW := 3 + 3 + nTools
 
 	if got, want := len(records), numFrameworks*wantRecordsPerFW; got != want {
 		t.Fatalf("len(records) = %d, want %d", got, want)
@@ -137,13 +141,15 @@ func TestRunCorrectnessPass_ConcurrencyOneIsSequential(t *testing.T) {
 	// mirroring a `-skip-judge` sequential run.
 	records := runCorrectnessPass(frameworks, modes, tasks, nil, 0, nil, budget, 1, 0)
 
-	wantOrder := []string{
-		"alpha/qa/qa-0", "alpha/qa/qa-1",
-		"alpha/tools/tool-mul", "alpha/tools/tool-expr", "alpha/tools/tool-add",
-		"beta/qa/qa-0", "beta/qa/qa-1",
-		"beta/tools/tool-mul", "beta/tools/tool-expr", "beta/tools/tool-add",
-		"gamma/qa/qa-0", "gamma/qa/qa-1",
-		"gamma/tools/tool-mul", "gamma/tools/tool-expr", "gamma/tools/tool-add",
+	// Built from arithmeticTasks so the hard-tier tools additions extend the
+	// expected order automatically — the property under test is the ORDER
+	// (framework-major, then mode, then task), not the task count.
+	var wantOrder []string
+	for _, fw := range []string{"alpha", "beta", "gamma"} {
+		wantOrder = append(wantOrder, fw+"/qa/qa-0", fw+"/qa/qa-1")
+		for _, a := range arithmeticTasks {
+			wantOrder = append(wantOrder, fw+"/tools/"+a.id)
+		}
 	}
 	if len(records) != len(wantOrder) {
 		t.Fatalf("len(records) = %d, want %d", len(records), len(wantOrder))
@@ -156,8 +162,8 @@ func TestRunCorrectnessPass_ConcurrencyOneIsSequential(t *testing.T) {
 	}
 
 	// qa: 2 items * 1 call (no judge, judge=nil short-circuits) = 2.
-	// tools: 3 items * 1 call = 3. Per framework = 5. * 3 frameworks = 15.
-	if got, want := budget.total(), 15; got != want {
+	// tools: len(arithmeticTasks) items * 1 call. Per framework = 2 + N.
+	if got, want := budget.total(), 3*(2+len(arithmeticTasks)); got != want {
 		t.Fatalf("budget.total() = %d, want %d", got, want)
 	}
 }
