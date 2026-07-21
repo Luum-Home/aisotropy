@@ -31,6 +31,44 @@ MODULE="$(go list -m 2>/dev/null | head -1)"
 [ -n "$MODULE" ] || MODULE="github.com/Luum-Home/aisotropy"
 IMPORT_PATH="$MODULE/$PKG"
 
+# --- 0. FAIL-CLOSED: is the target inside a NESTED Go module? ---
+# Every check below assumes the target belongs to the ROOT module: the import
+# path is built as "$MODULE/$PKG", `go test ./$PKG/` is run from the root, and
+# reachability is analysed from ./cmd/aisotropyd/... . None of that can see into
+# a nested module (this repo has 20+: arenas/live/*, examples/*, bench/*,
+# external/gollem). Run against one, every probe silently finds nothing and the
+# guard used to report 🟢 "no live-signal" — a FALSE GREEN authorising the
+# deletion of live code. Observed: `prune-guard.sh arenas/live/aisotropy`
+# returned green for a package called unconditionally from its own main().
+# A guard that cannot evaluate must BLOCK, never absolve.
+nested_mod=""
+probe="$PKG"
+while [ -n "$probe" ] && [ "$probe" != "." ]; do
+  if [ -f "$probe/go.mod" ]; then nested_mod="$probe"; break; fi
+  probe="$(dirname "$probe")"
+done
+if [ -n "$nested_mod" ]; then
+  echo "==================================================================="
+  echo " prune-guard: CANNOT EVALUATE  $PKG"
+  echo "==================================================================="
+  echo "0) NESTED MODULE: $nested_mod/go.mod owns this path — it is NOT part of"
+  echo "   the root module ($MODULE)."
+  echo "   Every check in this guard resolves against the root module, so all of"
+  echo "   them would silently find nothing here and report a FALSE GREEN."
+  echo ""
+  echo " VERDICT: 🚫 BLOCKED — out of this guard's reach, not proven dead."
+  echo " Apply the five criteria MANUALLY from inside that module:"
+  echo "   cd $nested_mod"
+  echo "   1. importers:    git grep -n '<symbol>' -- '*.go'"
+  echo "   2. coverage:     go test ./... -cover"
+  echo "   3. wiring:       grep the module's own composition root (main.go)"
+  echo "   4. re-export:    is it exported and referenced outside its package?"
+  echo "   5. reachability: deadcode ./... (from that module's own main)"
+  echo " Record each answer with its evidence before deleting anything."
+  echo "==================================================================="
+  exit 3
+fi
+
 echo "==================================================================="
 echo " prune-guard: is  $PKG  safe to delete as dead code?"
 echo " import path: $IMPORT_PATH"
