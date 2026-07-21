@@ -84,3 +84,15 @@ examples/graphbot/graphbot
 /wasm-vs-docker
 .agent-tooling/*
 .claude/settings.local.json
+.agent-tooling/sessions/
+.agent-tooling/metrics/
+.agent-tooling/tasks/
+.agent-tooling/checkpoints/
+.agent-tooling/dynamic-tools/
+.agent-tooling/rate-limit-state.json
+.agent-tooling/install-meta.json
+
+# ── Arena runtime state (never commit) ──
+arenas/live/*/.aisotropy-data
+arenas/live/*/.aisotropy-data.arena-run-marker
+arenas/live/*/.data

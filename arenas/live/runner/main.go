@@ -854,6 +854,52 @@ func runScript(script string, timeout time.Duration) (stdout string, exitCode in
 	return string(out), code, rerr
 }
 
+// baseInvocationTimeout is the outer per-invocation ceiling for every
+// single-turn invocation (qa/rag/tools/structured/stream, and memory mode's
+// recall invocation) — the original flat constant, unchanged.
+const baseInvocationTimeout = 180 * time.Second
+
+// perTurnAdapterBudget mirrors the aisotropy adapter's own per-turn
+// ctx.WithTimeout (110s — arenas/live/aisotropy/mode_memory.go's runMemory),
+// plus headroom for the constitutional fail-closed reflection loop's
+// retry/backend-switch overhead (internal/llm/reflect_auto.go's ReflectAuto:
+// up to 3 Gollem retries, then a homegrown Reflect[T] fallback — empirically
+// observed to cost 60-110s on a single turn) and the HTTP/hydration work
+// around the LLM call itself. Used only to size the OUTER runner-level
+// timeout for invocations that drive MORE than one real model turn inside a
+// single adapter process, so the adapter's own graceful per-turn error
+// ("App.Turn failed on turn N") always has room to fire BEFORE this outer
+// timeout kills the whole process mid-turn with an uninformative "killed".
+const perTurnAdapterBudget = 130 * time.Second
+
+// invocationTimeout sizes the outer per-invocation timeout passed to
+// runAdapterRetry. Every mode except memory's persist invocation drives
+// exactly one real model turn per adapter process, so baseInvocationTimeout
+// covers them unchanged (turns<=1 below). memory mode's persist invocation
+// (buildMemory in tasks.go) instead runs ALL of a task's user turns
+// sequentially inside ONE adapter process (mode_memory.go's runMemory) — the
+// flat single-turn budget was never sized for that and reliably kills a
+// long-haul memory task (e.g. mem-h03-longhaul's 10 persist turns) mid-flight
+// once cumulative per-turn latency (inflated by occasional slow reflection
+// retries) crosses 180s, well before every turn has run. Scale the budget by
+// the invocation's own turn count instead of guessing a single larger flat
+// constant.
+func invocationTimeout(in adapterInput) time.Duration {
+	turns := 0
+	for _, m := range in.Messages {
+		if m.Role == "user" {
+			turns++
+		}
+	}
+	if turns <= 1 {
+		return baseInvocationTimeout
+	}
+	if scaled := time.Duration(turns) * perTurnAdapterBudget; scaled > baseInvocationTimeout {
+		return scaled
+	}
+	return baseInvocationTimeout
+}
+
 // runWorkItem runs every invocation of a work item natively (the correctness
 // pass is native-only), summing provider token usage across invocations and
 // scoring against the FINAL invocation's output. Each invocation is retried
@@ -864,7 +910,7 @@ func runWorkItem(fw adapter, it workItem, budget *callCounter, retries int) reco
 	sumIn, sumOut := 0, 0
 	hasTok := true
 	for i, in := range it.Invocations {
-		res := runAdapterRetry(fw.runSh, in, 180*time.Second, retries, budget)
+		res := runAdapterRetry(fw.runSh, in, invocationTimeout(in), retries, budget)
 		if res.runErr != "" {
 			rec.RunErr = fmt.Sprintf("invocation %d/%d: %s", i+1, len(it.Invocations), res.runErr)
 			return rec
