@@ -63,12 +63,16 @@ type WorkingMemory struct {
 	maxMessageValueBytes int
 	summarizer           Summarizer
 
-	// mu guards inFlight and closed below. It is never held across a
-	// BadgerDB transaction or a Summarizer.Condense call.
+	// mu guards inFlight, pending, closed, and closeGrace below. It is never
+	// held across a BadgerDB transaction or a Summarizer.Condense call.
 	mu       sync.Mutex
 	inFlight map[string]struct{} // session prefixes with a condensation goroutine currently running
 	pending  map[string]struct{} // session prefixes that got an Append while their condensation was in flight — coalesced into one more pass so the window can't exceed the max (see triggerCondensation)
 	closed   bool
+	// closeGrace bounds how long Close waits for an in-flight condensation to
+	// finish before cancelling it (see defaultCloseCondensationGrace and
+	// SetCloseGrace).
+	closeGrace time.Duration
 
 	// wg tracks every background condensation goroutine spawned by Append.
 	// Close waits on it so shutdown is deterministic and leak-free.
@@ -108,6 +112,7 @@ func NewWorkingMemory(db *badger.DB, maxActiveMessages int, summarizer Summarize
 		summarizer:           summarizer,
 		inFlight:             make(map[string]struct{}),
 		pending:              make(map[string]struct{}),
+		closeGrace:           defaultCloseCondensationGrace,
 		shutdownCtx:          shutdownCtx,
 		shutdownCancel:       cancel,
 	}
@@ -219,19 +224,80 @@ func OpenInMemory(maxActiveMessages int, summarizer Summarizer) (*WorkingMemory,
 	return NewWorkingMemory(db, maxActiveMessages, summarizer), nil
 }
 
-// Close stops accepting new background condensations, cancels
-// shutdownCtx (so any Summarizer.Condense call currently in flight can abort
-// promptly), waits for every in-flight background condensation goroutine to
-// finish, and only then closes the underlying BadgerDB instance. This makes
-// shutdown deterministic: no goroutine started by Append can still be
-// running — or leaked — once Close returns.
+// defaultCloseCondensationGrace bounds how long Close waits for an in-flight
+// condensation to COMPLETE before it cancels shutdownCtx and forces the
+// goroutines to abort.
+//
+// Why a grace period exists at all (see
+// docs/architecture/arena-memory-forensics.md §4): Close used to cancel
+// shutdownCtx FIRST and only then wait on wg. A condensation in flight at that
+// moment aborts inside Summarizer.Condense, condenseAndPrune returns early, and
+// NEITHER the new summary NOR the prune of the evicted messages lands — the
+// session is left over its active-message cap with no corresponding summary,
+// and whether that happens depends purely on wall-clock timing between the
+// background goroutine and the caller's shutdown. That non-determinism is a
+// real state-consistency defect for any consumer using on-disk working memory,
+// and it made arena memory tasks flip between pass and fail across runs.
+//
+// Why the wait is BOUNDED: Condense is a real model call (LLMSummarizer) and a
+// hung or slow provider must not block process shutdown forever. 5s is chosen
+// as the tradeoff point — comfortably longer than a normal condensation call
+// (single-paragraph completions land well inside a second or two on the
+// providers this ships against) yet short enough to sit under the shutdown
+// budgets typical of container orchestrators, which commonly send SIGKILL 10s
+// after SIGTERM. Past the deadline the old behavior applies: cancel, let the
+// goroutines abort, and accept the un-applied condensation rather than hang.
+const defaultCloseCondensationGrace = 5 * time.Second
+
+// SetCloseGrace overrides the bounded grace period Close gives an in-flight
+// condensation to finish before cancelling it (see
+// defaultCloseCondensationGrace). A non-positive duration means "do not wait" —
+// cancel immediately, which is the pre-fix behavior. It exists so a deployment
+// with a tighter shutdown budget can shorten the wait, and so tests can drive
+// both sides of the deadline without sleeping for seconds. Call it before
+// Close; it has no effect once Close has begun.
+func (w *WorkingMemory) SetCloseGrace(d time.Duration) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closeGrace = d
+}
+
+// Close stops accepting new background condensations, gives any condensation
+// already in flight a BOUNDED grace period to finish and durably apply its
+// summary + prune, then cancels shutdownCtx (aborting anything still running),
+// waits for every background goroutine to exit, and only then closes the
+// underlying BadgerDB instance. This makes shutdown deterministic in both
+// directions: a normal-speed condensation always lands, and a hung one can
+// never block shutdown past the grace deadline. No goroutine started by Append
+// can still be running — or leaked — once Close returns.
 func (w *WorkingMemory) Close() error {
 	w.mu.Lock()
-	if !w.closed {
-		w.closed = true
+	alreadyClosed := w.closed
+	w.closed = true
+	grace := w.closeGrace
+	w.mu.Unlock()
+
+	if !alreadyClosed {
+		// closed=true above already stops triggerCondensation from spawning any
+		// NEW goroutine, so this only ever waits on work that was already in
+		// flight — the wait cannot be extended by fresh arrivals.
+		if grace > 0 {
+			done := make(chan struct{})
+			go func() {
+				w.wg.Wait()
+				close(done)
+			}()
+			timer := time.NewTimer(grace)
+			select {
+			case <-done:
+			case <-timer.C:
+				slog.Warn("working memory: condensation still in flight after close grace period; cancelling",
+					"grace", grace)
+			}
+			timer.Stop()
+		}
 		w.shutdownCancel()
 	}
-	w.mu.Unlock()
 
 	w.wg.Wait()
 	return w.db.Close()

@@ -101,11 +101,43 @@ func boundNoopSummary(s string) string {
 // paragraph rather than a structured or multi-part response, since the
 // summary buffer is meant to be a compact drop-in replacement for the
 // evicted messages inside the prompt window.
+//
+// The prompt carries TWO explicit loss contracts, because condenseAndPrune
+// folds the evicted messages into this paragraph IRREVERSIBLY — the originals
+// are deleted in the same transaction, so anything the paragraph omits or gets
+// wrong is permanently wrong for that session. Both failures below are the same
+// underlying defect (lossy condensation with no instruction about what is
+// irreplaceable) and both were observed in the arena's own store; see
+// docs/architecture/arena-memory-forensics.md §4.
+//
+//  1. SUPERSESSION CONTRACT — the original prompt said only "preserve the
+//     important facts", with no rule for a later message OVERRIDING an earlier
+//     one. Observed: a summary asserting "seat 14C" for a conversation where the
+//     seat had since changed 14C -> 22F -> 9A.
+//  2. UNIQUENESS CONTRACT — nor did it say what may not be paraphrased away.
+//     Observed: the needle "Vermillion Bravo", stated once at turn 1, condensed
+//     into "a relaxed, rail-based coastal itinerary" — a well-formed summary of
+//     the gist that silently dropped the one irreplaceable token. Generic
+//     narrative is reconstructible from what remains; a unique identifier is not,
+//     so the two are given explicitly different compression licenses.
+//
+// Both clauses are deliberately ONE short sentence each: this prompt is re-sent
+// on every condensation, which is a real billable model call (see
+// LLMSummarizer.Condense), so every added token is paid repeatedly.
+// TestSummarizerPromptStaysShort holds that budget.
 const summarizerSystemPrompt = "You are a memory-condensation assistant for a chat agent. " +
 	"Given the current session-state summary (which may be empty) and a batch " +
 	"of older chat messages being evicted from the active context window, " +
 	"produce a single, concise paragraph that preserves the important facts, " +
-	"decisions, and open threads. Respond with exactly one paragraph of plain " +
+	"decisions, and open threads. When a later message changes or replaces an " +
+	"earlier fact, record ONLY the latest value and state it as the current " +
+	"one; never carry a superseded value forward as if it were still true. " +
+	"Carry over VERBATIM every value that could not be reconstructed from the " +
+	"rest of the conversation — proper nouns, codenames, codes, combinations, " +
+	"account/seat/reference numbers, dates, exact quantities — even when stated " +
+	"only once and seemingly incidental; compress narrative freely, never a " +
+	"unique identifier. " +
+	"Respond with exactly one paragraph of plain " +
 	"text — no headers, no bullet points, no preamble."
 
 // LLMSummarizer is a Summarizer backed by a real llm.Client (see
