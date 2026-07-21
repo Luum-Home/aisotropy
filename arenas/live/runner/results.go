@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -239,6 +240,7 @@ func writeQualityTable(b *strings.Builder, rep reportData, aggs map[string]*mode
 
 	writeRunSummary(b, rep.Records)
 	writeQASmokeTestNote(b)
+	writeAisotropyMemoryCaveatNote(b, rep)
 
 	if rep.Concurrency > 1 {
 		fmt.Fprintf(b, "_Ran under `-concurrency %d`: up to %d frameworks' correctness/quality sweeps executed\n", rep.Concurrency, rep.Concurrency)
@@ -336,6 +338,36 @@ func writeQASmokeTestNote(b *strings.Builder) {
 	b.WriteString("> `tools` rows below as the primary quality signal in this board; read `qa`/`structured`/\n")
 	b.WriteString("> `stream` as wiring/smoke coverage, not a quality ranking. All modes keep running — a\n")
 	b.WriteString("> smoke test that catches gross breakage is still worth having.\n\n")
+}
+
+// writeAisotropyMemoryCaveatNote renders a MODE-SPECIFIC caveat, right above
+// the correctness table (same placement as writeQASmokeTestNote), that
+// aisotropy's `memory` cell is not apples-to-apples with every other
+// framework's `memory` cell — for a documented, code-grounded reason, not a
+// hand-wave. This lives in the GENERATOR (not a hand-edit of RESULTS.md)
+// because RESULTS.md is fully regenerated on every run and a hand-edit would
+// be silently erased. See docs/architecture/arena-memory-forensics.md for the
+// full forensic writeup (a BadgerDB store inspection); this is the short
+// version that survives regeneration.
+func writeAisotropyMemoryCaveatNote(b *strings.Builder, rep reportData) {
+	if !slices.Contains(rep.Frameworks, "aisotropy") || !slices.Contains(rep.Modes, "memory") {
+		return
+	}
+	b.WriteString("> **aisotropy `memory` is not apples-to-apples with the other frameworks — read before\n")
+	b.WriteString("> comparing.** `aisotropy.App.Turn` (the public façade `arenas/live/aisotropy` drives, see\n")
+	b.WriteString("> `aisotropy/turn.go`) accepts ONE prompt string and no message-list parameter, so this\n")
+	b.WriteString("> adapter drives **one real model call per conversational turn** — SPEC-sanctioned (see\n")
+	b.WriteString("> `arenas/live/SPEC.md`), not an adapter shortcut — instead of replaying the supplied\n")
+	b.WriteString("> transcript in a single call the way every other framework's adapter here does. Two\n")
+	b.WriteString("> consequences: (1) its memory-mode token total is inflated by **call count**, not\n")
+	b.WriteString("> per-call verbosity, so it is not directly comparable to a single-call framework's token\n")
+	b.WriteString("> total; (2) earlier runs of this adapter additionally dropped the suite's canned\n")
+	b.WriteString("> assistant turns entirely (only user turns were replayed), which primed a refusal\n")
+	b.WriteString("> cascade that made the `memory` SCORE itself invalid, not just the token count — that\n")
+	b.WriteString("> adapter defect is now fixed (canned turns reach the model as established context; see\n")
+	b.WriteString("> `arenas/live/aisotropy/mode_memory.go`), but the call-count token asymmetry remains, by\n")
+	b.WriteString("> contract, and is not a bug. Full forensic analysis:\n")
+	b.WriteString("> `docs/architecture/arena-memory-forensics.md`.\n\n")
 }
 
 // writeQualityLegend explains the score cell's denominator and the meaning of

@@ -316,6 +316,12 @@ func main() {
 
 func dispatch(req *request, out *result) error {
 	logf("aisotropy adapter: mode=%s, %d msg(s), %d tool(s), model=%s", req.Mode, len(req.Messages), len(req.Tools), modelName())
+	// F1 (arena-memory-forensics): isolate the on-disk working-memory data dir
+	// across DIFFERENT arena runs while preserving it across the SAME run's
+	// paired process invocations (memory persist->recall, crash_recovery
+	// producer->resumer) — see datadir_isolation.go for the full mechanism and
+	// why a naive wipe-on-every-boot would break crash_recovery.
+	isolateWorkingMemoryDataDir()
 	// Ensure the real networked rqlite facts tier can migrate cleanly on this
 	// boot (see rqlite_reset.go for the aisotropy migration defect this sidesteps).
 	resetRqliteFacts()
