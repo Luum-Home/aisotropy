@@ -90,23 +90,13 @@ func ScoreQA(reply, reference string, answers []string) Score {
 	}
 	if len(answers) > 0 {
 		replyToks := tokenize(nr)
-		best := 0.0
-		bestKey := ""
-		for _, a := range answers {
-			at := tokenize(normalize(a))
-			if len(at) == 0 {
-				continue
-			}
-			// containmentRatio(want=answer tokens, have=reply tokens): fraction of
-			// THIS answer key present in the reply. 1.0 = the full answer is there.
-			if r := containmentRatio(at, replyToks); r > best {
-				best, bestKey = r, a
-			}
-		}
+		// containmentRatio(want=answer tokens, have=reply tokens): fraction of
+		// EACH answer key present in the reply. 1.0 = the full answer is there.
+		best, bestKey, tried := bestAnswerKeyMatch(answers, replyToks)
 		return Score{
 			Value:  best,
 			Pass:   best >= 1.0, // reply must contain a COMPLETE acceptable answer
-			Detail: fmt.Sprintf("answer-key containment %.2f (best key %q of %d)", best, bestKey, len(answers)),
+			Detail: answerKeyDetail(best, bestKey, tried, len(answers)),
 		}
 	}
 	// Legacy fallback: reference token-containment (tasks without an answer key).
@@ -200,19 +190,12 @@ func ScoreRAGMultiHop(retrievedDocIDs, goldDocs []string, reply string, answers 
 	sort.Strings(missing)
 	recall := float64(hit) / float64(len(goldDocs))
 
-	ans := 0.0
-	bestKey := ""
+	var ans float64
+	var bestKey string
+	var tried []string
 	if len(answers) > 0 {
 		replyToks := tokenize(normalize(reply))
-		for _, a := range answers {
-			at := tokenize(normalize(a))
-			if len(at) == 0 {
-				continue
-			}
-			if r := containmentRatio(at, replyToks); r > ans {
-				ans, bestKey = r, a
-			}
-		}
+		ans, bestKey, tried = bestAnswerKeyMatch(answers, replyToks)
 	}
 	detail := fmt.Sprintf("multi-hop recall %d/%d gold docs", hit, len(goldDocs))
 	if len(missing) > 0 {
@@ -223,7 +206,7 @@ func ScoreRAGMultiHop(retrievedDocIDs, goldDocs []string, reply string, answers 
 		// rather than silently failing the item.
 		return Score{Value: recall, Pass: recall >= 1.0, Detail: detail + "; no answer key supplied"}
 	}
-	detail += fmt.Sprintf("; answer-key containment %.2f (best key %q)", ans, bestKey)
+	detail += "; " + answerKeyDetail(ans, bestKey, tried, 0)
 	return Score{
 		Value:  (recall + ans) / 2,
 		Pass:   recall >= 1.0 && ans >= 1.0,
@@ -358,18 +341,8 @@ func ScoreToolsAbstain(calls []ToolCall, reply string, answers []string) Score {
 	}
 	sort.Strings(called)
 
-	best := 0.0
-	bestKey := ""
 	replyToks := tokenize(normalize(reply))
-	for _, a := range answers {
-		at := tokenize(normalize(a))
-		if len(at) == 0 {
-			continue
-		}
-		if r := containmentRatio(at, replyToks); r > best {
-			best, bestKey = r, a
-		}
-	}
+	best, bestKey, tried := bestAnswerKeyMatch(answers, replyToks)
 	abstainVal := 0.0
 	detail := "tool correctly NOT called"
 	if !abstained {
@@ -377,7 +350,7 @@ func ScoreToolsAbstain(calls []ToolCall, reply string, answers []string) Score {
 	} else {
 		abstainVal = 1.0
 	}
-	detail += fmt.Sprintf("; answer-key containment %.2f (best key %q)", best, bestKey)
+	detail += "; " + answerKeyDetail(best, bestKey, tried, 0)
 	return Score{
 		Value:  (abstainVal + best) / 2,
 		Pass:   abstained && best >= 1.0,
@@ -707,6 +680,68 @@ func containmentRatio(want, have []string) float64 {
 		}
 	}
 	return float64(hit) / float64(len(wantSet))
+}
+
+// bestAnswerKeyMatch finds, among candidate answer keys, the one with the
+// highest token-containment ratio against an already-tokenized reply. It is
+// the shared "which answer key matched best" step behind ScoreQA (and its
+// ScoreMemory alias), ScoreRAGMultiHop, and ScoreToolsAbstain.
+//
+// tried is every key that was actually evaluated (a key with zero tokens
+// after normalization is skipped, same as before), IN ORDER — so a caller
+// can name what was tried even when every key is a COMPLETE miss (ratio 0
+// for all of them). The previous implementation only kept a key when its
+// ratio was strictly greater than the running best, so on a total miss
+// bestKey stayed at its zero value (""), and the failure Detail read as
+// "best key \"\"" — indistinguishable from "no answer key was configured".
+// That misled a human into debugging the TASK DATA instead of the actual
+// wrong-answer failure (see the mem-h01-overwrite regression this fixes).
+func bestAnswerKeyMatch(answers []string, replyToks []string) (best float64, bestKey string, tried []string) {
+	haveCandidate := false
+	for _, a := range answers {
+		at := tokenize(normalize(a))
+		if len(at) == 0 {
+			continue
+		}
+		tried = append(tried, a)
+		r := containmentRatio(at, replyToks)
+		if !haveCandidate || r > best {
+			best, bestKey = r, a
+			haveCandidate = true
+		}
+	}
+	return best, bestKey, tried
+}
+
+// answerKeyDetail renders the "answer-key containment" Detail fragment shared
+// by ScoreQA, ScoreRAGMultiHop, and ScoreToolsAbstain. On a complete miss
+// (best <= 0) it names every key that was tried rather than an empty best
+// key (see bestAnswerKeyMatch). totalKeys > 0 appends "of N" (ScoreQA's
+// original shape); totalKeys == 0 omits it (ScoreRAGMultiHop's and
+// ScoreToolsAbstain's original shape) — passing-case wording is otherwise
+// unchanged from before this fix.
+func answerKeyDetail(best float64, bestKey string, tried []string, totalKeys int) string {
+	if best <= 0 {
+		return fmt.Sprintf("answer-key containment %.2f (no key matched; tried %s)", best, quoteJoin(tried))
+	}
+	if totalKeys > 0 {
+		return fmt.Sprintf("answer-key containment %.2f (best key %q of %d)", best, bestKey, totalKeys)
+	}
+	return fmt.Sprintf("answer-key containment %.2f (best key %q)", best, bestKey)
+}
+
+// quoteJoin renders a comma-separated, quoted list of the keys that were
+// tried, for the zero-match branch of answerKeyDetail. Deterministic: input
+// order preserved, no map iteration involved.
+func quoteJoin(ss []string) string {
+	if len(ss) == 0 {
+		return "no tokenizable answer keys"
+	}
+	parts := make([]string, len(ss))
+	for i, s := range ss {
+		parts[i] = strconv.Quote(s)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // argValuesEqual compares two tool-argument values with light normalization:

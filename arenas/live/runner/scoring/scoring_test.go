@@ -91,6 +91,74 @@ func TestScoreQA_AnswerKey_EquivalentNumberForms(t *testing.T) {
 	}
 }
 
+// ---- ScoreQA answer-key zero-match Detail (mem-h01-overwrite regression) --
+//
+// Before the fix, a COMPLETE miss against an answer key (containment ratio
+// exactly 0 for every candidate key) rendered Detail as `best key ""` — an
+// empty key, indistinguishable from "this task has no answer key at all".
+// That misled a human debugger into suspecting malformed task data instead
+// of a genuine wrong-answer failure. The fix names the key(s) actually
+// tried. The passing-case message shape is unchanged (still "best key %q of
+// %d").
+
+func TestScoreQA_AnswerKey_ZeroMatchNamesTriedKey(t *testing.T) {
+	sc := ScoreQA("Your seat has been changed to a different one.", "You are booked in seat 9A.", []string{"9A"})
+	if sc.Pass {
+		t.Fatalf("want pass=false, got %+v", sc)
+	}
+	want := `answer-key containment 0.00 (no key matched; tried "9A")`
+	if sc.Detail != want {
+		t.Fatalf("want Detail %q, got %q", want, sc.Detail)
+	}
+}
+
+func TestScoreQA_AnswerKey_ZeroMatchNamesAllTriedKeys(t *testing.T) {
+	sc := ScoreQA("Completely unrelated reply.", "ref", []string{"alpha", "beta"})
+	if sc.Pass {
+		t.Fatalf("want pass=false, got %+v", sc)
+	}
+	want := `answer-key containment 0.00 (no key matched; tried "alpha", "beta")`
+	if sc.Detail != want {
+		t.Fatalf("want Detail %q, got %q", want, sc.Detail)
+	}
+}
+
+func TestScoreQA_AnswerKey_PassingDetailShapeUnchanged(t *testing.T) {
+	sc := ScoreQA("Paris", "Paris is the capital of France.", []string{"Paris"})
+	if !sc.Pass {
+		t.Fatalf("want pass=true, got %+v", sc)
+	}
+	want := `answer-key containment 1.00 (best key "Paris" of 1)`
+	if sc.Detail != want {
+		t.Fatalf("want Detail %q, got %q", want, sc.Detail)
+	}
+}
+
+// TestScoreRAGMultiHop_ZeroAnswerMatchNamesTriedKey and
+// TestScoreToolsAbstain_ZeroAnswerMatchNamesTriedKey cover the same bug class
+// in the other two call sites that share bestAnswerKeyMatch/answerKeyDetail.
+
+func TestScoreRAGMultiHop_ZeroAnswerMatchNamesTriedKey(t *testing.T) {
+	gold := []string{"21-maintenance-window.md", "05-vireo-t7.md"}
+	got := ScoreRAGMultiHop(gold, gold, "Completely unrelated reply.", []string{"T7 512"})
+	if got.Pass {
+		t.Fatalf("want pass=false, got %+v", got)
+	}
+	if !strings.Contains(got.Detail, `no key matched; tried "T7 512"`) {
+		t.Fatalf("want Detail to name the tried key on a zero match, got %q", got.Detail)
+	}
+}
+
+func TestScoreToolsAbstain_ZeroAnswerMatchNamesTriedKey(t *testing.T) {
+	got := ScoreToolsAbstain(nil, "Completely unrelated reply.", []string{"Canberra"})
+	if got.Pass {
+		t.Fatalf("want pass=false, got %+v", got)
+	}
+	if !strings.Contains(got.Detail, `no key matched; tried "Canberra"`) {
+		t.Fatalf("want Detail to name the tried key on a zero match, got %q", got.Detail)
+	}
+}
+
 // ---- ScoreMemory --------------------------------------------------------
 
 func TestScoreMemory_ExactRecall(t *testing.T) {
@@ -425,6 +493,18 @@ func TestDeterministic_Reproducible(t *testing.T) {
 			bad["meta"] = map[string]any{"unrelated": 1} // nested required missing
 			delete(bad, "sources")                       // required missing
 			return ScoreStructuredWithSchema(bad, []byte(strictFixtureSchema))
+		}},
+
+		// ---- answer-key zero-match Detail (mem-h01-overwrite regression) ----
+		{"qa-answerkey-zero-match", func() Score {
+			return ScoreQA("Your seat has been changed to a different one.", "You are booked in seat 9A.", []string{"9A"})
+		}},
+		{"rag-multihop-zero-answer-match", func() Score {
+			gold := []string{"21-maintenance-window.md", "05-vireo-t7.md"}
+			return ScoreRAGMultiHop(gold, gold, "Completely unrelated reply.", []string{"T7 512"})
+		}},
+		{"tools-abstain-zero-answer-match", func() Score {
+			return ScoreToolsAbstain(nil, "Completely unrelated reply.", []string{"Canberra"})
 		}},
 	}
 

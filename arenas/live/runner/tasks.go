@@ -197,6 +197,97 @@ func loadRagQuestions(path string) ([]ragQuestion, error) {
 	return qs, nil
 }
 
+// ---- -tasks subset filter ---------------------------------------------------
+//
+// See the -tasks flag help text in main.go for the operator-facing contract.
+// Background: a scratch `-live` directory of filtered/symlinked files was used
+// to run a bounded calibration and broke adapters that resolve auxiliary paths
+// RELATIVE TO -live (mastra's .env, aisotropy's _shared/corpus) — a subset
+// scratch directory silently strips those paths out from under the adapter.
+// -tasks is the fix: it filters the IN-MEMORY task/rag-question slices loaded
+// from the REAL -live directory, so path resolution never changes.
+
+// taskFilter is the parsed form of -tasks: a set of exact IDs plus a set of
+// prefixes (an entry ending in "*"). A nil *taskFilter matches everything —
+// this is what an unset/empty -tasks parses to, so filterTasks/
+// filterRagQuestions are no-ops (return the input slice unchanged) and the
+// run is byte-identical to today's behavior.
+type taskFilter struct {
+	exact    map[string]bool
+	prefixes []string
+}
+
+// parseTaskFilter parses the -tasks flag value. Syntax: comma-separated IDs
+// (same separator/trimming as every other CSV flag here, see splitCSV). An
+// entry ending in "*" is a PREFIX match — e.g. "qa-h*" matches every ID
+// starting with "qa-h" (all six hard-tier QA tasks) without listing each one.
+// Anything else is an EXACT match. An empty/whitespace-only string returns
+// nil, which taskFilter.match treats as "match everything".
+func parseTaskFilter(s string) *taskFilter {
+	ids := splitCSV(s)
+	if len(ids) == 0 {
+		return nil
+	}
+	f := &taskFilter{exact: map[string]bool{}}
+	for _, id := range ids {
+		if strings.HasSuffix(id, "*") {
+			f.prefixes = append(f.prefixes, strings.TrimSuffix(id, "*"))
+		} else {
+			f.exact[id] = true
+		}
+	}
+	return f
+}
+
+// match reports whether id passes the filter. A nil filter (the -tasks-unset
+// case) matches everything.
+func (f *taskFilter) match(id string) bool {
+	if f == nil {
+		return true
+	}
+	if f.exact[id] {
+		return true
+	}
+	for _, p := range f.prefixes {
+		if strings.HasPrefix(id, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterTasks keeps only suite tasks (arenas/live/tasks/suite.jsonl) whose ID
+// passes filter. A nil filter returns tasks unchanged (same slice, no copy) —
+// the exact -tasks-unset behavior.
+func filterTasks(tasks []task, filter *taskFilter) []task {
+	if filter == nil {
+		return tasks
+	}
+	out := make([]task, 0, len(tasks))
+	for _, t := range tasks {
+		if filter.match(t.ID) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// filterRagQuestions keeps only rag questions (arenas/live/_shared/
+// rag_questions.jsonl) whose ID passes filter. A nil filter returns rag
+// unchanged (same slice, no copy) — the exact -tasks-unset behavior.
+func filterRagQuestions(rag []ragQuestion, filter *taskFilter) []ragQuestion {
+	if filter == nil {
+		return rag
+	}
+	out := make([]ragQuestion, 0, len(rag))
+	for _, q := range rag {
+		if filter.match(q.ID) {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
 // buildWork produces the scored work items for one framework × mode, capping to
 // maxTasks per mode when maxTasks > 0.
 func buildWork(framework, mode string, tasks []task, rag []ragQuestion, maxTasks int) []workItem {

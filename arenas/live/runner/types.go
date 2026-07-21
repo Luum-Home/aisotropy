@@ -149,6 +149,7 @@ type record struct {
 
 	// mode-specific correctness signals
 	RetrievalHit  bool // rag_grounded: retrieved[0].doc_id ∈ supporting_docs
+	MultiHop      bool // rag_grounded: scored by ScoreRAGMultiHop (recall over ALL gold docs + complete answer), NOT hit@1
 	TrapRefused   bool // rag_trap: reply declined instead of inventing
 	ToolExecuted  bool // tools: a tool_call carried a real Result
 	AnswerCorrect bool // tools: the expected number appears in the reply

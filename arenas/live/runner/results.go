@@ -238,6 +238,7 @@ func writeQualityTable(b *strings.Builder, rep reportData, aggs map[string]*mode
 	b.WriteString("wall-clock (native, correctness pass) including the real model round-trip(s).\n\n")
 
 	writeRunSummary(b, rep.Records)
+	writeQASmokeTestNote(b)
 
 	if rep.Concurrency > 1 {
 		fmt.Fprintf(b, "_Ran under `-concurrency %d`: up to %d frameworks' correctness/quality sweeps executed\n", rep.Concurrency, rep.Concurrency)
@@ -295,6 +296,46 @@ func writeRunSummary(b *strings.Builder, records []record) {
 		fmt.Fprintf(b, " (%.1f%% of runs never produced a scoreable answer)", 100*float64(errored)/float64(total))
 	}
 	b.WriteString(".\n\n")
+}
+
+// writeQASmokeTestNote renders the empirical finding that `qa` (and the
+// `structured`/`stream` modes, which reuse the identical single-shot QA task
+// list — see buildQAStyle in tasks.go, invoked for all three of "qa",
+// "structured", "stream") is a SMOKE TEST in this arena, not a quality
+// signal: with the model held CONSTANT across every framework (the whole
+// point of this arena), qa does not discriminate — every framework scores a
+// perfect deterministic pass, including on qa-h01..qa-h06, near-miss items
+// specifically written to be easy to get wrong. A perfect qa score means "the
+// adapter is wired correctly", not "this framework answers better". This is
+// rendered here, at the top of the correctness section right above the
+// table the reader is about to read, per the operator finding that burying
+// this in the bottom Notes section makes it too easy to miss when skimming
+// the per-mode table. QA/structured/stream keep running — a smoke test that
+// catches gross adapter breakage is still worth having — only the framing
+// changes, not whether the modes exist.
+func writeQASmokeTestNote(b *strings.Builder) {
+	b.WriteString("> **QA is a smoke test, not a quality signal here (empirical finding).** This arena holds\n")
+	b.WriteString("> the model CONSTANT across every framework, so `qa` measures whether the MODEL answers\n")
+	b.WriteString("> correctly — and the model can't vary here, so `qa` can only ever detect gross adapter\n")
+	b.WriteString("> breakage (a broken request/response path), never a framework-quality difference. A\n")
+	b.WriteString("> calibration run confirmed this empirically: every framework scored a PERFECT 1.0 on `qa`,\n")
+	b.WriteString("> including on `qa-h01`..`qa-h06` — near-miss items deliberately written to be easy to get\n")
+	b.WriteString("> wrong (e.g. 208 vs 206 bones, Sydney vs Canberra). Read a perfect `qa` score as \"the\n")
+	b.WriteString("> adapter is wired correctly,\" never as \"this framework answers better than that one.\"\n")
+	b.WriteString(">\n")
+	b.WriteString("> **`structured` and `stream` inherit the same ceiling.** Both reuse the IDENTICAL\n")
+	b.WriteString("> single-shot QA task set as `qa` (`buildQAStyle` in `arenas/live/runner/tasks.go`\n")
+	b.WriteString("> serves all three modes from the same task list) — their own mechanics (schema validity,\n")
+	b.WriteString("> time-to-first-token) still measure something real, but the underlying QUESTION CONTENT\n")
+	b.WriteString("> does not discriminate between frameworks either, for the same reason `qa` doesn't.\n")
+	b.WriteString(">\n")
+	b.WriteString("> **Modes that DO carry discriminating signal in this arena: `memory`, `rag`, `tools`.**\n")
+	b.WriteString("> A calibration run with the model held constant across 3 frameworks showed real\n")
+	b.WriteString("> separation on these — e.g. aisotropy scored `memory` 1/2 and `tools` 5/7 while\n")
+	b.WriteString("> llamaindex scored `memory` 2/2 and `tools` 7/7 in that run. Weight the `memory`/`rag`/\n")
+	b.WriteString("> `tools` rows below as the primary quality signal in this board; read `qa`/`structured`/\n")
+	b.WriteString("> `stream` as wiring/smoke coverage, not a quality ranking. All modes keep running — a\n")
+	b.WriteString("> smoke test that catches gross breakage is still worth having.\n\n")
 }
 
 // writeQualityLegend explains the score cell's denominator and the meaning of
@@ -370,8 +411,19 @@ func writeJudgeSection(b *strings.Builder, rep reportData, get func(fw, mode str
 	b.WriteString("\n")
 }
 
+// qaSmokeTestSuffix marks a mode-signal cell as smoke-test coverage rather
+// than a quality signal — see writeQASmokeTestNote for the full empirical
+// finding this restates inline, at the row itself, so a reader scanning the
+// table (not just the prose above it) sees the caveat on every affected row.
+const qaSmokeTestSuffix = " [smoke test, not a quality signal — see note above]"
+
 func modeSignal(mode string, a *modeAgg) string {
 	switch mode {
+	case "qa":
+		// qa has no mode-specific signal beyond the deterministic score
+		// itself (already shown in its own column) — the row's entire
+		// purpose here is the smoke-test caveat.
+		return "smoke test — model held constant, does not discriminate" + qaSmokeTestSuffix
 	case "rag":
 		parts := []string{}
 		if a.groundedN > 0 {
@@ -383,24 +435,24 @@ func modeSignal(mode string, a *modeAgg) string {
 		if len(parts) == 0 {
 			return "—"
 		}
-		return strings.Join(parts, ", ")
+		return strings.Join(parts, ", ") + " (discriminates)"
 	case "tools":
 		if a.toolN == 0 {
 			return "—"
 		}
-		return fmt.Sprintf("exec %d/%d, correct %d/%d", a.toolExec, a.toolN, a.toolCorrect, a.toolN)
+		return fmt.Sprintf("exec %d/%d, correct %d/%d (discriminates)", a.toolExec, a.toolN, a.toolCorrect, a.toolN)
 	case "structured":
 		if a.structN == 0 {
-			return "—"
+			return "—" + qaSmokeTestSuffix
 		}
-		return fmt.Sprintf("valid %d/%d", a.structOK, a.structN)
+		return fmt.Sprintf("valid %d/%d", a.structOK, a.structN) + qaSmokeTestSuffix
 	case "stream":
 		if a.ttftN == 0 {
-			return "—"
+			return "—" + qaSmokeTestSuffix
 		}
-		return fmt.Sprintf("TTFT %dms (n=%d)", a.ttftSum/int64(a.ttftN), a.ttftN)
+		return fmt.Sprintf("TTFT %dms (n=%d)", a.ttftSum/int64(a.ttftN), a.ttftN) + qaSmokeTestSuffix
 	case "memory":
-		return "recall (judged)"
+		return "recall (judged) (discriminates)"
 	default:
 		return "—"
 	}
@@ -747,10 +799,20 @@ func detGlyph(sc scoring.Score) string {
 func itemSignal(r record) string {
 	switch r.Kind {
 	case "rag_grounded":
-		if r.RetrievalHit {
-			return "hit@1 ✓"
+		// A multi-hop item (one carrying an answer key) is scored by
+		// ScoreRAGMultiHop, which requires recall over EVERY gold doc AND a
+		// complete answer — not hit@1. Labelling it "hit@1" is actively
+		// misleading: it sent a reader hunting for a dispatch bug when the
+		// scorer was right. The single-hop label stays hit@1 because that IS
+		// what ScoreRAG measures.
+		label := "hit@1"
+		if r.MultiHop {
+			label = "multi-hop recall+answer"
 		}
-		return "hit@1 ✗"
+		if r.RetrievalHit {
+			return label + " ✓"
+		}
+		return label + " ✗"
 	case "rag_trap":
 		if r.TrapRefused {
 			return "refused ✓"

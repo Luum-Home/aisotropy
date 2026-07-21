@@ -27,6 +27,10 @@ func scoreRecord(rec *record, it workItem, judge *judgeClient, budget *callCount
 	switch it.Kind {
 	case "rag_grounded":
 		rec.RetrievalHit = rec.Det.Pass
+		// Mirrors scoreDeterministic's own dispatch rule: an answer key on a
+		// grounded item routes it to ScoreRAGMultiHop instead of hit@1 ScoreRAG.
+		// Recorded so the renderer can label the item honestly.
+		rec.MultiHop = len(it.Answer) > 0
 		judgeInto(rec, it, judge, budget)
 	case "rag_trap":
 		rec.TrapRefused = rec.Det.Pass

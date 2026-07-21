@@ -52,6 +52,7 @@ func main() {
 	nativeOnly := flag.Bool("native-only", false, "benchmark the native execution form only")
 	dockerOnly := flag.Bool("docker", false, "benchmark the docker execution form only")
 	maxTasks := flag.Int("max-tasks", 0, "cap tasks per correctness mode (0 = all; bounds real spend on a re-run)")
+	tasksFlag := flag.String("tasks", "", "THE SUPPORTED way to run a bounded subset of tasks (e.g. a cheap hard-tier-only calibration): comma-separated task/rag-question IDs, e.g. 'qa-h01-bones,mem-h01-overwrite,h1,h2,h4'. An entry ending in '*' is a PREFIX match — e.g. 'qa-h*' selects every suite task ID starting with qa-h (all six hard-tier QA tasks) without listing each one; anything without a trailing '*' is an EXACT id match. Filters BOTH the suite tasks loaded from arenas/live/tasks/suite.jsonl (by task id) AND the rag questions loaded from arenas/live/_shared/rag_questions.jsonl (by question id); the built-in tools-mode task list is NOT filtered by this flag (it is not file-based). Applied BEFORE -max-tasks: -tasks first narrows the REAL suite/rag files down to the matching subset, then -max-tasks caps per-mode from within that already-filtered subset — with -tasks unset (or empty) this is exactly today's behavior, byte-identical. Do NOT hand-build a scratch '-live' directory of filtered/symlinked files to get a subset run — adapters resolve auxiliary paths (e.g. the mastra adapter's .env, the aisotropy adapter's _shared/corpus) RELATIVE TO -live, so a partial scratch directory silently breaks those adapters (observed: mastra failed all 25 runs on a missing .env, aisotropy failed all 10 rag runs on a missing _shared/corpus). -tasks filters the REAL -live directory's contents in memory, so adapter path resolution never changes.")
 	concurrency := flag.Int("concurrency", 4, "max frameworks to run concurrently during the correctness/quality pass (1 = fully sequential, exact old behavior; the benchmark pass always stays sequential/uncontended)")
 	retry := flag.Int("retry", 1, "max retries per adapter invocation (correctness/quality pass) on a TRANSIENT failure — timeout/deadline/connection-reset/EOF or a 429/500/502/503/'unavailable' adapter error; a deterministic adapter/contract error never retries. 0 = no retry, exact old behavior")
 	rps := flag.Float64("rps", 0, "client-side GLOBAL model-call rate CEILING in calls/sec, shared across ALL concurrent framework goroutines (0 = disabled, exact old behavior). The client-side dual of the agnes FREE-TIER rate limit: with -concurrency>1, N frameworks otherwise burst their calls at once and blow the free-tier limit → a 429 storm. The pacer is ADAPTIVE and limit-AVOIDING (learned ceiling ratchets down on each 429 and never re-probes the known-bad rate; see docs/architecture/arena-rate-limiting.md), so this is an UPPER BOUND, not a fixed rate that must be guessed right — set it generously and let it self-tune below the real limit. Recommended for -concurrency>1, e.g. -rps 2.")
@@ -130,6 +131,21 @@ func main() {
 		fatal("load rag questions: %v", err)
 	}
 	logf("loaded %d suite tasks, %d rag questions", len(tasks), len(rag))
+
+	// ---- -tasks subset filter (see the flag help text above) --------------
+	// Filters the IN-MEMORY slices loaded from the REAL -live directory — the
+	// supported alternative to a hand-built scratch -live directory, which
+	// breaks adapters that resolve auxiliary paths relative to -live.
+	if tf := parseTaskFilter(*tasksFlag); tf != nil {
+		beforeTasks, beforeRag := len(tasks), len(rag)
+		tasks = filterTasks(tasks, tf)
+		rag = filterRagQuestions(rag, tf)
+		logf("-tasks filter %q applied: suite tasks %d -> %d, rag questions %d -> %d (tools-mode task list is not filtered)",
+			*tasksFlag, beforeTasks, len(tasks), beforeRag, len(rag))
+		if len(tasks) == 0 && len(rag) == 0 {
+			logf("WARNING: -tasks matched ZERO suite tasks and ZERO rag questions — check the IDs/prefixes against arenas/live/tasks/suite.jsonl and arenas/live/_shared/rag_questions.jsonl")
+		}
+	}
 
 	frameworks, err := discoverAdapters(*liveDir, splitCSV(*frameworksFlag))
 	if err != nil {
