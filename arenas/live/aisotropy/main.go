@@ -322,9 +322,11 @@ func dispatch(req *request, out *result) error {
 	// producer->resumer) — see datadir_isolation.go for the full mechanism and
 	// why a naive wipe-on-every-boot would break crash_recovery.
 	isolateWorkingMemoryDataDir()
-	// Ensure the real networked rqlite facts tier can migrate cleanly on this
-	// boot (see rqlite_reset.go for the aisotropy migration defect this sidesteps).
-	resetRqliteFacts()
+	// Scope-and-conditionally clear this task's own facts rows in the real
+	// networked rqlite tier before the mode runs — see rqlite_reset.go for why
+	// this is now scoped+marker-gated rather than an unconditional DROP TABLE
+	// (the migrate()-idempotency bug it used to work around is already fixed).
+	resetRqliteFacts(req)
 	start := time.Now()
 	var err error
 	switch req.Mode {
