@@ -24,10 +24,23 @@ type AgentStep struct {
 }
 
 // AgentOutput is the strict output contract for the agent endpoint.
+//
+// FinalAnswer is ADDITIVE (ADR / constitutional backward-compat gate): a new
+// OPTIONAL field with a stable JSON tag and `omitempty`, so a run that produces
+// no natural-language answer (only tool steps, or a non-converged stop) serializes
+// exactly as before this field existed — no existing field was renamed or removed.
+// It carries the model's final free-text reply, which the agent endpoint previously
+// discarded: when the model answers WITHOUT calling a tool (e.g. "what's the capital
+// of Australia" → "Canberra" with the calculator tool unused), Steps is empty and the
+// answer now lands here instead of being lost. It is also populated when the model
+// synthesizes a closing answer AFTER tool calls; Steps still records those calls
+// unchanged. Empty when the run only executed tools without a closing answer, or
+// stopped on the max-steps guardrail without converging.
 type AgentOutput struct {
 	Body struct {
-		TenantID string      `json:"tenant_id" doc:"Tenant that served the request"`
-		Steps    []AgentStep `json:"steps" doc:"Tool decisions and results, in order"`
+		TenantID    string      `json:"tenant_id" doc:"Tenant that served the request"`
+		Steps       []AgentStep `json:"steps" doc:"Tool decisions and results, in order"`
+		FinalAnswer string      `json:"final_answer,omitempty" doc:"Model's final natural-language answer, when it produced one (e.g. it answered directly without calling a tool, or summarized after tool calls). Empty when the run only executed tools or did not converge."`
 	}
 }
 
@@ -170,9 +183,12 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 			activeRegistry = overlayRegistry(primStore, in.TenantID, in.UserID, registry, scopes)
 		}
 
-		var steps []AgentStep
+		var (
+			steps  []AgentStep
+			answer string
+		)
 		if tc, ok := client.(llm.ToolCaller); ok {
-			steps, err = runNativeToolAgent(ctx, tc, tracer, activeRegistry, exec, typed, scopes, forwarded, maxSteps)
+			steps, answer, err = runNativeToolAgent(ctx, tc, tracer, activeRegistry, exec, typed, scopes, forwarded, maxSteps)
 		} else {
 			// Fallback (no native tool-calling): the combined executor routes
 			// typed tools through the typed dispatcher (best-effort over the
@@ -182,6 +198,10 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 			var loopSteps []agentloop.StepResult
 			loopSteps, err = loop.Run(ctx, scopes, forwarded)
 			steps = agentStepsFromLoop(loopSteps)
+			// The fallback loop conveys its final free-text answer via the
+			// terminating no-tool Decision's Answer (agentloop.FinalAnswer), the
+			// StreamChat-only analog of the native path's result.Output.
+			answer = agentloop.FinalAnswer(loopSteps)
 		}
 		if err != nil {
 			return nil, huma.Error500InternalServerError("agent loop failed", err)
@@ -190,6 +210,7 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 		out := &AgentOutput{}
 		out.Body.TenantID = in.TenantID
 		out.Body.Steps = steps
+		out.Body.FinalAnswer = answer
 		return out, nil
 	})
 }
@@ -218,9 +239,15 @@ const nativeToolSystemPrompt = "You are an assistant that may call the provided 
 // runNativeToolAgent drives the provider's native tool-calling through a Gollem
 // agent (ADR-0012 follow-up), restricting the model to the tools the caller's
 // scopes permit. It offers only Registry.Permitted(scopes) tools as Gollem
-// function tools and delegates the run to llm.RunToolAgent (which keeps all
-// gollem-core usage inside internal/llm), then maps the recorded llm.ToolSteps
-// into the endpoint's AgentStep contract.
+// function tools and delegates the run to llm.RunToolAgentWithOutput (which keeps
+// all gollem-core usage inside internal/llm), then maps the recorded llm.ToolSteps
+// into the endpoint's AgentStep contract AND returns the agent's final free-text
+// answer (the second return value gollem already computes at
+// internal/llm/toolagent.go:106-210 as core.Agent[string].Run's result.Output —
+// this is wiring an existing gollem output through, not a new capability; see
+// .claude/rules/dependency-reuse-first.md). The answer is "" when the model only
+// executed tools without a closing answer, or the run stopped on the max-steps
+// guardrail without converging.
 //
 // The double scope-gate is preserved: only Permitted(scopes) tools become
 // ToolSpecs/function-tools (offer-only-permitted), and because only those
@@ -228,7 +255,7 @@ const nativeToolSystemPrompt = "You are an assistant that may call the provided 
 // tool name lands in the agent's unknownCalls (a retry) and can never reach the
 // executor — the re-check half is structural, not a runtime re-validation. There
 // is no path from "not offered" to "executed".
-func runNativeToolAgent(ctx context.Context, tc llm.ToolCaller, tracer oteltrace.TracerProvider, registry *tools.Registry, executor agentloop.ToolExecutor, typed *TypedToolExecutor, scopes []string, prompt string, maxSteps int) ([]AgentStep, error) {
+func runNativeToolAgent(ctx context.Context, tc llm.ToolCaller, tracer oteltrace.TracerProvider, registry *tools.Registry, executor agentloop.ToolExecutor, typed *TypedToolExecutor, scopes []string, prompt string, maxSteps int) ([]AgentStep, string, error) {
 	permitted := registry.Permitted(scopes)
 	specs := make([]llm.ToolSpec, 0, len(permitted))
 	for _, t := range permitted {
@@ -245,16 +272,16 @@ func runNativeToolAgent(ctx context.Context, tc llm.ToolCaller, tracer oteltrace
 	// tools are offered, so run only ever sees an offered tool name.
 	run := NewAgentToolExec(typed, executor)
 
-	toolSteps, err := llm.RunToolAgent(ctx, tc, tracer, nativeToolSystemPrompt, prompt, specs, run, maxSteps)
+	toolSteps, answer, err := llm.RunToolAgentWithOutput(ctx, tc, tracer, nativeToolSystemPrompt, prompt, specs, run, maxSteps)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	steps := make([]AgentStep, 0, len(toolSteps))
 	for _, ts := range toolSteps {
 		steps = append(steps, AgentStep{Tool: ts.Tool, Args: ts.Args, Result: ts.Result})
 	}
-	return steps, nil
+	return steps, answer, nil
 }
 
 // overlayRegistry returns a registry whose tools carry the per-(tenant, user)

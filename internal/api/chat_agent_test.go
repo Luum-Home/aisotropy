@@ -108,7 +108,7 @@ func TestNativeToolAgent_ExecutesPermittedTool(t *testing.T) {
 		},
 	}
 
-	steps, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, DemoExecutor{}, (*TypedToolExecutor)(nil), nil, "find billing docs", 3)
+	steps, _, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, DemoExecutor{}, (*TypedToolExecutor)(nil), nil, "find billing docs", 3)
 	if err != nil {
 		t.Fatalf("runNativeToolAgent: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestNativeToolAgent_RejectsNonPermittedTool(t *testing.T) {
 		},
 	}
 
-	steps, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, mustNotRunExecutor{t: t}, (*TypedToolExecutor)(nil), nil, "read the financials", 3)
+	steps, _, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, mustNotRunExecutor{t: t}, (*TypedToolExecutor)(nil), nil, "read the financials", 3)
 	if err != nil {
 		t.Fatalf("runNativeToolAgent: %v", err)
 	}

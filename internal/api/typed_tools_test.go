@@ -57,7 +57,7 @@ func TestNativeToolAgent_TypedTool_DecodesNestedArgs(t *testing.T) {
 		},
 	}
 
-	steps, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, DemoExecutor{}, typed, nil, "weather in paris", 3)
+	steps, _, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, DemoExecutor{}, typed, nil, "weather in paris", 3)
 	if err != nil {
 		t.Fatalf("runNativeToolAgent: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestNativeToolAgent_TypedTool_InvalidArgsReflect(t *testing.T) {
 		},
 	}
 
-	steps, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, DemoExecutor{}, typed, nil, "weather in paris", 3)
+	steps, _, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, DemoExecutor{}, typed, nil, "weather in paris", 3)
 	if err != nil {
 		t.Fatalf("invalid typed args must not fail the run (they reflect), got: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestNativeToolAgent_TypedTool_ConstraintViolationReflects(t *testing.T) {
 		},
 	}
 
-	steps, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, DemoExecutor{}, typed, nil, "weather in paris", 3)
+	steps, _, err := runNativeToolAgent(context.Background(), tc, noop.NewTracerProvider(), reg, DemoExecutor{}, typed, nil, "weather in paris", 3)
 	if err != nil {
 		t.Fatalf("constraint violation must reflect, not fail the run: %v", err)
 	}

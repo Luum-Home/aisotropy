@@ -39,9 +39,19 @@ type ToolExecutor interface {
 // Decision is the structured-output contract the model must reply with: at
 // most one tool name (exactly as listed in the system prompt) plus its
 // arguments, or an empty Tool meaning "answer directly, no tool needed".
+//
+// Answer carries the model's natural-language reply to the user and is only
+// meaningful on the terminating no-tool Decision (Tool == ""): it is how a
+// StreamChat-only client — which has no native final-text channel like a
+// ToolCaller does — conveys the answer it synthesized after (or instead of)
+// any tool calls. The field is ADDITIVE and backward-compatible: a model that
+// still emits only {"tool":"","args":{}} decodes with Answer == "", exactly as
+// before this field existed. On a tool-call Decision the model is instructed to
+// leave Answer empty.
 type Decision struct {
-	Tool string            `json:"tool"`
-	Args map[string]string `json:"args"`
+	Tool   string            `json:"tool"`
+	Args   map[string]string `json:"args"`
+	Answer string            `json:"answer"`
 }
 
 // ErrMalformedDecision is returned (wrapped, via errors.Is) by SelectTool
@@ -99,7 +109,9 @@ func (l *Loop) SelectTool(ctx context.Context, scopes []string, prompt string) (
 	}
 
 	if dec.Tool == "" {
-		return Decision{Tool: ""}, nil
+		// Preserve the model's natural-language answer (Answer) while forcing the
+		// no-tool shape — this is the terminating direct-answer Decision.
+		return Decision{Tool: "", Answer: dec.Answer}, nil
 	}
 
 	if _, ok := permittedSet[dec.Tool]; !ok {
@@ -107,6 +119,8 @@ func (l *Loop) SelectTool(ctx context.Context, scopes []string, prompt string) (
 		// (either it hallucinated, or something tried to coerce it into
 		// naming a tool outside the caller's scopes). Never let that
 		// surface as a usable Decision — treat it exactly like "no tool".
+		// Any Answer the model attached to a rejected tool call is dropped:
+		// it never chose the no-tool path, so there is no trusted direct answer.
 		return Decision{Tool: ""}, nil
 	}
 
@@ -162,6 +176,20 @@ func (l *Loop) Run(ctx context.Context, scopes []string, prompt string) ([]StepR
 	return steps, nil
 }
 
+// FinalAnswer returns the model's natural-language answer from a completed Run:
+// the Answer carried by the terminating no-tool Decision (Tool == ""), which Run
+// always records as the LAST step when the model chose to answer directly. It is
+// "" when the run stopped without a direct answer — e.g. it exhausted MaxSteps
+// while still calling tools (a graceful non-converged stop, mirroring the native
+// RunToolAgentWithOutput contract), or the model emitted no answer text. This is
+// the fallback-path analog of the native agent's final free-text output.
+func FinalAnswer(steps []StepResult) string {
+	if n := len(steps); n > 0 && steps[n-1].Decision.Tool == "" {
+		return steps[n-1].Decision.Answer
+	}
+	return ""
+}
+
 // selectToolCapturingReasoning is SelectTool plus reasoning carry-forward: it
 // reinjects the accumulated reasoning as leading prompt context, runs the same
 // scope-safe single-turn selection, and folds this turn's reasoning back into
@@ -190,11 +218,14 @@ func (l *Loop) selectToolCapturingReasoning(ctx context.Context, scopes []string
 		return Decision{}, fmt.Errorf("%w: %w", ErrMalformedDecision, err)
 	}
 	if dec.Tool == "" {
-		return Decision{Tool: ""}, nil
+		// Preserve the model's natural-language answer (Answer) on the terminating
+		// direct-answer Decision; everything else is forced to the no-tool shape.
+		return Decision{Tool: "", Answer: dec.Answer}, nil
 	}
 	if _, ok := permittedSet[dec.Tool]; !ok {
 		// SECURITY INVARIANT (identical to SelectTool): a tool the caller's scopes
-		// did not permit is never surfaced as a usable Decision.
+		// did not permit is never surfaced as a usable Decision. Any Answer attached
+		// to a rejected tool call is dropped — the model never chose to answer.
 		return Decision{Tool: ""}, nil
 	}
 	return dec, nil
@@ -227,10 +258,12 @@ func buildSystemPrompt(reg *tools.Registry, scopes []string) string {
 	}
 	sb.WriteString("\n\nRespond with EXACTLY ONE JSON object and nothing else " +
 		"(no prose, no markdown code fences), matching this shape:\n" +
-		`{"tool": "<tool name or empty string>", "args": {"<key>": "<value>"}}` +
+		`{"tool": "<tool name or empty string>", "args": {"<key>": "<value>"}, "answer": "<natural-language answer or empty string>"}` +
 		"\n\nIf none of the listed tools help, or no tools are available, set " +
-		`"tool" to "" and "args" to {}. Never name a tool that was not ` +
-		"explicitly listed above.")
+		`"tool" to "" and "args" to {}, and put your natural-language answer to ` +
+		`the user in "answer". When you DO call a tool, set "answer" to "" (you ` +
+		"will get the tool result and can answer on a later turn). Never name a " +
+		"tool that was not explicitly listed above.")
 	return sb.String()
 }
 
