@@ -180,6 +180,13 @@ func runTools(req *request, out *result) error {
 			Args   map[string]string `json:"args"`
 			Result string            `json:"result"`
 		} `json:"steps"`
+		// FinalAnswer is the model's terminal natural-language reply (commit
+		// 2232d37: /chat/agent returns the model's final answer on both dispatch
+		// paths). Consuming it is what lets this mode report the model's ACTUAL
+		// prose instead of a fabricated sentence — fixing both the abstain case
+		// (no tool executed, so nothing to fabricate from) and the "number in
+		// prose" grading of the tool-executed case.
+		FinalAnswer string `json:"final_answer"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&agentResp); err != nil {
 		return fmt.Errorf("decode /chat/agent response: %w", err)
@@ -221,13 +228,30 @@ func runTools(req *request, out *result) error {
 	// whether that was the RIGHT outcome for a given task — this adapter must
 	// report what actually happened, never fail closed on an empty trace.
 	if len(out.ToolCalls) == 0 {
-		out.Reply = "No tool was executed for this request; the agent answered directly."
+		// No tool executed (valid outcome — the runner's mode-signal scoring
+		// judges whether that was RIGHT). Prefer the model's own final answer;
+		// the fabricated placeholder is only a defensive fallback for when the
+		// server legitimately returns an empty final_answer (e.g. a run that hit
+		// max-steps without producing prose).
+		if agentResp.FinalAnswer != "" {
+			out.Reply = agentResp.FinalAnswer
+		} else {
+			out.Reply = "No tool was executed for this request; the agent answered directly."
+		}
 		logf("tools: agent route completed with no tool executed (reported as a valid outcome)")
 		return nil
 	}
-	// Fold the executed tool result into the answer (the agent route returns tool
-	// decisions, not a final natural-language reply).
-	out.Reply = fmt.Sprintf("The %s tool was executed and returned %s.", out.ToolCalls[len(out.ToolCalls)-1].Name, lastResult)
+	// A tool executed. Prefer the model's terminal natural-language answer and
+	// append the tool-execution fact after it (so a grader looking for the
+	// computed number in prose finds it even when the model's own sentence
+	// omits it). Fall back to the fabricated sentence only when the server
+	// returned no final answer.
+	toolSentence := fmt.Sprintf("The %s tool was executed and returned %s.", out.ToolCalls[len(out.ToolCalls)-1].Name, lastResult)
+	if agentResp.FinalAnswer != "" {
+		out.Reply = agentResp.FinalAnswer + " " + toolSentence
+	} else {
+		out.Reply = toolSentence
+	}
 	logf("tools: executed %d tool call(s), last result=%s", len(out.ToolCalls), lastResult)
 	return nil
 }

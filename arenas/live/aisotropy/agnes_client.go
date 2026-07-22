@@ -1,50 +1,60 @@
-// agnes_client.go — a usage-capturing llm.Client that speaks the OpenAI
-// /chat/completions streaming protocol against agnes-2.0-flash.
+// agnes_client.go — a usage-capturing decorator over the aisotropy façade's own
+// OpenAI-compatible client, pointed at agnes-2.0-flash.
 //
-// WHY THIS EXISTS (and is not "reimplementing the provider"): aisotropy's public
-// façade exposes App.Turn, whose ChatOutput carries only {Reply, TenantID, Stub}
-// — it deliberately does NOT surface per-turn provider token usage to the
-// embedder. The live-arena contract, however, requires input_tokens/output_tokens
-// from the provider's reported usage. The only public seam that lets an embedder
-// observe usage is aisotropy.WithLLM(client), which injects an llm.Client whose
-// StreamChat the whole pipeline (GollemReflect → ChatCore) drives. So we inject a
-// client that (a) reads OPENAI_* env to select the real agnes model — exactly the
-// provider-agnostic selection ADR-0009 describes, WithLLM being that seam — and
-// (b) records the provider's stream-final usage so the adapter can report it.
+// WHY THIS EXISTS (and why it no longer hand-rolls a transport): the live-arena
+// contract requires per-turn provider token usage, and the aisotropy façade's
+// App.Turn ChatOutput deliberately does NOT surface it — the only public seam
+// that lets an embedder observe usage is aisotropy.WithLLM(client). The earlier
+// version of this file injected a bespoke SSE client implementing ONLY
+// StreamChat; because /chat/agent discovers native tool-calling by a
+// `client.(ToolCaller)` type assertion, that StreamChat-only client SILENTLY
+// downgraded the real lane's agent route to the fragile agentloop JSON fallback
+// (the Go interface-upgrade-loss trap — the single largest source of the tools
+// dimension's run-to-run variance). See commit 48dbf62.
 //
-// stdlib only (net/http + encoding/json): zero new dependencies, MIT-clean.
+// THE FIX (product half already landed): aisotropy.NewOpenAICompatLLM builds a
+// client that natively implements ToolCaller (and ReasoningToolCaller), and
+// ToolCallResult.Usage now carries provider usage on the CallTools path. This
+// file's job is the adapter half: wrap that client in a decorator that
+// PRESERVES the ToolCaller capability through the wrap (mirroring the product's
+// own middlewareToolCaller shape) while accumulating usage from BOTH the
+// StreamChat terminal Token AND the CallTools ToolCallResult. Losing ToolCaller
+// again is prevented by a compile-time assertion below plus a runtime
+// type-assertion test (agnes_client_test.go).
+//
+// stdlib only beyond the façade: zero new dependencies, MIT-clean.
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	aisotropy "github.com/Luum-Home/aisotropy/aisotropy"
 )
 
-// compile-time proof the injected type satisfies the public façade's LLMClient.
-var _ aisotropy.LLMClient = (*agnesClient)(nil)
+// compile-time proof the injected type satisfies BOTH the public façade's
+// LLMClient AND the optional ToolCaller capability — the assertion that would
+// have caught the original downgrade bug the day it was written. If a future
+// refactor drops CallTools (or the embedded StreamChat/Name), the module stops
+// compiling here rather than silently falling back to the agentloop JSON path.
+var (
+	_ aisotropy.LLMClient  = (*agnesClient)(nil)
+	_ aisotropy.ToolCaller = (*agnesClient)(nil)
+)
 
-// agnesClient calls agnes-2.0-flash over its OpenAI-compatible endpoint and
-// accumulates provider-reported usage across every StreamChat it serves (a
-// single App.Turn may drive StreamChat more than once via the reflection loop;
-// summing is the honest per-turn spend).
+// agnesClient decorates the façade's OpenAI-compatible client (inner) with a
+// per-turn usage accumulator. A single App.Turn may drive StreamChat more than
+// once (the reflection loop) and an agent run makes several CallTools turns;
+// summing every reported usage block is the honest per-turn spend.
+//
+// The decorator forwards StreamChat and CallTools to inner, so the native
+// tool-calling capability is carried THROUGH the wrap rather than lost by it.
 type agnesClient struct {
-	apiKey    string
-	model     string
-	baseURL   string
-	maxTokens int
-	http      *http.Client
+	inner  aisotropy.LLMClient  // the façade client (NewOpenAICompatLLM)
+	caller aisotropy.ToolCaller // inner asserted to ToolCaller (always non-nil here)
 
 	mu           sync.Mutex
 	inputTokens  int
@@ -52,8 +62,8 @@ type agnesClient struct {
 	sawUsage     bool
 }
 
-// newAgnesClient builds the client from OPENAI_* env. The key is read from the
-// environment and never logged or embedded in error strings.
+// newAgnesClient builds the decorator from OPENAI_* env. The key is read from
+// the environment and never logged or embedded in error strings.
 //
 // ARENA_STUB=1 (stubMode, app.go) short-circuits this entirely: it clears the
 // real-backend-tier env vars this process may have inherited from run.sh
@@ -62,10 +72,15 @@ type agnesClient struct {
 // `agnes, err := newAgnesClient(); if err != nil { return err }` followed by
 // `newApp(agnes, ...)` / `setUsage(out, agnes)` — both nil-safe (app.go) — so
 // a nil, nil-error return here is a normal, successful "run offline" signal
-// that needs no change at any of the 11 call sites: newApp then omits
-// WithLLM entirely, so aisotropy.New() falls back to its own env-driven
-// llm.FromEnv(), which (with every provider key unset) resolves to
-// aisotropy's NATIVE keyless stub client.
+// that needs no change at any call site: newApp then omits WithLLM entirely,
+// so aisotropy.New() falls back to its own env-driven llm.FromEnv(), which
+// (with every provider key unset) resolves to aisotropy's NATIVE keyless stub.
+//
+// Signature and stub behavior are IDENTICAL to the prior version — only the
+// transport underneath changes (façade client instead of a hand-rolled SSE
+// parser). max_tokens (AISOTROPY_MAX_TOKENS, default 1024) and stream usage
+// options are now owned by the façade client's own request shaping, which reads
+// the same env var — so that override is preserved, not dropped.
 func newAgnesClient() (*agnesClient, error) {
 	if stubMode() {
 		clearBackendTierEnv()
@@ -75,31 +90,30 @@ func newAgnesClient() (*agnesClient, error) {
 	if key == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
 	}
+	// baseURL "" lets the façade default to the OpenAI base URL; OPENAI_MODEL ""
+	// lets it fall through to our explicit agnes default below.
 	base := strings.TrimRight(os.Getenv("OPENAI_BASE_URL"), "/")
-	if base == "" {
-		base = "https://api.openai.com/v1"
-	}
 	model := os.Getenv("OPENAI_MODEL")
 	if model == "" {
 		model = "agnes-2.0-flash"
 	}
-	max := 1024
-	if v := os.Getenv("AISOTROPY_MAX_TOKENS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			max = n
-		}
+
+	inner := aisotropy.NewOpenAICompatLLM(key, model, base, "agnes")
+	caller, ok := inner.(aisotropy.ToolCaller)
+	if !ok {
+		// The façade constructor documents that its client implements ToolCaller;
+		// this can only fail if that contract regresses. Fail loudly rather than
+		// inject a client that would silently downgrade /chat/agent — the exact
+		// failure mode this whole rewrite exists to prevent.
+		return nil, fmt.Errorf("agnes: NewOpenAICompatLLM client does not implement aisotropy.ToolCaller — /chat/agent would downgrade to the agentloop JSON fallback")
 	}
-	return &agnesClient{
-		apiKey:    key,
-		model:     model,
-		baseURL:   base,
-		maxTokens: max,
-		http:      &http.Client{Timeout: 120 * time.Second},
-	}, nil
+	return &agnesClient{inner: inner, caller: caller}, nil
 }
 
-// Name identifies the client for observability (includes the model).
-func (c *agnesClient) Name() string { return "agnes:" + c.model }
+// Name delegates to the inner façade client, which composes name+":"+model —
+// with name "agnes" that is exactly the "agnes:"+model string this adapter has
+// always reported for observability.
+func (c *agnesClient) Name() string { return c.inner.Name() }
 
 // usage returns the accumulated provider-reported token counts. When the
 // provider never reported usage, it returns (-1, -1) per the arena contract.
@@ -120,123 +134,55 @@ func (c *agnesClient) addUsage(in, out int) {
 	c.mu.Unlock()
 }
 
-// StreamChat opens the SSE stream against agnes and emits incremental text
-// tokens, folding the provider's stream-final usage into the accumulator and
-// attaching it to the terminal Token (the llm.Client contract). Honors ctx
-// cancellation on both read and channel send.
+// StreamChat delegates to the inner client and folds the provider's
+// stream-final usage (carried on any Token.Usage, terminal or otherwise) into
+// the accumulator as tokens pass through. Honors ctx cancellation on send.
 func (c *agnesClient) StreamChat(ctx context.Context, system, prompt string) (<-chan aisotropy.Token, error) {
-	msgs := make([]map[string]string, 0, 2)
-	if system != "" {
-		msgs = append(msgs, map[string]string{"role": "system", "content": system})
-	}
-	msgs = append(msgs, map[string]string{"role": "user", "content": prompt})
-
-	body, err := json.Marshal(map[string]any{
-		"model":          c.model,
-		"stream":         true,
-		"max_tokens":     c.maxTokens,
-		"messages":       msgs,
-		"stream_options": map[string]any{"include_usage": true},
-	})
+	in, err := c.inner.StreamChat(ctx, system, prompt)
 	if err != nil {
-		return nil, fmt.Errorf("agnes: marshal request: %w", err)
+		return nil, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("agnes: build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-
-	resp, err := c.http.Do(req) //nolint:bodyclose // closed by consumeStream via defer
-	if err != nil {
-		return nil, fmt.Errorf("agnes: request failed: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		_ = resp.Body.Close()
-		return nil, fmt.Errorf("agnes: status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
-	}
-
-	ch := make(chan aisotropy.Token)
-	go c.consumeStream(ctx, resp.Body, ch)
-	return ch, nil
-}
-
-func (c *agnesClient) consumeStream(ctx context.Context, body io.ReadCloser, ch chan<- aisotropy.Token) {
-	defer close(ch)
-	defer func() { _ = body.Close() }()
-
-	var usage *aisotropy.Usage
-	sc := bufio.NewScanner(body)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for sc.Scan() {
-		if ctx.Err() != nil {
-			return
-		}
-		line := strings.TrimSpace(sc.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
-			if usage != nil {
-				c.addUsage(usage.InputTokens, usage.OutputTokens)
+	out := make(chan aisotropy.Token)
+	go func() {
+		defer close(out)
+		for tok := range in {
+			if tok.Usage != nil {
+				c.addUsage(tok.Usage.InputTokens, tok.Usage.OutputTokens)
 			}
-			c.send(ctx, ch, aisotropy.Token{Done: true, Usage: usage})
-			return
+			select {
+			case out <- tok:
+			case <-ctx.Done():
+				return
+			}
 		}
-		text, u := decodeChunk(data)
-		if u != nil {
-			usage = u
-		}
-		if text != "" && !c.send(ctx, ch, aisotropy.Token{Text: text}) {
-			return
-		}
-	}
-	if err := sc.Err(); err != nil && ctx.Err() == nil {
-		c.send(ctx, ch, aisotropy.Token{Err: fmt.Errorf("agnes: stream read: %w", err)})
-		return
-	}
-	if usage != nil {
-		c.addUsage(usage.InputTokens, usage.OutputTokens)
-	}
-	c.send(ctx, ch, aisotropy.Token{Done: true, Usage: usage})
+	}()
+	return out, nil
 }
 
-// decodeChunk decodes one SSE data payload: the text delta and, on the
-// usage-only chunk agnes emits before [DONE], the provider token counts.
-func decodeChunk(data string) (text string, usage *aisotropy.Usage) {
-	var chunk struct {
-		Choices []struct {
-			Delta struct {
-				Content string `json:"content"`
-			} `json:"delta"`
-		} `json:"choices"`
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-		} `json:"usage"`
+// CallTools delegates to the inner ToolCaller — this is the method whose
+// presence keeps /chat/agent on the native function-calling path — and folds
+// the tool-call turn's provider usage (ToolCallResult.Usage, non-nil by default
+// on the non-streaming CallTools request) into the accumulator. Usage is
+// recorded even when err is non-nil, in case a partial usage block came back.
+func (c *agnesClient) CallTools(ctx context.Context, system, prompt string, tools []aisotropy.ToolSpec) (aisotropy.ToolCallResult, error) {
+	res, err := c.caller.CallTools(ctx, system, prompt, tools)
+	if res.Usage != nil {
+		c.addUsage(res.Usage.InputTokens, res.Usage.OutputTokens)
 	}
-	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-		return "", nil // keep-alive / comment / non-JSON line
-	}
-	if chunk.Usage != nil {
-		usage = &aisotropy.Usage{InputTokens: chunk.Usage.PromptTokens, OutputTokens: chunk.Usage.CompletionTokens}
-	}
-	if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-		text = chunk.Choices[0].Delta.Content
-	}
-	return text, usage
+	return res, err
 }
 
-func (c *agnesClient) send(ctx context.Context, ch chan<- aisotropy.Token, t aisotropy.Token) bool {
-	select {
-	case ch <- t:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
+// NOTE ON ReasoningToolCaller (ADR-0061): the façade client ALSO implements the
+// optional ReasoningToolCaller (CallTools + stateless reasoning carry-forward).
+// This decorator cannot forward it: ReasoningToolCaller and its ReasoningState
+// parameter are NOT re-exported on the aisotropy façade, and this adapter is a
+// separate module that cannot import internal/llm to name that type. Wrapping
+// therefore hides ReasoningToolCaller, so the runtime's
+// `client.(ReasoningToolCaller)` assertion falls back to plain CallTools (which
+// this decorator DOES intercept for usage). The only behavioral effect is that
+// reasoning is not carried across agent turns — a documented graceful
+// degradation to "carry nothing", identical to any plain ToolCaller
+// (internal/llm/reasoning.go). This is a strictly smaller loss than the
+// agentloop JSON fallback the rewrite eliminates. Re-exporting
+// ReasoningToolCaller/ReasoningState on the façade would let a future version
+// forward it; that is a façade change outside this adapter's ownership.
