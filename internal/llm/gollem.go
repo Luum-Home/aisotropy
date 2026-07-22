@@ -299,7 +299,14 @@ func (s *gollemStream) Usage() core.Usage {
 	if s.usage == nil {
 		return core.Usage{}
 	}
-	return core.Usage{InputTokens: s.usage.InputTokens, OutputTokens: s.usage.OutputTokens}
+	u := core.Usage{InputTokens: s.usage.InputTokens, OutputTokens: s.usage.OutputTokens}
+	// Reasoning tokens travel in gollem's Details["reasoning_tokens"] convention
+	// (same mapping as toModelResponse below), so the streaming path does not
+	// drop them either.
+	if s.usage.ReasoningTokens > 0 {
+		u.Details = map[string]int{"reasoning_tokens": s.usage.ReasoningTokens}
+	}
+	return u
 }
 
 func (s *gollemStream) Close() error { s.state = gollemStreamDone; return nil }

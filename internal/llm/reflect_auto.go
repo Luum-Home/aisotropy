@@ -75,7 +75,17 @@ func ReflectAuto[T any](
 			result := ReflectResult[T]{
 				Output:   res.Output,
 				Attempts: res.Iterations,
-				Usage:    Usage{InputTokens: res.Usage.InputTokens, OutputTokens: res.Usage.OutputTokens},
+				Usage: Usage{
+					InputTokens:  res.Usage.InputTokens,
+					OutputTokens: res.Usage.OutputTokens,
+					// gollem carries reasoning tokens in core.Usage.Details under
+					// the "reasoning_tokens" key (its own providers' convention —
+					// gollem provider/openai/message.go writes it, ext/codetool
+					// reads it — and toModelResponse in gollem.go writes the same
+					// key), summed across iterations by Usage.Incr. A nil Details
+					// map reads as 0, so non-reasoning runs are unchanged.
+					ReasoningTokens: res.Usage.Details["reasoning_tokens"],
+				},
 			}
 			return result.Output, result.Attempts, ReflectionBackendGollem, result.Usage, nil
 		}

@@ -142,10 +142,36 @@ func (m *middlewareToolCaller) CallTools(ctx context.Context, system, prompt str
 	return m.tc.CallTools(ctx, system, prompt, tools)
 }
 
-// wrapOneMiddleware decorates next with mw, preserving next's ToolCaller
-// capability (if any) unchanged, per middlewareToolCaller's doc.
+// middlewareReasoningToolCaller preserves an inner ReasoningToolCaller through
+// the middleware decorator, exactly like middlewareToolCaller preserves
+// ToolCaller: CallToolsReasoning is forwarded UNCHANGED — ModelMiddleware's
+// contract is StreamChat-only, so reasoning tool-calls never pass through
+// WrapStream, and a decorator that dropped the capability would silently stop
+// reasoning from being carried across agent steps (gollem.go's
+// callToolsMaybeReasoning discovers it by type assertion).
+type middlewareReasoningToolCaller struct {
+	*middlewareToolCaller
+	rtc ReasoningToolCaller
+}
+
+var _ ReasoningToolCaller = (*middlewareReasoningToolCaller)(nil)
+
+func (m *middlewareReasoningToolCaller) CallToolsReasoning(ctx context.Context, system, prompt string, tools []ToolSpec, prior ReasoningState) (ToolCallResult, ReasoningState, error) {
+	return m.rtc.CallToolsReasoning(ctx, system, prompt, tools, prior)
+}
+
+// wrapOneMiddleware decorates next with mw, preserving next's widest
+// tool-calling capability tier (Client / +ToolCaller / +ReasoningToolCaller)
+// unchanged, per middlewareToolCaller's / middlewareReasoningToolCaller's docs
+// (same three-tier selection as WithUsageMeter).
 func wrapOneMiddleware(mw ModelMiddleware, next Client) Client {
 	base := &middlewareClient{mw: mw, next: next}
+	if rtc, ok := next.(ReasoningToolCaller); ok {
+		return &middlewareReasoningToolCaller{
+			middlewareToolCaller: &middlewareToolCaller{middlewareClient: base, tc: rtc},
+			rtc:                  rtc,
+		}
+	}
 	if tc, ok := next.(ToolCaller); ok {
 		return &middlewareToolCaller{middlewareClient: base, tc: tc}
 	}

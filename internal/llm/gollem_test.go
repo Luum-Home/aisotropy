@@ -470,7 +470,11 @@ func (f *usageFakeClient) StreamChat(_ context.Context, _, _ string) (<-chan Tok
 
 	out := make(chan Token, 2)
 	out <- Token{Text: text}
-	out <- Token{Done: true, Usage: &Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens}}
+	// Forward the scripted Usage WHOLE (a per-call copy), not rebuilt
+	// field-by-field — the field-list rebuild silently dropped
+	// ReasoningTokens, the very drop class this fake exists to catch.
+	u := usage
+	out <- Token{Done: true, Usage: &u}
 	close(out)
 	return out, nil
 }
@@ -501,8 +505,8 @@ func TestReflectAuto_AggregatesUsageAcrossRetries(t *testing.T) {
 			`{"reply":"ok"}`,
 		},
 		usages: []Usage{
-			{InputTokens: 100, OutputTokens: 20},
-			{InputTokens: 50, OutputTokens: 10},
+			{InputTokens: 100, OutputTokens: 20, ReasoningTokens: 7},
+			{InputTokens: 50, OutputTokens: 10, ReasoningTokens: 3},
 		},
 	}
 	decode := func(raw string) (gollemTestOutput, error) {
@@ -541,6 +545,15 @@ func TestReflectAuto_AggregatesUsageAcrossRetries(t *testing.T) {
 	if usage.OutputTokens != wantOutput {
 		t.Fatalf("usage.OutputTokens = %d, expected %d (sum of both iterations' usage, not just the last)",
 			usage.OutputTokens, wantOutput)
+	}
+	// Reasoning tokens round-trip through gollem's Details["reasoning_tokens"]
+	// convention (toModelResponse writes it, core's Usage.Incr sums it,
+	// ReflectAuto reads it back) — the regression guard for the be945de-flagged
+	// drop at reflect_auto.go's Usage mapping.
+	const wantReasoning = 7 + 3
+	if usage.ReasoningTokens != wantReasoning {
+		t.Fatalf("usage.ReasoningTokens = %d, expected %d (sum of both iterations, carried via core.Usage.Details)",
+			usage.ReasoningTokens, wantReasoning)
 	}
 }
 

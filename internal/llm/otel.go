@@ -128,7 +128,17 @@ func WithOTel(c Client, tracer trace.Tracer) Client {
 	o := &otelClient{next: c, tracer: tracer}
 	// Preserve an inner ToolCaller's native tool-calling (ADR-0012): a decorator
 	// that dropped CallTools would make client.(ToolCaller) fail downstream and
-	// silently disable the native tool-calling path.
+	// silently disable the native tool-calling path. Same for an inner
+	// ReasoningToolCaller (ADR-0061): the widest capability tier the inner
+	// client supports is preserved (three-tier selection, like WithUsageMeter),
+	// so instrumenting the chain never silently stops reasoning from being
+	// carried across agent steps.
+	if rtc, ok := c.(ReasoningToolCaller); ok {
+		return &otelReasoningToolCaller{
+			otelToolCaller: &otelToolCaller{otelClient: o, tc: rtc},
+			rtc:            rtc,
+		}
+	}
 	if tc, ok := c.(ToolCaller); ok {
 		return &otelToolCaller{otelClient: o, tc: tc}
 	}
@@ -145,10 +155,10 @@ type otelToolCaller struct {
 
 var _ ToolCaller = (*otelToolCaller)(nil)
 
-// CallTools starts one "chat.tools" span, delegates to the inner ToolCaller, and
-// records provider/model + tenant/user identity attributes (same vocabulary as
-// StreamChat). The span ends when the call returns.
-func (o *otelToolCaller) CallTools(ctx context.Context, system, prompt string, tools []ToolSpec) (ToolCallResult, error) {
+// toolCallAttrs builds the provider/model + tenant/user identity attributes a
+// tool-call span carries (same vocabulary as StreamChat's span), shared by
+// CallTools and CallToolsReasoning so the two spans stay attribute-identical.
+func (o *otelClient) toolCallAttrs(ctx context.Context) []attribute.KeyValue {
 	genAISystem, genAIModel := splitClientName(o.next.Name())
 
 	attrs := []attribute.KeyValue{
@@ -164,8 +174,14 @@ func (o *otelToolCaller) CallTools(ctx context.Context, system, prompt string, t
 	if user, ok := UserFromContext(ctx); ok {
 		attrs = append(attrs, attribute.String(attrUserID, user))
 	}
+	return attrs
+}
 
-	spanCtx, span := o.tracer.Start(ctx, spanNameChatTools, trace.WithAttributes(attrs...))
+// CallTools starts one "chat.tools" span, delegates to the inner ToolCaller, and
+// records provider/model + tenant/user identity attributes (same vocabulary as
+// StreamChat). The span ends when the call returns.
+func (o *otelToolCaller) CallTools(ctx context.Context, system, prompt string, tools []ToolSpec) (ToolCallResult, error) {
+	spanCtx, span := o.tracer.Start(ctx, spanNameChatTools, trace.WithAttributes(o.toolCallAttrs(ctx)...))
 	defer span.End()
 
 	res, err := o.tc.CallTools(spanCtx, system, prompt, tools)
@@ -176,6 +192,35 @@ func (o *otelToolCaller) CallTools(ctx context.Context, system, prompt string, t
 		span.SetStatus(codes.Ok, "")
 	}
 	return res, err
+}
+
+// otelReasoningToolCaller preserves an inner ReasoningToolCaller through the
+// OTel decorator: a reasoning tool-call is a provider call exactly like
+// CallTools, so it gets the same one-span-per-invocation treatment. Reasoning
+// CONTENT is never recorded on the span — only the same identity/status
+// attributes CallTools records (chain-of-thought must not leak into traces).
+type otelReasoningToolCaller struct {
+	*otelToolCaller
+	rtc ReasoningToolCaller
+}
+
+var _ ReasoningToolCaller = (*otelReasoningToolCaller)(nil)
+
+// CallToolsReasoning starts one "chat.tools" span (identical vocabulary to
+// CallTools), delegates to the inner ReasoningToolCaller, and records the call
+// status. Result and reasoning state are returned unchanged.
+func (o *otelReasoningToolCaller) CallToolsReasoning(ctx context.Context, system, prompt string, tools []ToolSpec, prior ReasoningState) (ToolCallResult, ReasoningState, error) {
+	spanCtx, span := o.tracer.Start(ctx, spanNameChatTools, trace.WithAttributes(o.toolCallAttrs(ctx)...))
+	defer span.End()
+
+	res, state, err := o.rtc.CallToolsReasoning(spanCtx, system, prompt, tools, prior)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
+	return res, state, err
 }
 
 // Name identifies the underlying provider, unchanged — the decorator does

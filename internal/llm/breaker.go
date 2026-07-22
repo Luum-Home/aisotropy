@@ -44,7 +44,11 @@ type circuitClient struct {
 // value ALSO implements ToolCaller, gating CallTools on the SAME breaker — so
 // the decorator never erases the capability (a decorator that dropped CallTools
 // would make client.(ToolCaller) fail at the call site and silently disable the
-// native tool-calling path). A non-ToolCaller c yields a plain breaker.
+// native tool-calling path). Likewise an inner ReasoningToolCaller (ADR-0061)
+// yields a breakered ReasoningToolCaller, gating CallToolsReasoning on the same
+// breaker — the widest capability tier the inner client supports is preserved
+// (the interface-upgrade-loss trap; same three-tier selection as
+// WithUsageMeter). A non-ToolCaller c yields a plain breaker.
 func WithCircuitBreaker(c Client, threshold int, cooldown time.Duration) Client {
 	if threshold < 1 {
 		threshold = 5
@@ -53,6 +57,12 @@ func WithCircuitBreaker(c Client, threshold int, cooldown time.Duration) Client 
 		cooldown = 30 * time.Second
 	}
 	b := &circuitClient{inner: c, threshold: threshold, cooldown: cooldown, now: time.Now, state: circuitClosed}
+	if rtc, ok := c.(ReasoningToolCaller); ok {
+		return &circuitReasoningToolCaller{
+			circuitToolCaller: &circuitToolCaller{circuitClient: b, tc: rtc},
+			rtc:               rtc,
+		}
+	}
 	if tc, ok := c.(ToolCaller); ok {
 		return &circuitToolCaller{circuitClient: b, tc: tc}
 	}
@@ -81,6 +91,30 @@ func (b *circuitToolCaller) CallTools(ctx context.Context, system, prompt string
 	res, err := b.tc.CallTools(ctx, system, prompt, tools)
 	b.record(err == nil)
 	return res, err
+}
+
+// circuitReasoningToolCaller preserves an inner ReasoningToolCaller through the
+// breaker. CallToolsReasoning is an upstream provider call exactly like
+// CallTools, so it is gated on the SAME shared breaker with the SAME
+// admit/record accounting — a reasoning tool-call can neither bypass an open
+// breaker nor fail without counting toward tripping it.
+type circuitReasoningToolCaller struct {
+	*circuitToolCaller
+	rtc ReasoningToolCaller
+}
+
+var _ ReasoningToolCaller = (*circuitReasoningToolCaller)(nil)
+
+// CallToolsReasoning fails fast with ErrCircuitOpen while the breaker is open;
+// otherwise it delegates to the inner ReasoningToolCaller and records the
+// outcome on the shared breaker (identical semantics to CallTools).
+func (b *circuitReasoningToolCaller) CallToolsReasoning(ctx context.Context, system, prompt string, tools []ToolSpec, prior ReasoningState) (ToolCallResult, ReasoningState, error) {
+	if err := b.admit(); err != nil {
+		return ToolCallResult{}, ReasoningState{}, err
+	}
+	res, state, err := b.rtc.CallToolsReasoning(ctx, system, prompt, tools, prior)
+	b.record(err == nil)
+	return res, state, err
 }
 
 // Name reports the wrapped client's identity unchanged.
