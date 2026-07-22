@@ -56,6 +56,30 @@ type ToolExecutor = agentloop.ToolExecutor
 // provider when ANTHROPIC_API_KEY is set, otherwise the credential-less stub).
 type LLMClient = llm.Client
 
+// NewOpenAICompatLLM builds an OpenAI-compatible LLM client (OpenRouter, OpenAI,
+// or any endpoint speaking /chat/completions) that a consumer can hand to WithLLM.
+// It is the supported way to point the runtime at a custom endpoint or a specific
+// model WITHOUT hand-rolling an HTTP transport — hand-rolling one is exactly how a
+// consumer silently loses native tool-calling (see below).
+//
+// baseURL "" defaults to the OpenAI base URL; model "" defaults to the package
+// default model; name "" defaults to "openai-compat" (it is used only for
+// Name()/observability). The apiKey is sent as the bearer credential and is never
+// logged.
+//
+// The returned client implements ToolCaller AND ReasoningToolCaller natively, so
+// /chat/agent (and every graph node) drives it through the provider's NATIVE
+// function-calling API rather than the fragile agentloop JSON fallback. That
+// capability is discovered by a type assertion at the call site, so a consumer who
+// WRAPS this client in a decorator that forwards ONLY StreamChat (the classic Go
+// interface-upgrade-loss trap) SILENTLY drops it back to the JSON fallback. The
+// runtime emits a boot-time slog.Warn when the resolved LLM client does not satisfy
+// ToolCaller (see App.Run / startRuntime) — heed it. To observe token usage on the
+// tool-calling path, read ToolCallResult.Usage rather than replacing this client.
+func NewOpenAICompatLLM(apiKey, model, baseURL, name string) LLMClient {
+	return llm.NewOpenAICompatClient(apiKey, model, baseURL, name)
+}
+
 // Token is one incremental fragment of a streamed model response, as delivered
 // on the channel an LLMClient returns.
 type Token = llm.Token

@@ -392,6 +392,16 @@ func waitWorkers(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
+// clientSupportsToolCalling reports whether c can drive the provider's NATIVE
+// tool-calling API (llm.ToolCaller) — the exact capability chat_agent.go's
+// handler discovers by `client.(llm.ToolCaller)` to choose native function-calling
+// over the agentloop JSON fallback. Extracted as a pure predicate so the boot-time
+// warning decision is unit-testable without capturing slog output.
+func clientSupportsToolCalling(c llm.Client) bool {
+	_, ok := c.(llm.ToolCaller)
+	return ok
+}
+
 // startRuntime builds the shared runtime core and starts its background workers,
 // returning it with a close() that performs the full teardown. It is the single
 // dependency-construction path both Run (HTTP) and Turn (in-process) boot from,
@@ -586,6 +596,20 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	middlewaredClient := llm.WithModelMiddleware(llmClient, a.ext.modelMiddleware...)
 	protectedClient := llm.WithCircuitBreaker(middlewaredClient, circuitFailureThreshold, circuitCooldown)
 	streamClient := llm.WithOTel(protectedClient, tracer)
+
+	// Native-tool-calling capability check (asserted on the FINAL client the
+	// agent route uses — protectedClient becomes rt.client, and chat_agent.go's
+	// handler does exactly this `client.(llm.ToolCaller)` assertion). The
+	// runtime-owned decorators above (middleware/breaker/OTel) each PRESERVE an
+	// inner ToolCaller, so a warning here means the client the CONSUMER injected
+	// (WithLLM) — or the env default — is StreamChat-only. That silently downgrades
+	// /chat/agent (and every graph node) to the agentloop JSON fallback instead of
+	// native function-calling. One log line, no behavior change: it is the signal
+	// that would have surfaced a hand-rolled StreamChat-only injected client the
+	// day it was wired. No secret is logged (only the client's Name()).
+	if !clientSupportsToolCalling(protectedClient) {
+		slog.Warn("injected LLM client does not implement native tool-calling (llm.ToolCaller); /chat/agent will use the agentloop JSON fallback instead of native function-calling — wrap with care (a StreamChat-only decorator drops this capability), or use aisotropy.NewOpenAICompatLLM", "client", protectedClient.Name())
+	}
 
 	// Optional cheap-model client for quota-pressure degradation (Phase 7). The
 	// SAME user model middleware is applied here too (ADR-0062): a tenant

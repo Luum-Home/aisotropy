@@ -54,6 +54,15 @@ func (a *AnthropicClient) CallTools(ctx context.Context, system, prompt string, 
 	}
 
 	var res ToolCallResult
+	// Provider token accounting for this non-streaming tool-call turn, surfaced
+	// on ToolCallResult.Usage exactly as the OpenAI-compat path does. Anthropic
+	// bills "thinking" INSIDE output_tokens and returns no separate streaming
+	// reasoning count on this API, so ReasoningTokens stays 0 (no double count) —
+	// consistent with llm.Usage's documented Anthropic behavior.
+	res.Usage = &Usage{
+		InputTokens:  int(msg.Usage.InputTokens),
+		OutputTokens: int(msg.Usage.OutputTokens),
+	}
 	for _, block := range msg.Content {
 		switch block.Type {
 		case "text":

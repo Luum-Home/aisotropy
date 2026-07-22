@@ -89,6 +89,14 @@ func TestAnthropicCallTools_ReturnsToolCalls(t *testing.T) {
 	if string(res.Calls[0].RawArgs) != `{"city":"Paris","days":3}` {
 		t.Errorf("RawArgs = %s, want {\"city\":\"Paris\",\"days\":3}", res.Calls[0].RawArgs)
 	}
+	// Provider token accounting is surfaced on ToolCallResult.Usage (Anthropic
+	// bills thinking inside output_tokens, so ReasoningTokens stays 0).
+	if res.Usage == nil || res.Usage.InputTokens != 10 || res.Usage.OutputTokens != 5 {
+		t.Errorf("res.Usage = %+v, want {InputTokens:10 OutputTokens:5 ReasoningTokens:0}", res.Usage)
+	}
+	if res.Usage != nil && res.Usage.ReasoningTokens != 0 {
+		t.Errorf("ReasoningTokens = %d, want 0 (Anthropic bills thinking inside output_tokens)", res.Usage.ReasoningTokens)
+	}
 
 	// Request body must carry the native tool envelope: the declared schema
 	// (name + input_schema with the city property + required) AND the permissive

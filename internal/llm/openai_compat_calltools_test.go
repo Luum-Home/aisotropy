@@ -92,6 +92,53 @@ func TestCallTools_ReturnsToolCalls(t *testing.T) {
 	}
 }
 
+// TestCallTools_SurfacesUsage decodes a CANNED non-streaming tool-call response
+// carrying a `usage` block and asserts the provider token counts land on
+// ToolCallResult.Usage (the counts arrive on the wire by default for a
+// non-streaming /chat/completions reply and used to be silently discarded).
+func TestCallTools_SurfacesUsage(t *testing.T) {
+	resp := `{"choices":[{"message":{"content":"","tool_calls":[
+		{"function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}
+	]}}],"usage":{"prompt_tokens":123,"completion_tokens":45,"completion_tokens_details":{"reasoning_tokens":7}}}`
+	srv := toolServer(t, http.StatusOK, resp, nil)
+	defer srv.Close()
+
+	c := NewOpenAICompatClient("test-key", "m", srv.URL, "test")
+	res, err := c.CallTools(context.Background(), "sys", "weather?", []ToolSpec{{Name: "get_weather"}})
+	if err != nil {
+		t.Fatalf("CallTools: %v", err)
+	}
+	if res.Usage == nil {
+		t.Fatal("res.Usage = nil, want the provider usage block surfaced")
+	}
+	if res.Usage.InputTokens != 123 {
+		t.Errorf("InputTokens = %d, want 123", res.Usage.InputTokens)
+	}
+	if res.Usage.OutputTokens != 45 {
+		t.Errorf("OutputTokens = %d, want 45", res.Usage.OutputTokens)
+	}
+	if res.Usage.ReasoningTokens != 7 {
+		t.Errorf("ReasoningTokens = %d, want 7", res.Usage.ReasoningTokens)
+	}
+}
+
+// TestCallTools_NoUsageBlock covers the nil-usage path: a response with no
+// `usage` key leaves ToolCallResult.Usage nil (a structural no-op), never a
+// zero-valued Usage that would masquerade as "0 tokens spent".
+func TestCallTools_NoUsageBlock(t *testing.T) {
+	srv := toolServer(t, http.StatusOK, `{"choices":[{"message":{"content":"hi"}}]}`, nil)
+	defer srv.Close()
+
+	c := NewOpenAICompatClient("test-key", "m", srv.URL, "test")
+	res, err := c.CallTools(context.Background(), "s", "p", nil)
+	if err != nil {
+		t.Fatalf("CallTools: %v", err)
+	}
+	if res.Usage != nil {
+		t.Errorf("res.Usage = %+v, want nil when the response omits usage", res.Usage)
+	}
+}
+
 // TestCallTools_NoTools covers buildToolCallPayload's early return: with no
 // tools offered, the payload carries no "tools"/"tool_choice" keys, and a
 // content-only reply comes back with zero Calls.
@@ -175,7 +222,8 @@ func TestCallTools_TransportError(t *testing.T) {
 // reasoning field becomes the fresh returned ReasoningState.
 func TestCallToolsReasoning_ReturnsToolCallsAndReasoning(t *testing.T) {
 	resp := `{"choices":[{"message":{"content":"calling","reasoning":"thinking it through",
-		"tool_calls":[{"function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]}}]}`
+		"tool_calls":[{"function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]}}],
+		"usage":{"prompt_tokens":10,"completion_tokens":20,"completion_tokens_details":{"reasoning_tokens":5}}}`
 	var body string
 	srv := toolServer(t, http.StatusOK, resp, &body)
 	defer srv.Close()
@@ -194,6 +242,9 @@ func TestCallToolsReasoning_ReturnsToolCallsAndReasoning(t *testing.T) {
 	}
 	if next.ReasoningText() != "thinking it through" {
 		t.Fatalf("next.ReasoningText() = %q, want the response's reasoning", next.ReasoningText())
+	}
+	if res.Usage == nil || res.Usage.InputTokens != 10 || res.Usage.OutputTokens != 20 || res.Usage.ReasoningTokens != 5 {
+		t.Fatalf("res.Usage = %+v, want {10 20 5} folded from the reasoning response", res.Usage)
 	}
 	if !strings.Contains(body, `"reasoning_effort":"medium"`) {
 		t.Errorf("body missing reasoning_effort: %s", body)

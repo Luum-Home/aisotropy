@@ -62,6 +62,14 @@ type ToolCall struct {
 type ToolCallResult struct {
 	Calls   []ToolCall
 	Message string
+	// Usage, when non-nil, carries the provider-reported token counts for this
+	// tool-call turn. Unlike StreamChat (where usage lands on the terminal Token),
+	// CallTools makes a single NON-streaming request whose response carries the
+	// usage block by default, so it is surfaced here directly. It is the SAME
+	// llm.Usage type Token.Usage uses (never a second usage type), so a consumer
+	// accounts for streamed and tool-calling spend through one shape. nil when the
+	// provider returned no usage block (e.g. a stub or a choice-less response).
+	Usage *Usage
 }
 
 // ToolCaller is an OPTIONAL capability a Client MAY additionally implement when

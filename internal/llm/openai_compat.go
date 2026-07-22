@@ -326,7 +326,7 @@ func (c *OpenAICompatClient) CallTools(ctx context.Context, system, prompt strin
 	}
 
 	msg := out.Choices[0].Message
-	res := ToolCallResult{Message: msg.Content}
+	res := ToolCallResult{Message: msg.Content, Usage: out.usage()}
 	for _, tc := range msg.ToolCalls {
 		// Args: flattened string view (compat / map executor). RawArgs: the
 		// provider's exact JSON, preserved so a typed tool can decode nested /
@@ -393,7 +393,7 @@ func prependPriorReasoning(prompt string, prior ReasoningState) string {
 // message carried into a fresh ReasoningState (text-kind, no signature).
 func toolResultAndReasoning(out toolCallResponse) (ToolCallResult, ReasoningState) {
 	msg := out.Choices[0].Message
-	res := ToolCallResult{Message: msg.Content}
+	res := ToolCallResult{Message: msg.Content, Usage: out.usage()}
 	for _, tc := range msg.ToolCalls {
 		res.Calls = append(res.Calls, ToolCall{
 			Name:    tc.Function.Name,
@@ -480,6 +480,32 @@ type toolCallResponse struct {
 			} `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
+	// Usage is the provider's token accounting for this NON-streaming tool-call
+	// response. A non-streaming /chat/completions reply carries it by default (no
+	// stream_options.include_usage needed, unlike the streaming path), so the
+	// counts arrive on the wire and are folded onto ToolCallResult.Usage. Absent
+	// on a provider that omits it (or a stub) → nil, a structural no-op.
+	Usage *struct {
+		PromptTokens           int `json:"prompt_tokens"`
+		CompletionTokens       int `json:"completion_tokens"`
+		CompletionTokensDetail struct {
+			ReasoningTokens int `json:"reasoning_tokens"`
+		} `json:"completion_tokens_details"`
+	} `json:"usage"`
+}
+
+// usage folds a toolCallResponse's provider usage block into an *Usage, or nil
+// when the provider returned none. Shared by CallTools and the reasoning
+// variant so both surface token accounting identically.
+func (r toolCallResponse) usage() *Usage {
+	if r.Usage == nil {
+		return nil
+	}
+	return &Usage{
+		InputTokens:     r.Usage.PromptTokens,
+		OutputTokens:    r.Usage.CompletionTokens,
+		ReasoningTokens: r.Usage.CompletionTokensDetail.ReasoningTokens,
+	}
 }
 
 // sendToolCallRequest POSTs payload to the /chat/completions endpoint and
