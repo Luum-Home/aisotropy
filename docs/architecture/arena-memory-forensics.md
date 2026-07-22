@@ -565,3 +565,11 @@ discards information before it reaches the scored output." Reading the code that
 the documentation or the plausible story about what should have run, is what surfaced the real cause
 in all three cases. This document's own §3.3 finding (a stale justifying comment, found while writing
 this very report) is a fourth, smaller instance of the same thing happening in real time.
+
+**Correction (this is now the fourth time, not the third):** a fourth full instance surfaced after
+this document was written — `tool-h-chain-1` "failing" (read as "aisotropy can't chain tool calls")
+was, like item 2 above, the adapter fabricating `out.Reply` from a raw tool result instead of the
+model's real answer, not a capability gap (the sibling `tool-h-chain-2` passes on the same code path).
+That instance is diagnosed but, unlike items 1–3, **not yet fixed**. The full list of four, with the
+verdict/fix status for each, now lives in `docs/architecture/arena-adapter-artifacts.md` — treat that
+document as the up-to-date index of this pattern rather than renumbering this section further.
