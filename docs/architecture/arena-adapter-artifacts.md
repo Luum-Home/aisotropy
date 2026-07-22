@@ -1,7 +1,7 @@
 ---
 type: Process
 title: "Arena Adapter Artifacts — four times the harness lied about the product"
-description: Across one working session on the live arena, four separate "aisotropy is worse than framework X" results turned out to be artifacts of aisotropy's own arena adapter or a stale contract doc, not real capability differences — a stale SPEC.md (7 adapters), a fabricated tool-mode reply on an abstain task, a discarded cooperative-turn replay in the memory suite, and (diagnosed but not yet fixed) the same fabricated-reply bug breaking a chained tool-use task. This document is the repeatable discipline that caught each one, plus the two adoption-surface holes the arena shook out along the way.
+description: Across one working session on the live arena, four separate "aisotropy is worse than framework X" results turned out to be artifacts of aisotropy's own arena adapter or a stale contract doc, not real capability differences — a stale SPEC.md (7 adapters), a fabricated tool-mode reply on an abstain task, a discarded cooperative-turn replay in the memory suite, and the same fabricated-reply bug breaking a chained tool-use task (since fixed — see §6). This document is the repeatable discipline that caught each one, plus the two adoption-surface holes the arena shook out along the way.
 tags: [architecture, process, arena, adapters, post-mortem, code-truth]
 timestamp: 2026-07-22T00:00:00Z
 ---
@@ -30,7 +30,7 @@ otherwise.
 | 1 | Seven adapters (genkit-go, pydantic-ai, mastra, ai-sdk, llamaindex, langgraph, eino) scored 0 on tool-exec or reported the wrong model name under the offline stub | Seven independent frameworks all failing the same dimension | `arenas/live/SPEC.md` documented the wrong wire contract: no `result` field in the `tool_calls` schema, rule 2 not marked mode-dependent, and rule 4 ("model echoes `OPENAI_MODEL`") not qualified for the offline stub lane | **DOC** (stale contract, then 4 adapter bugs it caused) | `8c8aaff` (SPEC fix) + `6dcf6a7` (mastra, ai-sdk) + `fccda84` (llamaindex, pydantic-ai); genkit-go's own fix is referenced inside `6dcf6a7`'s message as `adf2311`, pydantic-ai's numeric-result variant as `c510fb5` |
 | 2 | `tool-h-abstain` ✗ for aisotropy: "aisotropy always calls the tool" | A framework hardwired to over-eager tool use, scoring 0 on the one negative item in the suite | The model correctly abstained (`arenas/live/RESULTS.md:601` shows `exec 6/7` — the SAME abstain rate as passing frameworks). The adapter then discarded the model's real answer ("Canberra") and substituted a canned placeholder string whenever zero tools were called | **ADAPTER** | Root cause identified and documented (`docs/architecture/arena-memory-forensics.md` §10, item 2); the adapter substitution itself (`mode_tools.go:224`) is still present — see §4 below |
 | 3 | `memory` 6/8, worst of eight frameworks, at 41,292 input tokens (~2.85x the nearest competitor) | A recency/condensation defect in the working-memory tier | A read-only dump of the arena's BadgerDB store showed the model in a refusal cascade: the adapter's turn-replay (`arenas/live/aisotropy/main.go`, `userMessages`, filters `Role == "user"` only — see line ~370 today, `main.go:359-367` at fix time) discarded the suite's canned cooperative assistant turns, so the model was repeatedly asked to PERFORM an already-declined action and its own refusal got persisted and replayed | **ADAPTER** (compounded by a real, separately-tracked product gap — see §5) | `14355a7`; board republished at `8154f63` showing memory 8/8 |
-| 4 | `tool-h-chain-1` ✗ for aisotropy: "aisotropy can't chain tool calls" | A framework whose tool-use loop is single-shot, unable to feed one call's result into the next | The loop DOES chain — `internal/agentloop/agentloop.go:174`'s `for range l.MaxSteps` feeds `result` from one step into `current`, the prompt for the next; `aisotropy/app.go:58` sets `agentMaxSteps = 3`, enough for a 2-call chain. `tool-h-chain-2`, the sibling 2-call-chain task, PASSES (`arenas/live/RESULTS.md:599`, "exec+correct ✓"). The adapter's reply is fabricated from the LAST tool's raw result (`mode_tools.go:230`, `fmt.Sprintf("The %s tool was executed and returned %s.", ..., lastResult)`) instead of the model's own final answer — the same `out.Reply` fabrication as #2, not a chaining defect | **ADAPTER — diagnosed, NOT yet fixed** | Not fixed as of this writing; see §6 |
+| 4 | `tool-h-chain-1` ✗ for aisotropy: "aisotropy can't chain tool calls" | A framework whose tool-use loop is single-shot, unable to feed one call's result into the next | The loop DOES chain — `internal/agentloop/agentloop.go:174`'s `for range l.MaxSteps` feeds `result` from one step into `current`, the prompt for the next; `aisotropy/app.go:58` sets `agentMaxSteps = 3`, enough for a 2-call chain. `tool-h-chain-2`, the sibling 2-call-chain task, PASSES (`arenas/live/RESULTS.md:599`, "exec+correct ✓"). The adapter's reply is fabricated from the LAST tool's raw result (`mode_tools.go:230`, `fmt.Sprintf("The %s tool was executed and returned %s.", ..., lastResult)`) instead of the model's own final answer — the same `out.Reply` fabrication as #2, not a chaining defect | **ADAPTER — fixed** | `48dbf62` + `674c0e8`; validated 7/7, see §6 |
 
 ## 2. The Q0 discipline — the thing worth keeping
 
@@ -146,23 +146,36 @@ Both fixes are the same meta-point stated twice: the arena is a debugging instru
 surface, and both holes were invisible to `go test ./...` because no existing test exercised a
 third-party integrator's actual call pattern.
 
-## 6. What is NOT yet closed
+## 6. What was closed after this document was first written
 
-- **`tool-h-chain-1`'s root cause (row 4) is diagnosed, not fixed.** `2232d37` added the
-  `final_answer` field to `POST /chat/agent`'s response body, but `arenas/live/aisotropy/mode_tools.go`
-  does not consume it: its `agentResp` decode struct (`mode_tools.go:176-182`) still has only
-  `tenant_id` and `steps`, no `final_answer` field, and `out.Reply` is still built at line 230 from
-  `lastResult`, the raw last-tool-call output, never from the model's own answer. Until the adapter is
-  updated to read and prefer `final_answer`, `tool-h-chain-1` should be expected to keep failing on
-  the arena board even though the underlying capability (chained tool calls, confirmed by
-  `tool-h-chain-2` passing) works. Do not read a future re-run of this task as a capability change
-  without checking whether the adapter was actually touched.
-- **A run-to-run variance experiment is in flight at the time of writing.** Repeated real-lane runs
-  are being used to establish how much a single board diff can move between runs of the same code
-  against the same model, before any further "framework A beats framework B" claim is trusted at
-  single-run resolution. Its results are not reported here — this document only records that the
-  experiment exists and why: three of the four rows above were fixed by re-reading code, not by
-  re-running the arena, and a noisy board could otherwise mask or fake a fix.
+Both items this section originally listed as open are now closed. The original text is preserved
+in git history; the closure evidence is recorded here because a doc that says "pending" forever
+is its own kind of stale.
+
+- **Row 4 is FIXED, and the fix went deeper than consuming `final_answer`.** The variance
+  experiment (below) showed the entire aisotropy tools surface flipping verdicts across identical
+  runs (chain-1 FAIL/FAIL/PASS, chain-2 PASS/FAIL/FAIL, coerce PASS/ERR/FAIL, abstain
+  FAIL/ERR/ERR) while all seven competitors were stable. The root cause was one level below the
+  fabricated reply: the adapter's hand-rolled usage-counting client implemented only `StreamChat`,
+  so the `ToolCaller` assertion in `internal/api/chat_agent.go` failed and the real lane silently
+  downgraded to the `agentloop` JSON fallback — 3x the model calls (the observed 500s) and
+  free-text JSON parsing (the observed flips) — the Go interface-upgrade-loss trap
+  (cf. `http.ResponseController`, Go 1.20). Fixed in three additive layers: `48dbf62` (product:
+  `Usage` on `ToolCallResult`, the public `aisotropy.NewOpenAICompatLLM` constructor, a boot-time
+  WARN when the composed client lacks `ToolCaller`) and `674c0e8` (adapter: a
+  ToolCaller-preserving usage decorator replacing ~120 lines of hand-rolled SSE, plus
+  `mode_tools.go` consuming `final_answer` on both branches, with a compile-time
+  `var _ aisotropy.ToolCaller` guard). Real-lane validation: **7/7 tools including all four
+  previously-unstable tasks, exactly 1 model call per task (was up to 3), zero downgrade WARNs,
+  positive provider usage on the native tool path, and `final_answer` carrying the chained
+  `30826914`** — settling every residual the diagnosis had left open.
+- **The variance experiment completed: 622 of 630 cells (98.7%) returned the same verdict across
+  three identical full runs.** Of the 8 unstable cells, 4 were the aisotropy tools surface (root
+  cause above, since fixed), 3 were competitor transients (ERR in one run, PASS in the others),
+  and 1 was a refusal-trap judgment flip (`langgraph/rag/q9`) — model stochasticity, not code.
+  Memory was 8/8 stable across all three runs, which is what justified NOT building the
+  structural needle-extraction fix: the summarizer's preservation contract holds under repetition,
+  not just once.
 
 ## Uncertainties
 
