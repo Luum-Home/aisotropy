@@ -7,8 +7,8 @@ tags: [arenas, live, results, agnes, quality, latency, cold-start, ttft, tokens,
 
 # Live arena results — modes × benchmarks
 
-> **Run:** 2026-07-21 17:26 UTC • **Model (held constant):** `agnes-2.0-flash` • **Modes:** qa, rag, tools, memory, structured, stream • **Frameworks:** 9 • **Execution forms:** native
-> **Billable model round-trips this run:** 811 • **Bench modes:** qa • **Bench iters:** 5 • **Cold probes:** 3 (empty-stdin, 0 model calls)
+> **Run:** 2026-07-22 02:38 UTC • **Model (held constant):** `agnes-2.0-flash` • **Modes:** qa, rag, tools, memory, structured, stream • **Frameworks:** 9 • **Execution forms:** native
+> **Billable model round-trips this run:** 821 • **Bench modes:** qa • **Bench iters:** 5 • **Cold probes:** 3 (empty-stdin, 0 model calls)
 > **New dimensions:** memory_scoped, isolation_leak, crash_recovery, observability (scoped-memory & isolation, crash recovery, observability capability)
 
 > **LANE: REAL** — every row is a real `agnes-2.0-flash` call; the quality numbers are the live signal.
@@ -186,7 +186,7 @@ retrieval hit@1 on the gold doc + trap-refusal; tools: real tool execution + num
 correctness; structured: schema-valid JSON; stream: mean TTFT). Latency is end-to-end
 wall-clock (native, correctness pass) including the real model round-trip(s).
 
-**Run summary (this pass):** 630 total runs — 554 scored, 76 errored (12.1% of runs never produced a scoreable answer).
+**Run summary (this pass):** 630 total runs — 556 scored, 74 errored (11.7% of runs never produced a scoreable answer).
 
 > **QA is a smoke test, not a quality signal here (empirical finding).** This arena holds
 > the model CONSTANT across every framework, so `qa` measures whether the MODEL answers
@@ -211,58 +211,74 @@ wall-clock (native, correctness pass) including the real model round-trip(s).
 > `stream` as wiring/smoke coverage, not a quality ranking. All modes keep running — a
 > smoke test that catches gross breakage is still worth having.
 
+> **aisotropy `memory` is not apples-to-apples with the other frameworks — read before
+> comparing.** `aisotropy.App.Turn` (the public façade `arenas/live/aisotropy` drives, see
+> `aisotropy/turn.go`) accepts ONE prompt string and no message-list parameter, so this
+> adapter drives **one real model call per conversational turn** — SPEC-sanctioned (see
+> `arenas/live/SPEC.md`), not an adapter shortcut — instead of replaying the supplied
+> transcript in a single call the way every other framework's adapter here does. Two
+> consequences: (1) its memory-mode token total is inflated by **call count**, not
+> per-call verbosity, so it is not directly comparable to a single-call framework's token
+> total; (2) earlier runs of this adapter additionally dropped the suite's canned
+> assistant turns entirely (only user turns were replayed), which primed a refusal
+> cascade that made the `memory` SCORE itself invalid, not just the token count — that
+> adapter defect is now fixed (canned turns reach the model as established context; see
+> `arenas/live/aisotropy/mode_memory.go`), but the call-count token asymmetry remains, by
+> contract, and is not a bug. Full forensic analysis:
+> `docs/architecture/arena-memory-forensics.md`.
+
 _Ran under `-concurrency 1` (fully sequential) — latency in this pass is uncontended._
 
 | Framework | Mode | Deterministic score | Avg value | Mode signal | Avg latency (ms) | Runs | Err |
 |---|---|---:|---:|---|---:|---:|---:|
-| ai-sdk | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 11553 | 12 | 0 |
-| ai-sdk | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 13139 | 19 | 0 |
-| ai-sdk | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 26607 | 7 | 0 |
-| ai-sdk | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 9225 | 8 | 0 |
-| ai-sdk | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 25040 | 12 | 0 |
-| ai-sdk | stream | 12/12 ✓ | 1.0 | TTFT 14392ms (n=12) [smoke test, not a quality signal — see note above] | 15428 | 12 | 0 |
-| aisotropy | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 19817 | 12 | 0 |
-| aisotropy | rag | 19/19 ✓ | 1.0 | hit@1 13/13, trap-refuse 6/6 (discriminates) | 16210 | 19 | 0 |
-| aisotropy | tools | 6/7 ✗ | 0.9 | exec 6/7, correct 6/7 (discriminates) | 37128 | 7 | 0 |
-| aisotropy | memory | 6/8 ✗ | 0.8 | recall (judged) (discriminates) | 23218 | 8 | 0 |
-| aisotropy | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 43363 | 12 | 0 |
-| aisotropy | stream | 12/12 ✓ | 1.0 | TTFT 22312ms (n=12) [smoke test, not a quality signal — see note above] | 22589 | 12 | 0 |
-| eino | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 24549 | 12 | 0 |
-| eino | rag | 16/18 ✗ (1 err) | 0.9 | hit@1 10/12, trap-refuse 6/6 (discriminates) | 26887 | 19 | 1 |
-| eino | tools | 6/6 ✓ (1 err) | 1.0 | exec 6/6, correct 6/6 (discriminates) | 53137 | 7 | 1 |
-| eino | memory | 7/7 ✓ (1 err) | 1.0 | recall (judged) (discriminates) | 32100 | 8 | 1 |
-| eino | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 22426 | 12 | 0 |
-| eino | stream | 12/12 ✓ | 1.0 | TTFT 15632ms (n=12) [smoke test, not a quality signal — see note above] | 17819 | 12 | 0 |
-| genkit-go | qa | 11/11 ✓ (1 err) | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 24562 | 12 | 1 |
-| genkit-go | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 35194 | 19 | 0 |
-| genkit-go | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 34147 | 7 | 0 |
-| genkit-go | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 13448 | 8 | 0 |
-| genkit-go | structured | 10/10 ✓ (2 err) | 1.0 | valid 10/10 [smoke test, not a quality signal — see note above] | 19275 | 12 | 2 |
-| genkit-go | stream | 12/12 ✓ | 1.0 | TTFT 15911ms (n=12) [smoke test, not a quality signal — see note above] | 16722 | 12 | 0 |
-| langgraph | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 18590 | 12 | 0 |
-| langgraph | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 23435 | 19 | 0 |
-| langgraph | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 36741 | 7 | 0 |
-| langgraph | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 25240 | 8 | 0 |
-| langgraph | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 21214 | 12 | 0 |
-| langgraph | stream | 12/12 ✓ | 1.0 | TTFT 32352ms (n=12) [smoke test, not a quality signal — see note above] | 34735 | 12 | 0 |
-| llamaindex | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 24465 | 12 | 0 |
-| llamaindex | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 17490 | 19 | 0 |
-| llamaindex | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 35291 | 7 | 0 |
-| llamaindex | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 22682 | 8 | 0 |
-| llamaindex | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 19551 | 12 | 0 |
-| llamaindex | stream | 12/12 ✓ | 1.0 | TTFT 14000ms (n=12) [smoke test, not a quality signal — see note above] | 15211 | 12 | 0 |
-| mastra | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 17049 | 12 | 0 |
-| mastra | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 15064 | 19 | 0 |
-| mastra | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 20749 | 7 | 0 |
-| mastra | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 10859 | 8 | 0 |
-| mastra | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 11266 | 12 | 0 |
-| mastra | stream | 12/12 ✓ | 1.0 | TTFT 12464ms (n=12) [smoke test, not a quality signal — see note above] | 13056 | 12 | 0 |
-| pydantic-ai | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 16503 | 12 | 0 |
-| pydantic-ai | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 13458 | 19 | 0 |
-| pydantic-ai | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 24862 | 7 | 0 |
-| pydantic-ai | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 13978 | 8 | 0 |
-| pydantic-ai | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 21687 | 12 | 0 |
-| pydantic-ai | stream | 12/12 ✓ | 1.0 | TTFT 9061ms (n=12) [smoke test, not a quality signal — see note above] | 10317 | 12 | 0 |
+| ai-sdk | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 6736 | 12 | 0 |
+| ai-sdk | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 10070 | 19 | 0 |
+| ai-sdk | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 19901 | 7 | 0 |
+| ai-sdk | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 8635 | 8 | 0 |
+| ai-sdk | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 8852 | 12 | 0 |
+| ai-sdk | stream | 12/12 ✓ | 1.0 | TTFT 7645ms (n=12) [smoke test, not a quality signal — see note above] | 7992 | 12 | 0 |
+| aisotropy | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 14242 | 12 | 0 |
+| aisotropy | rag | 18/19 ✗ | 0.9 | hit@1 13/13, trap-refuse 5/6 (discriminates) | 12801 | 19 | 0 |
+| aisotropy | tools | 5/6 ✗ (1 err) | 0.9 | exec 5/6, correct 5/6 (discriminates) | 14670 | 7 | 1 |
+| aisotropy | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 17142 | 8 | 0 |
+| aisotropy | structured | 11/11 ✓ (1 err) | 1.0 | valid 11/11 [smoke test, not a quality signal — see note above] | 21366 | 12 | 1 |
+| aisotropy | stream | 12/12 ✓ | 1.0 | TTFT 9414ms (n=12) [smoke test, not a quality signal — see note above] | 10490 | 12 | 0 |
+| eino | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 11051 | 12 | 0 |
+| eino | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 10792 | 19 | 0 |
+| eino | tools | 6/6 ✓ (1 err) | 1.0 | exec 6/6, correct 6/6 (discriminates) | 19243 | 7 | 1 |
+| eino | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 9469 | 8 | 0 |
+| eino | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 11638 | 12 | 0 |
+| eino | stream | 12/12 ✓ | 1.0 | TTFT 7450ms (n=12) [smoke test, not a quality signal — see note above] | 9064 | 12 | 0 |
+| genkit-go | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 9852 | 12 | 0 |
+| genkit-go | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 12035 | 19 | 0 |
+| genkit-go | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 15598 | 7 | 0 |
+| genkit-go | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 10344 | 8 | 0 |
+| genkit-go | structured | 11/11 ✓ (1 err) | 1.0 | valid 11/11 [smoke test, not a quality signal — see note above] | 13385 | 12 | 1 |
+| genkit-go | stream | 12/12 ✓ | 1.0 | TTFT 14341ms (n=12) [smoke test, not a quality signal — see note above] | 15123 | 12 | 0 |
+| langgraph | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 17406 | 12 | 0 |
+| langgraph | rag | 16/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 5/6 (discriminates) | 13210 | 19 | 0 |
+| langgraph | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 18454 | 7 | 0 |
+| langgraph | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 10025 | 8 | 0 |
+| langgraph | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 15165 | 12 | 0 |
+| langgraph | stream | 12/12 ✓ | 1.0 | TTFT 13842ms (n=12) [smoke test, not a quality signal — see note above] | 16266 | 12 | 0 |
+| llamaindex | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 11457 | 12 | 0 |
+| llamaindex | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 13743 | 19 | 0 |
+| llamaindex | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 22927 | 7 | 0 |
+| llamaindex | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 20274 | 8 | 0 |
+| llamaindex | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 17248 | 12 | 0 |
+| llamaindex | stream | 12/12 ✓ | 1.0 | TTFT 11497ms (n=12) [smoke test, not a quality signal — see note above] | 12842 | 12 | 0 |
+| mastra | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 8752 | 12 | 0 |
+| mastra | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 12933 | 19 | 0 |
+| mastra | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 19230 | 7 | 0 |
+| mastra | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 10453 | 8 | 0 |
+| mastra | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 10384 | 12 | 0 |
+| mastra | stream | 12/12 ✓ | 1.0 | TTFT 10289ms (n=12) [smoke test, not a quality signal — see note above] | 11224 | 12 | 0 |
+| pydantic-ai | qa | 12/12 ✓ | 1.0 | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | 12594 | 12 | 0 |
+| pydantic-ai | rag | 17/19 ✗ | 0.9 | hit@1 11/13, trap-refuse 6/6 (discriminates) | 17512 | 19 | 0 |
+| pydantic-ai | tools | 7/7 ✓ | 1.0 | exec 6/7, correct 7/7 (discriminates) | 24148 | 7 | 0 |
+| pydantic-ai | memory | 8/8 ✓ | 1.0 | recall (judged) (discriminates) | 14768 | 8 | 0 |
+| pydantic-ai | structured | 12/12 ✓ | 1.0 | valid 12/12 [smoke test, not a quality signal — see note above] | 17188 | 12 | 0 |
+| pydantic-ai | stream | 12/12 ✓ | 1.0 | TTFT 11801ms (n=12) [smoke test, not a quality signal — see note above] | 13526 | 12 | 0 |
 | spring-ai | qa | — (12 err) | — | smoke test — model held constant, does not discriminate [smoke test, not a quality signal — see note above] | — | 12 | 12 |
 | spring-ai | rag | — (19 err) | — | — | — | 19 | 19 |
 | spring-ai | tools | — (7 err) | — | — | — | 7 | 7 |
@@ -379,15 +395,15 @@ The cold-start *overhead* column is cold − warm p50 of the same cell's mode (f
 
 | Framework | Form | Mode | p50 (ms) | p95 (ms) | Iters | Cold-start (ms) | Cold overhead (ms) | Note |
 |---|---|---|---:|---:|---:|---:|---:|---|
-| ai-sdk | native | qa | 8908 | 25408 | 5 | 115 | 0 | — |
-| aisotropy | native | qa | 11558 | 23347 | 5 | 22 | 0 | — |
-| eino | native | qa | 6888 | 14636 | 5 | 195 | 0 | — |
-| genkit-go | native | qa | 7158 | 8007 | 5 | 547 | 0 | — |
-| langgraph | native | qa | 9339 | 13295 | 5 | 35 | 0 | — |
-| llamaindex | native | qa | 8212 | 9812 | 5 | 59 | 0 | — |
-| mastra | native | qa | 7041 | 9631 | 5 | 298 | 0 | — |
-| pydantic-ai | native | qa | 9307 | 19665 | 5 | 70 | 0 | — |
-| spring-ai | native | qa | — | — | 0 | 11 | — | all 5 iterations failed (mode unsupported by adapter?) |
+| ai-sdk | native | qa | 7371 | 15770 | 5 | 124 | 0 | — |
+| aisotropy | native | qa | 7851 | 29410 | 5 | 20 | 0 | — |
+| eino | native | qa | 8823 | 14209 | 5 | 178 | 0 | — |
+| genkit-go | native | qa | 9308 | 12249 | 5 | 207 | 0 | — |
+| langgraph | native | qa | 8760 | 27327 | 5 | 38 | 0 | — |
+| llamaindex | native | qa | 8123 | 12110 | 5 | 56 | 0 | — |
+| mastra | native | qa | 7246 | 14716 | 5 | 346 | 0 | — |
+| pydantic-ai | native | qa | 13171 | 19547 | 5 | 67 | 0 | — |
+| spring-ai | native | qa | — | — | 0 | 12 | — | all 5 iterations failed (mode unsupported by adapter?) |
 
 ### TTFT (stream) and peak RSS
 
@@ -396,14 +412,14 @@ TTFT is time-to-first-token from a `stream`-mode run. Peak RSS is the child proc
 
 | Framework | Form | TTFT (ms) | Peak RSS |
 |---|---|---:|---:|
-| ai-sdk | native | 45093 | 111.8 MiB |
-| aisotropy | native | 7276 | 63.1 MiB |
-| eino | native | 11255 | 51.8 MiB |
-| genkit-go | native | 11259 | 30.5 MiB |
-| langgraph | native | 12052 | 135.2 MiB |
-| llamaindex | native | 7218 | 148.8 MiB |
-| mastra | native | 10876 | 205.9 MiB |
-| pydantic-ai | native | 10074 | 145.0 MiB |
+| ai-sdk | native | 8020 | 112.0 MiB |
+| aisotropy | native | 15643 | 215.9 MiB |
+| eino | native | 17190 | 47.7 MiB |
+| genkit-go | native | 12683 | 30.9 MiB |
+| langgraph | native | 9855 | 135.6 MiB |
+| llamaindex | native | 22882 | 148.7 MiB |
+| mastra | native | 9262 | 205.7 MiB |
+| pydantic-ai | native | 14284 | 144.6 MiB |
 
 ## Measured token spend — per framework × per mode
 
@@ -413,54 +429,54 @@ Runs where usage was unavailable report `-1` and are excluded from the sums.
 
 | Framework | Mode | Total input | Total output | Total | Avg in/task | Avg out/task | Runs w/ usage |
 |---|---|---:|---:|---:|---:|---:|---:|
-| ai-sdk | qa | 3325 | 575 | 3900 | 277.1 | 47.9 | 12 |
-| ai-sdk | rag | 12791 | 3626 | 16417 | 673.2 | 190.8 | 19 |
-| ai-sdk | tools | 8801 | 641 | 9442 | 1257.3 | 91.6 | 7 |
-| ai-sdk | memory | 14504 | 4771 | 19275 | 1813.0 | 596.4 | 8 |
-| ai-sdk | structured | 3317 | 2301 | 5618 | 276.4 | 191.8 | 12 |
-| ai-sdk | stream | 3317 | 2056 | 5373 | 276.4 | 171.3 | 12 |
-| aisotropy | qa | 4647 | 2865 | 7512 | 387.2 | 238.8 | 12 |
-| aisotropy | rag | 14006 | 4339 | 18345 | 737.2 | 228.4 | 19 |
-| aisotropy | tools | 6311 | 1047 | 7358 | 901.6 | 149.6 | 7 |
-| aisotropy | memory | 41292 | 15384 | 56676 | 5161.5 | 1923.0 | 8 |
-| aisotropy | structured | 11331 | 2844 | 14175 | 944.2 | 237.0 | 12 |
-| aisotropy | stream | 6816 | 1247 | 8063 | 568.0 | 103.9 | 12 |
-| eino | qa | 3321 | 940 | 4261 | 276.8 | 78.3 | 12 |
-| eino | rag | 12136 | 384 | 12520 | 674.2 | 21.3 | 18 |
-| eino | tools | 7796 | 416 | 8212 | 1299.3 | 69.3 | 6 |
-| eino | memory | 10723 | 2824 | 13547 | 1531.9 | 403.4 | 7 |
-| eino | structured | 5035 | 3342 | 8377 | 419.6 | 278.5 | 12 |
-| eino | stream | 3313 | 2658 | 5971 | 276.1 | 221.5 | 12 |
-| genkit-go | qa | 3039 | 2664 | 5703 | 276.3 | 242.2 | 11 |
-| genkit-go | rag | 12707 | 7763 | 20470 | 668.8 | 408.6 | 19 |
-| genkit-go | tools | 4799 | 591 | 5390 | 685.6 | 84.4 | 7 |
-| genkit-go | memory | 13535 | 4659 | 18194 | 1691.9 | 582.4 | 8 |
-| genkit-go | structured | 3961 | 6556 | 10517 | 396.1 | 655.6 | 10 |
-| genkit-go | stream | 516 | 2630 | 3146 | 43.0 | 219.2 | 12 |
-| langgraph | qa | 3319 | 1238 | 4557 | 276.6 | 103.2 | 12 |
-| langgraph | rag | 13373 | 6457 | 19830 | 703.8 | 339.8 | 19 |
-| langgraph | tools | 8055 | 1361 | 9416 | 1150.7 | 194.4 | 7 |
-| langgraph | memory | 10789 | 3911 | 14700 | 1348.6 | 488.9 | 8 |
-| langgraph | structured | 3321 | 1141 | 4462 | 276.8 | 95.1 | 12 |
-| langgraph | stream | 3311 | 1832 | 5143 | 275.9 | 152.7 | 12 |
-| llamaindex | qa | 3317 | 2186 | 5503 | 276.4 | 182.2 | 12 |
-| llamaindex | rag | 12138 | 8094 | 20232 | 638.8 | 426.0 | 19 |
-| llamaindex | tools | 3457 | 938 | 4395 | 493.9 | 134.0 | 7 |
-| llamaindex | memory | 9657 | 8229 | 17886 | 1207.1 | 1028.6 | 8 |
-| llamaindex | structured | 7073 | 7773 | 14846 | 589.4 | 647.8 | 12 |
-| llamaindex | stream | 516 | 3070 | 3586 | 43.0 | 255.8 | 12 |
-| mastra | qa | 3313 | 3402 | 6715 | 276.1 | 283.5 | 12 |
-| mastra | rag | 12781 | 7617 | 20398 | 672.7 | 400.9 | 19 |
-| mastra | tools | 8819 | 1791 | 10610 | 1259.9 | 255.9 | 7 |
-| mastra | memory | 7720 | 4024 | 11744 | 965.0 | 503.0 | 8 |
-| mastra | structured | 3315 | 2164 | 5479 | 276.2 | 180.3 | 12 |
-| mastra | stream | 3307 | 3828 | 7135 | 275.6 | 319.0 | 12 |
-| pydantic-ai | qa | 3315 | 1945 | 5260 | 276.2 | 162.1 | 12 |
-| pydantic-ai | rag | 13293 | 6145 | 19438 | 699.6 | 323.4 | 19 |
-| pydantic-ai | tools | 7987 | 1082 | 9069 | 1141.0 | 154.6 | 7 |
-| pydantic-ai | memory | 7568 | 2860 | 10428 | 946.0 | 357.5 | 8 |
-| pydantic-ai | structured | 5161 | 7941 | 13102 | 430.1 | 661.8 | 12 |
-| pydantic-ai | stream | 3317 | 1514 | 4831 | 276.4 | 126.2 | 12 |
+| ai-sdk | qa | 3315 | 1569 | 4884 | 276.2 | 130.8 | 12 |
+| ai-sdk | rag | 12785 | 6357 | 19142 | 672.9 | 334.6 | 19 |
+| ai-sdk | tools | 10618 | 4117 | 14735 | 1516.9 | 588.1 | 7 |
+| ai-sdk | memory | 21601 | 6474 | 28075 | 2700.1 | 809.2 | 8 |
+| ai-sdk | structured | 3315 | 2964 | 6279 | 276.2 | 247.0 | 12 |
+| ai-sdk | stream | 3317 | 1368 | 4685 | 276.4 | 114.0 | 12 |
+| aisotropy | qa | 5073 | 6919 | 11992 | 422.8 | 576.6 | 12 |
+| aisotropy | rag | 14006 | 7231 | 21237 | 737.2 | 380.6 | 19 |
+| aisotropy | tools | 4500 | 220 | 4720 | 750.0 | 36.7 | 6 |
+| aisotropy | memory | 65458 | 35186 | 100644 | 8182.2 | 4398.2 | 8 |
+| aisotropy | structured | 10180 | 5881 | 16061 | 925.5 | 534.6 | 11 |
+| aisotropy | stream | 7085 | 2855 | 9940 | 590.4 | 237.9 | 12 |
+| eino | qa | 3315 | 1503 | 4818 | 276.2 | 125.2 | 12 |
+| eino | rag | 12783 | 7572 | 20355 | 672.8 | 398.5 | 19 |
+| eino | tools | 8321 | 1357 | 9678 | 1386.8 | 226.2 | 6 |
+| eino | memory | 20255 | 6123 | 26378 | 2531.9 | 765.4 | 8 |
+| eino | structured | 5027 | 4597 | 9624 | 418.9 | 383.1 | 12 |
+| eino | stream | 3315 | 2035 | 5350 | 276.2 | 169.6 | 12 |
+| genkit-go | qa | 3311 | 2724 | 6035 | 275.9 | 227.0 | 12 |
+| genkit-go | rag | 12703 | 9004 | 21707 | 668.6 | 473.9 | 19 |
+| genkit-go | tools | 4803 | 888 | 5691 | 686.1 | 126.9 | 7 |
+| genkit-go | memory | 20697 | 5130 | 25827 | 2587.1 | 641.2 | 8 |
+| genkit-go | structured | 4353 | 6783 | 11136 | 395.7 | 616.6 | 11 |
+| genkit-go | stream | 516 | 2819 | 3335 | 43.0 | 234.9 | 12 |
+| langgraph | qa | 3319 | 1518 | 4837 | 276.6 | 126.5 | 12 |
+| langgraph | rag | 13359 | 9281 | 22640 | 703.1 | 488.5 | 19 |
+| langgraph | tools | 8071 | 2000 | 10071 | 1153.0 | 285.7 | 7 |
+| langgraph | memory | 18650 | 3624 | 22274 | 2331.2 | 453.0 | 8 |
+| langgraph | structured | 3319 | 2019 | 5338 | 276.6 | 168.2 | 12 |
+| langgraph | stream | 3315 | 1829 | 5144 | 276.2 | 152.4 | 12 |
+| llamaindex | qa | 3313 | 2386 | 5699 | 276.1 | 198.8 | 12 |
+| llamaindex | rag | 12140 | 7287 | 19427 | 638.9 | 383.5 | 19 |
+| llamaindex | tools | 3453 | 856 | 4309 | 493.3 | 122.3 | 7 |
+| llamaindex | memory | 16733 | 3853 | 20586 | 2091.6 | 481.6 | 8 |
+| llamaindex | structured | 7067 | 10236 | 17303 | 588.9 | 853.0 | 12 |
+| llamaindex | stream | 516 | 3122 | 3638 | 43.0 | 260.2 | 12 |
+| mastra | qa | 3317 | 1318 | 4635 | 276.4 | 109.8 | 12 |
+| mastra | rag | 12783 | 6028 | 18811 | 672.8 | 317.3 | 19 |
+| mastra | tools | 8830 | 1669 | 10499 | 1261.4 | 238.4 | 7 |
+| mastra | memory | 12964 | 6050 | 19014 | 1620.5 | 756.2 | 8 |
+| mastra | structured | 3319 | 1559 | 4878 | 276.6 | 129.9 | 12 |
+| mastra | stream | 3309 | 2527 | 5836 | 275.8 | 210.6 | 12 |
+| pydantic-ai | qa | 3317 | 1879 | 5196 | 276.4 | 156.6 | 12 |
+| pydantic-ai | rag | 13291 | 5823 | 19114 | 699.5 | 306.5 | 19 |
+| pydantic-ai | tools | 8536 | 1251 | 9787 | 1219.4 | 178.7 | 7 |
+| pydantic-ai | memory | 11349 | 4851 | 16200 | 1418.6 | 606.4 | 8 |
+| pydantic-ai | structured | 5163 | 6316 | 11479 | 430.2 | 526.3 | 12 |
+| pydantic-ai | stream | 3315 | 1520 | 4835 | 276.2 | 126.7 | 12 |
 
 ## Per-item detail
 
@@ -470,566 +486,566 @@ unless `-llm-judge` was passed this run).
 
 | Framework | Mode | Item | Kind | Latency (ms) | In tok | Out tok | Det | Det detail | Corr | Help | Faith | Signal | Error |
 |---|---|---|---|---:|---:|---:|:--:|---|---:|---:|---:|---|---|
-| ai-sdk | qa | qa-01-capital | qa | 8254 | 274 | 8 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
-| ai-sdk | qa | qa-02-gold | qa | 22321 | 273 | 190 | ✓ | exact match (normalized) | — | — | — | — | — |
-| ai-sdk | qa | qa-03-continents | qa | 10146 | 275 | 29 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
-| ai-sdk | qa | qa-04-shakespeare | qa | 7975 | 275 | 10 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
-| ai-sdk | qa | qa-05-lightspeed | qa | 26983 | 281 | 239 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
-| ai-sdk | qa | qa-06-planets | qa | 12000 | 277 | 12 | ✓ | exact match (normalized) | — | — | — | — | — |
-| ai-sdk | qa | qa-h01-bones | qa | 10133 | 277 | 14 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
-| ai-sdk | qa | qa-h02-canberra | qa | 7164 | 275 | 9 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
-| ai-sdk | qa | qa-h03-iron | qa | 7152 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
-| ai-sdk | qa | qa-h04-berlin | qa | 8412 | 276 | 12 | ✓ | exact match (normalized) | — | — | — | — | — |
-| ai-sdk | qa | qa-h05-boiling | qa | 7163 | 284 | 20 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
-| ai-sdk | qa | qa-h06-minutes | qa | 10942 | 281 | 19 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
-| ai-sdk | rag | q1 | rag_grounded | 17326 | 692 | 473 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| ai-sdk | rag | q2 | rag_grounded | 16083 | 666 | 227 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| ai-sdk | rag | q3 | rag_grounded | 10704 | 671 | 56 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| ai-sdk | rag | q4 | rag_grounded | 7933 | 648 | 35 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| ai-sdk | rag | q5 | rag_grounded | 11491 | 637 | 25 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| ai-sdk | rag | q6 | rag_grounded | 12223 | 689 | 19 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| ai-sdk | rag | q7 | rag_grounded | 20070 | 701 | 462 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| ai-sdk | rag | q8 | rag_trap | 7582 | 646 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| ai-sdk | rag | q9 | rag_trap | 7345 | 661 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| ai-sdk | rag | h1 | rag_grounded | 9474 | 679 | 282 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| ai-sdk | rag | h2 | rag_grounded | 20533 | 713 | 551 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
-| ai-sdk | rag | h3 | rag_grounded | 11158 | 663 | 345 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
-| ai-sdk | rag | h4 | rag_grounded | 8534 | 702 | 31 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
-| ai-sdk | rag | h5 | rag_grounded | 7825 | 637 | 44 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
-| ai-sdk | rag | h6 | rag_grounded | 12285 | 706 | 671 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
-| ai-sdk | rag | h7 | rag_trap | 26255 | 662 | 375 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| ai-sdk | rag | h8 | rag_trap | 27052 | 641 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| ai-sdk | rag | h9 | rag_trap | 8505 | 694 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| ai-sdk | rag | h10 | rag_trap | 7278 | 683 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| ai-sdk | tools | tool-mul | tools | 14945 | 1329 | 119 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
-| ai-sdk | tools | tool-expr | tools | 21434 | 1337 | 64 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
-| ai-sdk | tools | tool-add | tools | 16828 | 1343 | 167 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
-| ai-sdk | tools | tool-h-chain-1 | tools | 29810 | 1398 | 82 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
-| ai-sdk | tools | tool-h-chain-2 | tools | 26126 | 1400 | 62 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
-| ai-sdk | tools | tool-h-coerce | tools | 68389 | 1370 | 78 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
-| ai-sdk | tools | tool-h-abstain | tools | 8719 | 624 | 69 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
-| ai-sdk | memory | mem-01-color | memory | 12530 | 2723 | 254 | ✓ | exact match (normalized) | — | — | — | — | — |
-| ai-sdk | memory | mem-02-pets | memory | 11133 | 3530 | 30 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
-| ai-sdk | memory | mem-03-deadline | memory | 7232 | 2949 | 390 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
-| ai-sdk | memory | mem-h01-overwrite | memory | 7347 | 1062 | 1180 | ✓ | exact match (normalized) | — | — | — | — | — |
-| ai-sdk | memory | mem-h02-interference | memory | 18039 | 1002 | 114 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
-| ai-sdk | memory | mem-h03-longhaul | memory | 1998 | 1254 | 11 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
-| ai-sdk | memory | mem-h04-multifact | memory | 7944 | 965 | 965 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
-| ai-sdk | memory | mem-h05-derived | memory | 7582 | 1019 | 1827 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
-| ai-sdk | structured | qa-01-capital | structured | 40761 | 274 | 55 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | structured | qa-02-gold | structured | 8750 | 275 | 45 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | structured | qa-03-continents | structured | 9052 | 275 | 49 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | structured | qa-04-shakespeare | structured | 17443 | 273 | 224 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | structured | qa-05-lightspeed | structured | 15486 | 281 | 855 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | structured | qa-06-planets | structured | 11774 | 277 | 49 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | structured | qa-h01-bones | structured | 11104 | 275 | 253 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | structured | qa-h02-canberra | structured | 32270 | 273 | 162 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | structured | qa-h03-iron | structured | 9040 | 275 | 222 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | structured | qa-h04-berlin | structured | 24365 | 276 | 56 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | structured | qa-h05-boiling | structured | 10426 | 284 | 48 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | structured | qa-h06-minutes | structured | 110016 | 279 | 283 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| ai-sdk | stream | qa-01-capital | stream | 7312 | 274 | 8 | ✓ | TTFT measured: 7025ms | — | — | — | ttft 7025ms | — |
-| ai-sdk | stream | qa-02-gold | stream | 7397 | 275 | 9 | ✓ | TTFT measured: 7199ms | — | — | — | ttft 7199ms | — |
-| ai-sdk | stream | qa-03-continents | stream | 3368 | 275 | 8 | ✓ | TTFT measured: 3233ms | — | — | — | ttft 3233ms | — |
-| ai-sdk | stream | qa-04-shakespeare | stream | 11298 | 273 | 192 | ✓ | TTFT measured: 10952ms | — | — | — | ttft 10952ms | — |
-| ai-sdk | stream | qa-05-lightspeed | stream | 20581 | 281 | 851 | ✓ | TTFT measured: 20132ms | — | — | — | ttft 20132ms | — |
-| ai-sdk | stream | qa-06-planets | stream | 18336 | 275 | 192 | ✓ | TTFT measured: 12947ms | — | — | — | ttft 12947ms | — |
-| ai-sdk | stream | qa-h01-bones | stream | 11307 | 277 | 14 | ✓ | TTFT measured: 11023ms | — | — | — | ttft 11023ms | — |
-| ai-sdk | stream | qa-h02-canberra | stream | 35747 | 275 | 9 | ✓ | TTFT measured: 35552ms | — | — | — | ttft 35552ms | — |
-| ai-sdk | stream | qa-h03-iron | stream | 20576 | 277 | 13 | ✓ | TTFT measured: 16265ms | — | — | — | ttft 16265ms | — |
-| ai-sdk | stream | qa-h04-berlin | stream | 20864 | 274 | 229 | ✓ | TTFT measured: 20464ms | — | — | — | ttft 20464ms | — |
-| ai-sdk | stream | qa-h05-boiling | stream | 13990 | 282 | 217 | ✓ | TTFT measured: 13754ms | — | — | — | ttft 13754ms | — |
-| ai-sdk | stream | qa-h06-minutes | stream | 14371 | 279 | 314 | ✓ | TTFT measured: 14167ms | — | — | — | ttft 14167ms | — |
-| aisotropy | qa | qa-01-capital | qa | 8812 | 353 | 7 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
-| aisotropy | qa | qa-02-gold | qa | 43685 | 734 | 1340 | ✓ | exact match (normalized) | — | — | — | — | — |
-| aisotropy | qa | qa-03-continents | qa | 15594 | 352 | 388 | ✓ | answer-key containment 1.00 (best key "7" of 2) | — | — | — | — | — |
-| aisotropy | qa | qa-04-shakespeare | qa | 18104 | 352 | 263 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
-| aisotropy | qa | qa-05-lightspeed | qa | 40861 | 362 | 12 | ✓ | answer-key containment 1.00 (best key "299792" of 4) | — | — | — | — | — |
-| aisotropy | qa | qa-06-planets | qa | 22136 | 354 | 227 | ✓ | exact match (normalized) | — | — | — | — | — |
-| aisotropy | qa | qa-h01-bones | qa | 7749 | 356 | 23 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
-| aisotropy | qa | qa-h02-canberra | qa | 8942 | 354 | 7 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
-| aisotropy | qa | qa-h03-iron | qa | 8771 | 356 | 7 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
-| aisotropy | qa | qa-h04-berlin | qa | 37854 | 353 | 237 | ✓ | answer-key containment 1.00 (best key "1989" of 1) | — | — | — | — | — |
-| aisotropy | qa | qa-h05-boiling | qa | 18179 | 361 | 344 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
-| aisotropy | qa | qa-h06-minutes | qa | 7117 | 360 | 10 | ✓ | answer-key containment 1.00 (best key "1440" of 2) | — | — | — | — | — |
-| aisotropy | rag | q1 | rag_grounded | 20919 | 739 | 496 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| aisotropy | rag | q2 | rag_grounded | 17907 | 765 | 375 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| aisotropy | rag | q3 | rag_grounded | 9160 | 719 | 56 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| aisotropy | rag | q4 | rag_grounded | 11011 | 761 | 374 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| aisotropy | rag | q5 | rag_grounded | 12342 | 735 | 28 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| aisotropy | rag | q6 | rag_grounded | 9716 | 657 | 19 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| aisotropy | rag | q7 | rag_grounded | 13367 | 783 | 468 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| aisotropy | rag | q8 | rag_trap | 14694 | 739 | 5 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| aisotropy | rag | q9 | rag_trap | 7752 | 765 | 5 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| aisotropy | rag | h1 | rag_grounded | 16695 | 790 | 181 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| aisotropy | rag | h2 | rag_grounded | 13096 | 728 | 31 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| aisotropy | rag | h3 | rag_grounded | 42193 | 764 | 242 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
-| aisotropy | rag | h4 | rag_grounded | 16427 | 735 | 463 | ✓ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✓ | — |
-| aisotropy | rag | h5 | rag_grounded | 25419 | 732 | 430 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
-| aisotropy | rag | h6 | rag_grounded | 15559 | 654 | 346 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
-| aisotropy | rag | h7 | rag_trap | 11311 | 770 | 5 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| aisotropy | rag | h8 | rag_trap | 11874 | 743 | 5 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| aisotropy | rag | h9 | rag_trap | 20862 | 774 | 153 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| aisotropy | rag | h10 | rag_trap | 17697 | 653 | 657 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| aisotropy | tools | tool-mul | tools | 21382 | 805 | 400 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
-| aisotropy | tools | tool-expr | tools | 8635 | 819 | 38 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
-| aisotropy | tools | tool-add | tools | 30940 | 815 | 35 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
-| aisotropy | tools | tool-h-chain-1 | tools | 93244 | 1318 | 329 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
-| aisotropy | tools | tool-h-chain-2 | tools | 28278 | 868 | 45 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
-| aisotropy | tools | tool-h-coerce | tools | 56188 | 1297 | 190 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
-| aisotropy | tools | tool-h-abstain | tools | 21231 | 389 | 10 | ✗ | …swer-key containment 0.00 (no key matched; tried "Canberra") | — | — | — | no tool ✗ | — |
-| aisotropy | memory | mem-01-color | memory | 10858 | 1608 | 525 | ✓ | answer-key containment 1.00 (best key "teal" of 1) | — | — | — | — | — |
-| aisotropy | memory | mem-02-pets | memory | 7742 | 3144 | 1663 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
-| aisotropy | memory | mem-03-deadline | memory | 39676 | 1778 | 1145 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
-| aisotropy | memory | mem-h01-overwrite | memory | 7347 | 8120 | 3434 | ✗ | answer-key containment 0.00 (no key matched; tried "9A") | — | — | — | — | — |
-| aisotropy | memory | mem-h02-interference | memory | 7319 | 4690 | 521 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
-| aisotropy | memory | mem-h03-longhaul | memory | 32570 | 13430 | 5782 | ✗ | … containment 0.00 (no key matched; tried "Vermillion Bravo") | — | — | — | — | — |
-| aisotropy | memory | mem-h04-multifact | memory | 48016 | 4103 | 1052 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
-| aisotropy | memory | mem-h05-derived | memory | 32217 | 4419 | 1262 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
-| aisotropy | structured | qa-01-capital | structured | 27493 | 839 | 50 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | structured | qa-02-gold | structured | 55750 | 841 | 35 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | structured | qa-03-continents | structured | 20480 | 865 | 59 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | structured | qa-04-shakespeare | structured | 30138 | 842 | 36 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | structured | qa-05-lightspeed | structured | 60368 | 1091 | 81 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | structured | qa-06-planets | structured | 23404 | 600 | 35 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | structured | qa-h01-bones | structured | 109048 | 1331 | 374 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | structured | qa-h02-canberra | structured | 38221 | 1295 | 801 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | structured | qa-h03-iron | structured | 39197 | 598 | 43 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | structured | qa-h04-berlin | structured | 25301 | 844 | 532 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | structured | qa-h05-boiling | structured | 15346 | 861 | 172 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | structured | qa-h06-minutes | structured | 75610 | 1324 | 626 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| aisotropy | stream | qa-01-capital | stream | 8275 | 548 | 8 | ✓ | TTFT measured: 7960ms | — | — | — | ttft 7960ms | — |
-| aisotropy | stream | qa-02-gold | stream | 14401 | 485 | 198 | ✓ | TTFT measured: 14053ms | — | — | — | ttft 14053ms | — |
-| aisotropy | stream | qa-03-continents | stream | 37659 | 577 | 157 | ✓ | TTFT measured: 37431ms | — | — | — | ttft 37431ms | — |
-| aisotropy | stream | qa-04-shakespeare | stream | 16319 | 436 | 293 | ✓ | TTFT measured: 16089ms | — | — | — | ttft 16089ms | — |
-| aisotropy | stream | qa-05-lightspeed | stream | 15242 | 708 | 20 | ✓ | TTFT measured: 15017ms | — | — | — | ttft 15017ms | — |
-| aisotropy | stream | qa-06-planets | stream | 14133 | 510 | 106 | ✓ | TTFT measured: 13803ms | — | — | — | ttft 13803ms | — |
-| aisotropy | stream | qa-h01-bones | stream | 7707 | 439 | 14 | ✓ | TTFT measured: 7419ms | — | — | — | ttft 7419ms | — |
-| aisotropy | stream | qa-h02-canberra | stream | 44711 | 628 | 9 | ✓ | TTFT measured: 44444ms | — | — | — | ttft 44444ms | — |
-| aisotropy | stream | qa-h03-iron | stream | 19187 | 608 | 188 | ✓ | TTFT measured: 18830ms | — | — | — | ttft 18830ms | — |
-| aisotropy | stream | qa-h04-berlin | stream | 7863 | 665 | 12 | ✓ | TTFT measured: 7577ms | — | — | — | ttft 7577ms | — |
-| aisotropy | stream | qa-h05-boiling | stream | 34497 | 631 | 223 | ✓ | TTFT measured: 34277ms | — | — | — | ttft 34277ms | — |
-| aisotropy | stream | qa-h06-minutes | stream | 51079 | 581 | 19 | ✓ | TTFT measured: 50846ms | — | — | — | ttft 50846ms | — |
-| eino | qa | qa-01-capital | qa | 15181 | 274 | 8 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
-| eino | qa | qa-02-gold | qa | 9812 | 273 | 142 | ✓ | exact match (normalized) | — | — | — | — | — |
-| eino | qa | qa-03-continents | qa | 9976 | 273 | 329 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
-| eino | qa | qa-04-shakespeare | qa | 16286 | 275 | 13 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
-| eino | qa | qa-05-lightspeed | qa | 8699 | 281 | 214 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
-| eino | qa | qa-06-planets | qa | 15900 | 277 | 12 | ✓ | exact match (normalized) | — | — | — | — | — |
-| eino | qa | qa-h01-bones | qa | 64279 | 277 | 14 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
-| eino | qa | qa-h02-canberra | qa | 27462 | 275 | 9 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
-| eino | qa | qa-h03-iron | qa | 55742 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
-| eino | qa | qa-h04-berlin | qa | 24249 | 274 | 148 | ✓ | exact match (normalized) | — | — | — | — | — |
-| eino | qa | qa-h05-boiling | qa | 44050 | 284 | 19 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
-| eino | qa | qa-h06-minutes | qa | 2954 | 281 | 19 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
-| eino | rag | q1 | rag_grounded | 104230 | 694 | 31 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| eino | rag | q2 | rag_grounded | 7877 | 668 | 29 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| eino | rag | q3 | rag_grounded | 0 | n/a | n/a | — |  | — | — | — | hit@1 ✗ | run: …unhealthy) ------------------------ node path: [node_2] exit status 1) |
-| eino | rag | q4 | rag_grounded | 30249 | 648 | 35 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| eino | rag | q5 | rag_grounded | 30881 | 637 | 25 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| eino | rag | q6 | rag_grounded | 44453 | 689 | 19 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| eino | rag | q7 | rag_grounded | 12640 | 703 | 25 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| eino | rag | q8 | rag_trap | 13048 | 646 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| eino | rag | q9 | rag_trap | 23327 | 661 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| eino | rag | h1 | rag_grounded | 25604 | 681 | 22 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| eino | rag | h2 | rag_grounded | 12356 | 715 | 30 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
-| eino | rag | h3 | rag_grounded | 8339 | 665 | 30 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
-| eino | rag | h4 | rag_grounded | 19730 | 702 | 31 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
-| eino | rag | h5 | rag_grounded | 37880 | 637 | 45 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
-| eino | rag | h6 | rag_grounded | 24982 | 708 | 26 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
-| eino | rag | h7 | rag_trap | 38677 | 664 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| eino | rag | h8 | rag_trap | 15827 | 641 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| eino | rag | h9 | rag_trap | 24687 | 694 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| eino | rag | h10 | rag_trap | 9181 | 683 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| eino | tools | tool-mul | tools | 84299 | 1262 | 50 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
-| eino | tools | tool-expr | tools | 24909 | 1280 | 64 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
-| eino | tools | tool-add | tools | 67018 | 1280 | 77 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
-| eino | tools | tool-h-chain-1 | tools | 51797 | 1327 | 85 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
-| eino | tools | tool-h-chain-2 | tools | 75033 | 1336 | 62 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
-| eino | tools | tool-h-coerce | tools | 15771 | 1311 | 78 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
+| ai-sdk | qa | qa-01-capital | qa | 7131 | 274 | 8 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
+| ai-sdk | qa | qa-02-gold | qa | 8424 | 273 | 156 | ✓ | exact match (normalized) | — | — | — | — | — |
+| ai-sdk | qa | qa-03-continents | qa | 9261 | 273 | 268 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
+| ai-sdk | qa | qa-04-shakespeare | qa | 8675 | 273 | 195 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
+| ai-sdk | qa | qa-05-lightspeed | qa | 2654 | 283 | 20 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
+| ai-sdk | qa | qa-06-planets | qa | 8280 | 275 | 193 | ✓ | exact match (normalized) | — | — | — | — | — |
+| ai-sdk | qa | qa-h01-bones | qa | 9401 | 275 | 295 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
+| ai-sdk | qa | qa-h02-canberra | qa | 1325 | 275 | 9 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
+| ai-sdk | qa | qa-h03-iron | qa | 8434 | 275 | 220 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
+| ai-sdk | qa | qa-h04-berlin | qa | 8749 | 274 | 167 | ✓ | exact match (normalized) | — | — | — | — | — |
+| ai-sdk | qa | qa-h05-boiling | qa | 7101 | 284 | 19 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
+| ai-sdk | qa | qa-h06-minutes | qa | 1406 | 281 | 19 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
+| ai-sdk | rag | q1 | rag_grounded | 10124 | 694 | 41 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| ai-sdk | rag | q2 | rag_grounded | 9396 | 666 | 341 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| ai-sdk | rag | q3 | rag_grounded | 7538 | 671 | 49 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| ai-sdk | rag | q4 | rag_grounded | 13487 | 646 | 880 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| ai-sdk | rag | q5 | rag_grounded | 8207 | 637 | 25 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| ai-sdk | rag | q6 | rag_grounded | 7631 | 689 | 19 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| ai-sdk | rag | q7 | rag_grounded | 9553 | 701 | 346 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| ai-sdk | rag | q8 | rag_trap | 13640 | 646 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| ai-sdk | rag | q9 | rag_trap | 10323 | 659 | 352 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| ai-sdk | rag | h1 | rag_grounded | 3533 | 679 | 258 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| ai-sdk | rag | h2 | rag_grounded | 16094 | 713 | 1469 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
+| ai-sdk | rag | h3 | rag_grounded | 10922 | 663 | 404 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
+| ai-sdk | rag | h4 | rag_grounded | 11957 | 702 | 29 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
+| ai-sdk | rag | h5 | rag_grounded | 12063 | 635 | 822 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
+| ai-sdk | rag | h6 | rag_grounded | 11405 | 706 | 416 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
+| ai-sdk | rag | h7 | rag_trap | 7177 | 664 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| ai-sdk | rag | h8 | rag_trap | 9583 | 639 | 316 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| ai-sdk | rag | h9 | rag_trap | 7207 | 694 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| ai-sdk | rag | h10 | rag_trap | 11499 | 681 | 572 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| ai-sdk | tools | tool-mul | tools | 14362 | 1320 | 95 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
+| ai-sdk | tools | tool-expr | tools | 18208 | 1346 | 446 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
+| ai-sdk | tools | tool-add | tools | 12534 | 1325 | 53 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
+| ai-sdk | tools | tool-h-chain-1 | tools | 20503 | 1402 | 240 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
+| ai-sdk | tools | tool-h-chain-2 | tools | 47773 | 3231 | 3112 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
+| ai-sdk | tools | tool-h-coerce | tools | 14942 | 1379 | 162 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
+| ai-sdk | tools | tool-h-abstain | tools | 10991 | 615 | 9 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
+| ai-sdk | memory | mem-01-color | memory | 7052 | 3026 | 1081 | ✓ | exact match (normalized) | — | — | — | — | — |
+| ai-sdk | memory | mem-02-pets | memory | 7085 | 3955 | 690 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
+| ai-sdk | memory | mem-03-deadline | memory | 9911 | 3294 | 1554 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
+| ai-sdk | memory | mem-h01-overwrite | memory | 7200 | 2257 | 646 | ✓ | exact match (normalized) | — | — | — | — | — |
+| ai-sdk | memory | mem-h02-interference | memory | 7058 | 2079 | 856 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
+| ai-sdk | memory | mem-h03-longhaul | memory | 8552 | 2803 | 225 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
+| ai-sdk | memory | mem-h04-multifact | memory | 9269 | 2087 | 394 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
+| ai-sdk | memory | mem-h05-derived | memory | 12953 | 2100 | 1028 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
+| ai-sdk | structured | qa-01-capital | structured | 1417 | 274 | 39 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | structured | qa-02-gold | structured | 8986 | 273 | 236 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | structured | qa-03-continents | structured | 8058 | 275 | 120 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | structured | qa-04-shakespeare | structured | 7207 | 275 | 45 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | structured | qa-05-lightspeed | structured | 12389 | 281 | 713 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | structured | qa-06-planets | structured | 8343 | 275 | 232 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | structured | qa-h01-bones | structured | 7452 | 277 | 58 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | structured | qa-h02-canberra | structured | 8281 | 273 | 207 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | structured | qa-h03-iron | structured | 12698 | 275 | 229 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | structured | qa-h04-berlin | structured | 7206 | 276 | 40 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | structured | qa-h05-boiling | structured | 15543 | 282 | 752 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | structured | qa-h06-minutes | structured | 8645 | 279 | 293 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| ai-sdk | stream | qa-01-capital | stream | 8245 | 272 | 179 | ✓ | TTFT measured: 7996ms | — | — | — | ttft 7996ms | — |
+| ai-sdk | stream | qa-02-gold | stream | 7015 | 275 | 9 | ✓ | TTFT measured: 6772ms | — | — | — | ttft 6772ms | — |
+| ai-sdk | stream | qa-03-continents | stream | 10232 | 273 | 214 | ✓ | TTFT measured: 10006ms | — | — | — | ttft 10006ms | — |
+| ai-sdk | stream | qa-04-shakespeare | stream | 8131 | 273 | 205 | ✓ | TTFT measured: 7867ms | — | — | — | ttft 7867ms | — |
+| ai-sdk | stream | qa-05-lightspeed | stream | 9152 | 281 | 281 | ✓ | TTFT measured: 8778ms | — | — | — | ttft 8778ms | — |
+| ai-sdk | stream | qa-06-planets | stream | 13462 | 277 | 12 | ✓ | TTFT measured: 12106ms | — | — | — | ttft 12106ms | — |
+| ai-sdk | stream | qa-h01-bones | stream | 7337 | 277 | 14 | ✓ | TTFT measured: 7098ms | — | — | — | ttft 7098ms | — |
+| ai-sdk | stream | qa-h02-canberra | stream | 8104 | 273 | 177 | ✓ | TTFT measured: 7887ms | — | — | — | ttft 7887ms | — |
+| ai-sdk | stream | qa-h03-iron | stream | 1330 | 277 | 13 | ✓ | TTFT measured: 1042ms | — | — | — | ttft 1042ms | — |
+| ai-sdk | stream | qa-h04-berlin | stream | 7573 | 276 | 12 | ✓ | TTFT measured: 7395ms | — | — | — | ttft 7395ms | — |
+| ai-sdk | stream | qa-h05-boiling | stream | 6995 | 284 | 19 | ✓ | TTFT measured: 6748ms | — | — | — | ttft 6748ms | — |
+| ai-sdk | stream | qa-h06-minutes | stream | 8332 | 279 | 233 | ✓ | TTFT measured: 8049ms | — | — | — | ttft 8049ms | — |
+| aisotropy | qa | qa-01-capital | qa | 19038 | 351 | 281 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
+| aisotropy | qa | qa-02-gold | qa | 7227 | 354 | 12 | ✓ | answer-key containment 1.00 (best key "Au" of 1) | — | — | — | — | — |
+| aisotropy | qa | qa-03-continents | qa | 12600 | 352 | 912 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
+| aisotropy | qa | qa-04-shakespeare | qa | 7192 | 354 | 8 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
+| aisotropy | qa | qa-05-lightspeed | qa | 40662 | 1172 | 2077 | ✓ | answer-key containment 1.00 (best key "299,792" of 4) | — | — | — | — | — |
+| aisotropy | qa | qa-06-planets | qa | 7282 | 356 | 13 | ✓ | answer-key containment 1.00 (best key "Jupiter" of 1) | — | — | — | — | — |
+| aisotropy | qa | qa-h01-bones | qa | 11209 | 356 | 19 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
+| aisotropy | qa | qa-h02-canberra | qa | 12251 | 352 | 755 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
+| aisotropy | qa | qa-h03-iron | qa | 17686 | 354 | 832 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
+| aisotropy | qa | qa-h04-berlin | qa | 13304 | 353 | 868 | ✓ | answer-key containment 1.00 (best key "1989" of 1) | — | — | — | — | — |
+| aisotropy | qa | qa-h05-boiling | qa | 12591 | 361 | 817 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
+| aisotropy | qa | qa-h06-minutes | qa | 9869 | 358 | 325 | ✓ | answer-key containment 1.00 (best key "1440" of 2) | — | — | — | — | — |
+| aisotropy | rag | q1 | rag_grounded | 13520 | 739 | 801 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| aisotropy | rag | q2 | rag_grounded | 10496 | 765 | 402 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| aisotropy | rag | q3 | rag_grounded | 7551 | 717 | 873 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| aisotropy | rag | q4 | rag_grounded | 11451 | 763 | 35 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| aisotropy | rag | q5 | rag_grounded | 12425 | 733 | 693 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| aisotropy | rag | q6 | rag_grounded | 12035 | 657 | 18 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| aisotropy | rag | q7 | rag_grounded | 10705 | 783 | 350 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| aisotropy | rag | q8 | rag_trap | 8258 | 739 | 5 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| aisotropy | rag | q9 | rag_trap | 8084 | 765 | 5 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| aisotropy | rag | h1 | rag_grounded | 8091 | 792 | 22 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| aisotropy | rag | h2 | rag_grounded | 17501 | 728 | 30 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| aisotropy | rag | h3 | rag_grounded | 12344 | 764 | 758 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
+| aisotropy | rag | h4 | rag_grounded | 42049 | 735 | 705 | ✓ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✓ | — |
+| aisotropy | rag | h5 | rag_grounded | 8761 | 734 | 51 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
+| aisotropy | rag | h6 | rag_grounded | 10144 | 654 | 320 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
+| aisotropy | rag | h7 | rag_trap | 7738 | 770 | 5 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| aisotropy | rag | h8 | rag_trap | 14196 | 741 | 1024 | ✗ | trap question NOT refused — likely invented an answer | — | — | — | invented ✗ | — |
+| aisotropy | rag | h9 | rag_trap | 17638 | 774 | 785 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| aisotropy | rag | h10 | rag_trap | 10246 | 653 | 349 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| aisotropy | tools | tool-mul | tools | 13654 | 562 | 28 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
+| aisotropy | tools | tool-expr | tools | 15638 | 819 | 38 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
+| aisotropy | tools | tool-add | tools | 10976 | 815 | 35 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
+| aisotropy | tools | tool-h-chain-1 | tools | 0 | n/a | n/a | — |  | — | — | — | no tool ✗ | run: …ropyd stopped aisotropy-live-adapter: /chat/agent returned status 500) |
+| aisotropy | tools | tool-h-chain-2 | tools | 13493 | 616 | 37 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
+| aisotropy | tools | tool-h-coerce | tools | 27200 | 1299 | 72 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
+| aisotropy | tools | tool-h-abstain | tools | 7062 | 389 | 10 | ✗ | …swer-key containment 0.00 (no key matched; tried "Canberra") | — | — | — | no tool ✗ | — |
+| aisotropy | memory | mem-01-color | memory | 12239 | 873 | 810 | ✓ | answer-key containment 1.00 (best key "teal" of 1) | — | — | — | — | — |
+| aisotropy | memory | mem-02-pets | memory | 12884 | 1418 | 1948 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
+| aisotropy | memory | mem-03-deadline | memory | 13905 | 896 | 970 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
+| aisotropy | memory | mem-h01-overwrite | memory | 16493 | 8213 | 4873 | ✓ | answer-key containment 1.00 (best key "9A" of 1) | — | — | — | — | — |
+| aisotropy | memory | mem-h02-interference | memory | 13319 | 6215 | 3306 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
+| aisotropy | memory | mem-h03-longhaul | memory | 12912 | 32894 | 15060 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
+| aisotropy | memory | mem-h04-multifact | memory | 27633 | 6152 | 3574 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
+| aisotropy | memory | mem-h05-derived | memory | 27755 | 8797 | 4645 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
+| aisotropy | structured | qa-01-capital | structured | 36148 | 1043 | 1573 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| aisotropy | structured | qa-02-gold | structured | 17275 | 841 | 35 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| aisotropy | structured | qa-03-continents | structured | 15298 | 844 | 239 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| aisotropy | structured | qa-04-shakespeare | structured | 31927 | 1295 | 1486 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| aisotropy | structured | qa-05-lightspeed | structured | 0 | n/a | n/a | — |  | — | — | — | no structured ✗ | run: …d stopped aisotropy-live-adapter: /chat/agent (structured) status 500) |
+| aisotropy | structured | qa-06-planets | structured | 28952 | 842 | 1556 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| aisotropy | structured | qa-h01-bones | structured | 15720 | 601 | 43 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| aisotropy | structured | qa-h02-canberra | structured | 14102 | 842 | 36 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| aisotropy | structured | qa-h03-iron | structured | 13863 | 845 | 50 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| aisotropy | structured | qa-h04-berlin | structured | 14020 | 846 | 53 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| aisotropy | structured | qa-h05-boiling | structured | 31230 | 1327 | 387 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| aisotropy | structured | qa-h06-minutes | structured | 16495 | 854 | 423 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| aisotropy | stream | qa-01-capital | stream | 8851 | 582 | 196 | ✓ | TTFT measured: 8618ms | — | — | — | ttft 8618ms | — |
+| aisotropy | stream | qa-02-gold | stream | 14691 | 521 | 212 | ✓ | TTFT measured: 14403ms | — | — | — | ttft 14403ms | — |
+| aisotropy | stream | qa-03-continents | stream | 13287 | 577 | 800 | ✓ | TTFT measured: 12928ms | — | — | — | ttft 12928ms | — |
+| aisotropy | stream | qa-04-shakespeare | stream | 7447 | 459 | 10 | ✓ | TTFT measured: 7169ms | — | — | — | ttft 7169ms | — |
+| aisotropy | stream | qa-05-lightspeed | stream | 11409 | 732 | 701 | ✓ | TTFT measured: 11037ms | — | — | — | ttft 11037ms | — |
+| aisotropy | stream | qa-06-planets | stream | 8866 | 546 | 205 | ✓ | TTFT measured: 8661ms | — | — | — | ttft 8661ms | — |
+| aisotropy | stream | qa-h01-bones | stream | 7491 | 460 | 15 | ✓ | TTFT measured: 6940ms | — | — | — | ttft 6940ms | — |
+| aisotropy | stream | qa-h02-canberra | stream | 7270 | 664 | 9 | ✓ | TTFT measured: 7037ms | — | — | — | ttft 7037ms | — |
+| aisotropy | stream | qa-h03-iron | stream | 7533 | 610 | 13 | ✓ | TTFT measured: 7108ms | — | — | — | ttft 7108ms | — |
+| aisotropy | stream | qa-h04-berlin | stream | 19034 | 686 | 12 | ✓ | TTFT measured: 9916ms | — | — | — | ttft 9916ms | — |
+| aisotropy | stream | qa-h05-boiling | stream | 12503 | 667 | 663 | ✓ | TTFT measured: 11946ms | — | — | — | ttft 11946ms | — |
+| aisotropy | stream | qa-h06-minutes | stream | 7509 | 581 | 19 | ✓ | TTFT measured: 7210ms | — | — | — | ttft 7210ms | — |
+| eino | qa | qa-01-capital | qa | 9666 | 272 | 186 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
+| eino | qa | qa-02-gold | qa | 7144 | 275 | 9 | ✓ | exact match (normalized) | — | — | — | — | — |
+| eino | qa | qa-03-continents | qa | 34228 | 275 | 25 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
+| eino | qa | qa-04-shakespeare | qa | 8032 | 273 | 129 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
+| eino | qa | qa-05-lightspeed | qa | 8629 | 281 | 280 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
+| eino | qa | qa-06-planets | qa | 8364 | 275 | 172 | ✓ | exact match (normalized) | — | — | — | — | — |
+| eino | qa | qa-h01-bones | qa | 13162 | 275 | 185 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
+| eino | qa | qa-h02-canberra | qa | 8659 | 273 | 185 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
+| eino | qa | qa-h03-iron | qa | 11078 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
+| eino | qa | qa-h04-berlin | qa | 8806 | 274 | 281 | ✓ | exact match (normalized) | — | — | — | — | — |
+| eino | qa | qa-h05-boiling | qa | 7525 | 284 | 19 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
+| eino | qa | qa-h06-minutes | qa | 7325 | 281 | 19 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
+| eino | rag | q1 | rag_grounded | 10299 | 692 | 418 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| eino | rag | q2 | rag_grounded | 4536 | 668 | 29 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| eino | rag | q3 | rag_grounded | 12967 | 669 | 874 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| eino | rag | q4 | rag_grounded | 10504 | 648 | 35 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| eino | rag | q5 | rag_grounded | 12083 | 635 | 814 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| eino | rag | q6 | rag_grounded | 7694 | 689 | 21 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| eino | rag | q7 | rag_grounded | 9739 | 701 | 356 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| eino | rag | q8 | rag_trap | 10666 | 644 | 533 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| eino | rag | q9 | rag_trap | 13567 | 659 | 1045 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| eino | rag | h1 | rag_grounded | 7734 | 681 | 22 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| eino | rag | h2 | rag_grounded | 9808 | 713 | 342 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
+| eino | rag | h3 | rag_grounded | 9727 | 663 | 394 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
+| eino | rag | h4 | rag_grounded | 9753 | 700 | 359 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
+| eino | rag | h5 | rag_grounded | 10144 | 635 | 486 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
+| eino | rag | h6 | rag_grounded | 22600 | 708 | 26 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
+| eino | rag | h7 | rag_trap | 7468 | 664 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| eino | rag | h8 | rag_trap | 14476 | 639 | 1115 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| eino | rag | h9 | rag_trap | 7551 | 694 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| eino | rag | h10 | rag_trap | 13750 | 681 | 691 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| eino | tools | tool-mul | tools | 21596 | 1270 | 131 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
+| eino | tools | tool-expr | tools | 19284 | 1448 | 237 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
+| eino | tools | tool-add | tools | 19194 | 1391 | 185 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
+| eino | tools | tool-h-chain-1 | tools | 10266 | 1549 | 295 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
+| eino | tools | tool-h-chain-2 | tools | 15915 | 1344 | 272 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
+| eino | tools | tool-h-coerce | tools | 29207 | 1319 | 237 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
 | eino | tools | tool-h-abstain | tools | 0 | n/a | n/a | — |  | — | — | — | no tool ✗ | run: …pected a multi-step tool call for an arithmetic request exit status 1) |
-| eino | memory | mem-01-color | memory | 11278 | 2564 | 1543 | ✓ | exact match (normalized) | — | — | — | — | — |
-| eino | memory | mem-02-pets | memory | 36570 | 2982 | 29 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
-| eino | memory | mem-03-deadline | memory | 22290 | n/a | n/a | — |  | — | — | — | — | run: …- No available workers (all circuits open or unhealthy) exit status 1) |
-| eino | memory | mem-h01-overwrite | memory | 97346 | 1022 | 13 | ✓ | exact match (normalized) | — | — | — | — | — |
-| eino | memory | mem-h02-interference | memory | 39467 | 971 | 232 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
-| eino | memory | mem-h03-longhaul | memory | 20873 | 1268 | 56 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
-| eino | memory | mem-h04-multifact | memory | 7202 | 935 | 536 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
-| eino | memory | mem-h05-derived | memory | 11968 | 981 | 415 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
-| eino | structured | qa-01-capital | structured | 8498 | 417 | 20 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | structured | qa-02-gold | structured | 64198 | 418 | 26 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | structured | qa-03-continents | structured | 19457 | 416 | 985 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | structured | qa-04-shakespeare | structured | 20683 | 416 | 832 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | structured | qa-05-lightspeed | structured | 14049 | 426 | 37 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | structured | qa-06-planets | structured | 9484 | 420 | 29 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | structured | qa-h01-bones | structured | 35427 | 418 | 313 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | structured | qa-h02-canberra | structured | 21223 | 416 | 302 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | structured | qa-h03-iron | structured | 22108 | 420 | 20 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | structured | qa-h04-berlin | structured | 17503 | 419 | 29 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | structured | qa-h05-boiling | structured | 20076 | 425 | 713 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | structured | qa-h06-minutes | structured | 16406 | 424 | 36 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| eino | stream | qa-01-capital | stream | 14398 | 272 | 194 | ✓ | TTFT measured: 14028ms | — | — | — | ttft 14028ms | — |
-| eino | stream | qa-02-gold | stream | 19421 | 273 | 144 | ✓ | TTFT measured: 17936ms | — | — | — | ttft 17936ms | — |
-| eino | stream | qa-03-continents | stream | 7795 | 275 | 25 | ✓ | TTFT measured: 7317ms | — | — | — | ttft 7317ms | — |
-| eino | stream | qa-04-shakespeare | stream | 9116 | 273 | 178 | ✓ | TTFT measured: 7408ms | — | — | — | ttft 7408ms | — |
-| eino | stream | qa-05-lightspeed | stream | 11780 | 281 | 349 | ✓ | TTFT measured: 8475ms | — | — | — | ttft 8475ms | — |
-| eino | stream | qa-06-planets | stream | 13046 | 277 | 12 | ✓ | TTFT measured: 12728ms | — | — | — | ttft 12728ms | — |
-| eino | stream | qa-h01-bones | stream | 30587 | 275 | 696 | ✓ | TTFT measured: 25125ms | — | — | — | ttft 25125ms | — |
-| eino | stream | qa-h02-canberra | stream | 8699 | 275 | 9 | ✓ | TTFT measured: 8426ms | — | — | — | ttft 8426ms | — |
-| eino | stream | qa-h03-iron | stream | 12591 | 275 | 348 | ✓ | TTFT measured: 7372ms | — | — | — | ttft 7372ms | — |
-| eino | stream | qa-h04-berlin | stream | 66923 | 274 | 457 | ✓ | TTFT measured: 64155ms | — | — | — | ttft 64155ms | — |
-| eino | stream | qa-h05-boiling | stream | 9812 | 284 | 19 | ✓ | TTFT measured: 6607ms | — | — | — | ttft 6607ms | — |
-| eino | stream | qa-h06-minutes | stream | 9671 | 279 | 227 | ✓ | TTFT measured: 8007ms | — | — | — | ttft 8007ms | — |
-| genkit-go | qa | qa-01-capital | qa | 0 | n/a | n/a | — |  | — | — | — | — | run: …-2.0-flash base_url=https://apihub.agnes-ai.com/v1 mode=qa stub=false) |
-| genkit-go | qa | qa-02-gold | qa | 28996 | 273 | 180 | ✓ | exact match (normalized) | — | — | — | — | — |
-| genkit-go | qa | qa-03-continents | qa | 23029 | 275 | 25 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
-| genkit-go | qa | qa-04-shakespeare | qa | 79843 | 273 | 204 | ✓ | exact match (normalized) | — | — | — | — | — |
-| genkit-go | qa | qa-05-lightspeed | qa | 14648 | 281 | 641 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
-| genkit-go | qa | qa-06-planets | qa | 9890 | 275 | 173 | ✓ | exact match (normalized) | — | — | — | — | — |
-| genkit-go | qa | qa-h01-bones | qa | 17440 | 275 | 336 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
-| genkit-go | qa | qa-h02-canberra | qa | 18075 | 273 | 181 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
-| genkit-go | qa | qa-h03-iron | qa | 11589 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
-| genkit-go | qa | qa-h04-berlin | qa | 26665 | 274 | 227 | ✓ | exact match (normalized) | — | — | — | — | — |
-| genkit-go | qa | qa-h05-boiling | qa | 11092 | 282 | 665 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
-| genkit-go | qa | qa-h06-minutes | qa | 28916 | 281 | 19 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
-| genkit-go | rag | q1 | rag_grounded | 18609 | 685 | 697 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| genkit-go | rag | q2 | rag_grounded | 29118 | 660 | 638 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| genkit-go | rag | q3 | rag_grounded | 27102 | 663 | 692 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| genkit-go | rag | q4 | rag_grounded | 12414 | 652 | 410 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| genkit-go | rag | q5 | rag_grounded | 74147 | 632 | 25 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| genkit-go | rag | q6 | rag_grounded | 44800 | 684 | 19 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| genkit-go | rag | q7 | rag_grounded | 31800 | 700 | 784 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| genkit-go | rag | q8 | rag_trap | 9541 | 645 | 30 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| genkit-go | rag | q9 | rag_trap | 87829 | 654 | 846 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| genkit-go | rag | h1 | rag_grounded | 33216 | 673 | 317 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| genkit-go | rag | h2 | rag_grounded | 13092 | 707 | 29 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
-| genkit-go | rag | h3 | rag_grounded | 12560 | 659 | 29 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
-| genkit-go | rag | h4 | rag_grounded | 9461 | 695 | 32 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
-| genkit-go | rag | h5 | rag_grounded | 73978 | 636 | 812 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
-| genkit-go | rag | h6 | rag_grounded | 136656 | 701 | 776 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
-| genkit-go | rag | h7 | rag_trap | 8838 | 658 | 31 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| genkit-go | rag | h8 | rag_trap | 24455 | 635 | 968 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| genkit-go | rag | h9 | rag_trap | 12857 | 691 | 601 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| genkit-go | rag | h10 | rag_trap | 8224 | 677 | 27 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| genkit-go | tools | tool-mul | tools | 26209 | 671 | 75 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
-| genkit-go | tools | tool-expr | tools | 73614 | 691 | 32 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
-| genkit-go | tools | tool-add | tools | 33079 | 674 | 22 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
-| genkit-go | tools | tool-h-chain-1 | tools | 21532 | 729 | 79 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
-| genkit-go | tools | tool-h-chain-2 | tools | 22004 | 732 | 226 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
-| genkit-go | tools | tool-h-coerce | tools | 49309 | 704 | 37 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
-| genkit-go | tools | tool-h-abstain | tools | 13284 | 598 | 120 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
-| genkit-go | memory | mem-01-color | memory | 15608 | 2279 | 625 | ✓ | exact match (normalized) | — | — | — | — | — |
-| genkit-go | memory | mem-02-pets | memory | 12830 | 3405 | 395 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
-| genkit-go | memory | mem-03-deadline | memory | 11683 | 2702 | 1422 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
-| genkit-go | memory | mem-h01-overwrite | memory | 10001 | 1027 | 279 | ✓ | answer-key containment 1.00 (best key "9A" of 1) | — | — | — | — | — |
-| genkit-go | memory | mem-h02-interference | memory | 15849 | 971 | 692 | ✓ | exact match (normalized) | — | — | — | — | — |
-| genkit-go | memory | mem-h03-longhaul | memory | 14707 | 1259 | 445 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
-| genkit-go | memory | mem-h04-multifact | memory | 18955 | 929 | 781 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
-| genkit-go | memory | mem-h05-derived | memory | 7952 | 963 | 20 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
-| genkit-go | structured | qa-01-capital | structured | 17540 | 392 | 952 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| genkit-go | structured | qa-02-gold | structured | 26430 | 393 | 1458 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| genkit-go | structured | qa-03-continents | structured | 50724 | 393 | 1502 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| genkit-go | structured | qa-04-shakespeare | structured | 17735 | 393 | 1116 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| genkit-go | structured | qa-05-lightspeed | structured | 8556 | 403 | 109 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| genkit-go | structured | qa-06-planets | structured | 20028 | 397 | 96 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| genkit-go | structured | qa-h01-bones | structured | 10634 | 397 | 80 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| genkit-go | structured | qa-h02-canberra | structured | 17489 | n/a | n/a | — |  | — | — | — | no structured ✗ | adapter: …ired - (root): confidence is required - (root): key_points is required |
-| genkit-go | structured | qa-h03-iron | structured | 8059 | 397 | 72 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| genkit-go | structured | qa-h04-berlin | structured | 20279 | 394 | 564 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| genkit-go | structured | qa-h05-boiling | structured | 12768 | 402 | 607 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| genkit-go | structured | qa-h06-minutes | structured | 28953 | n/a | n/a | — |  | — | — | — | no structured ✗ | adapter: …ired - (root): confidence is required - (root): key_points is required |
-| genkit-go | stream | qa-01-capital | stream | 12617 | 39 | 195 | ✓ | TTFT measured: 11847ms | — | — | — | ttft 11847ms | — |
-| genkit-go | stream | qa-02-gold | stream | 16864 | 40 | 11 | ✓ | TTFT measured: 16189ms | — | — | — | ttft 16189ms | — |
-| genkit-go | stream | qa-03-continents | stream | 7718 | 40 | 31 | ✓ | TTFT measured: 6791ms | — | — | — | ttft 6791ms | — |
-| genkit-go | stream | qa-04-shakespeare | stream | 19046 | 40 | 210 | ✓ | TTFT measured: 18420ms | — | — | — | ttft 18420ms | — |
-| genkit-go | stream | qa-05-lightspeed | stream | 15917 | 49 | 427 | ✓ | TTFT measured: 15047ms | — | — | — | ttft 15047ms | — |
-| genkit-go | stream | qa-06-planets | stream | 18884 | 43 | 205 | ✓ | TTFT measured: 18049ms | — | — | — | ttft 18049ms | — |
-| genkit-go | stream | qa-h01-bones | stream | 15940 | 43 | 229 | ✓ | TTFT measured: 15125ms | — | — | — | ttft 15125ms | — |
-| genkit-go | stream | qa-h02-canberra | stream | 33411 | 40 | 199 | ✓ | TTFT measured: 32726ms | — | — | — | ttft 32726ms | — |
-| genkit-go | stream | qa-h03-iron | stream | 15920 | 41 | 362 | ✓ | TTFT measured: 15070ms | — | — | — | ttft 15070ms | — |
-| genkit-go | stream | qa-h04-berlin | stream | 13742 | 42 | 160 | ✓ | TTFT measured: 12929ms | — | — | — | ttft 12929ms | — |
-| genkit-go | stream | qa-h05-boiling | stream | 22952 | 52 | 583 | ✓ | TTFT measured: 21909ms | — | — | — | ttft 21909ms | — |
-| genkit-go | stream | qa-h06-minutes | stream | 7662 | 47 | 18 | ✓ | TTFT measured: 6835ms | — | — | — | ttft 6835ms | — |
-| langgraph | qa | qa-01-capital | qa | 46821 | 272 | 155 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
-| langgraph | qa | qa-02-gold | qa | 12274 | 275 | 9 | ✓ | exact match (normalized) | — | — | — | — | — |
-| langgraph | qa | qa-03-continents | qa | 27645 | 273 | 295 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
-| langgraph | qa | qa-04-shakespeare | qa | 8082 | 275 | 13 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
-| langgraph | qa | qa-05-lightspeed | qa | 13324 | 281 | 325 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
-| langgraph | qa | qa-06-planets | qa | 12155 | 277 | 12 | ✓ | exact match (normalized) | — | — | — | — | — |
-| langgraph | qa | qa-h01-bones | qa | 15005 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
-| langgraph | qa | qa-h02-canberra | qa | 8350 | 275 | 9 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
-| langgraph | qa | qa-h03-iron | qa | 12909 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
-| langgraph | qa | qa-h04-berlin | qa | 18533 | 274 | 155 | ✓ | exact match (normalized) | — | — | — | — | — |
-| langgraph | qa | qa-h05-boiling | qa | 23499 | 284 | 19 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
-| langgraph | qa | qa-h06-minutes | qa | 24493 | 279 | 220 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
-| langgraph | rag | q1 | rag_grounded | 11574 | 727 | 45 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| langgraph | rag | q2 | rag_grounded | 16527 | 693 | 372 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| langgraph | rag | q3 | rag_grounded | 40669 | 698 | 55 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| langgraph | rag | q4 | rag_grounded | 29745 | 672 | 790 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| langgraph | rag | q5 | rag_grounded | 8999 | 669 | 29 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| langgraph | rag | q6 | rag_grounded | 8787 | 720 | 19 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| langgraph | rag | q7 | rag_grounded | 25930 | 738 | 358 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| langgraph | rag | q8 | rag_trap | 20266 | 676 | 32 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| langgraph | rag | q9 | rag_trap | 31411 | 686 | 925 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| langgraph | rag | h1 | rag_grounded | 34646 | 706 | 319 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| langgraph | rag | h2 | rag_grounded | 25167 | 748 | 979 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
-| langgraph | rag | h3 | rag_grounded | 25401 | 691 | 924 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
-| langgraph | rag | h4 | rag_grounded | 22806 | 738 | 42 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
-| langgraph | rag | h5 | rag_grounded | 43531 | 667 | 60 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
-| langgraph | rag | h6 | rag_grounded | 13266 | 738 | 26 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
-| langgraph | rag | h7 | rag_trap | 20407 | 691 | 15 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| langgraph | rag | h8 | rag_trap | 21749 | 673 | 24 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| langgraph | rag | h9 | rag_trap | 35181 | 729 | 1416 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| langgraph | rag | h10 | rag_trap | 9203 | 713 | 27 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| langgraph | tools | tool-mul | tools | 27221 | 1210 | 141 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
-| langgraph | tools | tool-expr | tools | 37004 | 1238 | 328 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
-| langgraph | tools | tool-add | tools | 28390 | 1220 | 201 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
-| langgraph | tools | tool-h-chain-1 | tools | 33811 | 1275 | 217 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
-| langgraph | tools | tool-h-chain-2 | tools | 62990 | 1286 | 287 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
-| langgraph | tools | tool-h-coerce | tools | 48448 | 1259 | 178 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
-| langgraph | tools | tool-h-abstain | tools | 19326 | 567 | 9 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
-| langgraph | memory | mem-01-color | memory | 21159 | 1589 | 208 | ✓ | exact match (normalized) | — | — | — | — | — |
-| langgraph | memory | mem-02-pets | memory | 26629 | 1930 | 1193 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
-| langgraph | memory | mem-03-deadline | memory | 40558 | 1973 | 242 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
-| langgraph | memory | mem-h01-overwrite | memory | 36290 | 1050 | 864 | ✓ | answer-key containment 1.00 (best key "9A" of 1) | — | — | — | — | — |
-| langgraph | memory | mem-h02-interference | memory | 19132 | 987 | 258 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
-| langgraph | memory | mem-h03-longhaul | memory | 37163 | 1281 | 501 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
-| langgraph | memory | mem-h04-multifact | memory | 8193 | 954 | 582 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
-| langgraph | memory | mem-h05-derived | memory | 12799 | 1025 | 63 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
-| langgraph | structured | qa-01-capital | structured | 34360 | 272 | 175 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-02-gold | structured | 8279 | 275 | 24 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-03-continents | structured | 10446 | 275 | 46 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-04-shakespeare | structured | 31889 | 275 | 31 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-05-lightspeed | structured | 27603 | 283 | 38 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-06-planets | structured | 12417 | 277 | 22 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-h01-bones | structured | 14457 | 277 | 33 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-h02-canberra | structured | 29405 | 273 | 283 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-h03-iron | structured | 27170 | 275 | 258 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-h04-berlin | structured | 28907 | 274 | 183 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-h05-boiling | structured | 8904 | 284 | 26 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | structured | qa-h06-minutes | structured | 20732 | 281 | 22 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| langgraph | stream | qa-01-capital | stream | 32502 | 272 | 194 | ✓ | TTFT measured: 29746ms | — | — | — | ttft 29746ms | — |
-| langgraph | stream | qa-02-gold | stream | 21696 | 273 | 172 | ✓ | TTFT measured: 19140ms | — | — | — | ttft 19140ms | — |
-| langgraph | stream | qa-03-continents | stream | 20885 | 273 | 239 | ✓ | TTFT measured: 19622ms | — | — | — | ttft 19622ms | — |
-| langgraph | stream | qa-04-shakespeare | stream | 33160 | 273 | 187 | ✓ | TTFT measured: 30294ms | — | — | — | ttft 30294ms | — |
-| langgraph | stream | qa-05-lightspeed | stream | 23954 | 281 | 265 | ✓ | TTFT measured: 21329ms | — | — | — | ttft 21329ms | — |
-| langgraph | stream | qa-06-planets | stream | 17339 | 277 | 12 | ✓ | TTFT measured: 12883ms | — | — | — | ttft 12883ms | — |
-| langgraph | stream | qa-h01-bones | stream | 40814 | 275 | 169 | ✓ | TTFT measured: 38404ms | — | — | — | ttft 38404ms | — |
-| langgraph | stream | qa-h02-canberra | stream | 24821 | 273 | 163 | ✓ | TTFT measured: 22611ms | — | — | — | ttft 22611ms | — |
-| langgraph | stream | qa-h03-iron | stream | 148591 | 277 | 13 | ✓ | TTFT measured: 147420ms | — | — | — | ttft 147420ms | — |
-| langgraph | stream | qa-h04-berlin | stream | 13996 | 274 | 163 | ✓ | TTFT measured: 11955ms | — | — | — | ttft 11955ms | — |
-| langgraph | stream | qa-h05-boiling | stream | 20885 | 284 | 19 | ✓ | TTFT measured: 19583ms | — | — | — | ttft 19583ms | — |
-| langgraph | stream | qa-h06-minutes | stream | 18177 | 279 | 236 | ✓ | TTFT measured: 15241ms | — | — | — | ttft 15241ms | — |
-| llamaindex | qa | qa-01-capital | qa | 8898 | 274 | 8 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
-| llamaindex | qa | qa-02-gold | qa | 10136 | 275 | 9 | ✓ | exact match (normalized) | — | — | — | — | — |
-| llamaindex | qa | qa-03-continents | qa | 24785 | 273 | 675 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
-| llamaindex | qa | qa-04-shakespeare | qa | 10091 | 273 | 192 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
-| llamaindex | qa | qa-05-lightspeed | qa | 12126 | 283 | 20 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
-| llamaindex | qa | qa-06-planets | qa | 27453 | 275 | 218 | ✓ | exact match (normalized) | — | — | — | — | — |
-| llamaindex | qa | qa-h01-bones | qa | 13117 | 277 | 14 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
-| llamaindex | qa | qa-h02-canberra | qa | 34812 | 275 | 9 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
-| llamaindex | qa | qa-h03-iron | qa | 32269 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
-| llamaindex | qa | qa-h04-berlin | qa | 14088 | 274 | 208 | ✓ | exact match (normalized) | — | — | — | — | — |
-| llamaindex | qa | qa-h05-boiling | qa | 59986 | 282 | 601 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
-| llamaindex | qa | qa-h06-minutes | qa | 45827 | 279 | 219 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
-| llamaindex | rag | q1 | rag_grounded | 9638 | 673 | 32 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| llamaindex | rag | q2 | rag_grounded | 41918 | 649 | 820 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| llamaindex | rag | q3 | rag_grounded | 9661 | 654 | 49 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| llamaindex | rag | q4 | rag_grounded | 35517 | 618 | 1025 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| llamaindex | rag | q5 | rag_grounded | 21915 | 614 | 25 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| llamaindex | rag | q6 | rag_grounded | 9227 | 662 | 19 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| llamaindex | rag | q7 | rag_grounded | 13086 | 682 | 26 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| llamaindex | rag | q8 | rag_trap | 9052 | 612 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| llamaindex | rag | q9 | rag_trap | 14981 | 634 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| llamaindex | rag | h1 | rag_grounded | 9304 | 664 | 6 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| llamaindex | rag | h2 | rag_grounded | 19266 | 675 | 815 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
-| llamaindex | rag | h3 | rag_grounded | 18909 | 627 | 1043 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
-| llamaindex | rag | h4 | rag_grounded | 17082 | 611 | 28 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
-| llamaindex | rag | h5 | rag_grounded | 18064 | 608 | 989 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
-| llamaindex | rag | h6 | rag_grounded | 22748 | 663 | 1112 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
-| llamaindex | rag | h7 | rag_trap | 15148 | 645 | 691 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| llamaindex | rag | h8 | rag_trap | 12368 | 607 | 375 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| llamaindex | rag | h9 | rag_trap | 24352 | 602 | 620 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| llamaindex | rag | h10 | rag_trap | 10076 | 638 | 407 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| llamaindex | tools | tool-mul | tools | 78946 | 515 | 195 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
-| llamaindex | tools | tool-expr | tools | 46858 | 527 | 236 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
-| llamaindex | tools | tool-add | tools | 29961 | 512 | 211 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
-| llamaindex | tools | tool-h-chain-1 | tools | 30036 | 549 | 46 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
-| llamaindex | tools | tool-h-chain-2 | tools | 22539 | 567 | 37 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
-| llamaindex | tools | tool-h-coerce | tools | 22521 | 542 | 202 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
-| llamaindex | tools | tool-h-abstain | tools | 16179 | 245 | 11 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
-| llamaindex | memory | mem-01-color | memory | 11480 | 941 | 21 | ✓ | exact match (normalized) | — | — | — | — | — |
-| llamaindex | memory | mem-02-pets | memory | 11890 | 1114 | 692 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
-| llamaindex | memory | mem-03-deadline | memory | 36659 | 1076 | 39 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
-| llamaindex | memory | mem-h01-overwrite | memory | 30905 | 1600 | 1230 | ✓ | exact match (normalized) | — | — | — | — | — |
-| llamaindex | memory | mem-h02-interference | memory | 14773 | 984 | 2899 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
-| llamaindex | memory | mem-h03-longhaul | memory | 34316 | 1996 | 2913 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
-| llamaindex | memory | mem-h04-multifact | memory | 15537 | 967 | 421 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
-| llamaindex | memory | mem-h05-derived | memory | 25899 | 979 | 14 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
-| llamaindex | structured | qa-01-capital | structured | 24646 | 585 | 1504 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | structured | qa-02-gold | structured | 26895 | 586 | 737 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | structured | qa-03-continents | structured | 9113 | 588 | 30 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | structured | qa-04-shakespeare | structured | 27493 | 586 | 1758 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | structured | qa-05-lightspeed | structured | 15887 | 596 | 32 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | structured | qa-06-planets | structured | 28116 | 590 | 29 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | structured | qa-h01-bones | structured | 17535 | 588 | 1161 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | structured | qa-h02-canberra | structured | 10522 | 588 | 32 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | structured | qa-h03-iron | structured | 18132 | 590 | 33 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | structured | qa-h04-berlin | structured | 15067 | 589 | 29 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | structured | qa-h05-boiling | structured | 17401 | 595 | 1133 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | structured | qa-h06-minutes | structured | 23808 | 592 | 1295 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| llamaindex | stream | qa-01-capital | stream | 9585 | 39 | 179 | ✓ | TTFT measured: 8314ms | — | — | — | ttft 8314ms | — |
-| llamaindex | stream | qa-02-gold | stream | 9295 | 40 | 11 | ✓ | TTFT measured: 7778ms | — | — | — | ttft 7778ms | — |
-| llamaindex | stream | qa-03-continents | stream | 26591 | 40 | 257 | ✓ | TTFT measured: 25353ms | — | — | — | ttft 25353ms | — |
-| llamaindex | stream | qa-04-shakespeare | stream | 15212 | 40 | 12 | ✓ | TTFT measured: 14011ms | — | — | — | ttft 14011ms | — |
-| llamaindex | stream | qa-05-lightspeed | stream | 14243 | 49 | 836 | ✓ | TTFT measured: 13069ms | — | — | — | ttft 13069ms | — |
-| llamaindex | stream | qa-06-planets | stream | 29706 | 43 | 216 | ✓ | TTFT measured: 28625ms | — | — | — | ttft 28625ms | — |
-| llamaindex | stream | qa-h01-bones | stream | 16750 | 43 | 564 | ✓ | TTFT measured: 15491ms | — | — | — | ttft 15491ms | — |
-| llamaindex | stream | qa-h02-canberra | stream | 5576 | 40 | 184 | ✓ | TTFT measured: 4426ms | — | — | — | ttft 4426ms | — |
-| llamaindex | stream | qa-h03-iron | stream | 10006 | 41 | 251 | ✓ | TTFT measured: 8959ms | — | — | — | ttft 8959ms | — |
-| llamaindex | stream | qa-h04-berlin | stream | 7933 | 42 | 10 | ✓ | TTFT measured: 7002ms | — | — | — | ttft 7002ms | — |
-| llamaindex | stream | qa-h05-boiling | stream | 27143 | 52 | 316 | ✓ | TTFT measured: 25810ms | — | — | — | ttft 25810ms | — |
-| llamaindex | stream | qa-h06-minutes | stream | 10503 | 47 | 234 | ✓ | TTFT measured: 9171ms | — | — | — | ttft 9171ms | — |
-| mastra | qa | qa-01-capital | qa | 9388 | 272 | 152 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
-| mastra | qa | qa-02-gold | qa | 12600 | 275 | 9 | ✓ | exact match (normalized) | — | — | — | — | — |
-| mastra | qa | qa-03-continents | qa | 9173 | 273 | 244 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
-| mastra | qa | qa-04-shakespeare | qa | 14121 | 273 | 527 | ✓ | exact match (normalized) | — | — | — | — | — |
-| mastra | qa | qa-05-lightspeed | qa | 26645 | 281 | 669 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
-| mastra | qa | qa-06-planets | qa | 11355 | 275 | 213 | ✓ | exact match (normalized) | — | — | — | — | — |
-| mastra | qa | qa-h01-bones | qa | 8068 | 277 | 12 | ✓ | exact match (normalized) | — | — | — | — | — |
-| mastra | qa | qa-h02-canberra | qa | 9846 | 273 | 178 | ✓ | exact match (normalized) | — | — | — | — | — |
-| mastra | qa | qa-h03-iron | qa | 73076 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
-| mastra | qa | qa-h04-berlin | qa | 8583 | 276 | 12 | ✓ | exact match (normalized) | — | — | — | — | — |
-| mastra | qa | qa-h05-boiling | qa | 14581 | 282 | 692 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
-| mastra | qa | qa-h06-minutes | qa | 7161 | 279 | 681 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
-| mastra | rag | q1 | rag_grounded | 11496 | 692 | 451 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| mastra | rag | q2 | rag_grounded | 11370 | 666 | 406 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| mastra | rag | q3 | rag_grounded | 24716 | 669 | 1115 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| mastra | rag | q4 | rag_grounded | 9644 | 648 | 35 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| mastra | rag | q5 | rag_grounded | 7623 | 637 | 25 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| mastra | rag | q6 | rag_grounded | 9365 | 687 | 258 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| mastra | rag | q7 | rag_grounded | 14631 | 701 | 326 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| mastra | rag | q8 | rag_trap | 8022 | 646 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| mastra | rag | q9 | rag_trap | 16483 | 659 | 321 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| mastra | rag | h1 | rag_grounded | 10119 | 679 | 283 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| mastra | rag | h2 | rag_grounded | 21489 | 713 | 1274 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
-| mastra | rag | h3 | rag_grounded | 7979 | 665 | 29 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
-| mastra | rag | h4 | rag_grounded | 14366 | 700 | 686 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
-| mastra | rag | h5 | rag_grounded | 20775 | 635 | 790 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
-| mastra | rag | h6 | rag_grounded | 25011 | 708 | 26 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
-| mastra | rag | h7 | rag_trap | 38730 | 662 | 740 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| mastra | rag | h8 | rag_trap | 8192 | 641 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| mastra | rag | h9 | rag_trap | 12373 | 692 | 551 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| mastra | rag | h10 | rag_trap | 13843 | 681 | 289 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| mastra | tools | tool-mul | tools | 18006 | 1320 | 168 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
-| mastra | tools | tool-expr | tools | 10230 | 1346 | 214 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
-| mastra | tools | tool-add | tools | 15342 | 1334 | 144 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
-| mastra | tools | tool-h-chain-1 | tools | 42885 | 1407 | 704 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
-| mastra | tools | tool-h-chain-2 | tools | 5038 | 1409 | 154 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
-| mastra | tools | tool-h-coerce | tools | 45005 | 1379 | 240 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
-| mastra | tools | tool-h-abstain | tools | 8743 | 624 | 167 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
-| mastra | memory | mem-01-color | memory | 8767 | 765 | 581 | ✓ | exact match (normalized) | — | — | — | — | — |
-| mastra | memory | mem-02-pets | memory | 18736 | 862 | 641 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
-| mastra | memory | mem-03-deadline | memory | 12331 | 850 | 24 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
-| mastra | memory | mem-h01-overwrite | memory | 7297 | 1051 | 1498 | ✓ | exact match (normalized) | — | — | — | — | — |
-| mastra | memory | mem-h02-interference | memory | 7328 | 987 | 22 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
-| mastra | memory | mem-h03-longhaul | memory | 7400 | 1263 | 421 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
-| mastra | memory | mem-h04-multifact | memory | 16460 | 946 | 808 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
-| mastra | memory | mem-h05-derived | memory | 8560 | 996 | 29 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
-| mastra | structured | qa-01-capital | structured | 13798 | 272 | 189 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-02-gold | structured | 7848 | 275 | 47 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-03-continents | structured | 10753 | 273 | 318 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-04-shakespeare | structured | 11562 | 273 | 193 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-05-lightspeed | structured | 12114 | 283 | 48 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-06-planets | structured | 10712 | 277 | 49 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-h01-bones | structured | 12178 | 275 | 455 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-h02-canberra | structured | 8670 | 273 | 182 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-h03-iron | structured | 9361 | 275 | 235 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-h04-berlin | structured | 12824 | 276 | 52 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-h05-boiling | structured | 7641 | 284 | 60 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | structured | qa-h06-minutes | structured | 17733 | 279 | 336 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| mastra | stream | qa-01-capital | stream | 9188 | 272 | 181 | ✓ | TTFT measured: 8697ms | — | — | — | ttft 8697ms | — |
-| mastra | stream | qa-02-gold | stream | 8752 | 273 | 193 | ✓ | TTFT measured: 8264ms | — | — | — | ttft 8264ms | — |
-| mastra | stream | qa-03-continents | stream | 10314 | 273 | 390 | ✓ | TTFT measured: 9575ms | — | — | — | ttft 9575ms | — |
-| mastra | stream | qa-04-shakespeare | stream | 9741 | 275 | 10 | ✓ | TTFT measured: 9278ms | — | — | — | ttft 9278ms | — |
-| mastra | stream | qa-05-lightspeed | stream | 18759 | 281 | 803 | ✓ | TTFT measured: 18020ms | — | — | — | ttft 18020ms | — |
-| mastra | stream | qa-06-planets | stream | 11563 | 275 | 162 | ✓ | TTFT measured: 10815ms | — | — | — | ttft 10815ms | — |
-| mastra | stream | qa-h01-bones | stream | 14463 | 275 | 722 | ✓ | TTFT measured: 13811ms | — | — | — | ttft 13811ms | — |
-| mastra | stream | qa-h02-canberra | stream | 10185 | 273 | 165 | ✓ | TTFT measured: 9657ms | — | — | — | ttft 9657ms | — |
-| mastra | stream | qa-h03-iron | stream | 9388 | 275 | 215 | ✓ | TTFT measured: 8750ms | — | — | — | ttft 8750ms | — |
-| mastra | stream | qa-h04-berlin | stream | 9135 | 274 | 159 | ✓ | TTFT measured: 8578ms | — | — | — | ttft 8578ms | — |
-| mastra | stream | qa-h05-boiling | stream | 35012 | 282 | 524 | ✓ | TTFT measured: 34521ms | — | — | — | ttft 34521ms | — |
-| mastra | stream | qa-h06-minutes | stream | 10183 | 279 | 304 | ✓ | TTFT measured: 9607ms | — | — | — | ttft 9607ms | — |
-| pydantic-ai | qa | qa-01-capital | qa | 29790 | 274 | 8 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
-| pydantic-ai | qa | qa-02-gold | qa | 42530 | 273 | 166 | ✓ | exact match (normalized) | — | — | — | — | — |
-| pydantic-ai | qa | qa-03-continents | qa | 11667 | 275 | 28 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
-| pydantic-ai | qa | qa-04-shakespeare | qa | 13752 | 275 | 10 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
-| pydantic-ai | qa | qa-05-lightspeed | qa | 15340 | 281 | 281 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
-| pydantic-ai | qa | qa-06-planets | qa | 11185 | 275 | 220 | ✓ | exact match (normalized) | — | — | — | — | — |
-| pydantic-ai | qa | qa-h01-bones | qa | 13321 | 275 | 647 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
-| pydantic-ai | qa | qa-h02-canberra | qa | 12193 | 273 | 180 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
-| pydantic-ai | qa | qa-h03-iron | qa | 10125 | 275 | 166 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
-| pydantic-ai | qa | qa-h04-berlin | qa | 8562 | 276 | 12 | ✓ | exact match (normalized) | — | — | — | — | — |
-| pydantic-ai | qa | qa-h05-boiling | qa | 15522 | 284 | 19 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
-| pydantic-ai | qa | qa-h06-minutes | qa | 14054 | 279 | 208 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
-| pydantic-ai | rag | q1 | rag_grounded | 13351 | 723 | 44 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| pydantic-ai | rag | q2 | rag_grounded | 11909 | 689 | 380 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| pydantic-ai | rag | q3 | rag_grounded | 13497 | 694 | 55 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| pydantic-ai | rag | q4 | rag_grounded | 9022 | 670 | 35 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| pydantic-ai | rag | q5 | rag_grounded | 9440 | 665 | 28 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| pydantic-ai | rag | q6 | rag_grounded | 16730 | 714 | 983 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| pydantic-ai | rag | q7 | rag_grounded | 11956 | 736 | 25 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| pydantic-ai | rag | q8 | rag_trap | 18037 | 670 | 936 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| pydantic-ai | rag | q9 | rag_trap | 14962 | 682 | 422 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| pydantic-ai | rag | h1 | rag_grounded | 12293 | 702 | 341 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
-| pydantic-ai | rag | h2 | rag_grounded | 16945 | 744 | 661 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
-| pydantic-ai | rag | h3 | rag_grounded | 12261 | 687 | 430 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
-| pydantic-ai | rag | h4 | rag_grounded | 8781 | 734 | 31 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
-| pydantic-ai | rag | h5 | rag_grounded | 19146 | 661 | 448 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
-| pydantic-ai | rag | h6 | rag_grounded | 17641 | 732 | 410 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
-| pydantic-ai | rag | h7 | rag_trap | 10883 | 687 | 13 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| pydantic-ai | rag | h8 | rag_trap | 17057 | 667 | 877 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| pydantic-ai | rag | h9 | rag_trap | 10761 | 727 | 13 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| pydantic-ai | rag | h10 | rag_trap | 11038 | 709 | 13 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
-| pydantic-ai | tools | tool-mul | tools | 28379 | 1202 | 186 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
-| pydantic-ai | tools | tool-expr | tools | 23748 | 1222 | 455 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
-| pydantic-ai | tools | tool-add | tools | 34472 | 1212 | 108 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
-| pydantic-ai | tools | tool-h-chain-1 | tools | 20164 | 1267 | 87 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
-| pydantic-ai | tools | tool-h-chain-2 | tools | 40212 | 1278 | 159 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
-| pydantic-ai | tools | tool-h-coerce | tools | 18789 | 1243 | 78 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
-| pydantic-ai | tools | tool-h-abstain | tools | 8275 | 563 | 9 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
-| pydantic-ai | memory | mem-01-color | memory | 10358 | 801 | 203 | ✓ | exact match (normalized) | — | — | — | — | — |
-| pydantic-ai | memory | mem-02-pets | memory | 12250 | 947 | 378 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
-| pydantic-ai | memory | mem-03-deadline | memory | 13731 | 936 | 234 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
-| pydantic-ai | memory | mem-h01-overwrite | memory | 10846 | 973 | 660 | ✓ | answer-key containment 1.00 (best key "9A" of 1) | — | — | — | — | — |
-| pydantic-ai | memory | mem-h02-interference | memory | 15444 | 917 | 710 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
-| pydantic-ai | memory | mem-h03-longhaul | memory | 10871 | 1166 | 292 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
-| pydantic-ai | memory | mem-h04-multifact | memory | 29109 | 881 | 331 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
-| pydantic-ai | memory | mem-h05-derived | memory | 9217 | 947 | 52 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
-| pydantic-ai | structured | qa-01-capital | structured | 19453 | 426 | 1279 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-02-gold | structured | 20493 | 427 | 1132 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-03-continents | structured | 22091 | 427 | 1146 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-04-shakespeare | structured | 19763 | 427 | 991 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-05-lightspeed | structured | 15558 | 437 | 99 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-06-planets | structured | 8882 | 431 | 86 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-h01-bones | structured | 12024 | 429 | 487 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-h02-canberra | structured | 11707 | 429 | 86 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-h03-iron | structured | 49433 | 429 | 518 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-h04-berlin | structured | 11571 | 430 | 74 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-h05-boiling | structured | 37543 | 436 | 1038 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | structured | qa-h06-minutes | structured | 31730 | 433 | 1005 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
-| pydantic-ai | stream | qa-01-capital | stream | 9474 | 272 | 167 | ✓ | TTFT measured: 8176ms | — | — | — | ttft 8176ms | — |
-| pydantic-ai | stream | qa-02-gold | stream | 9463 | 273 | 167 | ✓ | TTFT measured: 8243ms | — | — | — | ttft 8243ms | — |
-| pydantic-ai | stream | qa-03-continents | stream | 11506 | 275 | 8 | ✓ | TTFT measured: 10151ms | — | — | — | ttft 10151ms | — |
-| pydantic-ai | stream | qa-04-shakespeare | stream | 17307 | 273 | 231 | ✓ | TTFT measured: 16119ms | — | — | — | ttft 16119ms | — |
-| pydantic-ai | stream | qa-05-lightspeed | stream | 11319 | 283 | 20 | ✓ | TTFT measured: 10092ms | — | — | — | ttft 10092ms | — |
-| pydantic-ai | stream | qa-06-planets | stream | 12469 | 275 | 426 | ✓ | TTFT measured: 11201ms | — | — | — | ttft 11201ms | — |
-| pydantic-ai | stream | qa-h01-bones | stream | 8645 | 277 | 13 | ✓ | TTFT measured: 7410ms | — | — | — | ttft 7410ms | — |
-| pydantic-ai | stream | qa-h02-canberra | stream | 4120 | 273 | 209 | ✓ | TTFT measured: 2918ms | — | — | — | ttft 2918ms | — |
-| pydantic-ai | stream | qa-h03-iron | stream | 11349 | 275 | 222 | ✓ | TTFT measured: 10361ms | — | — | — | ttft 10361ms | — |
-| pydantic-ai | stream | qa-h04-berlin | stream | 8276 | 276 | 12 | ✓ | TTFT measured: 7017ms | — | — | — | ttft 7017ms | — |
-| pydantic-ai | stream | qa-h05-boiling | stream | 8428 | 284 | 20 | ✓ | TTFT measured: 7185ms | — | — | — | ttft 7185ms | — |
-| pydantic-ai | stream | qa-h06-minutes | stream | 11453 | 281 | 19 | ✓ | TTFT measured: 9869ms | — | — | — | ttft 9869ms | — |
+| eino | memory | mem-01-color | memory | 8311 | 2887 | 570 | ✓ | exact match (normalized) | — | — | — | — | — |
+| eino | memory | mem-02-pets | memory | 11244 | 3414 | 29 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
+| eino | memory | mem-03-deadline | memory | 10432 | 2824 | 1159 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
+| eino | memory | mem-h01-overwrite | memory | 7217 | 2145 | 1182 | ✓ | answer-key containment 1.00 (best key "9A" of 1) | — | — | — | — | — |
+| eino | memory | mem-h02-interference | memory | 13113 | 2005 | 1352 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
+| eino | memory | mem-h03-longhaul | memory | 6646 | 2845 | 1307 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
+| eino | memory | mem-h04-multifact | memory | 7287 | 2040 | 480 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
+| eino | memory | mem-h05-derived | memory | 11509 | 2095 | 44 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
+| eino | structured | qa-01-capital | structured | 11436 | 415 | 734 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | structured | qa-02-gold | structured | 9477 | 416 | 294 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | structured | qa-03-continents | structured | 7343 | 418 | 25 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | structured | qa-04-shakespeare | structured | 8551 | 416 | 262 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | structured | qa-05-lightspeed | structured | 11298 | 426 | 37 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | structured | qa-06-planets | structured | 9661 | 418 | 320 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | structured | qa-h01-bones | structured | 18879 | 418 | 293 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | structured | qa-h02-canberra | structured | 13029 | 416 | 802 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | structured | qa-h03-iron | structured | 9443 | 418 | 216 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | structured | qa-h04-berlin | structured | 14687 | 417 | 970 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | structured | qa-h05-boiling | structured | 12914 | 425 | 609 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | structured | qa-h06-minutes | structured | 12942 | 424 | 35 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| eino | stream | qa-01-capital | stream | 12469 | 272 | 198 | ✓ | TTFT measured: 10734ms | — | — | — | ttft 10734ms | — |
+| eino | stream | qa-02-gold | stream | 8711 | 273 | 176 | ✓ | TTFT measured: 7036ms | — | — | — | ttft 7036ms | — |
+| eino | stream | qa-03-continents | stream | 7447 | 275 | 12 | ✓ | TTFT measured: 7237ms | — | — | — | ttft 7237ms | — |
+| eino | stream | qa-04-shakespeare | stream | 9155 | 275 | 13 | ✓ | TTFT measured: 8964ms | — | — | — | ttft 8964ms | — |
+| eino | stream | qa-05-lightspeed | stream | 1384 | 283 | 20 | ✓ | TTFT measured: 1052ms | — | — | — | ttft 1052ms | — |
+| eino | stream | qa-06-planets | stream | 11100 | 275 | 490 | ✓ | TTFT measured: 7101ms | — | — | — | ttft 7101ms | — |
+| eino | stream | qa-h01-bones | stream | 9602 | 277 | 13 | ✓ | TTFT measured: 9001ms | — | — | — | ttft 9001ms | — |
+| eino | stream | qa-h02-canberra | stream | 8397 | 273 | 153 | ✓ | TTFT measured: 6687ms | — | — | — | ttft 6687ms | — |
+| eino | stream | qa-h03-iron | stream | 8444 | 275 | 195 | ✓ | TTFT measured: 6721ms | — | — | — | ttft 6721ms | — |
+| eino | stream | qa-h04-berlin | stream | 12361 | 274 | 185 | ✓ | TTFT measured: 10774ms | — | — | — | ttft 10774ms | — |
+| eino | stream | qa-h05-boiling | stream | 12118 | 282 | 561 | ✓ | TTFT measured: 6736ms | — | — | — | ttft 6736ms | — |
+| eino | stream | qa-h06-minutes | stream | 7591 | 281 | 19 | ✓ | TTFT measured: 7366ms | — | — | — | ttft 7366ms | — |
+| genkit-go | qa | qa-01-capital | qa | 6152 | 272 | 247 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
+| genkit-go | qa | qa-02-gold | qa | 11472 | 275 | 9 | ✓ | exact match (normalized) | — | — | — | — | — |
+| genkit-go | qa | qa-03-continents | qa | 10477 | 273 | 271 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
+| genkit-go | qa | qa-04-shakespeare | qa | 10844 | 273 | 447 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
+| genkit-go | qa | qa-05-lightspeed | qa | 13891 | 281 | 316 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
+| genkit-go | qa | qa-06-planets | qa | 7648 | 277 | 12 | ✓ | exact match (normalized) | — | — | — | — | — |
+| genkit-go | qa | qa-h01-bones | qa | 8777 | 275 | 180 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
+| genkit-go | qa | qa-h02-canberra | qa | 8615 | 273 | 168 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
+| genkit-go | qa | qa-h03-iron | qa | 7398 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
+| genkit-go | qa | qa-h04-berlin | qa | 11931 | 274 | 255 | ✓ | exact match (normalized) | — | — | — | — | — |
+| genkit-go | qa | qa-h05-boiling | qa | 11832 | 282 | 578 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
+| genkit-go | qa | qa-h06-minutes | qa | 9193 | 279 | 228 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
+| genkit-go | rag | q1 | rag_grounded | 10754 | 685 | 394 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| genkit-go | rag | q2 | rag_grounded | 7995 | 662 | 29 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| genkit-go | rag | q3 | rag_grounded | 10898 | 665 | 54 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| genkit-go | rag | q4 | rag_grounded | 14645 | 652 | 862 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| genkit-go | rag | q5 | rag_grounded | 14164 | 630 | 764 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| genkit-go | rag | q6 | rag_grounded | 8078 | 684 | 19 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| genkit-go | rag | q7 | rag_grounded | 15333 | 700 | 1059 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| genkit-go | rag | q8 | rag_trap | 14084 | 643 | 822 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| genkit-go | rag | q9 | rag_trap | 6104 | 654 | 400 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| genkit-go | rag | h1 | rag_grounded | 10969 | 673 | 870 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| genkit-go | rag | h2 | rag_grounded | 15138 | 705 | 988 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
+| genkit-go | rag | h3 | rag_grounded | 10719 | 657 | 427 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
+| genkit-go | rag | h4 | rag_grounded | 15669 | 695 | 31 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
+| genkit-go | rag | h5 | rag_grounded | 12482 | 638 | 59 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
+| genkit-go | rag | h6 | rag_grounded | 8437 | 703 | 26 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
+| genkit-go | rag | h7 | rag_trap | 15654 | 656 | 493 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| genkit-go | rag | h8 | rag_trap | 10709 | 635 | 450 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| genkit-go | rag | h9 | rag_trap | 13164 | 691 | 434 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| genkit-go | rag | h10 | rag_trap | 13680 | 675 | 823 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| genkit-go | tools | tool-mul | tools | 15460 | 663 | 16 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
+| genkit-go | tools | tool-expr | tools | 15472 | 691 | 96 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
+| genkit-go | tools | tool-add | tools | 14988 | 682 | 93 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
+| genkit-go | tools | tool-h-chain-1 | tools | 18144 | 725 | 259 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
+| genkit-go | tools | tool-h-chain-2 | tools | 15725 | 732 | 141 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
+| genkit-go | tools | tool-h-coerce | tools | 15934 | 712 | 186 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
+| genkit-go | tools | tool-h-abstain | tools | 13468 | 598 | 97 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
+| genkit-go | memory | mem-01-color | memory | 8828 | 2589 | 182 | ✓ | exact match (normalized) | — | — | — | — | — |
+| genkit-go | memory | mem-02-pets | memory | 7545 | 3863 | 384 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
+| genkit-go | memory | mem-03-deadline | memory | 9128 | 3077 | 278 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
+| genkit-go | memory | mem-h01-overwrite | memory | 13475 | 2219 | 1697 | ✓ | answer-key containment 1.00 (best key "9A" of 1) | — | — | — | — | — |
+| genkit-go | memory | mem-h02-interference | memory | 7747 | 2017 | 404 | ✓ | exact match (normalized) | — | — | — | — | — |
+| genkit-go | memory | mem-h03-longhaul | memory | 7698 | 2924 | 980 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
+| genkit-go | memory | mem-h04-multifact | memory | 11242 | 2035 | 434 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
+| genkit-go | memory | mem-h05-derived | memory | 17094 | 1973 | 771 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
+| genkit-go | structured | qa-01-capital | structured | 16783 | 392 | 1254 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| genkit-go | structured | qa-02-gold | structured | 15095 | 393 | 1038 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| genkit-go | structured | qa-03-continents | structured | 8861 | 395 | 108 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| genkit-go | structured | qa-04-shakespeare | structured | 13679 | 393 | 1536 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| genkit-go | structured | qa-05-lightspeed | structured | 13472 | 401 | 911 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| genkit-go | structured | qa-06-planets | structured | 7931 | 397 | 82 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| genkit-go | structured | qa-h01-bones | structured | 13299 | 395 | 592 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| genkit-go | structured | qa-h02-canberra | structured | 12365 | 395 | 76 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| genkit-go | structured | qa-h03-iron | structured | 26438 | 397 | 78 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| genkit-go | structured | qa-h04-berlin | structured | 9658 | 396 | 92 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| genkit-go | structured | qa-h05-boiling | structured | 13041 | n/a | n/a | — |  | — | — | — | no structured ✗ | adapter: …ired - (root): confidence is required - (root): key_points is required |
+| genkit-go | structured | qa-h06-minutes | structured | 9658 | 399 | 1016 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| genkit-go | stream | qa-01-capital | stream | 8734 | 39 | 186 | ✓ | TTFT measured: 7998ms | — | — | — | ttft 7998ms | — |
+| genkit-go | stream | qa-02-gold | stream | 16909 | 40 | 168 | ✓ | TTFT measured: 16158ms | — | — | — | ttft 16158ms | — |
+| genkit-go | stream | qa-03-continents | stream | 12496 | 40 | 719 | ✓ | TTFT measured: 11656ms | — | — | — | ttft 11656ms | — |
+| genkit-go | stream | qa-04-shakespeare | stream | 8785 | 40 | 196 | ✓ | TTFT measured: 7987ms | — | — | — | ttft 7987ms | — |
+| genkit-go | stream | qa-05-lightspeed | stream | 13743 | 49 | 19 | ✓ | TTFT measured: 12991ms | — | — | — | ttft 12991ms | — |
+| genkit-go | stream | qa-06-planets | stream | 8558 | 43 | 180 | ✓ | TTFT measured: 7766ms | — | — | — | ttft 7766ms | — |
+| genkit-go | stream | qa-h01-bones | stream | 11093 | 43 | 204 | ✓ | TTFT measured: 10465ms | — | — | — | ttft 10465ms | — |
+| genkit-go | stream | qa-h02-canberra | stream | 8920 | 40 | 202 | ✓ | TTFT measured: 8191ms | — | — | — | ttft 8191ms | — |
+| genkit-go | stream | qa-h03-iron | stream | 48118 | 41 | 14 | ✓ | TTFT measured: 47251ms | — | — | — | ttft 47251ms | — |
+| genkit-go | stream | qa-h04-berlin | stream | 13312 | 42 | 192 | ✓ | TTFT measured: 12183ms | — | — | — | ttft 12183ms | — |
+| genkit-go | stream | qa-h05-boiling | stream | 12442 | 52 | 721 | ✓ | TTFT measured: 11756ms | — | — | — | ttft 11756ms | — |
+| genkit-go | stream | qa-h06-minutes | stream | 18366 | 47 | 18 | ✓ | TTFT measured: 17692ms | — | — | — | ttft 17692ms | — |
+| langgraph | qa | qa-01-capital | qa | 78224 | 272 | 178 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
+| langgraph | qa | qa-02-gold | qa | 10192 | 275 | 9 | ✓ | exact match (normalized) | — | — | — | — | — |
+| langgraph | qa | qa-03-continents | qa | 21763 | 275 | 12 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
+| langgraph | qa | qa-04-shakespeare | qa | 17281 | 275 | 13 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
+| langgraph | qa | qa-05-lightspeed | qa | 14004 | 281 | 647 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
+| langgraph | qa | qa-06-planets | qa | 8547 | 277 | 12 | ✓ | exact match (normalized) | — | — | — | — | — |
+| langgraph | qa | qa-h01-bones | qa | 9562 | 275 | 201 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
+| langgraph | qa | qa-h02-canberra | qa | 9729 | 273 | 177 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
+| langgraph | qa | qa-h03-iron | qa | 9579 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
+| langgraph | qa | qa-h04-berlin | qa | 8146 | 276 | 12 | ✓ | exact match (normalized) | — | — | — | — | — |
+| langgraph | qa | qa-h05-boiling | qa | 8214 | 284 | 19 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
+| langgraph | qa | qa-h06-minutes | qa | 13641 | 279 | 225 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
+| langgraph | rag | q1 | rag_grounded | 11347 | 727 | 45 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| langgraph | rag | q2 | rag_grounded | 11787 | 693 | 362 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| langgraph | rag | q3 | rag_grounded | 14308 | 696 | 798 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| langgraph | rag | q4 | rag_grounded | 11946 | 672 | 386 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| langgraph | rag | q5 | rag_grounded | 17428 | 667 | 1057 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| langgraph | rag | q6 | rag_grounded | 12072 | 718 | 452 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| langgraph | rag | q7 | rag_grounded | 8888 | 740 | 25 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| langgraph | rag | q8 | rag_trap | 15916 | 674 | 588 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| langgraph | rag | q9 | rag_trap | 21231 | 686 | 1200 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| langgraph | rag | h1 | rag_grounded | 12277 | 706 | 374 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| langgraph | rag | h2 | rag_grounded | 15109 | 748 | 818 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
+| langgraph | rag | h3 | rag_grounded | 13547 | 691 | 374 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
+| langgraph | rag | h4 | rag_grounded | 12126 | 736 | 401 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
+| langgraph | rag | h5 | rag_grounded | 7986 | 665 | 510 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
+| langgraph | rag | h6 | rag_grounded | 9346 | 738 | 26 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
+| langgraph | rag | h7 | rag_trap | 16201 | 689 | 894 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| langgraph | rag | h8 | rag_trap | 16912 | 671 | 462 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| langgraph | rag | h9 | rag_trap | 10049 | 731 | 21 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| langgraph | rag | h10 | rag_trap | 12531 | 711 | 488 | ✗ | trap question NOT refused — likely invented an answer | — | — | — | invented ✗ | — |
+| langgraph | tools | tool-mul | tools | 18468 | 1218 | 388 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
+| langgraph | tools | tool-expr | tools | 18403 | 1222 | 64 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
+| langgraph | tools | tool-add | tools | 23896 | 1220 | 63 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
+| langgraph | tools | tool-h-chain-1 | tools | 20028 | 1283 | 371 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
+| langgraph | tools | tool-h-chain-2 | tools | 27405 | 1286 | 295 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
+| langgraph | tools | tool-h-coerce | tools | 16337 | 1267 | 620 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
+| langgraph | tools | tool-h-abstain | tools | 4642 | 575 | 199 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
+| langgraph | memory | mem-01-color | memory | 9442 | 1966 | 1017 | ✓ | exact match (normalized) | — | — | — | — | — |
+| langgraph | memory | mem-02-pets | memory | 8977 | 2427 | 27 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
+| langgraph | memory | mem-03-deadline | memory | 13732 | 2480 | 805 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
+| langgraph | memory | mem-h01-overwrite | memory | 12124 | 2272 | 1153 | ✓ | answer-key containment 1.00 (best key "9A" of 1) | — | — | — | — | — |
+| langgraph | memory | mem-h02-interference | memory | 8329 | 2095 | 484 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
+| langgraph | memory | mem-h03-longhaul | memory | 10864 | 2950 | 18 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
+| langgraph | memory | mem-h04-multifact | memory | 8367 | 2171 | 57 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
+| langgraph | memory | mem-h05-derived | memory | 8372 | 2289 | 63 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
+| langgraph | structured | qa-01-capital | structured | 19979 | 272 | 156 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | structured | qa-02-gold | structured | 13452 | 273 | 183 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | structured | qa-03-continents | structured | 8313 | 275 | 26 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | structured | qa-04-shakespeare | structured | 14555 | 275 | 25 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | structured | qa-05-lightspeed | structured | 17732 | 281 | 675 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | structured | qa-06-planets | structured | 19423 | 277 | 22 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | structured | qa-h01-bones | structured | 11917 | 275 | 222 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | structured | qa-h02-canberra | structured | 8164 | 275 | 22 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | structured | qa-h03-iron | structured | 20045 | 277 | 23 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | structured | qa-h04-berlin | structured | 11665 | 276 | 27 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | structured | qa-h05-boiling | structured | 14638 | 282 | 612 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | structured | qa-h06-minutes | structured | 22105 | 281 | 26 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| langgraph | stream | qa-01-capital | stream | 9811 | 272 | 204 | ✓ | TTFT measured: 6913ms | — | — | — | ttft 6913ms | — |
+| langgraph | stream | qa-02-gold | stream | 8356 | 275 | 9 | ✓ | TTFT measured: 6873ms | — | — | — | ttft 6873ms | — |
+| langgraph | stream | qa-03-continents | stream | 15406 | 273 | 321 | ✓ | TTFT measured: 10797ms | — | — | — | ttft 10797ms | — |
+| langgraph | stream | qa-04-shakespeare | stream | 13415 | 275 | 10 | ✓ | TTFT measured: 12154ms | — | — | — | ttft 12154ms | — |
+| langgraph | stream | qa-05-lightspeed | stream | 11473 | 281 | 460 | ✓ | TTFT measured: 6875ms | — | — | — | ttft 6875ms | — |
+| langgraph | stream | qa-06-planets | stream | 9675 | 275 | 168 | ✓ | TTFT measured: 8152ms | — | — | — | ttft 8152ms | — |
+| langgraph | stream | qa-h01-bones | stream | 9405 | 275 | 188 | ✓ | TTFT measured: 6812ms | — | — | — | ttft 6812ms | — |
+| langgraph | stream | qa-h02-canberra | stream | 2423 | 275 | 9 | ✓ | TTFT measured: 1198ms | — | — | — | ttft 1198ms | — |
+| langgraph | stream | qa-h03-iron | stream | 13781 | 275 | 207 | ✓ | TTFT measured: 11136ms | — | — | — | ttft 11136ms | — |
+| langgraph | stream | qa-h04-berlin | stream | 8050 | 276 | 12 | ✓ | TTFT measured: 6761ms | — | — | — | ttft 6761ms | — |
+| langgraph | stream | qa-h05-boiling | stream | 26546 | 284 | 19 | ✓ | TTFT measured: 25235ms | — | — | — | ttft 25235ms | — |
+| langgraph | stream | qa-h06-minutes | stream | 66854 | 279 | 222 | ✓ | TTFT measured: 63202ms | — | — | — | ttft 63202ms | — |
+| llamaindex | qa | qa-01-capital | qa | 13799 | 274 | 8 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
+| llamaindex | qa | qa-02-gold | qa | 17674 | 273 | 525 | ✓ | exact match (normalized) | — | — | — | — | — |
+| llamaindex | qa | qa-03-continents | qa | 9931 | 273 | 236 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
+| llamaindex | qa | qa-04-shakespeare | qa | 8814 | 275 | 13 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
+| llamaindex | qa | qa-05-lightspeed | qa | 6631 | 283 | 20 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
+| llamaindex | qa | qa-06-planets | qa | 9184 | 275 | 184 | ✓ | exact match (normalized) | — | — | — | — | — |
+| llamaindex | qa | qa-h01-bones | qa | 17323 | 275 | 237 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
+| llamaindex | qa | qa-h02-canberra | qa | 9596 | 273 | 167 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
+| llamaindex | qa | qa-h03-iron | qa | 8417 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
+| llamaindex | qa | qa-h04-berlin | qa | 9424 | 274 | 164 | ✓ | exact match (normalized) | — | — | — | — | — |
+| llamaindex | qa | qa-h05-boiling | qa | 17152 | 282 | 625 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
+| llamaindex | qa | qa-h06-minutes | qa | 9547 | 279 | 194 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
+| llamaindex | rag | q1 | rag_grounded | 23440 | 671 | 1058 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| llamaindex | rag | q2 | rag_grounded | 9088 | 651 | 29 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| llamaindex | rag | q3 | rag_grounded | 14886 | 654 | 48 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| llamaindex | rag | q4 | rag_grounded | 16609 | 618 | 801 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| llamaindex | rag | q5 | rag_grounded | 16730 | 612 | 818 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| llamaindex | rag | q6 | rag_grounded | 18050 | 660 | 1067 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| llamaindex | rag | q7 | rag_grounded | 13719 | 680 | 632 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| llamaindex | rag | q8 | rag_trap | 14660 | 610 | 672 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| llamaindex | rag | q9 | rag_trap | 3646 | 634 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| llamaindex | rag | h1 | rag_grounded | 8417 | 664 | 6 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| llamaindex | rag | h2 | rag_grounded | 12546 | 675 | 1069 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
+| llamaindex | rag | h3 | rag_grounded | 17693 | 629 | 27 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
+| llamaindex | rag | h4 | rag_grounded | 10159 | 611 | 28 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
+| llamaindex | rag | h5 | rag_grounded | 9274 | 610 | 41 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
+| llamaindex | rag | h6 | rag_grounded | 29227 | 663 | 552 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
+| llamaindex | rag | h7 | rag_trap | 12165 | 645 | 415 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| llamaindex | rag | h8 | rag_trap | 8976 | 609 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| llamaindex | rag | h9 | rag_trap | 8781 | 604 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| llamaindex | rag | h10 | rag_trap | 13069 | 640 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| llamaindex | tools | tool-mul | tools | 20074 | 513 | 29 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
+| llamaindex | tools | tool-expr | tools | 17827 | 525 | 133 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
+| llamaindex | tools | tool-add | tools | 20518 | 511 | 82 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
+| llamaindex | tools | tool-h-chain-1 | tools | 18538 | 550 | 116 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
+| llamaindex | tools | tool-h-chain-2 | tools | 42666 | 568 | 296 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
+| llamaindex | tools | tool-h-coerce | tools | 30842 | 541 | 43 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
+| llamaindex | tools | tool-h-abstain | tools | 10026 | 245 | 157 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
+| llamaindex | memory | mem-01-color | memory | 75400 | 1243 | 287 | ✓ | exact match (normalized) | — | — | — | — | — |
+| llamaindex | memory | mem-02-pets | memory | 10656 | 1555 | 271 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
+| llamaindex | memory | mem-03-deadline | memory | 10155 | 1452 | 1223 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
+| llamaindex | memory | mem-h01-overwrite | memory | 17650 | 2721 | 1381 | ✓ | exact match (normalized) | — | — | — | — | — |
+| llamaindex | memory | mem-h02-interference | memory | 8618 | 2008 | 17 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
+| llamaindex | memory | mem-h03-longhaul | memory | 8231 | 3581 | 33 | ✓ | …swer-key containment 1.00 (best key "Vermillion Bravo" of 1) | — | — | — | — | — |
+| llamaindex | memory | mem-h04-multifact | memory | 21894 | 2160 | 621 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
+| llamaindex | memory | mem-h05-derived | memory | 9591 | 2013 | 20 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
+| llamaindex | structured | qa-01-capital | structured | 8620 | 587 | 28 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | structured | qa-02-gold | structured | 17029 | 586 | 868 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | structured | qa-03-continents | structured | 20612 | 586 | 1207 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | structured | qa-04-shakespeare | structured | 22301 | 586 | 1690 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | structured | qa-05-lightspeed | structured | 13256 | 596 | 32 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | structured | qa-06-planets | structured | 16438 | 588 | 1080 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | structured | qa-h01-bones | structured | 13101 | 588 | 615 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | structured | qa-h02-canberra | structured | 23740 | 586 | 1926 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | structured | qa-h03-iron | structured | 13025 | 588 | 536 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | structured | qa-h04-berlin | structured | 8528 | 589 | 29 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | structured | qa-h05-boiling | structured | 31973 | 595 | 1089 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | structured | qa-h06-minutes | structured | 18359 | 592 | 1136 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| llamaindex | stream | qa-01-capital | stream | 8300 | 39 | 9 | ✓ | TTFT measured: 7107ms | — | — | — | ttft 7107ms | — |
+| llamaindex | stream | qa-02-gold | stream | 18347 | 40 | 204 | ✓ | TTFT measured: 17017ms | — | — | — | ttft 17017ms | — |
+| llamaindex | stream | qa-03-continents | stream | 16577 | 40 | 283 | ✓ | TTFT measured: 15292ms | — | — | — | ttft 15292ms | — |
+| llamaindex | stream | qa-04-shakespeare | stream | 9906 | 40 | 188 | ✓ | TTFT measured: 8658ms | — | — | — | ttft 8658ms | — |
+| llamaindex | stream | qa-05-lightspeed | stream | 13407 | 49 | 687 | ✓ | TTFT measured: 12041ms | — | — | — | ttft 12041ms | — |
+| llamaindex | stream | qa-06-planets | stream | 16420 | 43 | 201 | ✓ | TTFT measured: 14533ms | — | — | — | ttft 14533ms | — |
+| llamaindex | stream | qa-h01-bones | stream | 10798 | 43 | 200 | ✓ | TTFT measured: 9571ms | — | — | — | ttft 9571ms | — |
+| llamaindex | stream | qa-h02-canberra | stream | 10054 | 40 | 184 | ✓ | TTFT measured: 8819ms | — | — | — | ttft 8819ms | — |
+| llamaindex | stream | qa-h03-iron | stream | 10072 | 41 | 209 | ✓ | TTFT measured: 8698ms | — | — | — | ttft 8698ms | — |
+| llamaindex | stream | qa-h04-berlin | stream | 12222 | 42 | 10 | ✓ | TTFT measured: 10949ms | — | — | — | ttft 10949ms | — |
+| llamaindex | stream | qa-h05-boiling | stream | 13741 | 52 | 713 | ✓ | TTFT measured: 12397ms | — | — | — | ttft 12397ms | — |
+| llamaindex | stream | qa-h06-minutes | stream | 14263 | 47 | 234 | ✓ | TTFT measured: 12886ms | — | — | — | ttft 12886ms | — |
+| mastra | qa | qa-01-capital | qa | 8350 | 274 | 8 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
+| mastra | qa | qa-02-gold | qa | 8652 | 273 | 156 | ✓ | exact match (normalized) | — | — | — | — | — |
+| mastra | qa | qa-03-continents | qa | 9693 | 273 | 297 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
+| mastra | qa | qa-04-shakespeare | qa | 2765 | 273 | 167 | ✓ | exact match (normalized) | — | — | — | — | — |
+| mastra | qa | qa-05-lightspeed | qa | 7253 | 283 | 20 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
+| mastra | qa | qa-06-planets | qa | 5035 | 277 | 12 | ✓ | exact match (normalized) | — | — | — | — | — |
+| mastra | qa | qa-h01-bones | qa | 12376 | 277 | 13 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
+| mastra | qa | qa-h02-canberra | qa | 7389 | 275 | 9 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
+| mastra | qa | qa-h03-iron | qa | 12493 | 275 | 222 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
+| mastra | qa | qa-h04-berlin | qa | 12792 | 274 | 172 | ✓ | exact match (normalized) | — | — | — | — | — |
+| mastra | qa | qa-h05-boiling | qa | 7481 | 284 | 19 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
+| mastra | qa | qa-h06-minutes | qa | 10749 | 279 | 223 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
+| mastra | rag | q1 | rag_grounded | 21712 | 692 | 1057 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| mastra | rag | q2 | rag_grounded | 14502 | 666 | 370 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| mastra | rag | q3 | rag_grounded | 16916 | 671 | 49 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| mastra | rag | q4 | rag_grounded | 16299 | 646 | 364 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| mastra | rag | q5 | rag_grounded | 16180 | 635 | 628 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| mastra | rag | q6 | rag_grounded | 8840 | 689 | 19 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| mastra | rag | q7 | rag_grounded | 9971 | 701 | 322 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| mastra | rag | q8 | rag_trap | 11183 | 644 | 372 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| mastra | rag | q9 | rag_trap | 18015 | 659 | 333 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| mastra | rag | h1 | rag_grounded | 10035 | 679 | 289 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| mastra | rag | h2 | rag_grounded | 11661 | 715 | 30 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
+| mastra | rag | h3 | rag_grounded | 10252 | 665 | 29 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
+| mastra | rag | h4 | rag_grounded | 18549 | 700 | 977 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
+| mastra | rag | h5 | rag_grounded | 7665 | 637 | 31 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
+| mastra | rag | h6 | rag_grounded | 10129 | 706 | 348 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
+| mastra | rag | h7 | rag_trap | 12772 | 662 | 470 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| mastra | rag | h8 | rag_trap | 12384 | 641 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| mastra | rag | h9 | rag_trap | 8023 | 694 | 6 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| mastra | rag | h10 | rag_trap | 10650 | 681 | 328 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| mastra | tools | tool-mul | tools | 23712 | 1320 | 173 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
+| mastra | tools | tool-expr | tools | 18012 | 1355 | 284 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
+| mastra | tools | tool-add | tools | 23564 | 1334 | 152 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
+| mastra | tools | tool-h-chain-1 | tools | 25373 | 1398 | 173 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
+| mastra | tools | tool-h-chain-2 | tools | 18912 | 1420 | 613 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
+| mastra | tools | tool-h-coerce | tools | 17125 | 1379 | 181 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
+| mastra | tools | tool-h-abstain | tools | 7916 | 624 | 93 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
+| mastra | memory | mem-01-color | memory | 9419 | 1072 | 195 | ✓ | exact match (normalized) | — | — | — | — | — |
+| mastra | memory | mem-02-pets | memory | 7348 | 1329 | 467 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
+| mastra | memory | mem-03-deadline | memory | 10812 | 1189 | 974 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
+| mastra | memory | mem-h01-overwrite | memory | 28409 | 1977 | 673 | ✓ | answer-key containment 1.00 (best key "9A" of 1) | — | — | — | — | — |
+| mastra | memory | mem-h02-interference | memory | 12901 | 1706 | 656 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
+| mastra | memory | mem-h03-longhaul | memory | 9383 | 1963 | 815 | ✓ | exact match (normalized) | — | — | — | — | — |
+| mastra | memory | mem-h04-multifact | memory | 3613 | 1812 | 1373 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
+| mastra | memory | mem-h05-derived | memory | 1739 | 1916 | 897 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
+| mastra | structured | qa-01-capital | structured | 8670 | 272 | 212 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | structured | qa-02-gold | structured | 7775 | 275 | 47 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | structured | qa-03-continents | structured | 9971 | 273 | 287 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | structured | qa-04-shakespeare | structured | 10140 | 273 | 227 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | structured | qa-05-lightspeed | structured | 7777 | 283 | 59 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | structured | qa-06-planets | structured | 9110 | 275 | 213 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | structured | qa-h01-bones | structured | 8938 | 277 | 55 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | structured | qa-h02-canberra | structured | 14767 | 275 | 50 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | structured | qa-h03-iron | structured | 22599 | 275 | 203 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | structured | qa-h04-berlin | structured | 7661 | 276 | 58 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | structured | qa-h05-boiling | structured | 8059 | 284 | 78 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | structured | qa-h06-minutes | structured | 9143 | 281 | 70 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| mastra | stream | qa-01-capital | stream | 11071 | 272 | 138 | ✓ | TTFT measured: 10578ms | — | — | — | ttft 10578ms | — |
+| mastra | stream | qa-02-gold | stream | 12461 | 273 | 161 | ✓ | TTFT measured: 12017ms | — | — | — | ttft 12017ms | — |
+| mastra | stream | qa-03-continents | stream | 9388 | 273 | 252 | ✓ | TTFT measured: 8830ms | — | — | — | ttft 8830ms | — |
+| mastra | stream | qa-04-shakespeare | stream | 8753 | 273 | 189 | ✓ | TTFT measured: 8203ms | — | — | — | ttft 8203ms | — |
+| mastra | stream | qa-05-lightspeed | stream | 18757 | 281 | 599 | ✓ | TTFT measured: 18085ms | — | — | — | ttft 18085ms | — |
+| mastra | stream | qa-06-planets | stream | 12849 | 277 | 12 | ✓ | TTFT measured: 7838ms | — | — | — | ttft 7838ms | — |
+| mastra | stream | qa-h01-bones | stream | 12846 | 275 | 236 | ✓ | TTFT measured: 12294ms | — | — | — | ttft 12294ms | — |
+| mastra | stream | qa-h02-canberra | stream | 12137 | 273 | 210 | ✓ | TTFT measured: 11619ms | — | — | — | ttft 11619ms | — |
+| mastra | stream | qa-h03-iron | stream | 8730 | 275 | 195 | ✓ | TTFT measured: 8128ms | — | — | — | ttft 8128ms | — |
+| mastra | stream | qa-h04-berlin | stream | 8339 | 276 | 12 | ✓ | TTFT measured: 7769ms | — | — | — | ttft 7769ms | — |
+| mastra | stream | qa-h05-boiling | stream | 10084 | 282 | 296 | ✓ | TTFT measured: 9423ms | — | — | — | ttft 9423ms | — |
+| mastra | stream | qa-h06-minutes | stream | 9280 | 279 | 227 | ✓ | TTFT measured: 8690ms | — | — | — | ttft 8690ms | — |
+| pydantic-ai | qa | qa-01-capital | qa | 4277 | 272 | 185 | ✓ | answer-key containment 1.00 (best key "Paris" of 1) | — | — | — | — | — |
+| pydantic-ai | qa | qa-02-gold | qa | 9738 | 275 | 9 | ✓ | exact match (normalized) | — | — | — | — | — |
+| pydantic-ai | qa | qa-03-continents | qa | 8148 | 275 | 25 | ✓ | answer-key containment 1.00 (best key "seven" of 2) | — | — | — | — | — |
+| pydantic-ai | qa | qa-04-shakespeare | qa | 8035 | 275 | 10 | ✓ | answer-key containment 1.00 (best key "Shakespeare" of 2) | — | — | — | — | — |
+| pydantic-ai | qa | qa-05-lightspeed | qa | 11888 | 281 | 502 | ✓ | answer-key containment 1.00 (best key "300,000" of 4) | — | — | — | — | — |
+| pydantic-ai | qa | qa-06-planets | qa | 30859 | 275 | 503 | ✓ | exact match (normalized) | — | — | — | — | — |
+| pydantic-ai | qa | qa-h01-bones | qa | 10092 | 275 | 220 | ✓ | answer-key containment 1.00 (best key "206" of 1) | — | — | — | — | — |
+| pydantic-ai | qa | qa-h02-canberra | qa | 16228 | 275 | 9 | ✓ | answer-key containment 1.00 (best key "Canberra" of 1) | — | — | — | — | — |
+| pydantic-ai | qa | qa-h03-iron | qa | 17685 | 275 | 181 | ✓ | answer-key containment 1.00 (best key "Iron" of 2) | — | — | — | — | — |
+| pydantic-ai | qa | qa-h04-berlin | qa | 9984 | 274 | 197 | ✓ | exact match (normalized) | — | — | — | — | — |
+| pydantic-ai | qa | qa-h05-boiling | qa | 8925 | 284 | 19 | ✓ | answer-key containment 1.00 (best key "212" of 1) | — | — | — | — | — |
+| pydantic-ai | qa | qa-h06-minutes | qa | 15276 | 281 | 19 | ✓ | answer-key containment 1.00 (best key "1,440" of 2) | — | — | — | — | — |
+| pydantic-ai | rag | q1 | rag_grounded | 49985 | 723 | 45 | ✓ | hit@1: top doc 08-blue-guarantee.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| pydantic-ai | rag | q2 | rag_grounded | 12066 | 689 | 355 | ✓ | hit@1: top doc 05-vireo-t7.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| pydantic-ai | rag | q3 | rag_grounded | 9739 | 694 | 56 | ✓ | hit@1: top doc 09-quiet-car.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| pydantic-ai | rag | q4 | rag_grounded | 17494 | 668 | 425 | ✓ | hit@1: top doc 13-safety-office.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| pydantic-ai | rag | q5 | rag_grounded | 15274 | 663 | 742 | ✓ | hit@1: top doc 04-halcyon-pass.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| pydantic-ai | rag | q6 | rag_grounded | 14348 | 716 | 22 | ✓ | hit@1: top doc 02-skylark-line.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| pydantic-ai | rag | q7 | rag_grounded | 11487 | 736 | 25 | ✓ | hit@1: top doc 07-halopay-fares.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| pydantic-ai | rag | q8 | rag_trap | 8992 | 672 | 22 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| pydantic-ai | rag | q9 | rag_trap | 11729 | 682 | 391 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| pydantic-ai | rag | h1 | rag_grounded | 15705 | 702 | 302 | ✓ | hit@1: top doc 23-vireo-f2.md is a gold doc | — | — | — | hit@1 ✓ | — |
+| pydantic-ai | rag | h2 | rag_grounded | 12895 | 744 | 398 | ✗ | …1: top doc 24-blue-guarantee-2022-draft.md is not a gold doc | — | — | — | hit@1 ✗ | — |
+| pydantic-ai | rag | h3 | rag_grounded | 34995 | 687 | 364 | ✓ | …2 gold docs; answer-key containment 1.00 (best key "T7 512") | — | — | — | multi-hop recall+answer ✓ | — |
+| pydantic-ai | rag | h4 | rag_grounded | 19166 | 732 | 778 | ✗ | …key containment 1.00 (best key "Halcyon 1 December 1 March") | — | — | — | multi-hop recall+answer ✗ | — |
+| pydantic-ai | rag | h5 | rag_grounded | 24153 | 661 | 490 | ✓ | …cs; answer-key containment 1.00 (best key "Brightwater 180") | — | — | — | multi-hop recall+answer ✓ | — |
+| pydantic-ai | rag | h6 | rag_grounded | 20559 | 734 | 26 | ✓ | …/2 gold docs; answer-key containment 1.00 (best key "47 96") | — | — | — | multi-hop recall+answer ✓ | — |
+| pydantic-ai | rag | h7 | rag_trap | 8224 | 687 | 13 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| pydantic-ai | rag | h8 | rag_trap | 18918 | 667 | 739 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| pydantic-ai | rag | h9 | rag_trap | 8949 | 727 | 13 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| pydantic-ai | rag | h10 | rag_trap | 18052 | 707 | 617 | ✓ | trap question correctly refused | — | — | — | refused ✓ | — |
+| pydantic-ai | tools | tool-mul | tools | 40687 | 1287 | 151 | ✓ | tool executed and numeric answer 4183 present in reply | — | — | — | exec+correct ✓ | — |
+| pydantic-ai | tools | tool-expr | tools | 21248 | 1468 | 328 | ✓ | tool executed and numeric answer 90 present in reply | — | — | — | exec+correct ✓ | — |
+| pydantic-ai | tools | tool-add | tools | 16724 | 1276 | 137 | ✓ | tool executed and numeric answer 6912 present in reply | — | — | — | exec+correct ✓ | — |
+| pydantic-ai | tools | tool-h-chain-1 | tools | 15621 | 1259 | 61 | ✓ | tool executed and numeric answer 30826914 present in reply | — | — | — | exec+correct ✓ | — |
+| pydantic-ai | tools | tool-h-chain-2 | tools | 40081 | 1270 | 62 | ✓ | tool executed and numeric answer 1167239 present in reply | — | — | — | exec+correct ✓ | — |
+| pydantic-ai | tools | tool-h-coerce | tools | 24372 | 1405 | 251 | ✓ | tool executed and numeric answer 8888888 present in reply | — | — | — | exec+correct ✓ | — |
+| pydantic-ai | tools | tool-h-abstain | tools | 10306 | 571 | 261 | ✓ | …OT called; answer-key containment 1.00 (best key "Canberra") | — | — | — | no-exec, right # | — |
+| pydantic-ai | memory | mem-01-color | memory | 10005 | 1017 | 165 | ✓ | exact match (normalized) | — | — | — | — | — |
+| pydantic-ai | memory | mem-02-pets | memory | 19416 | 1238 | 747 | ✓ | answer-key containment 1.00 (best key "Pepper Miso" of 1) | — | — | — | — | — |
+| pydantic-ai | memory | mem-03-deadline | memory | 13475 | 1216 | 328 | ✓ | answer-key containment 1.00 (best key "13" of 1) | — | — | — | — | — |
+| pydantic-ai | memory | mem-h01-overwrite | memory | 24486 | 1662 | 1137 | ✓ | answer-key containment 1.00 (best key "9A" of 1) | — | — | — | — | — |
+| pydantic-ai | memory | mem-h02-interference | memory | 13600 | 1424 | 303 | ✓ | answer-key containment 1.00 (best key "88" of 1) | — | — | — | — | — |
+| pydantic-ai | memory | mem-h03-longhaul | memory | 10981 | 1617 | 683 | ✓ | exact match (normalized) | — | — | — | — | — |
+| pydantic-ai | memory | mem-h04-multifact | memory | 12160 | 1546 | 785 | ✓ | …er-key containment 1.00 (best key "Harrow 940 October" of 1) | — | — | — | — | — |
+| pydantic-ai | memory | mem-h05-derived | memory | 14024 | 1629 | 703 | ✓ | answer-key containment 1.00 (best key "677" of 1) | — | — | — | — | — |
+| pydantic-ai | structured | qa-01-capital | structured | 14784 | 426 | 742 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-02-gold | structured | 16637 | 427 | 745 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-03-continents | structured | 25345 | 427 | 948 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-04-shakespeare | structured | 15898 | 427 | 485 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-05-lightspeed | structured | 18153 | 437 | 99 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-06-planets | structured | 19119 | 431 | 87 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-h01-bones | structured | 20561 | 431 | 90 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-h02-canberra | structured | 23396 | 427 | 1311 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-h03-iron | structured | 9351 | 431 | 85 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-h04-berlin | structured | 11991 | 430 | 84 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-h05-boiling | structured | 13233 | 436 | 654 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | structured | qa-h06-minutes | structured | 17798 | 433 | 986 | ✓ | valid JSON object/array | — | — | — | valid JSON ✓ | — |
+| pydantic-ai | stream | qa-01-capital | stream | 8482 | 274 | 8 | ✓ | TTFT measured: 7157ms | — | — | — | ttft 7157ms | — |
+| pydantic-ai | stream | qa-02-gold | stream | 9581 | 273 | 168 | ✓ | TTFT measured: 8282ms | — | — | — | ttft 8282ms | — |
+| pydantic-ai | stream | qa-03-continents | stream | 15668 | 275 | 29 | ✓ | TTFT measured: 14341ms | — | — | — | ttft 14341ms | — |
+| pydantic-ai | stream | qa-04-shakespeare | stream | 12669 | 275 | 13 | ✓ | TTFT measured: 11357ms | — | — | — | ttft 11357ms | — |
+| pydantic-ai | stream | qa-05-lightspeed | stream | 21811 | 283 | 20 | ✓ | TTFT measured: 15408ms | — | — | — | ttft 15408ms | — |
+| pydantic-ai | stream | qa-06-planets | stream | 10080 | 275 | 184 | ✓ | TTFT measured: 8728ms | — | — | — | ttft 8728ms | — |
+| pydantic-ai | stream | qa-h01-bones | stream | 9587 | 275 | 170 | ✓ | TTFT measured: 8256ms | — | — | — | ttft 8256ms | — |
+| pydantic-ai | stream | qa-h02-canberra | stream | 12637 | 273 | 202 | ✓ | TTFT measured: 11412ms | — | — | — | ttft 11412ms | — |
+| pydantic-ai | stream | qa-h03-iron | stream | 10842 | 275 | 280 | ✓ | TTFT measured: 9541ms | — | — | — | ttft 9541ms | — |
+| pydantic-ai | stream | qa-h04-berlin | stream | 9945 | 274 | 163 | ✓ | TTFT measured: 8656ms | — | — | — | ttft 8656ms | — |
+| pydantic-ai | stream | qa-h05-boiling | stream | 12729 | 284 | 19 | ✓ | TTFT measured: 11481ms | — | — | — | ttft 11481ms | — |
+| pydantic-ai | stream | qa-h06-minutes | stream | 28287 | 279 | 264 | ✓ | TTFT measured: 27001ms | — | — | — | ttft 27001ms | — |
 | spring-ai | qa | qa-01-capital | qa | 0 | n/a | n/a | — |  | — | — | — | — | run: … Please visit http://www.java.com for information on installing Java.) |
 | spring-ai | qa | qa-02-gold | qa | 0 | n/a | n/a | — |  | — | — | — | — | run: … Please visit http://www.java.com for information on installing Java.) |
 | spring-ai | qa | qa-03-continents | qa | 0 | n/a | n/a | — |  | — | — | — | — | run: … Please visit http://www.java.com for information on installing Java.) |
