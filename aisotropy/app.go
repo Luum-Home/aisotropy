@@ -204,6 +204,13 @@ type App struct {
 	runtime  *appRuntime
 	turnErr  error
 
+	// usageOnce/usageAcc back App.Usage() (aisotropy/usage.go): the App-scoped
+	// provider-usage accumulator startRuntime composes into the base LLM
+	// client(s). Lazily built via usageAccumulator() so App.Usage() before any
+	// runtime boot returns zeros without triggering a build.
+	usageOnce sync.Once
+	usageAcc  *llm.UsageMeter
+
 	// configFile backs WithConfigFile: an explicit runtime config-file path
 	// (aisotropy/runtimeconfig.go). Empty means startRuntime falls back to the
 	// AISOTROPY_CONFIG_FILE env var and then the default search paths. The file's
@@ -436,6 +443,17 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 		llmClient = llm.FromEnv()
 	}
 
+	// Usage accumulation (Element E): wrap the BASE client with the App's
+	// usage meter BEFORE anything consumes it. This is the one choke point
+	// every provider call passes through — including the working-memory
+	// summarizer immediately below, which receives THIS client (not the
+	// middleware/breaker/OTel-composed one), so a later hook would undercount
+	// summarizer condensations relative to the honest all-calls total.
+	// WithUsageMeter preserves ToolCaller/ReasoningToolCaller, so the
+	// capability checks and decorators downstream see the base client's full
+	// surface unchanged. Read the total via App.Usage().
+	llmClient = llm.WithUsageMeter(llmClient, a.usageAccumulator())
+
 	// Working memory: on-disk BadgerDB when AISOTROPY_DATA_DIR is set, else
 	// in-memory. The summarizer is the consumer's WithSummarizer when supplied,
 	// else the built-in memory.LLMSummarizer backed by the chat LLM so the
@@ -620,7 +638,12 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	// case.
 	var cheapStreamClient llm.Client
 	if raw := llm.CheapClientFromEnv(); raw != nil {
-		cheapMiddlewared := llm.WithModelMiddleware(raw, a.ext.modelMiddleware...)
+		// The cheap client is a SECOND base client, so it gets the same usage
+		// meter: a tenant degraded to the cheap model under quota pressure is
+		// still real provider spend, and App.Usage()'s all-calls total must not
+		// silently exclude it.
+		metered := llm.WithUsageMeter(raw, a.usageAccumulator())
+		cheapMiddlewared := llm.WithModelMiddleware(metered, a.ext.modelMiddleware...)
 		cheapStreamClient = llm.WithOTel(llm.WithCircuitBreaker(cheapMiddlewared, circuitFailureThreshold, circuitCooldown), tracer)
 		slog.Info("cheap model configured for quota-pressure degradation", "model", raw.Name())
 	}

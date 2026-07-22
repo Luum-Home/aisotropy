@@ -113,12 +113,35 @@ type ChatInput struct {
 	Body     ChatRequest
 }
 
+// ChatUsage is the provider-reported token usage for ONE chat turn's main
+// model call, surfaced on the response body. It is THIS-TURN accounting (the
+// reflection pipeline's own captured llm.Usage), NOT the process-cumulative
+// all-calls total — the cumulative figure (which additionally includes
+// summarizer condensations and every other side-call) is the façade's
+// App.Usage() / the /costs meter. Real provider counts only, never a proxy
+// metric (see internal/llm's Usage doc).
+type ChatUsage struct {
+	InputTokens  int `json:"input_tokens" doc:"Provider-reported prompt/input token count for this turn's model call"`
+	OutputTokens int `json:"output_tokens" doc:"Provider-reported completion/output token count for this turn's model call"`
+	// ReasoningTokens is kept separate from OutputTokens (ADR-0061); 0 on
+	// non-reasoning providers and with reasoning off.
+	ReasoningTokens int `json:"reasoning_tokens,omitempty" doc:"Provider-reported reasoning token count, when the provider surfaces one (0 otherwise)"`
+}
+
 // ChatOutput is the strict output contract.
+//
+// Usage is ADDITIVE (constitutional backward-compat gate): a new OPTIONAL
+// pointer field with a stable JSON tag and omitempty, populated only when the
+// provider actually reported usage for the turn — a turn served by the
+// homegrown Reflect[T] fallback (which has no usage-carrying return slot, see
+// llm.ReflectAuto) serializes byte-for-byte as before this field existed. No
+// existing field was renamed or removed.
 type ChatOutput struct {
 	Body struct {
-		Reply    string `json:"reply" doc:"Agent response, schema-enforced via the reflection loop"`
-		TenantID string `json:"tenant_id" doc:"Tenant that served the request (isolation echo)"`
-		Stub     bool   `json:"stub" doc:"true when the resolved LLM client is the credential-less stub (no provider key configured)"`
+		Reply    string     `json:"reply" doc:"Agent response, schema-enforced via the reflection loop"`
+		TenantID string     `json:"tenant_id" doc:"Tenant that served the request (isolation echo)"`
+		Stub     bool       `json:"stub" doc:"true when the resolved LLM client is the credential-less stub (no provider key configured)"`
+		Usage    *ChatUsage `json:"usage,omitempty" doc:"Provider-reported token usage for this turn's main model call; absent when the provider reported none"`
 	}
 }
 
@@ -326,12 +349,22 @@ func chatRecordTurn(ctx context.Context, wm *memory.WorkingMemory, key memory.Ke
 }
 
 // chatBuildOutput assembles the strict ChatOutput contract from the final reply
-// text and the client that served the turn.
-func chatBuildOutput(replyText, tenantID string, client llm.Client) *ChatOutput {
+// text, the client that served the turn, and the turn's captured usage. A
+// zero-valued usage (the homegrown Reflect[T] fallback path, or a provider that
+// reported nothing) leaves Body.Usage nil so the JSON serializes exactly as it
+// did before the additive usage field existed.
+func chatBuildOutput(replyText, tenantID string, client llm.Client, usage llm.Usage) *ChatOutput {
 	out := &ChatOutput{}
 	out.Body.Reply = replyText
 	out.Body.TenantID = tenantID
 	out.Body.Stub = client.Name() == "stub"
+	if usage != (llm.Usage{}) {
+		out.Body.Usage = &ChatUsage{
+			InputTokens:     usage.InputTokens,
+			OutputTokens:    usage.OutputTokens,
+			ReasoningTokens: usage.ReasoningTokens,
+		}
+	}
 	return out
 }
 

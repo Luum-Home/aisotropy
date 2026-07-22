@@ -123,7 +123,7 @@ func ChatCore(ctx context.Context, d ChatDeps, in *ChatInput) (*ChatOutput, erro
 
 	chatRecordTurn(ctx, d.WM, key, in.TenantID, finalReply, usage, d.Meter)
 
-	return chatBuildOutput(finalReply, in.TenantID, active), nil
+	return chatBuildOutput(finalReply, in.TenantID, active, usage), nil
 }
 
 // resolveSubjectLanguage layers per-(tenant,user) persistence on top of the

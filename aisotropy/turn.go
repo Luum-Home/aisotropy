@@ -55,12 +55,20 @@ type ChatInput struct {
 
 // ChatOutput is the in-process turn result — the flat equivalent of the HTTP
 // ChatOutput.Body: the schema-enforced reply, the tenant that served it
-// (isolation echo), and whether the resolved LLM client was the credential-less
-// stub.
+// (isolation echo), whether the resolved LLM client was the credential-less
+// stub, and the turn's own token usage.
 type ChatOutput struct {
 	Reply    string
 	TenantID string
 	Stub     bool
+	// Usage is THIS TURN's provider-reported token usage — the main model call
+	// of the reflection pipeline that produced Reply. It is the zero Usage when
+	// the provider reported none (e.g. the homegrown Reflect[T] fallback path).
+	// It is NOT the cumulative figure: background side-calls (working-memory
+	// summarizer condensations, other tenants' concurrent turns) are excluded
+	// here by design — the cumulative all-calls total is App.Usage(). See that
+	// method's doc for the full contrast between the two surfaces.
+	Usage Usage
 }
 
 // Turn runs one chat turn in-process against the App's runtime. The runtime is
@@ -113,11 +121,19 @@ func (a *App) Turn(ctx context.Context, in ChatInput) (ChatOutput, error) {
 	if err != nil {
 		return ChatOutput{}, err
 	}
-	return ChatOutput{
+	result := ChatOutput{
 		Reply:    out.Body.Reply,
 		TenantID: out.Body.TenantID,
 		Stub:     out.Body.Stub,
-	}, nil
+	}
+	if u := out.Body.Usage; u != nil {
+		result.Usage = Usage{
+			InputTokens:     u.InputTokens,
+			OutputTokens:    u.OutputTokens,
+			ReasoningTokens: u.ReasoningTokens,
+		}
+	}
+	return result, nil
 }
 
 // ensureRuntime lazily boots the App's shared in-process runtime exactly once
