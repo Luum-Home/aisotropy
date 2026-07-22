@@ -14,8 +14,9 @@ import (
 // runStream drives aisotropy's REAL SSE streaming route (POST /v1/.../chat/stream)
 // and records time-to-first-token. It boots App.Run, opens the event stream, and
 // concatenates the named "token" events into the reply, timing the first one.
-// Token usage comes from the agnes client's accumulator (the streaming path is
-// driven by the same usage-capturing client injected via WithLLM).
+// Token usage comes from the product's own usage meter (App.Usage() via the
+// booted server's App — commit be945de; the streaming path traverses the same
+// metered base client as every other provider call).
 func runStream(req *request, out *result) error {
 	prompt, err := lastUserMessage(req.Messages)
 	if err != nil {
@@ -96,7 +97,7 @@ func runStream(req *request, out *result) error {
 	}
 
 	out.Reply = reply.String()
-	setUsage(out, agnes)
+	setUsage(out, srv.app)
 	logf("stream: ttft=%dms, reply=%d chars", out.TTFTMs, reply.Len())
 	return nil
 }

@@ -121,7 +121,7 @@ func runMemory(req *request, out *result) error {
 		cancel()
 		turnsRun++
 		if terr != nil {
-			setUsage(out, agnes)
+			setUsage(out, app)
 			out.Reply = lastReply
 			out.LatencyMs = time.Since(start).Milliseconds()
 			return fmt.Errorf("App.Turn failed on turn %d: %w", turnsRun, terr)
@@ -133,7 +133,7 @@ func runMemory(req *request, out *result) error {
 	}
 	out.LatencyMs = time.Since(start).Milliseconds()
 	out.Reply = lastReply
-	setUsage(out, agnes)
+	setUsage(out, app)
 	logf("memory turn(s) ok on session %q (data_dir persists across processes)", req.SessionID)
 	return nil
 }

@@ -99,12 +99,12 @@ func runRAG(req *request, out *result) error {
 	}
 	start := time.Now()
 	if err := postJSON(110*time.Second, aURL, aBody, &aResp); err != nil {
-		setUsage(out, agnes)
+		setUsage(out, srv.app)
 		return fmt.Errorf("answering via /ask: %w", err)
 	}
 	out.LatencyMs = time.Since(start).Milliseconds()
 	out.Reply = aResp.Reply
-	setUsage(out, agnes)
+	setUsage(out, srv.app)
 	return nil
 }
 

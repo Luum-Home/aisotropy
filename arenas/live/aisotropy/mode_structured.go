@@ -136,7 +136,7 @@ func runStructured(req *request, out *result) error {
 	if err := json.NewDecoder(resp.Body).Decode(&agentResp); err != nil {
 		return fmt.Errorf("decode /chat/agent (structured): %w", err)
 	}
-	setUsage(out, agnes)
+	setUsage(out, srv.app)
 
 	for _, s := range agentResp.Steps {
 		if s.Tool != "emit_structured_answer" || s.Result == "" {

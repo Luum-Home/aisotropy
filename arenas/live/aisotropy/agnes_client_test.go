@@ -1,45 +1,88 @@
 package main
 
 import (
+	"os"
 	"testing"
 
 	aisotropy "github.com/Luum-Home/aisotropy/aisotropy"
 )
 
-// TestAgnesClient_PreservesToolCaller is the belt-and-suspenders regression
-// guard for the exact bug commit 48dbf62 diagnosed: the arena's usage-capturing
-// client, injected via WithLLM, MUST still satisfy aisotropy.ToolCaller after
-// the wrap — otherwise /chat/agent silently downgrades to the agentloop JSON
-// fallback (the tools dimension's run-to-run variance source). The decorator
-// forwards CallTools, so the assertion must hold. If a future refactor drops
-// CallTools, the compile-time assertion in agnes_client.go breaks first; this
-// test catches the case where the type still compiles but a decorator is
-// slipped in that forwards only StreamChat.
-func TestAgnesClient_PreservesToolCaller(t *testing.T) {
-	// Construct a decorator directly (no network, no env): the wrap itself is
-	// what's under test, not the inner client's transport.
-	inner := aisotropy.NewOpenAICompatLLM("test-key", "agnes-2.0-flash", "https://example.invalid/v1", "agnes")
-	caller, ok := inner.(aisotropy.ToolCaller)
-	if !ok {
-		t.Fatal("precondition failed: NewOpenAICompatLLM must implement aisotropy.ToolCaller (product half, commit 48dbf62)")
-	}
-	dec := &agnesClient{inner: inner, caller: caller}
+// realLaneEnv points newAgnesClient at a syntactically valid but unreachable
+// provider (no network call is ever made — only construction is under test)
+// and forces the real lane (ARENA_STUB unset).
+func realLaneEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("ARENA_STUB", "")
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("OPENAI_BASE_URL", "https://example.invalid/v1")
+	t.Setenv("OPENAI_MODEL", "agnes-2.0-flash")
+}
 
-	// The load-bearing assertion: the decorator, viewed through the narrow
-	// LLMClient interface the way WithLLM stores it, must up-assert to ToolCaller.
-	var c aisotropy.LLMClient = dec
+// TestNewAgnesClient_ToolCapabilities is the regression guard for the bug
+// commit 48dbf62 diagnosed: the client injected via WithLLM MUST satisfy
+// aisotropy.ToolCaller when viewed through the narrow LLMClient interface the
+// way WithLLM stores it — otherwise /chat/agent silently downgrades to the
+// agentloop JSON fallback (the tools dimension's run-to-run variance source).
+//
+// It now ALSO asserts aisotropy.ReasoningToolCaller — a strict capability
+// UPGRADE over the deleted usage decorator (commit 674c0e8's agnesClient),
+// which could not forward that interface because the façade did not export it
+// (be945de exports it): with the raw façade client injected directly, the
+// runtime's `client.(ReasoningToolCaller)` assertion succeeds and reasoning is
+// carried across agent turns instead of being silently dropped at the wrap.
+func TestNewAgnesClient_ToolCapabilities(t *testing.T) {
+	realLaneEnv(t)
+
+	client, err := newAgnesClient()
+	if err != nil {
+		t.Fatalf("newAgnesClient: %v", err)
+	}
+	if client == nil {
+		t.Fatal("newAgnesClient returned nil client in the real lane")
+	}
+
+	// The load-bearing assertions run on the interface value exactly as
+	// WithLLM holds it.
+	var c aisotropy.LLMClient = client
 	if _, ok := c.(aisotropy.ToolCaller); !ok {
-		t.Fatal("agnesClient decorator does not satisfy aisotropy.ToolCaller — /chat/agent would use the agentloop JSON fallback (the exact downgrade this rewrite prevents)")
+		t.Fatal("injected client does not satisfy aisotropy.ToolCaller — /chat/agent would use the agentloop JSON fallback (the exact downgrade this guard prevents)")
+	}
+	if _, ok := c.(aisotropy.ReasoningToolCaller); !ok {
+		t.Fatal("injected client does not satisfy aisotropy.ReasoningToolCaller — the deleted decorator's known capability loss has regressed (be945de made the raw client's reasoning capability reachable; injecting it directly must keep it)")
 	}
 }
 
-// TestAgnesClient_NameComposition proves Name() delegates to the inner façade
-// client and composes the "agnes:<model>" string the arena reports.
-func TestAgnesClient_NameComposition(t *testing.T) {
-	inner := aisotropy.NewOpenAICompatLLM("k", "agnes-2.0-flash", "https://example.invalid/v1", "agnes")
-	caller, _ := inner.(aisotropy.ToolCaller)
-	dec := &agnesClient{inner: inner, caller: caller}
-	if got, want := dec.Name(), "agnes:agnes-2.0-flash"; got != want {
+// TestNewAgnesClient_NameComposition proves the injected façade client
+// composes the "agnes:<model>" identity string the arena has always reported.
+func TestNewAgnesClient_NameComposition(t *testing.T) {
+	realLaneEnv(t)
+
+	client, err := newAgnesClient()
+	if err != nil {
+		t.Fatalf("newAgnesClient: %v", err)
+	}
+	if got, want := client.Name(), "agnes:agnes-2.0-flash"; got != want {
 		t.Fatalf("Name() = %q, want %q", got, want)
+	}
+}
+
+// TestNewAgnesClient_StubModeReturnsNil pins the ARENA_STUB=1 contract every
+// mode's call site relies on: (nil, nil) — a normal, successful "run offline"
+// signal, never an error on the missing OPENAI_API_KEY — with the provider and
+// backend-tier env vars cleared so aisotropy.New() falls through to its native
+// keyless stub and in-process stores (see newAgnesClient's doc comment).
+func TestNewAgnesClient_StubModeReturnsNil(t *testing.T) {
+	t.Setenv("ARENA_STUB", "1")
+	t.Setenv("OPENAI_API_KEY", "leftover-from-run-sh") // must be cleared, not used
+
+	client, err := newAgnesClient()
+	if err != nil {
+		t.Fatalf("newAgnesClient in stub mode returned error: %v", err)
+	}
+	if client != nil {
+		t.Fatalf("newAgnesClient in stub mode returned a non-nil client (%T) — stub runs must not build a provider client", client)
+	}
+	if got := os.Getenv("OPENAI_API_KEY"); got != "" {
+		t.Fatalf("stub mode left OPENAI_API_KEY set (%q) — a surviving provider key makes a \"stub\" run silently call the real model (see providerEnvVars in app.go)", got)
 	}
 }

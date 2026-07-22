@@ -96,7 +96,7 @@ func scopedTurn(req *request, out *result, prompt string) (string, error) {
 		ProductID: product,
 	})
 	out.LatencyMs = time.Since(start).Milliseconds()
-	setUsage(out, agnes)
+	setUsage(out, app)
 	if terr != nil {
 		return "", fmt.Errorf("App.Turn (tenant=%s user=%s session=%s): %w", tenant, user, req.SessionID, terr)
 	}

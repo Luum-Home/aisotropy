@@ -95,12 +95,12 @@ func runWASMTool(req *request, out *result) error {
 	cancel()
 	out.LatencyMs = time.Since(start).Milliseconds()
 	if terr != nil {
-		setUsage(out, agnes)
+		setUsage(out, app)
 		out.Reply = fmt.Sprintf("The sandboxed WASM tool computed %s = %s.", expression, resultStr)
 		return fmt.Errorf("App.Turn (wasm fold) failed: %w", terr)
 	}
 	out.Reply = o.Reply
-	setUsage(out, agnes)
+	setUsage(out, app)
 	return nil
 }
 

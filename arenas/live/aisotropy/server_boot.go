@@ -19,7 +19,12 @@ import (
 )
 
 // bootedServer is a running aisotropy HTTP runtime plus the handle to stop it.
+// app is the App the server runs, exposed so the HTTP-driven modes can read
+// the product-metered provider usage off it (setUsage(out, srv.app) — since
+// commit be945de App.Usage() is the usage surface; the adapter no longer
+// carries a usage-counting client decorator).
 type bootedServer struct {
+	app     *aisotropy.App
 	baseURL string
 	cancel  context.CancelFunc
 	done    chan error
@@ -41,7 +46,7 @@ func freeLoopbackAddr() (string, error) {
 // bootServer builds the App with the given extra options (registered tools,
 // executor, persona), runs it on an ephemeral loopback port, and blocks until the
 // /healthz liveness endpoint responds. Call stop() (returned) to shut it down.
-func bootServer(agnes *agnesClient, persona string, extra ...aisotropy.Option) (*bootedServer, error) {
+func bootServer(agnes aisotropy.LLMClient, persona string, extra ...aisotropy.Option) (*bootedServer, error) {
 	addr, err := freeLoopbackAddr()
 	if err != nil {
 		return nil, err
@@ -63,7 +68,7 @@ func bootServer(agnes *agnesClient, persona string, extra ...aisotropy.Option) (
 		return nil, err
 	}
 	logf("aisotropy runtime booted on %s (NoAuth, loopback)", baseURL)
-	return &bootedServer{baseURL: baseURL, cancel: cancel, done: done}, nil
+	return &bootedServer{app: app, baseURL: baseURL, cancel: cancel, done: done}, nil
 }
 
 func (s *bootedServer) stop() {

@@ -42,7 +42,7 @@ func runQA(req *request, out *result) error {
 		})
 		cancel()
 		if terr != nil {
-			setUsage(out, agnes)
+			setUsage(out, app)
 			out.Reply = lastReply
 			out.LatencyMs = time.Since(start).Milliseconds()
 			return fmt.Errorf("App.Turn failed on turn %d/%d: %w", i+1, len(turns), terr)
@@ -52,6 +52,6 @@ func runQA(req *request, out *result) error {
 	}
 	out.LatencyMs = time.Since(start).Milliseconds()
 	out.Reply = lastReply
-	setUsage(out, agnes)
+	setUsage(out, app)
 	return nil
 }

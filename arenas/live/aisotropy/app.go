@@ -17,9 +17,10 @@ import (
 
 const productID = "arena"
 
-// newApp builds the shared App: the usage-capturing agnes client injected via
-// WithLLM (OPENAI_* selects the real model), the request's system prompt carried
-// as the product persona, and any extra options a mode needs (e.g. an
+// newApp builds the shared App: the raw façade agnes client injected via
+// WithLLM (OPENAI_* selects the real model; no adapter decorator — usage is
+// metered by the product itself, see setUsage), the request's system prompt
+// carried as the product persona, and any extra options a mode needs (e.g. an
 // authenticator for the App.Run modes). The semantic embedder + stores are
 // resolved by the runtime from the environment, so a real e5/Qdrant/rqlite/Badger
 // stack is used whenever those vars are set.
@@ -33,7 +34,7 @@ const productID = "arena"
 // invents. Every mode's `agnes, err := newAgnesClient()` call site is
 // unchanged; nil-safety here is the single choke point that makes the
 // ARENA_STUB toggle apply uniformly to all of them.
-func newApp(agnes *agnesClient, persona string, extra ...aisotropy.Option) *aisotropy.App {
+func newApp(agnes aisotropy.LLMClient, persona string, extra ...aisotropy.Option) *aisotropy.App {
 	var opts []aisotropy.Option
 	if agnes != nil {
 		opts = append(opts, aisotropy.WithLLM(agnes))
@@ -45,16 +46,50 @@ func newApp(agnes *agnesClient, persona string, extra ...aisotropy.Option) *aiso
 	return aisotropy.New(opts...)
 }
 
-// setUsage folds the agnes client's accumulated provider-reported usage into the
-// result (or -1/-1 when the provider never reported it, per the arena contract,
-// or when agnes is nil — the ARENA_STUB offline path, where there is no
-// provider to report usage at all).
-func setUsage(out *result, agnes *agnesClient) {
-	if agnes == nil {
+// setUsage folds the PRODUCT-metered provider usage into the result: since
+// commit be945de the runtime wraps its base client with llm.WithUsageMeter
+// (aisotropy/app.go, one line above where the working-memory summarizer takes
+// the client), and App.Usage() returns the cumulative total across every
+// provider call the App has made — main turns, reflection retries, summarizer
+// condensations, CallTools. That is exactly the accumulator the adapter's
+// deleted agnes_client decorator used to hand-roll, so this reads the façade
+// instead of an adapter-side counter.
+//
+// Cumulative is correct here BECAUSE the App's lifetime is one adapter
+// invocation: main.go reads exactly one request from stdin, dispatches exactly
+// one mode, and exits (main.go), and every mode builds its App fresh inside
+// that dispatch (one newApp / bootServer per invocation — mode_*.go,
+// server_boot.go). No App outlives a work item, so cumulative == this
+// invocation's spend and no snapshot/delta is needed.
+//
+// -1/-1 (the arena contract's "no provider usage — honest absence") is
+// reported when:
+//
+//   - stubMode(): ARENA_STUB=1 has NO provider at all — but aisotropy's native
+//     keyless StubClient (which answers instead) attaches a DETERMINISTIC FAKE
+//     Usage to its terminal token (internal/llm/stub.go's stubUsageFor), and
+//     that fake now traverses the product usage meter too, so App.Usage() in a
+//     stub run returns non-zero numbers that would render as real-looking
+//     token counts on a stub board. The arena-full-matrix law is explicit:
+//     stub tokens are provider-reported or -1, never fabricated. The stub gate
+//     here is therefore load-bearing, not defensive — pinned by
+//     TestSetUsage_StubLanePinsMinusOne (usage_report_test.go).
+//   - the meter observed nothing (zero Usage): the provider never reported a
+//     usage block (e.g. the call failed before any terminal token). A real
+//     provider never reports a genuine 0/0, so zero is read as absence — the
+//     same mapping the deleted decorator's sawUsage flag implemented.
+//   - app is nil (defensive; no mode currently calls setUsage without an App).
+func setUsage(out *result, app *aisotropy.App) {
+	if stubMode() || app == nil {
 		out.InputTokens, out.OutputTokens = -1, -1
 		return
 	}
-	out.InputTokens, out.OutputTokens = agnes.usage()
+	u := app.Usage()
+	if u.InputTokens == 0 && u.OutputTokens == 0 {
+		out.InputTokens, out.OutputTokens = -1, -1
+		return
+	}
+	out.InputTokens, out.OutputTokens = u.InputTokens, u.OutputTokens
 }
 
 // stubMode reports whether ARENA_STUB=1 requests aisotropy's keyless NATIVE

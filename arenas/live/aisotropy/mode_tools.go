@@ -218,7 +218,7 @@ func runTools(req *request, out *result) error {
 		seen[key] = true
 		out.ToolCalls = append(out.ToolCalls, toolCall{Name: s.Tool, Arguments: args, Result: s.Result})
 	}
-	setUsage(out, agnes)
+	setUsage(out, srv.app)
 	logf("tools: agent loop ran %d tool step(s), %d unique call(s)", steps, len(out.ToolCalls))
 
 	// Empty tool_calls is a VALID outcome, not an adapter error: a tools-mode

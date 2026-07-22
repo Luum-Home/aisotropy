@@ -347,7 +347,7 @@ func runObservability(req *request, out *result) error {
 	if turnErr == nil {
 		out.Reply = turnOut.Reply
 	}
-	setUsage(out, agnes)
+	setUsage(out, app)
 
 	// app.Close() flushes internal/llm's batched OTLP exporter — App.Close (via
 	// aisotropy/app.go's rt.closeFn) invokes the SAME shutdownTracing func

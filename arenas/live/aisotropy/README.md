@@ -446,8 +446,8 @@ to the container's `RQLITE_URL`.
 | Path | Role |
 |---|---|
 | `main.go` | Contract + mode dispatch. |
-| `agnes_client.go` | Usage-capturing `LLMClient` over agnes (OpenAI Chat Completions SSE). |
-| `app.go` | Shared `App` builder + usage read-back. |
+| `agnes_client.go` | Provider-client selection: the façade's own `aisotropy.NewOpenAICompatLLM` pointed at agnes, injected DIRECTLY via `WithLLM` (no decorator — usage is metered by the product runtime since commit `be945de`). |
+| `app.go` | Shared `App` builder + usage read-back via `App.Usage()` (stub lane pinned to `-1/-1`). |
 | `mode_qa.go` / `mode_rag.go` / `mode_tools.go` / `mode_memory.go` / `mode_structured.go` / `mode_stream.go` / `mode_wasmtool.go` | The seven original modes. |
 | `mode_scoped.go` | `memory_scoped` + `isolation_leak` — by-construction tenant isolation via `App.Turn` (working-memory key prefix + ctx-scoped tiers). |
 | `mode_crash.go` | `crash_recovery` — on-disk BadgerDB durability across a real `kill -9` (producer / resumer). |

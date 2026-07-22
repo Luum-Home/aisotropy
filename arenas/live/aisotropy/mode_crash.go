@@ -89,7 +89,7 @@ func runCrashProducer(req *request, out *result) error {
 		})
 		cancel()
 		if terr != nil {
-			setUsage(out, agnes)
+			setUsage(out, app)
 			out.Reply = lastReply
 			out.LatencyMs = time.Since(start).Milliseconds()
 			return fmt.Errorf("App.Turn failed on crash turn %d/%d: %w", turnNum, len(req.CrashTurns), terr)
@@ -100,7 +100,7 @@ func runCrashProducer(req *request, out *result) error {
 
 	out.LatencyMs = time.Since(start).Milliseconds()
 	out.Reply = lastReply
-	setUsage(out, agnes)
+	setUsage(out, app)
 	// Resumed/PrecrashFactRecalled/StateLost stay nil: recovery is only
 	// evaluated by the resumer (process B). Reaching here means the producer ran
 	// to completion (no kill), so this side never exercised recovery.
@@ -148,7 +148,7 @@ func runCrashResumer(req *request, out *result) error {
 		ProductID: product,
 	})
 	out.LatencyMs = time.Since(start).Milliseconds()
-	setUsage(out, agnes)
+	setUsage(out, app)
 	if terr != nil {
 		return fmt.Errorf("resumer App.Turn (tenant=%s session=%s): %w", tenant, req.SessionID, terr)
 	}

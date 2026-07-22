@@ -167,7 +167,7 @@ func runMiddleware(req *request, out *result) error {
 	})
 	cancel()
 	out.LatencyMs = time.Since(start).Milliseconds()
-	setUsage(out, agnes)
+	setUsage(out, app)
 
 	invocations, inboundFired, outboundFired := mw.fired()
 	res.Middleware = &middlewareInfo{
