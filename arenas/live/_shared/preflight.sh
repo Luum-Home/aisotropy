@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# arenas/live/_shared/preflight.sh
+#
+# Toolchain preflight for the live arena. Each adapter's run.sh bootstraps its
+# OWN project-local deps (a venv, node_modules, go modules, a maven package) but
+# assumes the underlying TOOLCHAIN (node / go / python / java+maven) is already
+# on the machine. When it is not, the adapter errors on every task and the
+# failure only shows up AFTER a billable run — spring-ai silently erroring 70/70
+# on a host with no JRE is the case this script exists to catch up front.
+#
+# Two modes:
+#   (default)   CHECK — print a per-adapter toolchain matrix, mutate nothing,
+#               and for anything missing print the exact `brew install` command.
+#               Exit 0 if every discovered adapter's toolchain is present,
+#               exit 3 if any is missing (so a runner/CI step can gate on it).
+#   --install   Bootstrap what is safe to bootstrap: install missing SYSTEM
+#               toolchains via Homebrew (announced per item) AND the project-local
+#               deps each adapter needs (venv+pip, npm ci, go mod download,
+#               mvn package). Only touches what is missing; re-running is a no-op.
+#
+# Style matches start-embed-server.sh: `set -euo pipefail`, all diagnostics to
+# stderr as `PROGRESS:`/`WARNING:`/`ERROR:` lines, stdout reserved for the matrix.
+#
+# Usage:
+#   bash arenas/live/_shared/preflight.sh            # check only
+#   bash arenas/live/_shared/preflight.sh --install  # check, then install missing
+#   bash arenas/live/_shared/preflight.sh --adapters spring-ai,mastra  # subset
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIVE="$(cd "$HERE/.." && pwd)"
+
+INSTALL=0
+ONLY=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --install) INSTALL=1 ;;
+    --adapters) shift; ONLY="${1:-}" ;;
+    --adapters=*) ONLY="${1#--adapters=}" ;;
+    -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+# --- toolchain requirement per adapter (derived from each run.sh) -------------
+# Columns: adapter -> space-separated toolchain keys it needs.
+# Toolchain keys: node | go | python | java  (java implies maven too).
+adapter_toolchains() {
+  case "$1" in
+    ai-sdk|mastra)               echo "node" ;;
+    eino|genkit-go|aisotropy)    echo "go" ;;
+    langgraph|llamaindex|pydantic-ai) echo "python" ;;
+    spring-ai)                   echo "java" ;;
+    *)                           echo "" ;;
+  esac
+}
+
+# --- how to detect a toolchain, and the brew formula that provides it ---------
+# detect_<key> exits 0 iff present. brew_formula_<key> prints the formula name.
+detect_node()   { command -v node >/dev/null 2>&1; }
+detect_go()     { command -v go   >/dev/null 2>&1; }
+detect_python() { command -v python3.13 >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; }
+detect_java()   { command -v java >/dev/null 2>&1 && { command -v mvn >/dev/null 2>&1 || [ -x "$LIVE/spring-ai/mvnw" ]; }; }
+
+brew_formula_node()   { echo "node"; }
+brew_formula_go()     { echo "go"; }
+brew_formula_python() { echo "python@3.13"; }
+brew_formula_java()   { echo "openjdk maven"; }  # two formulae
+
+toolchain_version() {
+  case "$1" in
+    node)   node --version 2>/dev/null ;;
+    go)     go version 2>/dev/null | awk '{print $3}' ;;
+    python) { command -v python3.13 >/dev/null 2>&1 && python3.13 --version || python3 --version; } 2>/dev/null ;;
+    java)   java -version 2>&1 | head -1 ;;
+  esac
+}
+
+# --- discover adapters (a dir with a run.sh), honoring --adapters -------------
+discover_adapters() {
+  local a name
+  for a in "$LIVE"/*/run.sh; do
+    [ -f "$a" ] || continue
+    name="$(basename "$(dirname "$a")")"
+    if [ -n "$ONLY" ]; then case ",$ONLY," in *",$name,"*) ;; *) continue ;; esac; fi
+    echo "$name"
+  done | sort
+}
+
+# --- brew presence (only needed for --install of a system toolchain) ----------
+have_brew() { command -v brew >/dev/null 2>&1; }
+
+install_toolchain() {  # $1 = key
+  local key="$1" formula
+  formula="$(brew_formula_"$key")"
+  if ! have_brew; then
+    echo "ERROR: $key is missing and Homebrew is not installed — cannot auto-install." >&2
+    echo "       Install $key manually, or install Homebrew from https://brew.sh first." >&2
+    return 1
+  fi
+  echo "PROGRESS: installing $key via: brew install $formula" >&2
+  # shellcheck disable=SC2086
+  brew install $formula 1>&2 || { echo "ERROR: brew install $formula failed" >&2; return 1; }
+}
+
+# --- project-local bootstrap per adapter (only in --install) ------------------
+bootstrap_local() {  # $1 = adapter name
+  local a="$1" dir="$LIVE/$1"
+  case "$a" in
+    langgraph|llamaindex|pydantic-ai)
+      if [ ! -d "$dir/.venv" ]; then
+        local py; py="$(command -v python3.13 || command -v python3)"
+        echo "PROGRESS: [$a] creating venv + installing requirements.txt" >&2
+        "$py" -m venv "$dir/.venv" && "$dir/.venv/bin/pip" install -q -r "$dir/requirements.txt" 1>&2 \
+          || { echo "ERROR: [$a] venv/pip bootstrap failed" >&2; return 1; }
+      fi ;;
+    ai-sdk|mastra)
+      if [ ! -d "$dir/node_modules" ] && [ -f "$dir/package.json" ]; then
+        echo "PROGRESS: [$a] npm install" >&2
+        ( cd "$dir" && npm install --silent ) 1>&2 || { echo "ERROR: [$a] npm install failed" >&2; return 1; }
+      fi ;;
+    eino|genkit-go|aisotropy)
+      if [ -f "$dir/go.mod" ]; then
+        echo "PROGRESS: [$a] go mod download" >&2
+        ( cd "$dir" && go mod download ) 1>&2 || { echo "ERROR: [$a] go mod download failed" >&2; return 1; }
+      fi ;;
+    spring-ai)
+      if [ -x "$dir/mvnw" ]; then
+        echo "PROGRESS: [$a] mvnw package (skipTests) — this is slow the first time" >&2
+        ( cd "$dir" && ./mvnw -q -DskipTests package ) 1>&2 || { echo "ERROR: [$a] mvnw package failed" >&2; return 1; }
+      fi ;;
+  esac
+}
+
+# ------------------------------------------------------------------------------
+echo "PROGRESS: arena preflight — mode: $([ "$INSTALL" = 1 ] && echo INSTALL || echo CHECK)" >&2
+
+adapters="$(discover_adapters)"
+[ -n "$adapters" ] || { echo "ERROR: no adapters found under $LIVE/*/run.sh" >&2; exit 2; }
+
+# collect the union of required toolchains and their status
+declare -a MISSING_TC=()
+printf '%-14s | %-8s | %s\n' "adapter" "toolchain" "status"
+printf '%-14s-+-%-8s-+-%s\n' "--------------" "--------" "------------------------------------"
+
+missing_any=0
+for a in $adapters; do
+  tcs="$(adapter_toolchains "$a")"
+  if [ -z "$tcs" ]; then
+    printf '%-14s | %-8s | %s\n' "$a" "?" "unknown adapter — no toolchain mapping"
+    continue
+  fi
+  for tc in $tcs; do
+    if detect_"$tc"; then
+      printf '%-14s | %-8s | present (%s)\n' "$a" "$tc" "$(toolchain_version "$tc")"
+    else
+      printf '%-14s | %-8s | MISSING -> brew install %s\n' "$a" "$tc" "$(brew_formula_"$tc")"
+      missing_any=1
+      case " ${MISSING_TC[*]:-} " in *" $tc "*) ;; *) MISSING_TC+=("$tc") ;; esac
+    fi
+  done
+done
+
+if [ "$INSTALL" != 1 ]; then
+  if [ "$missing_any" = 1 ]; then
+    echo "" >&2
+    echo "WARNING: some toolchains are missing — the adapters needing them will error on every task." >&2
+    echo "         Re-run with --install to install them (and bootstrap project-local deps), or run the" >&2
+    echo "         printed 'brew install' commands yourself. This CHECK run mutated nothing." >&2
+    exit 3
+  fi
+  echo "PROGRESS: all discovered adapters have their toolchain present." >&2
+  exit 0
+fi
+
+# --- INSTALL mode -------------------------------------------------------------
+rc=0
+for tc in "${MISSING_TC[@]:-}"; do
+  [ -n "$tc" ] || continue
+  install_toolchain "$tc" || rc=1
+done
+for a in $adapters; do
+  bootstrap_local "$a" || rc=1
+done
+if [ "$rc" = 0 ]; then
+  echo "PROGRESS: preflight install complete — toolchains present, project-local deps bootstrapped." >&2
+else
+  echo "ERROR: preflight install finished with failures — see the ERROR lines above." >&2
+fi
+exit "$rc"

@@ -21,6 +21,38 @@ embeddings endpoint**, which is exactly why this embed server exists.
 
 ---
 
+## 0. Toolchain preflight (`preflight.sh`) — run this FIRST
+
+Each adapter's `run.sh` bootstraps its own project-local deps but assumes the
+underlying **toolchain** is already installed: `node` (ai-sdk, mastra), `go`
+(eino, genkit-go, aisotropy), `python3.13` (langgraph, llamaindex, pydantic-ai),
+`java`+`maven` (spring-ai). When one is missing the adapter errors on **every**
+task, and — because the runner only calls adapters during a billable pass — the
+failure surfaces *after* the model spend, not before. This is exactly how
+spring-ai once errored 70/70 on a host with no JRE: nothing checked up front.
+
+`preflight.sh` closes that gap. It is **check-first and mutates nothing** by
+default:
+
+```bash
+bash _shared/preflight.sh                       # matrix of adapter → toolchain → present/MISSING
+                                                #   exit 0 = all present, exit 3 = something missing
+bash _shared/preflight.sh --adapters spring-ai  # check a subset
+bash _shared/preflight.sh --install             # install the missing toolchains (Homebrew) AND
+                                                #   bootstrap project-local deps (venv/npm/go mod/mvn)
+```
+
+The default run prints, for anything missing, the exact `brew install` command to
+fix it — so you can install by hand or re-run with `--install`. `--install` is
+the only mode that touches the system: it runs `brew install` per missing
+toolchain (announced on stderr) and bootstraps each adapter's local deps; it is
+idempotent, so re-running after a partial setup only fills the gaps. If Homebrew
+itself is absent, `--install` refuses and tells you rather than guessing. Exit 3
+on a check run is intended to gate a CI/runner step — don't spend model budget on
+a board where an adapter can only error.
+
+---
+
 ## 1. The embed server
 
 ### Contract
