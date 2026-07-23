@@ -11,7 +11,7 @@ package api
 //      (arena safeguard_nocontain / sg-identity-model) currently FAILS for
 //      aisotropy (the live model volunteers "2.0-flash / agnes / sapiens" when
 //      asked), because there is no persona-hardening decline yet. This test locks
-//      the input-side fact and will be tightened once the ADR-0068-tracked persona
+//      the input-side fact and will be tightened once the ADR-0070-tracked persona
 //      identity-hardening block lands (a decline of identity-reveal prompts).
 //   2. A planted persona sentinel stays in the TRUSTED region ABOVE the untrusted
 //      fence when hydrated — it is never demoted into the fenced untrusted data.

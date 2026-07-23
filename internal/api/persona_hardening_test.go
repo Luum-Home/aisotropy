@@ -9,7 +9,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/memory"
 )
 
-// ADR-0068 (A2) — configurable persona hardening.
+// ADR-0070 (A2) — configurable persona hardening.
 //
 // These tests pin two properties that must not regress:
 //  1. DEFAULT OFF is byte-identical: with AISOTROPY_PERSONA_HARDENING unset the
