@@ -483,3 +483,68 @@ func TestOpenAICompat_HandlerWithoutMiddlewareFailsClosed(t *testing.T) {
 		t.Fatalf("middleware-less shim status = %d, want 401 (fail closed); body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestOpenAICompat_QuotaRejectionIs429RateLimit closes the ADR-0066 verify
+// WARNING: OpenAI clients key retry/backoff on HTTP 429 + type
+// "rate_limit_error". With a drained token bucket the non-streaming path must
+// answer 429 (never 500/server_error), and the streaming path — whose 200 is
+// already on the wire — must label its error frame rate_limit_error. Quota
+// stays pre-spend: the drained requests never reach the LLM (StreamCore's
+// constitutional gate order, probed in the SDD verify phase).
+func TestOpenAICompat_QuotaRejectionIs429RateLimit(t *testing.T) {
+	wm := newTestWorkingMemory(t)
+	limiter := wm.NewLimiter(0, 1) // capacity 1, no refill: first request only
+
+	router := chi.NewRouter()
+	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy-oai-quota-test", "0.1.0"))
+	humaAPI.UseMiddleware(BindAuthMiddleware(humaAPI, auth.NewJWTBearer(oaiTestSecret)))
+	RegisterOpenAICompat(humaAPI, llm.NewStubClient(), wm,
+		nil, limiter, nil, nil, nil, nil, nil, nil, nil, 0, 0, nil, nil, nil)
+
+	token := mintTenantJWT(t, "acme", "alice")
+
+	// Request 1 drains the bucket and must succeed end-to-end.
+	if rec := postOAI(t, router, token, oaiBody(t, "hi", false, nil)); rec.Code != http.StatusOK {
+		t.Fatalf("first request status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+
+	// Request 2 (non-streaming): a real HTTP 429 with the OpenAI envelope.
+	rec := postOAI(t, router, token, oaiBody(t, "hi again", false, nil))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("drained non-streaming status = %d, want 429; body = %s", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Error oaiErrorBody `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("429 body is not an OpenAI error envelope: %s (%v)", rec.Body.String(), err)
+	}
+	if envelope.Error.Type != oaiErrTypeRateLimit {
+		t.Errorf("error.type = %q, want %q", envelope.Error.Type, oaiErrTypeRateLimit)
+	}
+	if !strings.Contains(envelope.Error.Message, "rate limit exceeded") {
+		t.Errorf("error.message = %q, want the rate-limit cause", envelope.Error.Message)
+	}
+
+	// Request 3 (streaming): 200 is on the wire, so the signal is the frame
+	// TYPE — rate_limit_error, and no [DONE] after an error.
+	rec = postOAI(t, router, token, oaiBody(t, "hi stream", true, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("streaming transport status = %d, want 200 (SSE); body = %s", rec.Code, rec.Body.String())
+	}
+	frames := parseOAIFrames(t, rec.Body.Bytes())
+	if len(frames) == 0 {
+		t.Fatal("streaming quota rejection produced no frames")
+	}
+	last := frames[len(frames)-1]
+	if last == "[DONE]" {
+		t.Fatalf("stream terminated with [DONE] despite quota rejection:\n%s", rec.Body.String())
+	}
+	var frame oaiErrorFrame
+	if err := json.Unmarshal([]byte(last), &frame); err != nil {
+		t.Fatalf("last frame is not an error envelope: %q (%v)", last, err)
+	}
+	if frame.Error.Type != oaiErrTypeRateLimit {
+		t.Errorf("stream error frame type = %q, want %q", frame.Error.Type, oaiErrTypeRateLimit)
+	}
+}

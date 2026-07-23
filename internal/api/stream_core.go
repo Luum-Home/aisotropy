@@ -107,6 +107,13 @@ type StreamSink struct {
 	OnDone  func(final StreamFinal)
 }
 
+// ErrRateLimited marks the pre-spend quota rejection (the constitutional
+// reject-before-spending gate). Wire adapters that own an HTTP-status or
+// typed-error vocabulary (e.g. the OpenAI-compat shim's 429/rate_limit_error)
+// detect it with errors.Is; the aisotropy SSE/AI-SDK/AG-UI paths keep treating
+// it as a plain error frame, unchanged.
+var ErrRateLimited = errors.New("rate limit exceeded")
+
 // StreamCore runs the full streaming chat pipeline (identity->ctx, quota gate,
 // input guardrail, gateway selection + quota-pressure degrade, hydration,
 // streaming LLM, output guardrail, cost) and delivers the assistant's output
@@ -163,7 +170,7 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 		}
 		if !allowed {
 			slog.WarnContext(ctx, "chat stream rate-limited", "tenant_id", in.TenantID)
-			return errors.New("rate limit exceeded for tenant " + in.TenantID)
+			return fmt.Errorf("%w for tenant %s", ErrRateLimited, in.TenantID)
 		}
 	}
 

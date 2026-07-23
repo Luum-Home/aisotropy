@@ -51,6 +51,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -96,6 +97,7 @@ const (
 	oaiErrTypeInvalidRequest = "invalid_request_error"
 	oaiErrTypeAuthentication = "authentication_error"
 	oaiErrTypeServer         = "server_error"
+	oaiErrTypeRateLimit      = "rate_limit_error"
 )
 
 // newOAICompletionID mints the completion id shared by every chunk of one
@@ -393,6 +395,12 @@ func oaiNonStreaming(ctx context.Context, deps StreamDeps, chatIn *ChatInput, mo
 		OnDone:  func(f StreamFinal) { final = &f },
 	}
 	if err := StreamCore(ctx, deps, chatIn, sink); err != nil {
+		// The quota gate rejects BEFORE any LLM spend (constitutional). OpenAI
+		// clients key retry/backoff on 429 + rate_limit_error — anything else
+		// (a 500) makes stock SDKs fail instead of backing off.
+		if errors.Is(err, ErrRateLimited) {
+			return nil, newOAIError(http.StatusTooManyRequests, oaiErrTypeRateLimit, err.Error())
+		}
 		return nil, newOAIError(http.StatusInternalServerError, oaiErrTypeServer, err.Error())
 	}
 	if final == nil {
@@ -496,8 +504,15 @@ func streamOAI(hctx huma.Context, d StreamDeps, in *ChatInput, model string, inc
 	switch {
 	case err != nil:
 		// Pipeline failure (quota, blocked input, hydration, stream start, or a
-		// mid-stream LLM error): error frame, close WITHOUT [DONE].
-		_ = stream.part(oaiErrorFrame{Error: oaiErrorBody{Message: err.Error(), Type: oaiErrTypeServer}})
+		// mid-stream LLM error): error frame, close WITHOUT [DONE]. The 200 is
+		// already on the wire, so the status cannot change — but the frame's
+		// error TYPE still tells an OpenAI client that a quota rejection is
+		// retryable (rate_limit_error) rather than a server fault.
+		errType := oaiErrTypeServer
+		if errors.Is(err, ErrRateLimited) {
+			errType = oaiErrTypeRateLimit
+		}
+		_ = stream.part(oaiErrorFrame{Error: oaiErrorBody{Message: err.Error(), Type: errType}})
 	case !finished:
 		// Client cancellation: nothing further to write; the peer is gone and
 		// the turn was interrupted, not completed — no [DONE].
