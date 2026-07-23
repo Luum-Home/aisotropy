@@ -7,7 +7,7 @@
     },
     "memory_cross_session": {
       "stub": {"native":"infeasible:offline stub backs the session transcript in a process-local in-memory map (rqlite_client.go stubTurns) that does not survive the persist→recall process boundary — the honest run-and-fail is scored on the real lane against networked rqlite","docker":"infeasible:offline stub backs the session transcript in a process-local in-memory map (rqlite_client.go stubTurns) that does not survive the persist→recall process boundary — the honest run-and-fail is scored on the real lane against networked rqlite","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pending","docker":"pending","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "real": {"native":"fail","docker":"fail","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
     },
     "memory_semantic_recall": {
       "stub": {"native":"infeasible:no semantic-memory primitive at any maturity — Genkit Go's experimental core/x/session is transcript-by-session-ID only (no embedding-ranked recall); hand-rolling one would benchmark adapter authorship, not the framework","docker":"infeasible:no semantic-memory primitive at any maturity — Genkit Go's experimental core/x/session is transcript-by-session-ID only (no embedding-ranked recall); hand-rolling one would benchmark adapter authorship, not the framework","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
@@ -50,8 +50,8 @@
       "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
     },
     "safeguard": {
-      "stub": {"native":"pending","docker":"pending","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pending","docker":"pending","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
+      "real": {"native":"fail","docker":"fail","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
     },
     "stream": {
       "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},

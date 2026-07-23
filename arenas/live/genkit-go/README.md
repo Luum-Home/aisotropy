@@ -324,6 +324,13 @@ extensions + platform + integrations + vendor docs). Genkit's July 2026 Agents-A
 as an announcement only (open question #6) — no memory semantics established, so it does not upgrade
 any verdict here.
 
+**2026-07 ecosystem sweep.** The Genkit Agents API is now in PREVIEW (2026-07) for **TS + Go**, with
+persistent sessions and a `SessionStore` interface (File/Firestore/Custom) —
+<https://www.infoq.com/news/2026/07/genkit-agents-api-preview/> and <https://genkit.dev/docs/chat/>.
+Maturity: **NATIVE-PREVIEW**, and it is **SESSION-scoped**: it does not provide user-scoped
+cross-session recall, so the varies-session/holds-user verdict above stands — but the preview MUST be
+cited whenever that verdict is quoted, since a future user-scoped store there would change it.
+
 ### `structured` — native schema-validated output
 
 `structured.go` defines a Go struct `structuredAnswer{Answer, Confidence, KeyPoints}`

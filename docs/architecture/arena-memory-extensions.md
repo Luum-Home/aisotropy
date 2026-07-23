@@ -53,6 +53,32 @@ session-ID-keyed transcript persistence — a test that varies the session ID wh
 constant defeats both by construction (see §3's cross-cutting protocol change). ai-sdk has nothing
 first-party for any of the three.
 
+### 1.1 2026-07 ecosystem sweep — the four weak adapters (post-measurement labels)
+
+Re-swept after the full board landed (`arenas/live/RESULTS.md` @ `06945bf`), per
+`.claude/rules/capability-absence-claims.md` (what exists + maturity + why it does not change the
+user-scoped verdict — never "X has no memory"):
+
+- **pydantic-ai** — native memory: **NONE** (open issue
+  [pydantic/pydantic-ai-harness#30](https://github.com/pydantic/pydantic-ai-harness/issues/30), 2026-03,
+  tracks it); THIRD-PARTY only (Hindsight, Neo4j Agent Memory, MemU). The board measured its
+  app-level user-scoped store over native `message_history` serialization — its maximum official
+  surface today.
+- **ai-sdk** — core stays **L0** (no primitive); Vercel now publishes a **PRESCRIBED-PATTERN** doc,
+  <https://ai-sdk.dev/docs/agents/memory> (user-scoped cross-session via external storage, a
+  `userId`+`sessionId` example). `@mem0/vercel-ai-provider` exists but Vercel classifies it a
+  "Community Provider" (<https://ai-sdk.dev/providers/community-providers/mem0>). The board measured
+  the session-keyed core default; wiring the prescribed pattern is a filed follow-up.
+- **eino** — **OFFICIAL-EXAMPLE** `MemoryStore`
+  (<https://pkg.go.dev/github.com/cloudwego/eino-examples/flow/agent/react/memory_example/memory>,
+  2026-03) — SESSION-keyed; a session-keyed store cannot pass a varies-session/holds-user dimension
+  by construction.
+- **genkit-go** — Genkit **Agents API PREVIEW** (2026-07, TS + Go): persistent sessions +
+  `SessionStore` (File/Firestore/Custom) —
+  <https://www.infoq.com/news/2026/07/genkit-agents-api-preview/> and <https://genkit.dev/docs/chat/>.
+  Maturity **NATIVE-PREVIEW**, SESSION-scoped: no user-scoped cross-session recall, so the verdict
+  stands — but this preview MUST be cited alongside it.
+
 ## 2. Third-party memory services — arena eligibility
 
 | Service | License | Self-host | Provides | Integrations |

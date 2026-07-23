@@ -53,7 +53,7 @@ each adapter's own `matrix.json` (schema: `arenas/live/MATRIX-SCHEMA.md`).
 | `observability` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `qa` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `rag` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
-| `safeguard` | ⧗ pending | ⧗ pending | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
+| `safeguard` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `stream` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `structured` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `tools` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
@@ -63,18 +63,18 @@ each adapter's own `matrix.json` (schema: `arenas/live/MATRIX-SCHEMA.md`).
 | Dimension | stub/native | stub/docker | stub/wasm | real/native | real/docker | real/wasm |
 |---|---|---|---|---|---|---|
 | `crash_recovery` | infeasible: …hare state regardless of when/whether a kill lands | infeasible: …emory semantics, not container lifecycle or timing | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
-| `isolation_forgetful` | ⧗ pending | ⧗ pending | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ⧗ pending | ⧗ pending | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
+| `isolation_forgetful` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
 | `isolation_leak` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
 | `memory` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
-| `memory_consolidation` | infeasible: …s only observable cross-process on the real tiers) | infeasible: …container without the real on-disk/networked tiers | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ⧗ pending | ⧗ pending | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
-| `memory_cross_session` | infeasible: …same class as crash_recovery's stub-infeasibility) | infeasible: …container without the real on-disk/networked tiers | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ⧗ pending | ⧗ pending | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
+| `memory_consolidation` | infeasible: …s only observable cross-process on the real tiers) | infeasible: …container without the real on-disk/networked tiers | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
+| `memory_cross_session` | infeasible: …same class as crash_recovery's stub-infeasibility) | infeasible: …container without the real on-disk/networked tiers | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
 | `memory_scoped` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
-| `memory_semantic_recall` | infeasible: …drant semantic tier plus cross-process persistence | infeasible: …ross-process persistence a paraphrase recall needs | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ⧗ pending | ⧗ pending | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
+| `memory_semantic_recall` | infeasible: …drant semantic tier plus cross-process persistence | infeasible: …ross-process persistence a paraphrase recall needs | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
 | `middleware` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
 | `observability` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
 | `qa` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
 | `rag` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
-| `safeguard` | ✓ | ⧗ pending | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ⧗ pending | ⧗ pending | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
+| `safeguard` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✗ | ✗ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
 | `stream` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
 | `structured` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
 | `tools` | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) | ✓ | ✓ | infeasible: …he wazero tool-sandbox runs under WASI (wasm_tool) |
@@ -89,14 +89,14 @@ each adapter's own `matrix.json` (schema: `arenas/live/MATRIX-SCHEMA.md`).
 | `isolation_leak` | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
 | `memory` | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
 | `memory_consolidation` | infeasible: …ld benchmark adapter authorship, not the framework | infeasible: …ld benchmark adapter authorship, not the framework | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | infeasible: …ld benchmark adapter authorship, not the framework | infeasible: …ld benchmark adapter authorship, not the framework | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
-| `memory_cross_session` | infeasible: … scored on the real lane against the on-disk store | infeasible: … scored on the real lane against the on-disk store | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
+| `memory_cross_session` | infeasible: … scored on the real lane against the on-disk store | infeasible: … scored on the real lane against the on-disk store | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
 | `memory_scoped` | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
 | `memory_semantic_recall` | infeasible: …ecall would be adapter-invented, not the framework | infeasible: …ecall would be adapter-invented, not the framework | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | infeasible: …ecall would be adapter-invented, not the framework | infeasible: …ecall would be adapter-invented, not the framework | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
 | `middleware` | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
 | `observability` | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
 | `qa` | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
 | `rag` | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
-| `safeguard` | ⧗ pending | ⧗ pending | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
+| `safeguard` | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
 | `stream` | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
 | `structured` | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
 | `tools` | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t-model client (HTTP) cannot run in a WASI sandbox |
@@ -110,14 +110,14 @@ each adapter's own `matrix.json` (schema: `arenas/live/MATRIX-SCHEMA.md`).
 | `isolation_leak` | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
 | `memory` | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
 | `memory_consolidation` | infeasible: …n replays raw transcript only; nothing to exercise | infeasible: …n replays raw transcript only; nothing to exercise | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | infeasible: …n replays raw transcript only; nothing to exercise | infeasible: …n replays raw transcript only; nothing to exercise | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
-| `memory_cross_session` | infeasible: …s scored on the real lane against networked rqlite | infeasible: …s scored on the real lane against networked rqlite | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
+| `memory_cross_session` | infeasible: …s scored on the real lane against networked rqlite | infeasible: …s scored on the real lane against networked rqlite | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
 | `memory_scoped` | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
 | `memory_semantic_recall` | infeasible: …ld benchmark adapter authorship, not the framework | infeasible: …ld benchmark adapter authorship, not the framework | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | infeasible: …ld benchmark adapter authorship, not the framework | infeasible: …ld benchmark adapter authorship, not the framework | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
 | `middleware` | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
 | `observability` | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
 | `qa` | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
 | `rag` | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
-| `safeguard` | ⧗ pending | ⧗ pending | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
+| `safeguard` | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
 | `stream` | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
 | `structured` | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
 | `tools` | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …t model plugin (HTTP) cannot run in a WASI sandbox |
@@ -127,18 +127,18 @@ each adapter's own `matrix.json` (schema: `arenas/live/MATRIX-SCHEMA.md`).
 | Dimension | stub/native | stub/docker | stub/wasm | real/native | real/docker | real/wasm |
 |---|---|---|---|---|---|---|
 | `crash_recovery` | infeasible: …el I/O (persistence itself verified: resumed=true) | infeasible: …el I/O (persistence itself verified: resumed=true) | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
-| `isolation_forgetful` | infeasible: …s infeasibility as the memory-extension dimensions | infeasible: …l SqliteStore leak verdict cannot manifest offline | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
+| `isolation_forgetful` | infeasible: …s infeasibility as the memory-extension dimensions | infeasible: …l SqliteStore leak verdict cannot manifest offline | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
 | `isolation_leak` | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
 | `memory` | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
-| `memory_consolidation` | infeasible: …s the real model for langmem + on-disk SqliteStore | infeasible: …process on-disk SqliteStore under the offline stub | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
-| `memory_cross_session` | infeasible: …oss-process, but the arena stub lane never sets it | infeasible: …e recall container without the on-disk SqliteStore | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
+| `memory_consolidation` | infeasible: …s the real model for langmem + on-disk SqliteStore | infeasible: …process on-disk SqliteStore under the offline stub | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
+| `memory_cross_session` | infeasible: …oss-process, but the arena stub lane never sets it | infeasible: …e recall container without the on-disk SqliteStore | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
 | `memory_scoped` | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
-| `memory_semantic_recall` | infeasible: … embed server + on-disk SqliteStore semantic index | infeasible: …cess on-disk SqliteStore a paraphrase recall needs | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
+| `memory_semantic_recall` | infeasible: … embed server + on-disk SqliteStore semantic index | infeasible: …cess on-disk SqliteStore a paraphrase recall needs | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
 | `middleware` | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
 | `observability` | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
 | `qa` | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
 | `rag` | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
-| `safeguard` | ⧗ pending | ⧗ pending | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
+| `safeguard` | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
 | `stream` | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
 | `structured` | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
 | `tools` | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …h model client (HTTP) cannot run in a WASI sandbox |
@@ -148,18 +148,18 @@ each adapter's own `matrix.json` (schema: `arenas/live/MATRIX-SCHEMA.md`).
 | Dimension | stub/native | stub/docker | stub/wasm | real/native | real/docker | real/wasm |
 |---|---|---|---|---|---|---|
 | `crash_recovery` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
-| `isolation_forgetful` | ✗ | ✗ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
+| `isolation_forgetful` | ✗ | ✗ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
 | `isolation_leak` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
 | `memory` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
-| `memory_consolidation` | infeasible: …boundary — real agnes + persistent Qdrant needed | infeasible: …boundary — real agnes + persistent Qdrant needed | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
-| `memory_cross_session` | infeasible: …rieval needs the persistent real Qdrant collection | infeasible: …rieval needs the persistent real Qdrant collection | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
+| `memory_consolidation` | infeasible: …boundary — real agnes + persistent Qdrant needed | infeasible: …boundary — real agnes + persistent Qdrant needed | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
+| `memory_cross_session` | infeasible: …rieval needs the persistent real Qdrant collection | infeasible: …rieval needs the persistent real Qdrant collection | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
 | `memory_scoped` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
-| `memory_semantic_recall` | infeasible: …ot semantic — real e5 + persistent Qdrant needed | infeasible: …ot semantic — real e5 + persistent Qdrant needed | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
+| `memory_semantic_recall` | infeasible: …ot semantic — real e5 + persistent Qdrant needed | infeasible: …ot semantic — real e5 + persistent Qdrant needed | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
 | `middleware` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
 | `observability` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
 | `qa` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
 | `rag` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
-| `safeguard` | ⧗ pending | ⧗ pending | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
+| `safeguard` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
 | `stream` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
 | `structured` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
 | `tools` | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …dex LLM client (HTTP) cannot run in a WASI sandbox |
@@ -169,18 +169,18 @@ each adapter's own `matrix.json` (schema: `arenas/live/MATRIX-SCHEMA.md`).
 | Dimension | stub/native | stub/docker | stub/wasm | real/native | real/docker | real/wasm |
 |---|---|---|---|---|---|---|
 | `crash_recovery` | infeasible: …el I/O (persistence itself verified: resumed=true) | infeasible: …el I/O (persistence itself verified: resumed=true) | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
-| `isolation_forgetful` | ⧗ pending | ⧗ pending | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
+| `isolation_forgetful` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `isolation_leak` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `memory` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
-| `memory_consolidation` | infeasible: …real model's recall output the stub cannot produce | infeasible: …call output the consolidation outcome is scored on | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
-| `memory_cross_session` | infeasible: …ine — but the SCORED recall needs the real model | infeasible: …t scoring requires the real model + real e5/Qdrant | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
+| `memory_consolidation` | infeasible: …real model's recall output the stub cannot produce | infeasible: …call output the consolidation outcome is scored on | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
+| `memory_cross_session` | infeasible: …ine — but the SCORED recall needs the real model | infeasible: …t scoring requires the real model + real e5/Qdrant | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `memory_scoped` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
-| `memory_semantic_recall` | infeasible: …drant (QdrantVector) for a genuine semantic recall | infeasible: …ningful vector space to retrieve a paraphrase from | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
+| `memory_semantic_recall` | infeasible: …drant (QdrantVector) for a genuine semantic recall | infeasible: …ningful vector space to retrieve a paraphrase from | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `middleware` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `observability` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `qa` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `rag` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
-| `safeguard` | ⧗ pending | ⧗ pending | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
+| `safeguard` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `stream` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `structured` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
 | `tools` | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …l client (fetch/HTTP) cannot run in a WASI sandbox |
@@ -194,14 +194,14 @@ each adapter's own `matrix.json` (schema: `arenas/live/MATRIX-SCHEMA.md`).
 | `isolation_leak` | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
 | `memory` | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
 | `memory_consolidation` | infeasible: …p, so there is nothing framework-owned to exercise | infeasible: …e stub.native; nothing framework-owned to exercise | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | infeasible: …s a no-op with nothing framework-owned to exercise | infeasible: …ficial consolidation primitive — see real.native | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
-| `memory_cross_session` | infeasible: … the recalled fact (TestModel returns canned text) | infeasible: …ate recall container without the real rqlite store | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
+| `memory_cross_session` | infeasible: … the recalled fact (TestModel returns canned text) | infeasible: …ate recall container without the real rqlite store | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
 | `memory_scoped` | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
 | `memory_semantic_recall` | infeasible: …work primitive — infeasible over a strawman pass | infeasible: …no framework semantic-recall primitive to exercise | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | infeasible: … replay, not a framework semantic-recall primitive | infeasible: …cial semantic-recall primitive — see real.native | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
 | `middleware` | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
 | `observability` | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
 | `qa` | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
 | `rag` | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
-| `safeguard` | ⧗ pending | ⧗ pending | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
+| `safeguard` | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✗ | ✗ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
 | `stream` | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
 | `structured` | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
 | `tools` | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox | ✓ | ✓ | infeasible: …I model client (HTTP) cannot run in a WASI sandbox |
@@ -210,17 +210,17 @@ each adapter's own `matrix.json` (schema: `arenas/live/MATRIX-SCHEMA.md`).
 
 | Dimension | stub/native | stub/docker | stub/wasm | real/native | real/docker | real/wasm |
 |---|---|---|---|---|---|---|
-| `isolation_forgetful` | ⧗ pending | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
-| `memory` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
+| `isolation_forgetful` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
+| `memory` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
 | `memory_consolidation` | infeasible: …e a no-op with nothing framework-owned to exercise | infeasible: …native consolidation primitive — see stub.native | infeasible: … AI HTTP model client cannot run in a WASI sandbox | infeasible: …s a no-op with nothing framework-owned to exercise | infeasible: …native consolidation primitive — see real.native | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
-| `memory_cross_session` | infeasible: …proven offline (persist+recall both key user:<id>) | infeasible: …ate recall container without the real rqlite store | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
+| `memory_cross_session` | infeasible: …proven offline (persist+recall both key user:<id>) | infeasible: …ate recall container without the real rqlite store | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
 | `memory_semantic_recall` | infeasible: …er-invented code, not a framework memory primitive | infeasible: …— see stub.native (jar-verified Spring AI 1.0.0) | infeasible: … AI HTTP model client cannot run in a WASI sandbox | infeasible: …ver-turns, not a framework memory-recall primitive | infeasible: …c-recall chat-memory primitive — see real.native | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
-| `qa` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
-| `rag` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
-| `safeguard` | ⧗ pending | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
-| `stream` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
-| `structured` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
-| `tools` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ⧗ pending | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
+| `qa` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
+| `rag` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ✗ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
+| `safeguard` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ✗ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
+| `stream` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
+| `structured` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
+| `tools` | ✓ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox | ✗ | ⧗ pending | infeasible: … AI HTTP model client cannot run in a WASI sandbox |
 
 ## Correctness / quality — per framework × per mode (PRIMARY, deterministic)
 

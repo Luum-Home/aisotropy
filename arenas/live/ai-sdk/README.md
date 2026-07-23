@@ -303,6 +303,14 @@ v7.0.31**, **`@ai-sdk/openai` v4.0.16** (`package.json`).
 | `memory_semantic_recall` | **infeasible** | NONE first-party — semantic recall only via the same community providers. | `infeasible` all lanes. |
 | `memory_consolidation` | **infeasible** | NONE first-party — consolidation only via the same community providers. | `infeasible` all lanes. |
 
+**2026-07 ecosystem sweep.** The AI SDK core stays **L0** (no memory primitive), but Vercel now ships a
+PRESCRIBED-PATTERN vendor doc — <https://ai-sdk.dev/docs/agents/memory> — showing user-scoped
+cross-session memory via **external storage** (a `userId`+`sessionId` example the app must implement
+itself). `@mem0/vercel-ai-provider` exists but Vercel itself classifies it a "Community Provider"
+(<https://ai-sdk.dev/providers/community-providers/mem0>). This board measured the session-keyed core
+default; wiring the prescribed external-storage pattern is a filed follow-up — a prescribed pattern is
+guidance to app authors, not a framework primitive, so the verdicts above stand.
+
 #### mem0-OSS exhibition row — decision: **DESIGNED, NOT BUILT**
 
 `docs/architecture/arena-memory-extensions.md` §4 allows an OPTIONAL, non-competing, clearly-labeled

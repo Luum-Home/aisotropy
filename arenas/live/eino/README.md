@@ -302,6 +302,12 @@ Ecosystem sweep basis: `docs/architecture/arena-memory-extensions.md` §1. Eino'
 DNS-unreachable during the research (open question #4); the pkg.go.dev `adk` API surface (no
 memory-store types) is the substitute evidence.
 
+**2026-07 ecosystem sweep.** The closest official artifact remains the OFFICIAL-EXAMPLE `MemoryStore`
+in `eino-examples` (<https://pkg.go.dev/github.com/cloudwego/eino-examples/flow/agent/react/memory_example/memory>,
+2026-03) — and it is **SESSION-keyed**. A session-keyed store cannot pass a varies-session/holds-user
+dimension **by construction** (the fresh recall session reads an empty conversation), so the
+run-and-fail verdict above is a property of what Eino officially ships, not of this adapter's wiring.
+
 ### `structured` mode
 
 Binds Eino's native structured-output config (`ChatModelConfig.ResponseFormat`, forwarded to

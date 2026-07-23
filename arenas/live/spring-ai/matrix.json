@@ -1,20 +1,20 @@
 {
   "framework": "spring-ai",
   "candidate": true,
-  "_note": "SCAFFOLD (partial). Authored + compiled against Spring AI 1.0.0 GA (mvn package OK, 50MB uber-jar). stub.native is 'pass' for the six base dimensions — actually built and run offline this session (env -u OPENAI_API_KEY ARENA_STUB=1, verified zero-network against bogus unreachable RQLITE/QDRANT/EMBED hosts, valid contract JSON incl. tool-call capture, structured schema validation, stream ttft, rag retrieval). stub.docker and BOTH real cells are 'pending': the real lane cannot be verified (agnes free-tier quota exhausted) and Docker/native-image were not built (no GraalVM installed). wasm is uniformly infeasible (the Spring AI HTTP model client needs host sockets). FASE-3 memory-extension + tenancy wiring added: memory_cross_session uses native ChatMemory keyed by a user-derived conversationId (single-axis, real:pending); memory_semantic_recall + memory_consolidation are infeasible (Spring AI 1.0.0 ships no semantic/consolidation chat-memory primitive — jar-verified); isolation_forgetful REFUSES the omitted conversationId offline (MessageWindowChatMemory throws 'conversationId cannot be null or empty', verified ARENA_STUB) but stays pending until the runner learns that signature. A follow-up with quota + a built image replaces each pending cell. See README.md 'What remains to verify' and 'isolation_forgetful'.",
+  "_note": "CANDIDATE (docker cells only). Authored + compiled against Spring AI 1.0.0 GA (mvn package OK, 50MB uber-jar). real.native cells are now filled from the committed full board (arenas/live/RESULTS.md @ 06945bf, real agnes lane): qa 12/12, memory 8/8, structured 12/12, stream 12/12, memory_cross_session 2/2, isolation_forgetful 2/2 (the runner now recognizes the MessageWindowChatMemory 'conversationId cannot be null or empty' refusal as the refuses verdict) = pass; rag (19 err), tools (7 err), safeguard 5/6 with 1 adapter err (sg-corpus-injection: 'id cannot be null or empty') = fail. stub.native cells are filled from offline ARENA_STUB runs (base dims verified zero-network earlier; safeguard + isolation_forgetful ran clean in the 2026-07-23 stub pass). The ONLY remaining pending cells are the docker forms: the Docker image was never built (no GraalVM/native-image), so no docker cell can honestly mirror native — the candidate flag covers exactly those cells until an image is built and smoked. wasm is uniformly infeasible (the Spring AI HTTP model client needs host sockets). memory_semantic_recall + memory_consolidation stay infeasible as declared (Spring AI 1.0.0 ships no semantic/consolidation chat-memory primitive — jar-verified); the committed board's 2/2 scores on those two dims rode user-keyed ChatMemory transcript replay through the memory path, visible in the token table, not a framework semantic/consolidation primitive.",
   "dimensions": {
     "isolation_forgetful": {
       "stub": {
-        "native": "pending",
+        "native": "pass",
         "docker": "pending",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       },
       "real": {
-        "native": "pending",
+        "native": "pass",
         "docker": "pending",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       },
-      "_verdict_note": "Spring AI is L1 (docs/architecture/arena-tenancy-levels.md). The omitted-scope read routes the blank conversationId through Spring AI's OWN ChatMemory boundary (MessageWindowChatMemory.get), where Assert.hasText throws IllegalArgumentException 'conversationId cannot be null or empty' BEFORE any model call — the model-independent 'refuses' verdict, VERIFIED offline (ARENA_STUB, Modes.isolationForgetful). This EARNS refuses=PASS, but arenas/live/runner/main.go forgetfulEnforcementSignatures does not yet recognize Spring AI's string, so it currently scores run-and-fail. Held at 'pending' (no faked pass) until the runner adds the signature — the exact string is in README 'isolation_forgetful'."
+      "_verdict_note": "Spring AI is L1 (docs/architecture/arena-tenancy-levels.md). The omitted-scope read routes the blank conversationId through Spring AI's OWN ChatMemory boundary (MessageWindowChatMemory.get), where Assert.hasText throws IllegalArgumentException 'conversationId cannot be null or empty' BEFORE any model call — the model-independent 'refuses' verdict. The runner now recognizes this signature: the committed board (RESULTS.md @ 06945bf) scores both forget tasks 'refuses ✓' (conversationid-required), 2/2 pass on real.native, and the 2026-07-23 ARENA_STUB pass reproduced it offline (stub.native pass)."
     },
     "memory_cross_session": {
       "stub": {
@@ -23,7 +23,7 @@
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       },
       "real": {
-        "native": "pending",
+        "native": "pass",
         "docker": "pending",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       }
@@ -59,7 +59,7 @@
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       },
       "real": {
-        "native": "pending",
+        "native": "pass",
         "docker": "pending",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       }
@@ -71,19 +71,19 @@
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       },
       "real": {
-        "native": "pending",
+        "native": "fail",
         "docker": "pending",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       }
     },
     "safeguard": {
       "stub": {
-        "native": "pending",
+        "native": "pass",
         "docker": "pending",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       },
       "real": {
-        "native": "pending",
+        "native": "fail",
         "docker": "pending",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       }
@@ -95,7 +95,7 @@
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       },
       "real": {
-        "native": "pending",
+        "native": "fail",
         "docker": "pending",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       }
@@ -107,7 +107,7 @@
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       },
       "real": {
-        "native": "pending",
+        "native": "pass",
         "docker": "pending",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       }
@@ -119,7 +119,7 @@
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       },
       "real": {
-        "native": "pending",
+        "native": "pass",
         "docker": "pending",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       }
@@ -131,7 +131,7 @@
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       },
       "real": {
-        "native": "pending",
+        "native": "pass",
         "docker": "pending",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       }

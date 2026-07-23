@@ -210,7 +210,7 @@ honest answers differ by dimension. Where there is no official primitive, the ce
 
 | Dimension | Pydantic AI primitive | Maturity | Version | Arena verdict |
 |---|---|---|---|---|
-| `memory_cross_session` | native `message_history` + `ModelMessagesTypeAdapter` serialization, keyed by `user_id` at the **application level** (`adapter.py` `_memory_store_key`) | **App-level replay keyed by user (L1)** — the persistence/replay is NATIVE, but the user-keying is adapter convention, NOT a framework scope primitive | pydantic-ai 2.12.0 | **real: pending** (mechanism proven offline; scoring needs real rqlite + real model) |
+| `memory_cross_session` | native `message_history` + `ModelMessagesTypeAdapter` serialization, keyed by `user_id` at the **application level** (`adapter.py` `_memory_store_key`) | **App-level replay keyed by user (L1)** — the persistence/replay is NATIVE, but the user-keying is adapter convention, NOT a framework scope primitive | pydantic-ai 2.12.0 | **real: pass 2/2** (committed board `RESULTS.md` @ 06945bf, real agnes lane) |
 | `memory_semantic_recall` | — none — | **NONE** (see below) | — | **infeasible: no official semantic-recall primitive** |
 | `memory_consolidation` | — none — | **NONE** | — | **infeasible: no official consolidation primitive** |
 
@@ -254,6 +254,14 @@ adapter's own code, not the framework, which is precisely why the arena's fairne
 `infeasible` for this dimension (there is no *framework* scope to forget). Marking it `infeasible` — instead
 of contriving an adapter-level "leak" or "refuse" — is the anti-strawman choice: aisotropy's own
 construction-enforced refusal is NOT credited here to a competitor that structurally lacks the concept.
+
+**2026-07 ecosystem sweep.** Native memory remains **NONE** for Pydantic AI: the open issue
+[pydantic/pydantic-ai-harness#30](https://github.com/pydantic/pydantic-ai-harness/issues/30) (2026-03) still
+tracks a first-party memory capability; everything else is THIRD-PARTY only (Hindsight, Neo4j Agent
+Memory, MemU). This board therefore measured Pydantic AI on its app-level user-scoped store built on
+the native `message_history` serialization — its **maximum official surface** today — and the verdicts
+above stand: what exists third-party is not a framework primitive and does not change the
+user-scoped result.
 
 ### `memory_scoped` — hand-rolled COMPOUND-SCOPE isolation (not framework-native)
 
