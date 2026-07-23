@@ -69,6 +69,7 @@ from modes import (
     observability,
     qa,
     rag,
+    store_memory,
     stream,
     structured,
     tools,
@@ -84,6 +85,13 @@ MODES = {
     "stream": stream.run,
     "memory_scoped": memory_scoped.run,
     "isolation_leak": isolation_leak.run,
+    # isolation_forgetful: the omitted-scope READ invocation of the "forgetful
+    # integrator" tenancy dimension (docs/architecture/arena-tenancy-levels.md).
+    # The recall arrives with user_id deliberately blank; store_memory.run_forgetful
+    # forwards that blank RAW to BaseStore.search so LangGraph's OWN scope boundary
+    # decides the verdict. The PERSIST invocation of this dimension arrives as an
+    # ordinary mode:"memory" turn with user_id set, handled by memory.run above.
+    "isolation_forgetful": store_memory.run_forgetful,
     "observability": observability.run,
     "middleware": middleware.run,
 }

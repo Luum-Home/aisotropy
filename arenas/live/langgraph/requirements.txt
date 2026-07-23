@@ -22,3 +22,17 @@ langgraph-checkpoint-sqlite==3.1.0
 opentelemetry-api==1.44.0
 opentelemetry-sdk==1.44.0
 openinference-instrumentation-langchain==0.1.67
+# memory_cross_session / memory_semantic_recall / memory_consolidation /
+# isolation_forgetful (docs/architecture/arena-memory-extensions.md,
+# arena-tenancy-levels.md): LangGraph's OWN long-term-memory primitive
+# (BaseStore: langgraph.store.sqlite.SqliteStore on-disk / .memory.InMemoryStore
+# stub, both shipped inside langgraph==1.2.9, no new package) namespaced by
+# (user_id,) with a semantic `index`, plus langmem for the consolidation
+# directive. See modes/store_memory.py and the "Memory extensions & tenancy"
+# section of README.md. langmem is MIT (github.com/langchain-ai/langmem).
+# langchain-anthropic is pinned <1.5.0 ONLY to keep langmem's transitive dep
+# compatible with the arena's pinned langchain-core==1.4.9 (langchain-anthropic
+# 1.5.0 requires core>=1.5.0); the anthropic path itself is UNUSED here — every
+# model call goes through the OpenAI-compatible agnes endpoint.
+langmem==0.0.30
+langchain-anthropic==1.4.8

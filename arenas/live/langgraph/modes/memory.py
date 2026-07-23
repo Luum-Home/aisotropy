@@ -26,12 +26,26 @@ import time
 import traceback
 from typing import Any
 
-from . import common
+from . import common, store_memory
 
 MODE = "memory"
 
 
 def run(payload: dict[str, Any]) -> dict[str, Any]:
+    # Memory-extension dimensions (memory_cross_session / memory_semantic_recall /
+    # memory_consolidation) arrive over the wire as ordinary mode:"memory" turns
+    # but carry the additive `user_id` field with a session_id that VARIES while
+    # user_id HOLDS across the task's invocations (arenas/live/runner/tasks.go
+    # buildMemoryExt). A thread-keyed CHECKPOINTER (the path below) cannot pass
+    # those by construction — session B is a fresh thread. When user_id is
+    # present we therefore route to LangGraph's OWN user-scoped long-term memory
+    # primitive (BaseStore, + langmem for consolidation) — see modes/store_memory
+    # .py. When user_id is absent, the plain `memory` dimension's cross-process
+    # checkpointer path below is UNCHANGED.
+    user_id = payload.get("user_id")
+    if isinstance(user_id, str) and user_id.strip():
+        return store_memory.run(payload, user_id=user_id)
+
     model_name, api_key, base_url, err = common.resolve_chat_env(MODE)
     if err:
         return err

@@ -48,6 +48,50 @@ which is an isolation leak, not a fix) — see `.claude/rules/constitutional-gat
 (`BaseStore` namespaces) to scope by; it does not give them the *guarantee* that a missing scope
 column fails closed.
 
+## Memory extensions & tenancy — official primitives wired (fairness transparency)
+
+The four opt-in dimensions below (`memory_cross_session`, `memory_semantic_recall`,
+`memory_consolidation`, `isolation_forgetful`) are driven through **LangGraph's OWN official
+long-term-memory primitives**, never a hand-rolled store. This is the fairness the arena requires
+(`docs/architecture/arena-fairness-protocol.md`): measuring LangGraph against a SQLite the adapter
+hand-rolls while its native `BaseStore` sits unused would be the #1 fairness debt. `modes/store_memory.py`
+is the engine; `modes/memory.py` routes to it when the wire turn carries a non-empty `user_id`
+(the plain `memory` checkpointer path is untouched when `user_id` is absent).
+
+| Dimension | Official primitive wired | Maturity | Pinned version | URL |
+|---|---|---|---|---|
+| `memory_cross_session` | `langgraph.store.base.BaseStore` — `SqliteStore` (on-disk, cross-process) / `InMemoryStore` (stub), namespaced by `(user_id,)`; `put`/`search` | **NATIVE** | ships inside `langgraph==1.2.9` (no new package) | https://langchain-ai.github.io/langgraph/concepts/memory/#long-term-memory |
+| `memory_semantic_recall` | Same `BaseStore` with an `index` config (`{dims, embed, fields}`) → semantic `search`; embedder is the SAME shared e5 endpoint (`OpenAIEmbeddings`, `multilingual-e5-small-query`) `rag` mode uses | **NATIVE** | `langgraph==1.2.9` + `langchain-openai==1.3.5` | https://blog.langchain.com/semantic-search-for-langgraph-memory/ |
+| `memory_consolidation` | `langmem.create_memory_store_manager(...).invoke({"messages": …})` — a `MemoryStoreManager` invoked **synchronously** on the consolidate directive, distilling into a dedicated `(user_id, "langmem")` sub-namespace | **OFFICIAL-EXTENSION** (langmem SDK, MIT) | `langmem==0.0.30` | https://langchain-ai.github.io/langmem/ |
+| `isolation_forgetful` | `BaseStore.search((user_id,), …)` with `user_id` forwarded **RAW** (blank) — the omitted-scope read at the framework's OWN API boundary (`modes/store_memory.py` `run_forgetful`, the `store.search(namespace, …)` call) | **NATIVE** (L1 — namespace is a scoping *parameter*, not enforced) | `langgraph==1.2.9` | https://langchain-ai.github.io/langgraph/concepts/persistence/#memory-store |
+
+**Consolidation compromise (documented, not hidden):** langmem's `MemoryStoreManager` is invoked
+synchronously to completion on the real model. Under the offline stub the `FakeListChatModel` cannot
+drive langmem's `trustcall` structured extraction, so the consolidate turn falls back to the
+`BaseStore` write path (the raw turns persisted on the persist invocation remain searchable, so
+recall still works) and SAYS SO in its reply — never a silent swallow. langmem also gets its OWN
+`(user_id, "langmem")` sub-namespace: its manager reconciles against existing memories expecting its
+own schema (`kind`/`content`) and raises `KeyError('kind')` — on the REAL model too — if pointed at
+the raw `{"text": …}` items; a recall `search` under the `(user_id,)` **prefix** still sees both the
+raw items and the distilled sub-namespace, so the split does not affect recall.
+
+**`isolation_forgetful` verdict is backend-dependent and honestly L1:** the omitted-scope
+`search(("",) , …)` returns **another user's memory on the real `SqliteStore`** (an empty-string
+namespace component behaves as a match-all prefix → a **leak**, L1 breach), and returns **empty on
+the stub `InMemoryStore`** (**silent_partition**). Either way LangGraph does **not** refuse — it is
+L1: namespaces are organizational, not access control. That is exactly the L1-vs-L3 gradation the
+dimension measures (`docs/architecture/arena-tenancy-levels.md`). The omission happens at
+`BaseStore`'s own `search` boundary — never backfilled in adapter glue — so the verdict is the
+framework's.
+
+**Package versions are read from `requirements.txt`** (`langgraph==1.2.9`,
+`langchain-openai==1.3.5`, `langchain-core==1.4.9`, `langmem==0.0.30`, and `langchain-anthropic==1.4.8`
+pinned `<1.5.0` ONLY to keep langmem's transitive dep compatible with the pinned
+`langchain-core==1.4.9` — the anthropic path itself is unused; every model call goes through the
+OpenAI-compatible agnes endpoint). NOT wired here (out of scope, still a SHOULD-FIX):
+`memory_scoped`/`isolation_leak` continue to use the hand-rolled `modes/scoped_store.py` — swapping
+those to `BaseStore` too is idiomaticity SHOULD-FIX #1, tracked separately from these four dimensions.
+
 ## Real infra wiring
 
 Configuration comes entirely from environment variables — never hardcoded:
