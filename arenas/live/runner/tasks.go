@@ -426,6 +426,25 @@ func isMemoryExtKind(kind string) bool {
 // user without needing session in its marker (see arenas/live/aisotropy/
 // rqlite_reset.go). Scored by scoring.ScoreMemory (answer-key containment), the
 // design's chosen primary — no new scorer.
+// runNonce is set ONCE per runner invocation (main, before any buildWork) and
+// appended to every memory-ext / forgetful user scope. It makes the on-disk
+// user-scoped stores each competitor adapter now uses (langgraph BaseStore,
+// llamaindex Qdrant, pydantic-ai/spring-ai rqlite, aisotropy facts) FRESH per
+// run: a deterministic user key would otherwise let a STALE store from a prior
+// run satisfy a cross-session recall — a framework would falsely PASS on
+// residue, not memory. langgraph/llamaindex/pydantic-ai all flagged this. Empty
+// in unit tests (they call the builders directly), so test keys are unchanged.
+// Tradeoff: stores accumulate old-nonce data across runs (disk grows slowly);
+// correctness-first over a per-adapter wipe that would need 8 more changes.
+var runNonce string
+
+func runSuffix() string {
+	if runNonce == "" {
+		return ""
+	}
+	return "-" + runNonce
+}
+
 func buildMemoryExt(framework, mode string, tasks []task, maxTasks int) []workItem {
 	mem := capTasks(filterKind(tasks, mode), maxTasks)
 	out := make([]workItem, 0, len(mem))
@@ -439,7 +458,7 @@ func buildMemoryExt(framework, mode string, tasks []task, maxTasks int) []workIt
 		// Unique-per-task user (the constant scope across this task's invocations)
 		// and two DISTINCT sessions: session A holds persist (+consolidate),
 		// session B is the fresh recall session that defeats transcript replay.
-		user := "u-" + mode + "-" + t.ID
+		user := "u-" + mode + "-" + t.ID + runSuffix()
 		sessionA := fmt.Sprintf("arena-%s-%s-a", mode, t.ID)
 		sessionB := fmt.Sprintf("arena-%s-%s-b", mode, t.ID)
 
@@ -514,7 +533,7 @@ func buildForgetful(framework string, tasks []task, maxTasks int) []workItem {
 		// scope A: a unique-per-task (tenant-held, user) scope the fact lives
 		// under. sessionB is a well-formed recall session so the ONLY thing the
 		// recall "forgot" is the isolation axis (user) — the sharpest test.
-		userA := "u-forget-" + t.ID
+		userA := "u-forget-" + t.ID + runSuffix()
 		sessionA := "arena-forget-" + t.ID + "-a"
 		sessionB := "arena-forget-" + t.ID + "-b"
 

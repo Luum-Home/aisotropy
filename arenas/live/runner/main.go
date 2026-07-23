@@ -150,6 +150,14 @@ func main() {
 	}
 	logf("loaded %d suite tasks, %d rag questions", len(tasks), len(rag))
 
+	// Set the per-run nonce ONCE, before any work is built. It makes every
+	// memory-ext/forgetful user scope fresh per run so a stale on-disk store
+	// from a prior run cannot satisfy a cross-session recall (see runNonce in
+	// tasks.go). Runtime-only value; the scoring package (the determinism-gated
+	// one) never sees it.
+	runNonce = fmt.Sprintf("r%d", time.Now().UnixNano())
+	logf("run nonce (per-run store isolation for memory-ext/forgetful): %s", runNonce)
+
 	// ---- -tasks subset filter (see the flag help text above) --------------
 	// Filters the IN-MEMORY slices loaded from the REAL -live directory — the
 	// supported alternative to a hand-built scratch -live directory, which
