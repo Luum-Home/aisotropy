@@ -171,7 +171,18 @@ ADR-0069 and in the test files' comments.
   and fixture tests passed against the real Kokoro container + faster-whisper
   base.en, and the file-based pipeline test (WAV → whisper STT → shim LLM →
   Kokoro TTS frames, via `pipecat.tests.utils.run_test`) passed against a live
-  stub-backed aisotropyd — no audio hardware involved.
+  stub-backed aisotropyd — no audio hardware involved. Re-run later the same
+  day against the real `cmd/aisotropyd` binary (post boot-deadlock fix):
+  **16/16 passed in 64s** via the canonical `with-heavy-lane.sh` invocation.
+- **Real-TTS latency measured** (2026-07-23, stub LLM + Kokoro **CPU** image,
+  5 runs): median `llm_ttft` **3.1 ms**, median `tts_ttfab` **3540 ms**, median
+  TTFAB **3543 ms**; barge-in-to-silence median **0.1 ms**. The sandwich's
+  latency bottleneck is Kokoro-CPU's first audio byte (2.3–3.7 s observed) —
+  production voice needs the GPU image, a streaming-TTS mode, or
+  sentence-chunked synthesis; the runtime side (shim) contributes ~3 ms. No
+  calibrated TTFAB threshold is committed yet: the `--assert-ttfab-ms 2000`
+  probe run correctly FAILED (exit 1) against the CPU image — that was the
+  breach path being exercised, not a regression.
 - `bot.py` itself (mic/speaker via `LocalAudioTransport`) still requires real
   audio hardware and has NOT been run here. The latent voice-id issue found
   while building the lane — pipecat 0.0.x's `OpenAITTSService` rejects
