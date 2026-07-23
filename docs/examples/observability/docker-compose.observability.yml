@@ -8,9 +8,16 @@
 #
 #   docker compose -f docs/examples/observability/docker-compose.observability.yml up -d
 #   # then run aisotropyd with:
-#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 ./aisotropyd
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4328 ./aisotropyd
 #   # open the UI:
-#   open http://localhost:18888
+#   open http://localhost:18898
+#
+# Ports are deliberately OFFSET (+10) from the OTel defaults (4317/4318/18888):
+# another local stack may already occupy the defaults with its own collector +
+# dashboard. If a collector is ALREADY listening on :4318 on this host, you can
+# skip this overlay entirely and just point aisotropyd at it
+# (OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318) — the exporter is
+# backend-agnostic OTLP; any OTLP-compatible collector/dashboard works.
 #
 # The exporter is otlptracehttp (HTTP/protobuf, internal/llm/otel.go), so it
 # posts to the OTLP/HTTP endpoint on host :4318 (container 18890). Content is
@@ -27,7 +34,7 @@ services:
       # Local dev only: skip the login token and allow plain-HTTP OTLP ingest.
       - DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true
     ports:
-      - "18888:18888"   # Dashboard UI (http://localhost:18888)
-      - "4317:18889"    # OTLP/gRPC  ingest  (host 4317  -> container 18889)
-      - "4318:18890"    # OTLP/HTTP  ingest  (host 4318  -> container 18890)
+      - "18898:18888"   # Dashboard UI (http://localhost:18898)
+      - "4327:18889"    # OTLP/gRPC  ingest  (host 4327  -> container 18889)
+      - "4328:18890"    # OTLP/HTTP  ingest  (host 4328  -> container 18890)
     restart: unless-stopped
