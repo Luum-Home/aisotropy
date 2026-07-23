@@ -94,10 +94,17 @@ func stubUsageFor(system, prompt string, words []string) Usage {
 	}
 }
 
-// stubWordsFor picks between the schema-aware structured reply (when prompt
+// stubWordsFor picks between the schema-aware structured reply (when the request
 // carries a structured-output instruction) and the default free-text echo.
+//
+// ADR-0068 (A1): the structured-output rider now lives in the SYSTEM region
+// (gollem.go buildGollemPrompt appends it to the system prompt, not the body),
+// so the stub must look for the schema marker in BOTH system and prompt — a
+// system-only match is the normal case after the fix. Without this, moving the
+// rider out of the body silently drops the stub into free-text echo, the chat
+// reflection loop never sees valid JSON, and it burns its whole retry budget.
 func stubWordsFor(system, prompt string) []string {
-	if reply, ok := stubStructuredReply(prompt); ok {
+	if reply, ok := stubStructuredReply(system, prompt); ok {
 		return []string{reply}
 	}
 	return buildStubWords(system, prompt)
@@ -118,17 +125,27 @@ const schemaInstructionMarker = "Respond ONLY with a valid JSON object that exac
 // Returns ok=false when prompt carries no such instruction, or the embedded
 // schema does not parse — callers fall back to the default free-text echo in
 // that case, never a silent malformed reply.
-func stubStructuredReply(prompt string) (string, bool) {
-	idx := strings.Index(prompt, schemaInstructionMarker)
+func stubStructuredReply(system, prompt string) (string, bool) {
+	// The schema rider may be in the SYSTEM region (ADR-0068 A1, the normal case)
+	// or, on any path that still inlines it, the prompt body. Prefer system.
+	source := system
+	idx := strings.Index(source, schemaInstructionMarker)
+	if idx < 0 {
+		source = prompt
+		idx = strings.Index(source, schemaInstructionMarker)
+	}
 	if idx < 0 {
 		return "", false
 	}
-	nl := strings.IndexByte(prompt[idx:], '\n')
+	nl := strings.IndexByte(source[idx:], '\n')
 	if nl < 0 {
 		return "", false
 	}
-	schemaText := prompt[idx+nl:]
-	userPart := strings.TrimSpace(prompt[:idx])
+	schemaText := source[idx+nl:]
+	// The user-facing content folded into string fields is always the actual
+	// prompt body (the user's turn), regardless of which region carried the
+	// schema — so a reply stays recognizably derived from the request.
+	userPart := strings.TrimSpace(prompt)
 
 	var schema map[string]any
 	if err := json.Unmarshal([]byte(schemaText), &schema); err != nil {

@@ -82,18 +82,18 @@ func TestStubClient_CtxCancelBeforeAnyToken(t *testing.T) {
 func TestStubStructuredReply_MalformedInputs(t *testing.T) {
 	t.Run("no newline after the marker", func(t *testing.T) {
 		prompt := "please answer. " + schemaInstructionMarker // no '\n' after it
-		if _, ok := stubStructuredReply(prompt); ok {
+		if _, ok := stubStructuredReply("", prompt); ok {
 			t.Fatal("expected ok=false when no newline follows the schema instruction marker")
 		}
 	})
 	t.Run("embedded schema is not valid JSON", func(t *testing.T) {
 		prompt := schemaInstructionMarker + "\nthis is not valid json{{{"
-		if _, ok := stubStructuredReply(prompt); ok {
+		if _, ok := stubStructuredReply("", prompt); ok {
 			t.Fatal("expected ok=false for an unparseable embedded schema")
 		}
 	})
 	t.Run("no marker present falls back cleanly", func(t *testing.T) {
-		if _, ok := stubStructuredReply("just a plain prompt, no schema instruction"); ok {
+		if _, ok := stubStructuredReply("", "just a plain prompt, no schema instruction"); ok {
 			t.Fatal("expected ok=false when the prompt carries no schema instruction")
 		}
 	})

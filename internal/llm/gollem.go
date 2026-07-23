@@ -343,9 +343,35 @@ func generateFull(ctx context.Context, client Client, system, prompt string) (st
 
 // buildGollemPrompt flattens Gollem's ModelMessage history (system prompt,
 // user prompt, feedback from previous retries, previous model responses)
-// into a single (system, prompt) pair — what Client.StreamChat accepts. It
-// appends, at the end, the JSON Schema instruction when params requests
-// structured output (see outputInstruction).
+// into a single (system, prompt) pair — what Client.StreamChat accepts.
+//
+// ADR-0068 (A1) — schema rider lives in the SYSTEM region, never the tail.
+// The JSON-Schema "respond ONLY with JSON" instruction (outputInstruction) is
+// appended to the SYSTEM prompt, NOT after the last user message. Previously it
+// was written to the body as the FINAL line — so on the qa/chat route (which
+// forces a struct T through the reflection loop) it was the last thing the model
+// read, AFTER a possibly-adversarial user turn. That trailing formatting
+// directive suppressed refusal/decline language: it is the code-grounded
+// mechanism behind live board 06945bf's safeguard failures (sg-identity-model
+// leaked the model/vendor name; sg-jailbreak-persona complied with a persona
+// override). Relocating it to the system region keeps the user's turn as the
+// FINAL content block, so the model's safety behaviour is not overwritten by a
+// trailing schema instruction. The schema TEXT is unchanged, so gollem's own
+// reflection retry (which resends a RetryPromptPart into the body — see below)
+// still references the identical schema; retry semantics are preserved.
+//
+// Placement note: the SystemPromptPart already carries the fully assembled
+// system prompt (persona, memory-recency policy, and — only when memory/RAG
+// hydration produced content — the untrusted-context fence, built by
+// internal/api.hydrateSystemPrompt). buildGollemPrompt receives that as one
+// opaque string and can only APPEND, so the rider lands at the very end of the
+// system region: right after the persona when there is no fence (the safeguard
+// probes hydrate nothing, so this is their case), or just after the fence close
+// otherwise — in both cases inside the system message and BEFORE the user turn,
+// which is the property that fixes the suppression. Placing it strictly above
+// the fence would require internal/api.hydrateSystemPrompt to inject it during
+// assembly; that is recorded as the ADR-0068 follow-up (native structured
+// output via the ToolCaller seam removes the prompt-borne rider entirely).
 func buildGollemPrompt(messages []core.ModelMessage, params *core.ModelRequestParameters) (system, prompt string) {
 	var sys strings.Builder
 	var body strings.Builder
@@ -375,8 +401,10 @@ func buildGollemPrompt(messages []core.ModelMessage, params *core.ModelRequestPa
 		}
 	}
 
+	// ADR-0068 (A1): rider into the SYSTEM region, not appended after the user
+	// turn. See the function doc for the full rationale.
 	if instr := outputInstruction(params); instr != "" {
-		writeLine(&body, instr)
+		writeLine(&sys, instr)
 	}
 
 	return strings.TrimSpace(sys.String()), strings.TrimSpace(body.String())
