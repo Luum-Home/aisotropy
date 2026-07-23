@@ -867,6 +867,10 @@ var forgetfulEnforcementSignatures = []struct {
 	{name: "identity-required", all: []string{"requires a non-empty value"}},
 	{name: "invalid-identity", all: []string{"invalid tenant/user identity"}},
 	{name: "identity-422", all: []string{"422", "identity"}},
+	// Mastra throws this before any model call when resourceId/threadId is
+	// omitted (arenas/live/mastra FASE 3) — model-independent enforcement, so it
+	// EARNS the refuses-PASS; without this it would misscore as run-and-fail.
+	{name: "mastra-scope-required", all: []string{"resourceid and a threadid must be provided"}},
 }
 
 // matchForgetfulEnforcementSignature returns the name of the first isolation-
