@@ -24,6 +24,19 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
+// otelCaptureContentEnv is the opt-in escape hatch for exporting user content
+// (tool call arguments) on gollem's ext/otel spans. Off by default — see the
+// package doc on otelContentDenylist in otel.go for the full privacy
+// rationale (gollem's ext/otel defaults captureToolArgs to TRUE, see
+// github.com/fugue-labs/gollem/ext/otel/options.go:25, and its
+// gollem.agent.prompt attribute has NO option gate at all, see
+// ext/otel/tracing.go:124-130 — the redacting exporter installed by
+// NewTracerProvider is the backstop for that one). Setting this var exports
+// tool arguments (which routinely carry user-supplied content) to whatever
+// OTLP backend AISOTROPY_ADDR's tracing is configured to send to — development
+// use only.
+const otelCaptureContentEnv = "AISOTROPY_OTEL_CAPTURE_CONTENT"
+
 // maxToolStepsGuardrailName names the turn guardrail that bounds the agent to
 // maxSteps model turns. It is used both to install the guardrail and to detect
 // its abort (a *core.GuardrailError carrying this name), so a run that simply
@@ -212,8 +225,20 @@ func RunToolAgentWithOutput(
 // otelTracingHooks builds the ext/otel tracing hook. When tracer is non-nil it
 // pins that provider; otherwise the hook uses the global OTel provider (a no-op
 // when none is configured).
+//
+// Tool-argument capture is OFF by default: gollem's ext/otel defaults
+// captureToolArgs to true (github.com/fugue-labs/gollem/ext/otel/options.go:25),
+// and tool arguments routinely carry user-supplied content (see the P0 privacy
+// finding this fixes — docs cross-reference in otel.go). This call explicitly
+// overrides that default rather than relying on gollem's default, so the
+// no-user-content posture holds even if gollem's own default ever changes.
+// Set AISOTROPY_OTEL_CAPTURE_CONTENT to restore capture for local debugging;
+// the redacting exporter in NewTracerProvider (otel.go) is the second,
+// independent layer of defense — it strips gollem.tool.args and
+// gollem.agent.prompt (which gollem records with NO option gate at all) from
+// every span unless the same env var is set.
 func otelTracingHooks(tracer oteltrace.TracerProvider) core.Hook {
-	tracingOpts := []otel.TracingOption{otel.WithCaptureToolArgs(true)}
+	tracingOpts := []otel.TracingOption{otel.WithCaptureToolArgs(otelCaptureContentEnabled())}
 	if tracer != nil {
 		tracingOpts = append(tracingOpts, otel.WithTracerProvider(tracer))
 	}

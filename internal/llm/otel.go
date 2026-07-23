@@ -95,6 +95,122 @@ const (
 	tracerName = "github.com/Luum-Home/aisotropy/internal/llm"
 )
 
+// otelContentDenylist lists the OTel span attribute keys the redacting
+// exporter (below) strips before spans leave the process, unless
+// AISOTROPY_OTEL_CAPTURE_CONTENT (see toolagent.go's otelCaptureContentEnv)
+// is set. This is the local defense for the P0 privacy finding: aisotropy's
+// constitutional posture is NO user content on telemetry (see this file's
+// package doc), but gollem's ext/otel — mounted by RunToolAgent
+// (toolagent.go) via otelTracingHooks — records content-bearing attributes
+// that are not fully under aisotropy's control:
+//
+//   - gollem.agent.prompt — the full user prompt, recorded UNCONDITIONALLY,
+//     with no TracingOption that disables it (verified in the pinned gollem
+//     module: github.com/fugue-labs/gollem@v0.5.1/ext/otel/tracing.go:124-130,
+//     func onRunStart). This exporter is the ONLY local defense against it.
+//   - gollem.tool.args — tool call arguments, gated by gollem's own
+//     captureToolArgs (default TRUE — .../ext/otel/options.go:22-27,
+//     defaultConfig). toolagent.go's otelTracingHooks overrides that default
+//     to off; this entry is defense-in-depth against a future call site (or a
+//     gollem upgrade changing its default) re-enabling it.
+//   - gollem.tool.result — tool call results, gated by captureToolResults
+//     (default false, .../ext/otel/options.go:46-53). aisotropy never enables
+//     it — listed here for the same defense-in-depth reason.
+//
+// Extend this list (or isRedactedGollemAttr's suffix check below) the next
+// time a gollem release adds a new content-bearing attribute — never assume a
+// new gollem.* attribute is content-free by default.
+var otelContentDenylist = map[attribute.Key]struct{}{
+	"gollem.agent.prompt": {},
+	"gollem.tool.args":    {},
+	"gollem.tool.result":  {},
+}
+
+// isRedactedGollemAttr reports whether key must be stripped by the redacting
+// exporter: either an exact otelContentDenylist match, or — defensively, for
+// a gollem attribute this list does not yet name by exact key — a
+// "gollem.*.messages"-shaped key. gollem's WithCaptureModelMessages option
+// (.../ext/otel/options.go:55-62) names its intent that way; no attribute
+// using that option exists in the pinned gollem version (captureModelMsgs is
+// read nowhere else in ext/otel — verified via grep), but the shape is
+// reserved so a gollem version bump can't silently start leaking full model
+// message history through this seam without this redactor catching it.
+func isRedactedGollemAttr(key attribute.Key) bool {
+	if _, ok := otelContentDenylist[key]; ok {
+		return true
+	}
+	k := string(key)
+	return strings.HasPrefix(k, "gollem.") && strings.HasSuffix(k, ".messages")
+}
+
+// otelCaptureContentEnv is duplicated here only in doc-comments (the const
+// itself lives in toolagent.go, this package's other file) — both the
+// redacting exporter below and otelTracingHooks (toolagent.go) share one
+// opt-in switch so enabling capture is a single, explicit, documented action
+// rather than two independent flags that could drift.
+
+// otelCaptureContentEnabled reports whether AISOTROPY_OTEL_CAPTURE_CONTENT is
+// set to a non-empty value — the shared opt-in escape hatch that disables the
+// redacting exporter below AND restores gollem's tool-argument capture in
+// otelTracingHooks (toolagent.go). Development use only: enabling it exports
+// user content (prompts, tool arguments) to whatever OTLP backend tracing is
+// configured to send to. Default (unset) is redact-everything — the
+// constitutional posture.
+func otelCaptureContentEnabled() bool {
+	return os.Getenv(otelCaptureContentEnv) != ""
+}
+
+// redactingExporter wraps an sdktrace.SpanExporter, stripping
+// isRedactedGollemAttr-matched attributes from every span before handing it
+// to the wrapped exporter — installed by NewTracerProvider around the OTLP
+// exporter it builds, independent of whatever TracingOption a given call site
+// passed (belt-and-suspenders against the attribute gollem records with no
+// option gate at all). Pass-through for every other attribute (usage
+// numbers, model/system identity, tenant/user ids, durations, ...) and every
+// other ReadOnlySpan property (name, status, events, links, ...) — this
+// wrapper touches Attributes() only, and it never logs what it drops.
+type redactingExporter struct {
+	next sdktrace.SpanExporter
+}
+
+var _ sdktrace.SpanExporter = (*redactingExporter)(nil)
+
+// ExportSpans wraps each span so its Attributes() call filters through
+// isRedactedGollemAttr, then delegates to the wrapped exporter unchanged.
+func (r *redactingExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	redacted := make([]sdktrace.ReadOnlySpan, len(spans))
+	for i, s := range spans {
+		redacted[i] = redactedSpan{ReadOnlySpan: s}
+	}
+	return r.next.ExportSpans(ctx, redacted)
+}
+
+// Shutdown delegates to the wrapped exporter unchanged.
+func (r *redactingExporter) Shutdown(ctx context.Context) error { return r.next.Shutdown(ctx) }
+
+// redactedSpan overrides Attributes() on an sdktrace.ReadOnlySpan, dropping
+// any isRedactedGollemAttr match. Every other method — including the sealed,
+// unexported ReadOnlySpan.private() that prevents packages outside
+// go.opentelemetry.io/otel/sdk/trace from implementing this interface
+// directly — is inherited unchanged via the embedded interface value, which
+// is how a wrapper defined outside that package is still allowed to satisfy
+// the sealed interface (the embedded value already implements private()).
+type redactedSpan struct {
+	sdktrace.ReadOnlySpan
+}
+
+func (s redactedSpan) Attributes() []attribute.KeyValue {
+	orig := s.ReadOnlySpan.Attributes()
+	kept := make([]attribute.KeyValue, 0, len(orig))
+	for _, a := range orig {
+		if isRedactedGollemAttr(a.Key) {
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return kept
+}
+
 // otelClient decorates a Client with OTel GenAI-semconv tracing. It is
 // transparent: every Token (Text/Done/Err) is forwarded to the caller
 // unchanged — the wrapper only observes the stream to populate span
@@ -442,6 +558,16 @@ func NewTracerProvider(ctx context.Context) (shutdown func(context.Context) erro
 		return noopShutdown, tp.Tracer(tracerName), tp
 	}
 
-	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))
+	// Wrap the OTLP exporter in the redacting layer (see otelContentDenylist
+	// above) by default — dropping gollem.agent.prompt / gollem.tool.args /
+	// gollem.tool.result before anything leaves the process, regardless of
+	// which gollem TracingOption a call site set. AISOTROPY_OTEL_CAPTURE_CONTENT
+	// disables this wrapper (development use only).
+	var spanExporter sdktrace.SpanExporter = exporter
+	if !otelCaptureContentEnabled() {
+		spanExporter = &redactingExporter{next: exporter}
+	}
+
+	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(spanExporter))
 	return tp.Shutdown, tp.Tracer(tracerName), tp
 }
