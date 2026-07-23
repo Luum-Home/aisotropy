@@ -164,12 +164,17 @@ func run(ctx context.Context, logger *slog.Logger) error {
 }
 
 func main() {
-	// ADR-0068 Layer 2: wrap the process default handler so every *Context log
-	// call carries the telemetry+identity correlation fields the boundary
-	// bridge stamps into ctx (internal/api's stampTelemetry). Behavior-
-	// preserving: a record whose ctx carries no metadata — every non-request
-	// line — passes through byte-identical to the unwrapped handler.
-	logger := slog.New(o11y.NewCtxHandler(slog.Default().Handler()))
+	// ADR-0068 Layer 2: wrap the process handler so every *Context log call
+	// carries the telemetry+identity correlation fields the boundary bridge
+	// stamps into ctx (internal/api's stampTelemetry).
+	//
+	// The base MUST be an explicit handler, never slog.Default().Handler():
+	// the stdlib's implicit default handler writes through the `log` package,
+	// and slog.SetDefault below points `log` back at THIS logger — a log↔slog
+	// cycle that deadlocks at boot under go1.26.5 (log's serialization lock is
+	// held across the bridge; goroutine dump: log.output → handlerWriter.Write
+	// → CtxHandler → defaultHandler → log.output → semacquire, self-wait).
+	logger := slog.New(o11y.NewCtxHandler(slog.NewTextHandler(os.Stderr, nil)))
 	slog.SetDefault(logger)
 	if err := run(context.Background(), logger); err != nil {
 		slog.Error(err.Error())

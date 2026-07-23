@@ -48,11 +48,11 @@ go run ./cmd/aisotropyd
 # to the deterministic stub client. Set a real key for actual conversations.
 ```
 
-> **Known issue (2026-07-23):** under go1.26.5 `cmd/aisotropyd` can deadlock at
-> boot (slog CtxHandler ↔ std-log bridge recursion, `main.go:172`; tracked as a
-> spawned fix task). Workaround until fixed: run a minimal main that imports the
-> public façade — `aisotropy.App` registers the same shim route — which is how
-> the pipeline test's live pass was produced.
+> **Fixed (2026-07-23, same day):** under go1.26.5 `cmd/aisotropyd` deadlocked at
+> boot (log↔slog bridge cycle: the o11y CtxHandler wrapped the stdlib's implicit
+> default handler, which writes through the `log` package that `slog.SetDefault`
+> had pointed back at it). The base is now an explicit stderr TextHandler;
+> boot + `/healthz` + the shim's 401 verified live post-fix.
 
 ### 2. A tenant JWT (this is the OpenAI `api_key`)
 
