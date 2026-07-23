@@ -127,7 +127,7 @@ func newGuardChatRouter(t *testing.T, client llm.Client, wm *memory.WorkingMemor
 	})
 	router := chi.NewRouter()
 	humaAPI := humachi.New(router, huma.DefaultConfig("guard-test", "0.1.0"))
-	Register(humaAPI, client, wm, store, nil, nil, nil, nil, nil, guard)
+	Register(humaAPI, client, wm, store, nil, nil, nil, nil, nil, nil, nil, nil, guard)
 	return router
 }
 

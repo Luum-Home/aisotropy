@@ -159,14 +159,17 @@ func (a *App) ensureRuntime() (*appRuntime, error) {
 // so HTTP and in-process run ChatCore over identical deps.
 func (rt *appRuntime) chatDeps() api.ChatDeps {
 	return api.ChatDeps{
-		Client:  rt.client,
-		WM:      rt.wm,
-		Store:   rt.factsStore,
-		Limiter: rt.limiter,
-		ToolReg: rt.toolRegistry,
-		Persona: rt.persona,
-		Meter:   rt.costMeter,
-		GW:      rt.gateway,
-		Guard:   rt.guard,
+		Client:   rt.client,
+		WM:       rt.wm,
+		Store:    rt.factsStore,
+		Limiter:  rt.limiter,
+		ToolReg:  rt.toolRegistry,
+		Persona:  rt.persona,
+		Meter:    rt.costMeter,
+		GW:       rt.gateway,
+		Guard:    rt.guard,
+		SemStore: rt.semanticStore,
+		Embedder: rt.embedder,
+		Reranker: rt.reranker,
 	}
 }

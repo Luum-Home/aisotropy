@@ -465,8 +465,10 @@ threaded through the handlers:
   `engram` facade, whose lifecycle is tied to the fact — supersede/delete removes the vector), and
   `KindTurn` (raw turns, **bounded** by a TTL/cap pruner that runs always, independent of the Rust
   sleep cycle). `hydrateSystemPrompt` retrieves `KindDocument`+`KindFact` at user scope, merges the
-  tenant-shared `KindDocument` bucket, and excludes raw `KindTurn` from the primary RAG. Wired on the
-  **streaming** path (the non-streaming `chat` passes a nil semantic store). Hydration is still
+  tenant-shared `KindDocument` bucket, and excludes raw `KindTurn` from the primary RAG. Wired on
+  **both** chat routes: the streaming path and — since the chat-route parity fix — the non-streaming
+  `chat`/`App.Turn` path via `ChatDeps.SemStore/Embedder/Reranker` (historically the non-streaming
+  route passed a nil semantic store and could not semantic-recall). Hydration is still
   **sequential**, not the goroutine-parallel hydration the aspirational
   [request lifecycle](request-lifecycle.md) describes. The embedder is BYO: `HashEmbedder` by default
   (wires but does not rank semantically), a real `APIEmbedder` when `AISOTROPY_EMBED_URL` is set.

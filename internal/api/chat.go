@@ -38,6 +38,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/gateway"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
+	"github.com/Luum-Home/aisotropy/internal/semantic"
 	"github.com/Luum-Home/aisotropy/internal/tools"
 )
 
@@ -268,14 +269,13 @@ func chatCheckQuota(ctx context.Context, limiter *memory.Limiter, tenantID strin
 }
 
 // chatBuildSystemPrompt hydrates the system prompt from working memory +
-// facts (the non-streaming endpoint does not wire semantic RAG — semStore/
-// embedder are nil, that's the streaming path's job) and appends the
-// scope-gated tools fragment (Phase 7): a forbidden tool never enters the
-// payload (granular-control.md).
-func chatBuildSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, toolReg *tools.Registry, persona PersonaProvider, key memory.Key, scope facts.Scope, in *ChatInput, prompt string) (string, error) {
-	// Non-streaming route wires no semantic RAG (nil semStore/embedder), so the
-	// reranker is nil too — there are no semantic hits for it to reorder.
-	system, err := hydrateSystemPrompt(ctx, wm, store, nil, nil, nil, persona, key, scope, in.Body.ProductID, prompt)
+// facts + semantic RAG (the same hydrateSystemPrompt the streaming route
+// runs — one shared hydration path, so /chat and /chat/stream recall
+// identically; a nil semStore/embedder degrades to no semantic context) and
+// appends the scope-gated tools fragment (Phase 7): a forbidden tool never
+// enters the payload (granular-control.md).
+func chatBuildSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store facts.Store, semStore semantic.Store, embedder semantic.Embedder, reranker semantic.Reranker, toolReg *tools.Registry, persona PersonaProvider, key memory.Key, scope facts.Scope, in *ChatInput, prompt string) (string, error) {
+	system, err := hydrateSystemPrompt(ctx, wm, store, semStore, embedder, reranker, persona, key, scope, in.Body.ProductID, prompt)
 	if err != nil {
 		return "", err
 	}
@@ -385,6 +385,14 @@ func chatBuildOutput(replyText, tenantID string, client llm.Client, usage llm.Us
 // surfaced here). A nil meter skips recording (keeps existing tests that
 // pass nil working unchanged).
 //
+// semStore/embedder/reranker wire semantic RAG hydration — the SAME instances
+// RegisterStream receives, so the non-streaming route recalls exactly what the
+// streaming route does (route parity: a consolidated KindFact/KindDocument
+// vector is paraphrase-recallable on /chat too, not only /chat/stream). All
+// three are optional: nil semStore/embedder degrades to no semantic context
+// and a nil reranker keeps the built-in score ordering, exactly like the
+// streaming path.
+//
 // gw is the model-selection gateway seam (internal/gateway): when non-nil, the
 // client that serves the turn is chosen by its routing policy (selectClient);
 // nil selects the passed client directly, preserving pre-gateway behavior.
@@ -393,7 +401,7 @@ func chatBuildOutput(replyText, tenantID string, client llm.Client, usage llm.Us
 // model, an injection verdict is annotated (or, if BlockInjection, rejected),
 // and the model response is inspected before it is returned (or, if BlockOutput,
 // replaced with a safe refusal). A nil guard disables guardrails entirely.
-func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, persona PersonaProvider, meter *costmeter.Meter, gw *gateway.Gateway, guard *Guard) {
+func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store facts.Store, limiter *memory.Limiter, toolReg *tools.Registry, persona PersonaProvider, meter *costmeter.Meter, semStore semantic.Store, embedder semantic.Embedder, reranker semantic.Reranker, gw *gateway.Gateway, guard *Guard) {
 	huma.Register(api, huma.Operation{
 		OperationID: "chat",
 		Method:      httpMethodPost,
@@ -412,15 +420,18 @@ func Register(api huma.API, client llm.Client, wm *memory.WorkingMemory, store f
 		// ChatDeps assembly is what guarantees HTTP and in-process share one
 		// code path — no behavior lives in this closure any more.
 		return ChatCore(ctx, ChatDeps{
-			Client:  client,
-			WM:      wm,
-			Store:   store,
-			Limiter: limiter,
-			ToolReg: toolReg,
-			Persona: persona,
-			Meter:   meter,
-			GW:      gw,
-			Guard:   guard,
+			Client:   client,
+			WM:       wm,
+			Store:    store,
+			Limiter:  limiter,
+			ToolReg:  toolReg,
+			Persona:  persona,
+			Meter:    meter,
+			GW:       gw,
+			Guard:    guard,
+			SemStore: semStore,
+			Embedder: embedder,
+			Reranker: reranker,
 		}, in)
 	})
 }

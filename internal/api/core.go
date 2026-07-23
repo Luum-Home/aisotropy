@@ -12,6 +12,7 @@ import (
 	"github.com/Luum-Home/aisotropy/internal/lang"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/memory"
+	"github.com/Luum-Home/aisotropy/internal/semantic"
 	"github.com/Luum-Home/aisotropy/internal/tools"
 )
 
@@ -36,6 +37,17 @@ type ChatDeps struct {
 	Meter   *costmeter.Meter
 	GW      *gateway.Gateway
 	Guard   *Guard
+	// SemStore/Embedder/Reranker wire semantic RAG hydration into the
+	// non-streaming pipeline — the SAME tier, kinds (Document+Fact, never raw
+	// Turn) and in-scan tenant/user filtering the streaming path uses via
+	// hydrateSystemPrompt/searchSemanticContext. Historically these were nil
+	// here (only /chat/stream hydrated semantic memory), which meant a fact
+	// consolidated into a KindFact vector was paraphrase-recallable on the
+	// streaming route but NOT on /chat or App.Turn. Nil still degrades cleanly
+	// to "no semantic context" (facts-only deployments unchanged).
+	SemStore semantic.Store
+	Embedder semantic.Embedder
+	Reranker semantic.Reranker
 }
 
 // ChatCore runs the full non-streaming chat pipeline in-process: identity->ctx,
@@ -102,7 +114,7 @@ func ChatCore(ctx context.Context, d ChatDeps, in *ChatInput) (*ChatOutput, erro
 		"llm", active.Name(),
 	)
 
-	system, err := chatBuildSystemPrompt(ctx, d.WM, d.Store, d.ToolReg, d.Persona, key, scope, in, forwarded)
+	system, err := chatBuildSystemPrompt(ctx, d.WM, d.Store, d.SemStore, d.Embedder, d.Reranker, d.ToolReg, d.Persona, key, scope, in, forwarded)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to hydrate working memory", err)
 	}

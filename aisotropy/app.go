@@ -1219,7 +1219,10 @@ func (a *App) Run(ctx context.Context) error {
 		slog.Info("MCP serve endpoint enabled (scope-gated tool publishing)", "path", a.mcpServe.path)
 	}
 
-	api.Register(humaAPI, rt.client, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.persona, rt.costMeter, rt.gateway, rt.guard)
+	// Route parity: the non-streaming route receives the SAME semantic
+	// store/embedder/reranker the streaming route gets on the next line, so a
+	// consolidated KindFact/KindDocument vector is recallable on both.
+	api.Register(humaAPI, rt.client, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.persona, rt.costMeter, rt.semanticStore, rt.embedder, rt.reranker, rt.gateway, rt.guard)
 	api.RegisterStream(humaAPI, rt.streamClient, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.costMeter, rt.cheapStreamClient, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, a.inPricePer1M, a.outPricePer1M, rt.bptSampler, rt.gateway, rt.guard)
 	// Frontend-UI protocol adapters (Phase 2A/2B): the Vercel AI SDK "UI Message
 	// Stream" and the AG-UI (CopilotKit) event stream. Both are PROTOCOL COSTUMES

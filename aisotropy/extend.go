@@ -487,11 +487,12 @@ func WithGuardrailCheck(checks ...GuardrailCheck) Option {
 // exactly the injection window and orders by score, byte-for-byte the prior
 // behavior).
 //
-// Scope note (honesty gate): the non-streaming /chat route (and the in-process
-// App.Turn that shares it) does NOT hydrate semantic RAG through a reranker — it
-// uses the working-memory-centric ChatCore path, which has no semantic reranking
-// stage — so a Reranker affects the streaming, /ask, and bitrate paths, not
-// plain Turn. This mirrors where semantic RAG hydration actually lives.
+// Scope note: since the chat-route parity fix, the non-streaming /chat route
+// (and the in-process App.Turn that shares ChatCore) hydrates semantic RAG
+// through the SAME hydrateSystemPrompt/searchSemanticContext path the streaming
+// routes use — so a Reranker now affects /chat and Turn too, alongside the
+// streaming, /ask, and bitrate paths. Semantic RAG hydration lives in one place
+// for every chat-shaped route.
 func WithReranker(r Reranker) Option {
 	return func(a *App) { a.ext.reranker = r }
 }

@@ -29,7 +29,7 @@ func TestChatBuildSystemPrompt_AppendsScopeGatedTools(t *testing.T) {
 
 	t.Run("permitted tool appears, gated tool hidden", func(t *testing.T) {
 		in := &ChatInput{TenantID: "acme", UserID: "alice", Body: ChatRequest{ProductID: "p1"}}
-		sys, err := chatBuildSystemPrompt(context.Background(), nil, nil, reg, nil, key, scope, in, "hello")
+		sys, err := chatBuildSystemPrompt(context.Background(), nil, nil, nil, nil, nil, reg, nil, key, scope, in, "hello")
 		if err != nil {
 			t.Fatalf("chatBuildSystemPrompt: %v", err)
 		}
@@ -43,7 +43,7 @@ func TestChatBuildSystemPrompt_AppendsScopeGatedTools(t *testing.T) {
 
 	t.Run("granting the scope surfaces the gated tool", func(t *testing.T) {
 		in := &ChatInput{TenantID: "acme", UserID: "alice", Body: ChatRequest{ProductID: "p1", Scopes: []string{"admin:delete"}}}
-		sys, err := chatBuildSystemPrompt(context.Background(), nil, nil, reg, nil, key, scope, in, "hello")
+		sys, err := chatBuildSystemPrompt(context.Background(), nil, nil, nil, nil, nil, reg, nil, key, scope, in, "hello")
 		if err != nil {
 			t.Fatalf("chatBuildSystemPrompt: %v", err)
 		}
@@ -54,7 +54,7 @@ func TestChatBuildSystemPrompt_AppendsScopeGatedTools(t *testing.T) {
 
 	t.Run("nil registry appends no tool fragment", func(t *testing.T) {
 		in := &ChatInput{TenantID: "acme", UserID: "alice", Body: ChatRequest{ProductID: "p1"}}
-		sys, err := chatBuildSystemPrompt(context.Background(), nil, nil, nil, nil, key, scope, in, "hello")
+		sys, err := chatBuildSystemPrompt(context.Background(), nil, nil, nil, nil, nil, nil, nil, key, scope, in, "hello")
 		if err != nil {
 			t.Fatalf("chatBuildSystemPrompt: %v", err)
 		}
