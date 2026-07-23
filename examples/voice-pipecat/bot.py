@@ -18,7 +18,7 @@ Environment:
     AISOTROPY_OPENAI_BASE_URL  shim base URL         (default http://localhost:8080/v1)
     AISOTROPY_TENANT_JWT       tenant JWT = api_key  (required; mint with mint_jwt.py)
     KOKORO_BASE_URL            Kokoro-FastAPI URL    (default http://localhost:8880/v1)
-    KOKORO_VOICE               Kokoro voice          (default af_heart)
+    KOKORO_VOICE               Kokoro voice          (default alloy; see ADR-0069 §3)
     WHISPER_MODEL              faster-whisper model  (default distil-medium.en)
 
 Run:
@@ -50,7 +50,10 @@ from pipecat.transports.local.audio import (
 SHIM_BASE_URL = os.environ.get("AISOTROPY_OPENAI_BASE_URL", "http://localhost:8080/v1")
 TENANT_JWT = os.environ.get("AISOTROPY_TENANT_JWT", "")
 KOKORO_BASE_URL = os.environ.get("KOKORO_BASE_URL", "http://localhost:8880/v1")
-KOKORO_VOICE = os.environ.get("KOKORO_VOICE", "af_heart")
+# "alloy" (an OpenAI voice id, mapped server-side by Kokoro-FastAPI) — pipecat
+# 0.0.x's OpenAITTSService rejects Kokoro ids like "af_heart" via its
+# VALID_VOICES lookup, degrading into silent no-audio (ADR-0069 §3).
+KOKORO_VOICE = os.environ.get("KOKORO_VOICE", "alloy")
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "distil-medium.en")
 
 

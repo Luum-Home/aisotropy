@@ -154,7 +154,7 @@ ADR-0069 and in the test files' comments.
 | `AISOTROPY_OPENAI_BASE_URL` | `http://localhost:8080/v1` | shim base URL (SDK appends `/chat/completions`) |
 | `AISOTROPY_TENANT_JWT` | — (required) | tenant JWT, passed as the OpenAI api_key |
 | `KOKORO_BASE_URL` | `http://localhost:8880/v1` | Kokoro-FastAPI base URL |
-| `KOKORO_VOICE` | `af_heart` | Kokoro voice |
+| `KOKORO_VOICE` | `alloy` | TTS voice id — OpenAI-style, mapped server-side by Kokoro-FastAPI (see ADR-0069 §3) |
 | `WHISPER_MODEL` | `distil-medium.en` | faster-whisper model name |
 
 ## Honest status (what has actually been executed)
@@ -173,10 +173,12 @@ ADR-0069 and in the test files' comments.
   Kokoro TTS frames, via `pipecat.tests.utils.run_test`) passed against a live
   stub-backed aisotropyd — no audio hardware involved.
 - `bot.py` itself (mic/speaker via `LocalAudioTransport`) still requires real
-  audio hardware and has NOT been run here. Known latent issue found while
-  building the lane: pipecat 0.0.x's `OpenAITTSService` rejects non-OpenAI
-  voice ids (`VALID_VOICES` lookup), so `KOKORO_VOICE=af_heart` will produce a
-  silent error at the TTS leg — use an OpenAI-style voice id (e.g.
-  `KOKORO_VOICE=alloy`, mapped server-side by Kokoro-FastAPI) until bot.py is
-  updated. Run steps 1–5 above to produce real numbers; do not quote any until
+  audio hardware and has NOT been run here. The latent voice-id issue found
+  while building the lane — pipecat 0.0.x's `OpenAITTSService` rejects
+  non-OpenAI voice ids (`VALID_VOICES` lookup), so a Kokoro id like `af_heart`
+  produced a silent error at the TTS leg — was fixed 2026-07-23: `bot.py` now
+  defaults `KOKORO_VOICE` to `alloy` (an OpenAI-style id, mapped server-side by
+  Kokoro-FastAPI — the same voice the ADR-0069 test lane uses). Setting
+  `KOKORO_VOICE` to a raw Kokoro id still triggers the pipecat rejection.
+  Run steps 1–5 above to produce real numbers; do not quote any until
   you have.

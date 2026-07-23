@@ -94,7 +94,8 @@ dependency-reuse-first):
   (`VALID_VOICES[...]` KeyErrors on a Kokoro id like `af_heart` and degrades into a silent
   no-audio run). The test uses `voice="alloy"`, which Kokoro-FastAPI maps server-side. This is
   also a **latent bug in `bot.py`** (it passes `af_heart` to the same service) — left for a
-  follow-on since bot.py changes are outside this change's scope.
+  follow-on since bot.py changes are outside this change's scope. *(fixed 2026-07-23:
+  `bot.py` now defaults `KOKORO_VOICE` to `alloy`, the same mapped id this lane uses.)*
 
 ### 4. Metric scripts become threshold asserts
 
@@ -191,6 +192,7 @@ Dependency license verdicts for everything the lane adds (`pip show`, 2026-07-23
 - **No LLM-as-judge of transcripts** — the arena's deterministic-judging rule applies verbatim:
   WER is a pure function; no network/model call decides a pass.
 - **No bot.py rewrite** — its `af_heart`-vs-`VALID_VOICES` latent bug and the pipecat 1.x
-  migration are named follow-ons, not smuggled into a testing ADR.
+  migration are named follow-ons, not smuggled into a testing ADR. *(voice-id follow-on fixed
+  2026-07-23: bot.py default → `alloy`; the pipecat 1.x migration remains open.)*
 - **No CI wiring / no model caching infra** — opt-in lane first; automation is a follow-on once
   the lane has operator mileage.
