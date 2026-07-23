@@ -108,12 +108,22 @@ numbers transfer to the bot.
 
 Threshold mode (ADR-0069) turns either script into a CI-usable gate — the
 measurement is unchanged; a breached median exits 1 (exit 2 stays reserved for
-configuration/connectivity errors):
+configuration/connectivity errors). Recommended thresholds, **calibrated
+against the measured 2026-07-23 runs** (stub LLM + Kokoro **CPU** image:
+median TTFAB 3543 ms, worst 3766 ms; barge-in median 0.1 ms — the
+passQAThreshold pattern, ~2× headroom over the measured floor):
 
 ```bash
-python3 measure_ttfab.py --runs 5 --assert-ttfab-ms 800
+# CPU-image lane (the only calibrated lane so far):
+python3 measure_ttfab.py --runs 5 --assert-ttfab-ms 7000
 python3 measure_bargein.py --runs 5 --assert-bargein-ms 250
 ```
+
+A sub-second TTFAB assert is only meaningful once a faster TTS path exists
+(Kokoro GPU image, streaming TTS, or sentence-chunked synthesis) — calibrate
+against measured runs on that stack before committing a threshold for it; an
+aspirational threshold (e.g. 800 ms vs the CPU image) fails always and gates
+nothing.
 
 ## The voice testing lane (ADR-0069) — no audio hardware needed
 
