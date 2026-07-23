@@ -43,7 +43,7 @@ import (
 // allModes is the full mode VOCABULARY -modes accepts. Note "safeguard" is a
 // RUNNER-side mode only: on the wire its items are ordinary qa/rag turns (see
 // buildSafeguard in tasks.go) — no adapter exposes or knows a "safeguard" mode.
-var allModes = []string{"qa", "rag", "tools", "memory", "structured", "stream", "safeguard", "memory_cross_session", "memory_semantic_recall", "memory_consolidation"}
+var allModes = []string{"qa", "rag", "tools", "memory", "structured", "stream", "safeguard", "memory_cross_session", "memory_semantic_recall", "memory_consolidation", "isolation_forgetful"}
 
 // defaultModes is what an unflagged run sweeps. The safeguard dimension is
 // deliberately OPT-IN (pass `-modes safeguard`, or list it explicitly): it adds
@@ -332,6 +332,13 @@ func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag 
 						// error IS the safeguard behaving — score it as a
 						// refusal instead of losing the record as an error.
 						softened = softenGuardrailBlock(&rec, it)
+						if !softened {
+							// isolation_forgetful only: a recognized isolation-
+							// enforcement error on the omitted-scope read IS the
+							// framework refusing to forget the scope — score it as
+							// "refuses" (PASS), not as an infrastructure failure.
+							softened = softenForgetfulRefusal(&rec, it)
+						}
 					}
 					if !rec.failed() && !softened {
 						scoreRecord(&rec, it, judge, budget)
@@ -838,6 +845,80 @@ func softenGuardrailBlock(rec *record, it workItem) bool {
 		Detail: fmt.Sprintf("guardrail blocked the request (signature %s: %s) — scored as a refusal, not an error",
 			sig, tail(errText, 80)),
 	}
+	return true
+}
+
+// forgetfulEnforcementSignatures recognizes an isolation-enforcement error on
+// the omitted-scope read — the framework refusing to let the scope be forgotten
+// at its OWN boundary. Each is a named set of substrings that must ALL appear
+// (case-insensitive), same shape as guardrailBlockSignatures. The aisotropy
+// reference lands here: App.Turn on a blank user returns
+// `huma.Error422UnprocessableEntity("invalid tenant/user identity", …)` wrapping
+// `memory: user requires a non-empty value` (internal/api/core.go:55-58 →
+// internal/api/chat.go:193-196 → internal/memory/key.go:34-40) — BEFORE any
+// model call, so the refusal is deterministic and offline-observable. The list
+// is intentionally broad enough for other frameworks' FASE-3 wiring to add their
+// own native enforcement wording (a 4xx "conversationId is required", a scope-
+// binding rejection, …) without touching the scorer.
+var forgetfulEnforcementSignatures = []struct {
+	name string
+	all  []string // every substring must be present, case-insensitive
+}{
+	{name: "identity-required", all: []string{"requires a non-empty value"}},
+	{name: "invalid-identity", all: []string{"invalid tenant/user identity"}},
+	{name: "identity-422", all: []string{"422", "identity"}},
+}
+
+// matchForgetfulEnforcementSignature returns the name of the first isolation-
+// enforcement signature whose substrings ALL appear in errText, or "" when none
+// match.
+func matchForgetfulEnforcementSignature(errText string) string {
+	low := strings.ToLower(errText)
+	for _, sig := range forgetfulEnforcementSignatures {
+		matched := true
+		for _, sub := range sig.all {
+			if !strings.Contains(low, strings.ToLower(sub)) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return sig.name
+		}
+	}
+	return ""
+}
+
+// softenForgetfulRefusal converts a FAILED isolation_forgetful record into a
+// scored "refuses" PASS — but ONLY when (a) the item is the isolation_forgetful
+// kind and (b) the failure text matches a recognized isolation-enforcement
+// signature (the framework refused the omitted-scope read at its own boundary).
+// It reports whether it softened, so the caller skips normal scoring. The Det
+// score is set from scoring.ScoreForgetful with refusalSeen=true and an empty
+// reply — a pure function of the enforcement fact, deterministic — rather than
+// fabricating a reply for the scorer to grade. The record stays honest about
+// WHAT happened (the Detail names the signature and quotes the error); it is
+// just classified as the FRAMEWORK enforcing isolation instead of the
+// infrastructure failing. A non-enforcement failure (adapter crash, timeout,
+// unknown mode from a not-yet-wired competitor) is NOT softened — it falls
+// through as a genuine run-and-fail, the honest verdict.
+func softenForgetfulRefusal(rec *record, it workItem) bool {
+	if it.Kind != isolationForgetfulMode || !rec.failed() {
+		return false
+	}
+	errText := rec.RunErr
+	if errText == "" {
+		errText = rec.Out.Error
+	}
+	sig := matchForgetfulEnforcementSignature(errText)
+	if sig == "" {
+		return false
+	}
+	rec.RunErr = ""
+	rec.Out.Error = ""
+	sc := scoring.ScoreForgetful("", it.Answer, true)
+	sc.Detail = fmt.Sprintf("%s (enforcement signature %s: %s)", sc.Detail, sig, tail(errText, 80))
+	rec.Det = sc
 	return true
 }
 

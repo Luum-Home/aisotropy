@@ -298,6 +298,8 @@ func buildWork(framework, mode string, tasks []task, rag []ragQuestion, maxTasks
 		return buildMemory(framework, filterKind(tasks, "multi_turn_memory"), maxTasks)
 	case memoryCrossSessionMode, memorySemanticRecallMode, memoryConsolidationMode:
 		return buildMemoryExt(framework, mode, tasks, maxTasks)
+	case isolationForgetfulMode:
+		return buildForgetful(framework, tasks, maxTasks)
 	case "tools":
 		return buildTools(framework, maxTasks)
 	case "rag":
@@ -459,6 +461,81 @@ func buildMemoryExt(framework, mode string, tasks []task, maxTasks int) []workIt
 			Question:    t.Messages[idx].Content,
 			Reference:   t.Reference,
 			Answer:      t.Answer,
+		})
+	}
+	return out
+}
+
+// isolationForgetfulMode is the OPT-IN "forgetful integrator" isolation
+// dimension (docs/architecture/arena-tenancy-levels.md §"forgetful integrator").
+// It MEASURES the L1-vs-L3 tenancy difference the memory_scoped/isolation_leak
+// dimensions today only ASSERT (every framework shows a ✓ that means different
+// things): write a fact under a scope through the framework's OWN scoping
+// primitive, then read it back with the scope OMITTED — the exact real-world
+// integrator mistake — and score three deterministic outcomes (scoring.
+// ScoreForgetful): refuses (enforcement, PASS) / leak / silent_partition.
+//
+// The mode string is ALSO the suite `kind` AND the RECALL invocation's wire mode
+// (mirroring the safeguard/memory-ext "mode == kind" shape). Opt-in: it is in
+// allModes (so `-modes isolation_forgetful` works) but NOT defaultModes, so an
+// unflagged run pays zero extra calls.
+const isolationForgetfulMode = "isolation_forgetful"
+
+// buildForgetful builds the OPT-IN isolation_forgetful work items. Load-bearing
+// shape (a persist→forgetful-recall pair, one process per invocation):
+//
+//   - PERSIST invocation: every message up to (but excluding) the final user
+//     turn, sent as an ordinary wire-mode "memory" turn under an explicit,
+//     UNIQUE-per-task user (scope A) and session A. This writes the fact through
+//     the framework's own memory API exactly as a real integrator would.
+//   - RECALL invocation: the final user turn, sent as wire-mode
+//     isolation_forgetful with the USER SCOPE DELIBERATELY OMITTED (UserID "").
+//     The distinct wire mode is what tells an adapter to forward the omitted
+//     scope RAW to the framework's own API (never backfilling a default the way
+//     the plain-memory handler does) — so the framework's OWN boundary decides
+//     the outcome, not adapter glue. This is the fairness constraint the design
+//     mandates (docs/architecture/arena-idiomaticity-and-dx.md, arena-tenancy-
+//     levels.md §5): the omission happens at the framework's API boundary.
+//
+// The scoped answer key (t.Answer) is the fact written under scope A — the data
+// a leak would return and a correct enforcement must NOT. Scored by
+// scoring.ScoreForgetful (three-way verdict) via eval.go — enforcement errors
+// are recognized by the runner's softenForgetfulRefusal (main.go).
+func buildForgetful(framework string, tasks []task, maxTasks int) []workItem {
+	items := capTasks(filterKind(tasks, isolationForgetfulMode), maxTasks)
+	out := make([]workItem, 0, len(items))
+	for _, t := range items {
+		idx := lastUserIndex(t.Messages)
+		if idx < 0 {
+			continue
+		}
+		persist := t.Messages[:idx]
+		recall := []inMessage{t.Messages[idx]}
+		// scope A: a unique-per-task (tenant-held, user) scope the fact lives
+		// under. sessionB is a well-formed recall session so the ONLY thing the
+		// recall "forgot" is the isolation axis (user) — the sharpest test.
+		userA := "u-forget-" + t.ID
+		sessionA := "arena-forget-" + t.ID + "-a"
+		sessionB := "arena-forget-" + t.ID + "-b"
+
+		var invs []adapterInput
+		if len(persist) > 0 {
+			invs = append(invs, adapterInput{Mode: "memory", System: t.System, Messages: persist, SessionID: sessionA, UserID: userA})
+		}
+		// The omitted-scope read: UserID intentionally BLANK (the forgetful
+		// mistake). Wire mode isolation_forgetful routes the adapter to a handler
+		// that forwards the blank identity to the framework's own API.
+		invs = append(invs, adapterInput{Mode: isolationForgetfulMode, Messages: recall, SessionID: sessionB, UserID: ""})
+
+		out = append(out, workItem{
+			Framework:   framework,
+			Mode:        isolationForgetfulMode,
+			ID:          t.ID,
+			Kind:        isolationForgetfulMode, // suite kind == mode name; scored by ScoreForgetful in eval.go
+			Invocations: invs,
+			Question:    t.Messages[idx].Content,
+			Reference:   t.Reference,
+			Answer:      t.Answer, // the scoped fact: a leak returns it, enforcement must not
 		})
 	}
 	return out

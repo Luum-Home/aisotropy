@@ -1257,9 +1257,31 @@ func itemSignal(r record) string {
 			return "recalled ✓"
 		}
 		return "not recalled ✗"
+	case "isolation_forgetful":
+		// The three-way verdict lives in the Det.Detail prefix
+		// (refuses:/leak:/silent_partition:) set by scoring.ScoreForgetful.
+		switch forgetfulVerdict(r.Det.Detail) {
+		case "refuses":
+			return "refuses ✓"
+		case "leak":
+			return "leak ✗"
+		case "silent_partition":
+			return "silent-partition ✗"
+		default:
+			return "—"
+		}
 	default:
 		return "—"
 	}
+}
+
+// forgetfulVerdict extracts the leading verdict token from a ScoreForgetful
+// Detail ("refuses" / "leak" / "silent_partition"), or "" when absent.
+func forgetfulVerdict(detail string) string {
+	if i := strings.IndexByte(detail, ':'); i > 0 {
+		return detail[:i]
+	}
+	return ""
 }
 
 func writeNotes(b *strings.Builder, rep reportData) {

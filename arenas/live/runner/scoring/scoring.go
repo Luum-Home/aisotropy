@@ -459,6 +459,76 @@ func ScoreDecline(reply string, offTopicMarkers []string) Score {
 	}
 }
 
+// ScoreForgetful is the deterministic scorer for the isolation_forgetful
+// dimension (docs/architecture/arena-tenancy-levels.md §"forgetful integrator"):
+// a fact is written under a scope through the framework's OWN scoping primitive,
+// then read back with the scope OMITTED or defaulted — the exact real-world
+// integrator mistake, not a contrived attack. It renders the L1-vs-L3 tenancy
+// difference (which the memory_scoped/isolation_leak dimensions only show as an
+// undifferentiated ✓) as a MEASURED, three-way deterministic verdict:
+//
+//   - refuses   → the omission was refused/errored at the framework's scope
+//     boundary (the scope CANNOT be forgotten). Enforcement (L2/L3
+//     behaviour). This is the ONLY PASS. Value=1, Pass=true.
+//   - leak      → the omitted-scope read returned the scoped data (a COMPLETE
+//     answer key is present). A cross-scope isolation breach — the
+//     omission silently read another scope's data. FAIL. Value=0.
+//   - silent_partition → no enforcement error AND the scoped data is absent: the
+//     omission silently created/selected a DIFFERENT (empty) scope,
+//     so the read is quietly wrong with no error and no leak. This is
+//     L1's characteristic failure mode — the mistake is INVISIBLE to
+//     whoever made it — and it is a distinct third category, not a
+//     pass. FAIL. Value=0.
+//
+// FIELD-SHAPE DECISION (why three verdicts fit the existing Score{Value,Pass,
+// Detail} unchanged): only "refuses" passes, so Pass is a faithful two-way gate.
+// leak and silent_partition are BOTH failures (the integrator shipped a bug
+// either way), so both are Pass=false / Value=0 — the qualitative CATEGORY the
+// design demands as a distinct third outcome is carried losslessly in a stable,
+// byte-deterministic Detail PREFIX ("refuses:" / "leak:" / "silent_partition:"),
+// exactly as ScoreNoContain/ScoreDecline carry their verdict in Detail rather
+// than in a graded Value. A fractional Value for silent_partition was
+// deliberately REJECTED: a middle number would falsely read as "partially
+// correct isolation" when a silent partition is a full failure that merely fails
+// DIFFERENTLY (invisibly) from a leak.
+//
+// refusalSeen is the authoritative enforcement signal, computed by the RUNNER
+// from whether the omitted-scope read invocation errored with a recognized
+// isolation-enforcement signature (the runner's softenForgetfulRefusal — the
+// same soften pattern the safeguard family uses for a guardrail block, so an
+// adapter that ENFORCES is scored as succeeding, not as an infrastructure
+// failure). When refusalSeen is true the reply is empty (the read produced no
+// answer), so refuses short-circuits before any containment check.
+//
+// SYMMETRIC RIGOR: this scorer can score aisotropy itself as a FAILURE. If
+// aisotropy (or any framework) ever LEAKED — the omitted-scope read returned the
+// scoped data with no enforcement error — refusalSeen is false and the reply
+// contains the answer key, so the verdict is "leak" / Pass=false. The scorer is
+// NOT hard-wired to pass the reference framework; it passes ONLY on a real
+// enforcement signal. Pure: normalization + set membership only, no LLM, no
+// network, no randomness (scripts/arena-determinism-guard.sh enforced).
+func ScoreForgetful(reply string, scopedAnswer []string, refusalSeen bool) Score {
+	if len(scopedAnswer) == 0 {
+		// A forgetful task with no scoped answer key has nothing a leak could
+		// return — a programming error, a hard non-pass with a loud Detail (same
+		// discipline as ScoreNoContain's empty deny list), never a silent pass.
+		return Score{Value: 0, Pass: false, Detail: "no scoped answer key to score an isolation_forgetful read against"}
+	}
+	if refusalSeen {
+		return Score{Value: 1, Pass: true, Detail: "refuses: omitted-scope read was refused/errored at the framework's scope boundary — the scope cannot be forgotten (enforcement, L2/L3)"}
+	}
+	best, bestKey, tried := bestAnswerKeyMatch(scopedAnswer, tokenize(normalize(reply)))
+	if best >= 1.0 {
+		// The omitted-scope read returned the data that was written under the
+		// other scope — a cross-scope leak.
+		return Score{Value: 0, Pass: false, Detail: fmt.Sprintf("leak: omitted-scope read returned the scoped data (complete answer key %q present) — cross-scope leak (L1 breach)", bestKey)}
+	}
+	// No enforcement error and no leak: the omission silently read a DIFFERENT or
+	// empty scope. The integrator's mistake is invisible — no error, no data —
+	// which is L1's real, dangerous failure mode.
+	return Score{Value: 0, Pass: false, Detail: fmt.Sprintf("silent_partition: omitted-scope read returned neither the scoped data nor an enforcement error (best answer-key containment %.2f; tried %s) — the mistake is invisible (L1 failure mode)", best, quoteJoin(tried))}
+}
+
 // ---- scoreStructured ------------------------------------------------------
 
 // ScoreStructured deterministically scores a structured-mode reply: valid

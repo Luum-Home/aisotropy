@@ -105,6 +105,15 @@ const (
 	// reports whether the inbound (system-prompt transform) and outbound
 	// (token-stream wrap) hooks genuinely fired — see mode_middleware.go.
 	modeMiddleware = "middleware"
+
+	// modeIsolationForgetful is the RECALL invocation of the "forgetful
+	// integrator" isolation dimension (docs/architecture/arena-tenancy-levels.md
+	// §"forgetful integrator"). The runner sends it with user_id DELIBERATELY
+	// OMITTED; this adapter forwards that blank identity RAW to App.Turn (never
+	// backfilling arenaUser the way runMemory does), so aisotropy's OWN
+	// memory.Key.Validate refuses at the framework boundary — the fairness rule.
+	// See mode_forgetful.go.
+	modeIsolationForgetful = "isolation_forgetful"
 )
 
 // ---- Request contract (stdin) ----
@@ -354,8 +363,10 @@ func dispatch(req *request, out *result) error {
 		err = runObservability(req, out)
 	case modeMiddleware:
 		err = runMiddleware(req, out)
+	case modeIsolationForgetful:
+		err = runForgetful(req, out)
 	default:
-		return fmt.Errorf("unknown mode %q (want one of qa|rag|tools|memory|structured|stream|wasm_tool|memory_scoped|isolation_leak|crash_recovery|observability|middleware)", req.Mode)
+		return fmt.Errorf("unknown mode %q (want one of qa|rag|tools|memory|structured|stream|wasm_tool|memory_scoped|isolation_leak|crash_recovery|observability|middleware|isolation_forgetful)", req.Mode)
 	}
 	if out.LatencyMs == 0 {
 		out.LatencyMs = time.Since(start).Milliseconds()

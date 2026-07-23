@@ -544,6 +544,18 @@ func TestDeterministic_Reproducible(t *testing.T) {
 		{"mem-consolidation-recall", func() Score {
 			return ScoreMemory("You chose Marigold as the project codename.", "You chose Marigold as the project codename.", []string{"Marigold"})
 		}},
+
+		// ---- isolation_forgetful tier (three-way tenancy verdict) -----------
+		// One fixture per verdict, so the determinism guard pins all three
+		// branches byte-for-byte. See ScoreForgetful and
+		// docs/architecture/arena-tenancy-levels.md §"forgetful integrator".
+		{"forgetful-refuses", func() Score { return ScoreForgetful("", []string{"Kings Cross"}, true) }},
+		{"forgetful-leak", func() Score {
+			return ScoreForgetful("Your favourite station is Kings Cross.", []string{"Kings Cross"}, false)
+		}},
+		{"forgetful-silent-partition", func() Score {
+			return ScoreForgetful("I don't have any station on file.", []string{"Kings Cross"}, false)
+		}},
 	}
 
 	// Establish the baseline on iteration 0, then assert every subsequent
@@ -783,6 +795,57 @@ func TestScoreDecline(t *testing.T) {
 		if got.Pass != c.pass || got.Value != c.value {
 			t.Errorf("%s: ScoreDecline(%q, %v) = {Value:%v Pass:%v}, want {Value:%v Pass:%v} (detail: %s)",
 				c.name, c.repl, c.markers, got.Value, got.Pass, c.value, c.pass, got.Detail)
+		}
+	}
+}
+
+// verdictPrefix extracts the leading "verdict:" token from a ScoreForgetful
+// Detail (the machine-parseable three-way category — see ScoreForgetful's
+// field-shape doc). "" when the Detail has no verdict prefix.
+func verdictPrefix(detail string) string {
+	if i := strings.IndexByte(detail, ':'); i > 0 {
+		return detail[:i]
+	}
+	return ""
+}
+
+// TestScoreForgetful pins the three-way isolation_forgetful verdict, including
+// the symmetric-rigor case that the SAME scorer fails a framework (aisotropy
+// itself, in the synthetic fixture) that LEAKS. All three outcomes are
+// exercised: enforcement→refuses (PASS), returned-scoped-data→leak (FAIL),
+// empty/different-scope→silent_partition (FAIL, its own verdict).
+func TestScoreForgetful(t *testing.T) {
+	scoped := []string{"Kings Cross"}
+	cases := []struct {
+		name        string
+		reply       string
+		answer      []string
+		refusalSeen bool
+		wantVerdict string
+		wantPass    bool
+	}{
+		// refuses — the framework refused the omitted-scope read at its own
+		// boundary (aisotropy's memory.Key.Validate; the runner sets refusalSeen).
+		{"refuses-enforced", "", scoped, true, "refuses", true},
+		// leak — SYMMETRIC RIGOR: this is a SYNTHETIC aisotropy leak (the omitted-
+		// scope read returned the fact written under the other scope). The scorer
+		// MUST fail it. Proves ScoreForgetful is not hard-wired to pass aisotropy.
+		{"leak-synthetic-aisotropy", "Your favourite station is Kings Cross.", scoped, false, "leak", false},
+		// silent_partition — no error, no scoped data: the omission quietly read a
+		// different/empty scope. L1's invisible failure mode, a distinct verdict.
+		{"silent-partition-empty", "I don't have any station on file.", scoped, false, "silent_partition", false},
+		{"silent-partition-different-scope", "Your favourite station is Paddington.", scoped, false, "silent_partition", false},
+		// empty answer key → loud non-pass (programming error), never a silent pass.
+		{"no-answer-key", "anything", nil, false, "", false},
+	}
+	for _, c := range cases {
+		got := ScoreForgetful(c.reply, c.answer, c.refusalSeen)
+		if got.Pass != c.wantPass {
+			t.Errorf("%s: ScoreForgetful(%q, %v, %v).Pass = %v, want %v (detail: %s)",
+				c.name, c.reply, c.answer, c.refusalSeen, got.Pass, c.wantPass, got.Detail)
+		}
+		if v := verdictPrefix(got.Detail); c.wantVerdict != "" && v != c.wantVerdict {
+			t.Errorf("%s: verdict = %q, want %q (detail: %s)", c.name, v, c.wantVerdict, got.Detail)
 		}
 	}
 }

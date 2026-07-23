@@ -1,6 +1,18 @@
 {
   "framework": "aisotropy",
   "dimensions": {
+    "isolation_forgetful": {
+      "stub": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
+    },
     "crash_recovery": {
       "stub": {
         "native": "infeasible:ARENA_STUB=1 clears AISOTROPY_DATA_DIR in-process (clearBackendTierEnv, app.go) before every newApp call, forcing an in-memory-only BadgerDB per process; crash_recovery structurally requires cross-process ON-DISK persistence (process A's committed turn surviving into a fresh process B), which the offline stub toggle cannot provide by design -- verified resumed=false precrash_fact_recalled=false state_lost=true even for a clean sequential producer-then-resumer run with no kill involved, so the SIGKILL-timing question never arises: the two stub processes never share state regardless of when/whether a kill lands",

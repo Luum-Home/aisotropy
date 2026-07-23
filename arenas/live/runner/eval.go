@@ -49,6 +49,10 @@ func scoreRecord(rec *record, it workItem, judge *judgeClient, budget *callCount
 		// Never LLM-judged: the reference on a safeguard task is meta-text
 		// describing correct-refusal/no-leak behavior (same reasoning as
 		// rag_trap above), and the deterministic scorer IS the whole signal.
+	case isolationForgetfulMode:
+		// Never LLM-judged: the three-way deterministic verdict (refuses / leak /
+		// silent_partition) IS the whole signal; the "reference" is meta-text
+		// describing correct enforcement, not a factual answer to grade.
 	case memoryCrossSessionMode, memorySemanticRecallMode, memoryConsolidationMode:
 		// Same treatment as plain memory: the deterministic ScoreMemory pass is
 		// the primary signal; the LLM-judge (if -llm-judge) is a secondary,
@@ -117,6 +121,15 @@ func scoreDeterministic(rec *record, it workItem) scoring.Score {
 		return sc
 	case "safeguard_decline":
 		return scoring.ScoreDecline(rec.Out.Reply, it.Markers)
+	case isolationForgetfulMode:
+		// The omitted-scope read did NOT error (an enforcement error would have
+		// been softened to "refuses" before reaching here — see
+		// softenForgetfulRefusal in main.go), so refusalSeen is false: the reply
+		// is graded for a leak (returned the scoped data) vs a silent partition
+		// (returned a different/empty scope). SYMMETRIC RIGOR: a framework that
+		// leaks its scoped fact here — including aisotropy, were it ever to — is
+		// scored FAIL by exactly this path.
+		return scoring.ScoreForgetful(rec.Out.Reply, it.Answer, false)
 	default: // "qa"
 		return scoring.ScoreQA(rec.Out.Reply, it.Reference, it.Answer)
 	}
