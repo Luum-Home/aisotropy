@@ -42,6 +42,8 @@ import (
 	"strings"
 
 	"github.com/goccy/go-yaml"
+
+	"github.com/Luum-Home/aisotropy/internal/plugin"
 )
 
 // aisotropyPkg is the public façade a generated bot imports (and nothing else —
@@ -232,10 +234,11 @@ func writeReport(b *strings.Builder, dir string, fm frontMatter, body string) {
 	writeAntiMagic(b, fm, body)
 	writeWiring(b, dir, fm, body)
 
-	if strings.EqualFold(fm.License, "AGPL-3.0") || strings.Contains(strings.ToUpper(fm.License), "SSPL") {
+	if blocked, reason := licenseGateStatus(fm.License); blocked {
 		line(b, "")
-		line(b, "LICENSE GATE (constitutional): %s is on the block list — an", fm.License)
-		line(b, "imported skill's code + content is a dependency; do NOT adopt without an ADR.")
+		line(b, "LICENSE GATE (constitutional): %s.", reason)
+		line(b, "-out generation ABORTS on this skill (license-policy, .claude/rules/cos/license-policy.md) —")
+		line(b, "an imported skill's code + content is a dependency; do NOT adopt without an ADR.")
 	}
 	line(b, "")
 	line(b, "Run with -out <dir> to WRITE a compilable Go module for this skill.")
@@ -453,7 +456,39 @@ func checkRefusals(fm frontMatter, body, skillDir string) error {
 			"presume silent always-on injection — it can only work by injecting prose the operator never sees. " +
 			"Rewrite the instructions as an operator-owned persona (drop the 'always inject' framing) to import it")
 	}
+
+	// Gate 3: disallowed or unstated license (repo-wide constitutional gate,
+	// .claude/rules/cos/license-policy.md — see also constitutional-gates.md's
+	// "License policy" section). Preview only PRINTED this as a note; -out must
+	// actually ABORT before writing anything, the same way Gate 1/Gate 2 do — an
+	// imported skill's code and content become a dependency of the generated
+	// module the moment scaffolding lands on disk.
+	if blocked, reason := licenseGateStatus(fm.License); blocked {
+		return fmt.Errorf("REFUSED (license-policy): %s. skill-import will not generate a consumer module for "+
+			"a skill under a non-permissive or unstated license. Set license to one of MIT, BSD-2-Clause, "+
+			"BSD-3-Clause, or Apache-2.0/ISC in SKILL.md frontmatter before generating, or obtain an explicit "+
+			"ADR exception per license-policy", reason)
+	}
 	return nil
+}
+
+// licenseGateStatus applies the repo-wide license-policy allowlist to a skill's
+// declared license, reusing internal/plugin's canonical permittedLicenses set
+// (dependency-reuse-first, .claude/rules/dependency-reuse-first.md) instead of
+// re-deriving a second copy of the same allowlist. Deny-by-default: an empty
+// license is reported as UNKNOWN and blocked rather than assumed permissive —
+// the Agent-Skills frontmatter 'license' field is optional in the upstream
+// format, but silently treating "not stated" as "fine" would let an unlicensed
+// (all-rights-reserved-by-default) or simply undeclared-copyleft skill through.
+func licenseGateStatus(license string) (blocked bool, reason string) {
+	lic := strings.TrimSpace(license)
+	if lic == "" {
+		return true, "license is UNKNOWN — SKILL.md frontmatter declares no 'license' field; deny-by-default per license-policy"
+	}
+	if !plugin.LicensePermitted(lic) {
+		return true, fmt.Sprintf("license %q is not permitted — only permissive licenses (MIT, BSD-2/3-Clause, Apache-2.0, ISC) clear the allowlist", lic)
+	}
+	return false, ""
 }
 
 // generateMainGo emits the gofmt'd main.go for the skill's consumer module.

@@ -75,11 +75,14 @@ Do the thing carefully. Confirm inputs first.
 // mcpDefaultSkill exercises: default map-to ("mcp"), default tool-name (derived
 // from the script path), default persona-product-id (falls back to fm.Name), and
 // the orDefault interpreter fallback branch (second script has no interpreter).
+// license: MIT so this fixture is unaffected by the license gate (it is not
+// what this fixture is testing) — see licenseAbsentSkill for that case.
 func mcpDefaultSkill() map[string]string {
 	return map[string]string{
 		"SKILL.md": `---
 name: mcp-default
 description: MCP default mapping skill.
+license: MIT
 metadata:
   aisotropy:
     required-scope: exec:mcp
@@ -139,6 +142,7 @@ func silentWithContentSkill() map[string]string {
 		"SKILL.md": `---
 name: silent-with-content
 description: Silent phrasing but has a reference, must not be refused.
+license: MIT
 metadata:
   aisotropy:
     references:
@@ -158,6 +162,7 @@ func backtickBodySkill() map[string]string {
 		"SKILL.md": "---\n" +
 			"name: backtick-body\n" +
 			"description: Body with an inline code span.\n" +
+			"license: MIT\n" +
 			"metadata:\n" +
 			"  aisotropy:\n" +
 			"    required-scope: exec:code\n" +
@@ -203,6 +208,76 @@ Follow the documented procedure.
 	}
 }
 
+// gplLicenseSkill exercises the general (non-AGPL/SSPL) branch of the license
+// gate: any license absent from internal/plugin's permissive allowlist is
+// blocked, not just the two hardcoded examples the original preview-only text
+// checked for. Carries a real scope-gated script so a regression that removes
+// the license gate but leaves gate 1/2 intact would still be caught (the skill
+// legitimately clears gate 1 and gate 2).
+func gplLicenseSkill() map[string]string {
+	return map[string]string{
+		"SKILL.md": `---
+name: gpl-skill
+description: Skill under GPL-3.0, not on the permissive allowlist.
+license: GPL-3.0
+metadata:
+  aisotropy:
+    required-scope: exec:gpl
+    scripts:
+      - path: scripts/run.sh
+        interpreter: bash
+---
+Run the script.
+`,
+		"scripts/run.sh": "#!/bin/sh\necho gpl\n",
+	}
+}
+
+// licenseAbsentSkill declares no 'license' field at all (distinct from an empty
+// string): deny-by-default treats "unstated" as UNKNOWN and blocks -out, same
+// as an explicitly rejected license. Carries a real scope-gated script for the
+// same reason gplLicenseSkill does.
+func licenseAbsentSkill() map[string]string {
+	return map[string]string{
+		"SKILL.md": `---
+name: license-absent
+description: No license field in frontmatter at all.
+metadata:
+  aisotropy:
+    required-scope: exec:noLicense
+    scripts:
+      - path: scripts/run.sh
+        interpreter: bash
+---
+Run the script.
+`,
+		"scripts/run.sh": "#!/bin/sh\necho no-license\n",
+	}
+}
+
+// mitLicenseSkill is the positive control for the license gate: MIT is on the
+// permissive allowlist, so -out must generate normally despite otherwise
+// looking just like gplLicenseSkill/licenseAbsentSkill (real scope-gated
+// script, same shape).
+func mitLicenseSkill() map[string]string {
+	return map[string]string{
+		"SKILL.md": `---
+name: mit-skill
+description: Skill under MIT, on the permissive allowlist.
+license: MIT
+metadata:
+  aisotropy:
+    required-scope: exec:mit
+    scripts:
+      - path: scripts/run.sh
+        interpreter: bash
+---
+Run the script.
+`,
+		"scripts/run.sh": "#!/bin/sh\necho mit\n",
+	}
+}
+
 // missingScriptFileSkill declares a script whose file is not actually present on
 // disk, forcing copyFile's "copy script" error branch during generate.
 func missingScriptFileSkill() map[string]string {
@@ -210,6 +285,7 @@ func missingScriptFileSkill() map[string]string {
 		"SKILL.md": `---
 name: missing-script-file
 description: Script path does not exist on disk.
+license: MIT
 metadata:
   aisotropy:
     required-scope: exec:missing
@@ -235,6 +311,7 @@ func missingReferenceFileSkill() map[string]string {
 		"SKILL.md": `---
 name: missing-reference-file
 description: Reference path does not exist on disk.
+license: MIT
 metadata:
   aisotropy:
     references:
@@ -254,6 +331,7 @@ func emptyPathEntriesSkill() map[string]string {
 		"SKILL.md": `---
 name: empty-path-entries
 description: Some script/reference entries declare no path.
+license: MIT
 metadata:
   aisotropy:
     required-scope: exec:mixed
@@ -284,6 +362,7 @@ func invalidIdentifierSkill() map[string]string {
 		"SKILL.md": `---
 name: invalid-identifier
 description: Arg name is not a valid Go identifier.
+license: MIT
 metadata:
   aisotropy:
     required-scope: exec:bad
@@ -384,7 +463,7 @@ func TestRun_PreviewMode_Success(t *testing.T) {
 			files: mcpDefaultSkill(),
 			wantAll: []string{
 				"skill:        mcp-default",
-				"license:      -",
+				"license:      MIT",
 				"WithMCPServer(\"exec:mcp\", \"bash\"",
 				"WithMCPServer(\"exec:mcp\", \"<interpreter>\"",
 			},
@@ -407,14 +486,30 @@ func TestRun_PreviewMode_Success(t *testing.T) {
 			name:  "agpl license gate",
 			files: agplLicenseSkill(),
 			wantAll: []string{
-				"LICENSE GATE (constitutional): AGPL-3.0 is on the block list",
+				`LICENSE GATE (constitutional): license "AGPL-3.0" is not permitted`,
+				"-out generation ABORTS on this skill",
 			},
 		},
 		{
 			name:  "sspl license gate",
 			files: sspLicenseSkill(),
 			wantAll: []string{
-				"LICENSE GATE (constitutional): Server Side Public License (SSPL) is on the block list",
+				`LICENSE GATE (constitutional): license "Server Side Public License (SSPL)" is not permitted`,
+				"-out generation ABORTS on this skill",
+			},
+		},
+		{
+			name:  "gpl license gate (general allowlist branch, not a hardcoded AGPL/SSPL string match)",
+			files: gplLicenseSkill(),
+			wantAll: []string{
+				`LICENSE GATE (constitutional): license "GPL-3.0" is not permitted`,
+			},
+		},
+		{
+			name:  "absent license reported as UNKNOWN and blocked",
+			files: licenseAbsentSkill(),
+			wantAll: []string{
+				"LICENSE GATE (constitutional): license is UNKNOWN",
 			},
 		},
 		{
@@ -636,6 +731,44 @@ func TestRun_GenerateMode_Refusals(t *testing.T) {
 				"presume silent always-on injection",
 			},
 		},
+		{
+			// Confirmed-audit regression case: AGPL previously generated with exit
+			// 0 and zero warning in -out mode (preview's "LICENSE GATE" text was
+			// display-only). This pins that -out now actually aborts.
+			name:  "gate 3: AGPL-3.0 license",
+			files: agplLicenseSkill(),
+			wantErr: []string{
+				"REFUSED (license-policy)",
+				`license "AGPL-3.0" is not permitted`,
+			},
+		},
+		{
+			name:  "gate 3: SSPL-flavored license",
+			files: sspLicenseSkill(),
+			wantErr: []string{
+				"REFUSED (license-policy)",
+				`license "Server Side Public License (SSPL)" is not permitted`,
+			},
+		},
+		{
+			// General-allowlist regression guard: GPL-3.0 is not AGPL and not
+			// SSPL, so a gate that hardcoded those two strings (the original bug)
+			// would let this one through. It must still block.
+			name:  "gate 3: GPL-3.0 license",
+			files: gplLicenseSkill(),
+			wantErr: []string{
+				"REFUSED (license-policy)",
+				`license "GPL-3.0" is not permitted`,
+			},
+		},
+		{
+			name:  "gate 3: absent license (deny-by-default)",
+			files: licenseAbsentSkill(),
+			wantErr: []string{
+				"REFUSED (license-policy)",
+				"license is UNKNOWN",
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -654,7 +787,35 @@ func TestRun_GenerateMode_Refusals(t *testing.T) {
 			if _, err := os.Stat(outDir); err == nil {
 				t.Errorf("refused generation must not create the out dir")
 			}
+			entries, _ := os.ReadDir(filepath.Dir(outDir))
+			for _, e := range entries {
+				if e.Name() == filepath.Base(outDir) {
+					t.Errorf("refused generation must not write any file/dir named %q", e.Name())
+				}
+			}
 		})
+	}
+}
+
+// TestRun_GenerateMode_LicenseGate_MITPasses is the positive control: a
+// permitted license must generate normally, proving the gate is deny-by-
+// default (blocks everything not on the allowlist) rather than accidentally
+// deny-everything (which the refusal-only tests above cannot distinguish).
+func TestRun_GenerateMode_LicenseGate_MITPasses(t *testing.T) {
+	skillDir := newSkillDir(t, mitLicenseSkill())
+	outDir := filepath.Join(t.TempDir(), "out")
+	var out, errb bytes.Buffer
+	code := run([]string{"-out", outDir, skillDir}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stdout=%q stderr=%q)", code, out.String(), errb.String())
+	}
+	if errb.Len() != 0 {
+		t.Fatalf("stderr should be empty, got %q", errb.String())
+	}
+	for _, rel := range []string{"go.mod", "go.sum", "main.go", "scripts/run.sh"} {
+		if _, err := os.Stat(filepath.Join(outDir, rel)); err != nil {
+			t.Errorf("expected generated file %s: %v", rel, err)
+		}
 	}
 }
 

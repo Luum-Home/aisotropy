@@ -173,6 +173,20 @@ func licensePermitted(license string) bool {
 	return ok
 }
 
+// LicensePermitted is the exported form of licensePermitted: it lets other
+// importers within this module apply the SAME permissive allowlist this
+// package enforces on plugin manifests, instead of re-deriving their own copy
+// (dependency-reuse-first, .claude/rules/dependency-reuse-first.md). An empty
+// string is never permitted — callers that want to distinguish "unstated" from
+// "explicitly rejected" check for an empty input themselves before calling.
+//
+// Known caller: cmd/skill-import (ADR-0022) gates its `-out` generation mode on
+// this exact allowlist so an imported Agent Skill under a copyleft or
+// source-available license cannot be scaffolded into a consumer module.
+func LicensePermitted(license string) bool {
+	return licensePermitted(license)
+}
+
 // ParseManifest reads and validates an `aisotropy-plugin.yaml` file at path. A
 // parse or validation failure is returned as an error wrapping the path so a bad
 // manifest fails at load, not at request time.
