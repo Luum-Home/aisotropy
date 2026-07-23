@@ -97,7 +97,7 @@ func stubUsageFor(system, prompt string, words []string) Usage {
 // stubWordsFor picks between the schema-aware structured reply (when the request
 // carries a structured-output instruction) and the default free-text echo.
 //
-// ADR-0068 (A1): the structured-output rider now lives in the SYSTEM region
+// ADR-0070 (A1): the structured-output rider now lives in the SYSTEM region
 // (gollem.go buildGollemPrompt appends it to the system prompt, not the body),
 // so the stub must look for the schema marker in BOTH system and prompt — a
 // system-only match is the normal case after the fix. Without this, moving the
@@ -126,7 +126,7 @@ const schemaInstructionMarker = "Respond ONLY with a valid JSON object that exac
 // schema does not parse — callers fall back to the default free-text echo in
 // that case, never a silent malformed reply.
 func stubStructuredReply(system, prompt string) (string, bool) {
-	// The schema rider may be in the SYSTEM region (ADR-0068 A1, the normal case)
+	// The schema rider may be in the SYSTEM region (ADR-0070 A1, the normal case)
 	// or, on any path that still inlines it, the prompt body. Prefer system.
 	source := system
 	idx := strings.Index(source, schemaInstructionMarker)

@@ -14,7 +14,7 @@ import (
 const schemaRiderMarker = "Respond ONLY with a valid JSON object"
 
 // TestBuildGollemPrompt_SchemaRiderNotAfterUserTurn is the PRIMARY, offline
-// regression guard for ADR-0068 (A1). It survives with ZERO model calls — the
+// regression guard for ADR-0070 (A1). It survives with ZERO model calls — the
 // real A/B (scripts/safeguard-ab.sh) is n=1 corroboration that the invariant
 // actually changes model behaviour, but THIS test is what prevents a silent
 // regression of the structural cause.

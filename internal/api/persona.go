@@ -28,7 +28,7 @@ func normalizePersonaLanguage(lang string) string {
 	return strings.ToLower(strings.TrimSpace(lang))
 }
 
-// personaHardeningEnvVar gates the optional PersonaHardening block (ADR-0068 A2).
+// personaHardeningEnvVar gates the optional PersonaHardening block (ADR-0070 A2).
 // Default OFF: when unset — or set to anything other than a truthy value — the
 // served persona bytes are byte-for-byte identical to a build without this
 // feature. Only "true"/"1"/"yes"/"on" (case-insensitive) turn it on. It is a
@@ -44,7 +44,7 @@ const personaHardeningEnvVar = "AISOTROPY_PERSONA_HARDENING"
 //
 // This EXCEEDS mastra's default posture: mastra @mastra/core 1.51.0 (Apache-2.0)
 // ships NO default hardening — instructions pass to the model verbatim and its
-// PromptInjectionDetector is opt-in and inactive by default (see ADR-0068). Kept
+// PromptInjectionDetector is opt-in and inactive by default (see ADR-0070). Kept
 // short and declarative: standing RULES, not a template (anti-magic gate,
 // ADR-0002). The rules mirror the deny/decline classes the arena safeguard
 // probes measure (identity concealment, persona-override refusal, instruction
@@ -141,7 +141,7 @@ func NewMapPersonaProvider(prompts map[string]string) PersonaProvider {
 	for k, v := range prompts {
 		m[k] = v
 	}
-	// ADR-0068 (A2): optional trusted-region hardening, default OFF (byte-identical
+	// ADR-0070 (A2): optional trusted-region hardening, default OFF (byte-identical
 	// persona unless AISOTROPY_PERSONA_HARDENING is truthy).
 	return withPersonaHardening(mapPersonaProvider{prompts: m, fallback: defaultPersonaProvider{}})
 }
@@ -194,7 +194,7 @@ func NewMultilingualPersonaProvider(prompts map[PersonaKey]string) PersonaProvid
 		}
 		m[PersonaKey{ProductID: k.ProductID, Language: lang}] = v
 	}
-	// ADR-0068 (A2): optional trusted-region hardening, default OFF (byte-identical
+	// ADR-0070 (A2): optional trusted-region hardening, default OFF (byte-identical
 	// persona unless AISOTROPY_PERSONA_HARDENING is truthy).
 	return withPersonaHardening(multilingualPersonaProvider{prompts: m, fallback: defaultPersonaProvider{}})
 }

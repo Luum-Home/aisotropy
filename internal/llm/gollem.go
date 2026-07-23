@@ -345,7 +345,7 @@ func generateFull(ctx context.Context, client Client, system, prompt string) (st
 // user prompt, feedback from previous retries, previous model responses)
 // into a single (system, prompt) pair — what Client.StreamChat accepts.
 //
-// ADR-0068 (A1) — schema rider lives in the SYSTEM region, never the tail.
+// ADR-0070 (A1) — schema rider lives in the SYSTEM region, never the tail.
 // The JSON-Schema "respond ONLY with JSON" instruction (outputInstruction) is
 // appended to the SYSTEM prompt, NOT after the last user message. Previously it
 // was written to the body as the FINAL line — so on the qa/chat route (which
@@ -370,7 +370,7 @@ func generateFull(ctx context.Context, client Client, system, prompt string) (st
 // otherwise — in both cases inside the system message and BEFORE the user turn,
 // which is the property that fixes the suppression. Placing it strictly above
 // the fence would require internal/api.hydrateSystemPrompt to inject it during
-// assembly; that is recorded as the ADR-0068 follow-up (native structured
+// assembly; that is recorded as the ADR-0070 follow-up (native structured
 // output via the ToolCaller seam removes the prompt-borne rider entirely).
 func buildGollemPrompt(messages []core.ModelMessage, params *core.ModelRequestParameters) (system, prompt string) {
 	var sys strings.Builder
@@ -401,7 +401,7 @@ func buildGollemPrompt(messages []core.ModelMessage, params *core.ModelRequestPa
 		}
 	}
 
-	// ADR-0068 (A1): rider into the SYSTEM region, not appended after the user
+	// ADR-0070 (A1): rider into the SYSTEM region, not appended after the user
 	// turn. See the function doc for the full rationale.
 	if instr := outputInstruction(params); instr != "" {
 		writeLine(&sys, instr)

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestStubStructuredReply_SchemaInSystemRegion locks the ADR-0068 (A1)
+// TestStubStructuredReply_SchemaInSystemRegion locks the ADR-0070 (A1)
 // consequential fix: after the schema rider was relocated from the prompt body
 // into the SYSTEM region (gollem.go buildGollemPrompt), the stub must still emit
 // a schema-satisfying JSON object when the marker is carried by `system`. Before
