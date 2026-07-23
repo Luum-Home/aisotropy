@@ -59,6 +59,16 @@ jobs:
       - name: go build
         run: go build ./...
 
+      - name: License audit (root module + compose images)
+        # Constitutional license gate (ADR-0067 companion): fails the build if a
+        # root-module dependency resolves to a prohibited license (or has no
+        # LICENSE file at all) or if any docker-compose image is not on the
+        # reviewed allowlist. --root-only matches this workflow's scope note
+        # above (nested demo modules are not gated here; the full sweep is
+        # `scripts/license-audit.sh` run manually). Placed after `go build` so
+        # GOMODCACHE is already populated with the root module's dependencies.
+        run: bash scripts/license-audit.sh --root-only
+
       - name: go test (race + coverage)
         # -race forces covermode=atomic automatically. Docker is present on the
         # runner, so Docker-gated tests execute rather than skip.

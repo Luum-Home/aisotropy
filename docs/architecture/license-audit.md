@@ -101,3 +101,26 @@ exception" posture: 0 BLOCKER, 2 fully-documented exceptions (one out of aisotro
 graph entirely, one a false-positive of Go's monorepo module packaging — not a real license risk),
 and 1 deliberate, ADR-backed copyleft exception in the Docker image layer (Grafana). Re-run
 `scripts/license-audit.sh` whenever a `go.mod` or `docker-compose*.yml` changes.
+
+## Enforcement (wired 2026-07-23 — no longer memory-dependent)
+
+The re-run is no longer something to remember; it fires automatically at both choke points:
+
+- **Local, at commit time**: `scripts/install-hooks.sh` symlinks `.git/hooks/pre-commit` →
+  `scripts/license-gate-precommit.sh`, a **conditional** gate: it runs
+  `license-audit.sh --root-only` (~1s) only when the staged changes touch a dependency/image
+  manifest (`go.mod`/`go.sum`, `docker-compose*.yml`, `Dockerfile*`, `Cargo.*`,
+  `requirements*.txt`, `package.json`, `pyproject.toml`); every other commit pays ~0ms.
+  Bypass (loud, one commit): `SKIP_LICENSE_AUDIT=1 git commit …` or `--no-verify`.
+- **CI, on every push/PR**: the `License audit (root module + compose images)` step in
+  `.github/workflows/ci.yml` runs `license-audit.sh --root-only` right after `go build` (so the
+  module cache is populated) — a contributor without the local hook still cannot land an
+  unreviewed dependency or image on `main`.
+- **Scope note**: both gates use `--root-only` (shipped runtime + all compose images), matching
+  CI's "only the root module is gated" philosophy. The nested demo modules (`arenas/*`,
+  `examples/*`, `bench/*`) stay covered by the manual full sweep (`scripts/license-audit.sh`
+  with no flag), which remains the audit-cadence tool.
+
+Verified live 2026-07-23: positive path (staged `requirements*.txt` → gate triggers → 29 root
+deps + 12 images → exit 0) and negative path (staged compose file with an unlisted image →
+`UNLISTED_IMAGE` finding → exit 1, commit blocked).

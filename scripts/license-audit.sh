@@ -30,7 +30,12 @@
 #   - grafana/grafana image (AGPL-3.0) is an approved exception under
 #     docs/decisions/0067-grafana-agpl-exception-observability-stack.md — allowlisted, not blocked.
 #
-# USAGE:  scripts/license-audit.sh
+# USAGE:  scripts/license-audit.sh [--root-only]
+#         --root-only: audit only the ROOT go.mod (the shipped runtime) + the full
+#         compose-image sweep. This is the COMMIT-GATE / CI scope (matches ci.yml's
+#         "only the root module is gated" philosophy); the no-flag full sweep over
+#         all 24 nested modules stays the manual audit-cadence tool.
+#         SKIP_LICENSE_AUDIT=1 skips entirely (loud bypass — a skip is NOT a pass).
 # EXIT:   0 = clean, no findings
 #         1 = findings (review the FINDINGS list printed at the end)
 #         2 = environment error (not a git repo, `go` missing, GOMODCACHE unreadable)
@@ -40,6 +45,19 @@
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" || { echo "license-audit: not in a git repo" >&2; exit 2; }
+
+if [ "${SKIP_LICENSE_AUDIT:-0}" = "1" ]; then
+  echo "license-audit: SKIPPED (SKIP_LICENSE_AUDIT=1) — audit NOT performed; a skip is a bypass, not a pass."
+  exit 0
+fi
+
+ROOT_ONLY=0
+case "${1:-}" in
+  --root-only) ROOT_ONLY=1 ;;
+  "") : ;;
+  *) echo "license-audit: unknown argument '$1' (only --root-only is supported)" >&2; exit 2 ;;
+esac
+
 command -v go >/dev/null 2>&1 || { echo "license-audit: 'go' not found on PATH" >&2; exit 2; }
 
 GOMODCACHE="$(go env GOMODCACHE 2>/dev/null)"
@@ -139,12 +157,19 @@ extract_local_replaces() {
 echo
 echo "--- (a) Go direct-dependency license sweep ---"
 
-GO_MOD_DIRS="$(find . -name go.mod \
-  -not -path '*/node_modules/*' \
-  -not -path '*/.claude/worktrees/*' \
-  -not -path '*/.agent-tooling/checkpoints/*' \
-  -not -path '*/.venv/*' \
-  | sed 's#^\./##' | sort)"
+if [ "$ROOT_ONLY" = "1" ]; then
+  # Commit-gate / CI scope: the shipped runtime only. Nested demo modules
+  # (arenas/*, examples/*, bench/*, external/*) are audited by the manual
+  # full sweep, mirroring ci.yml's "only the root module is gated" note.
+  GO_MOD_DIRS="go.mod"
+else
+  GO_MOD_DIRS="$(find . -name go.mod \
+    -not -path '*/node_modules/*' \
+    -not -path '*/.claude/worktrees/*' \
+    -not -path '*/.agent-tooling/checkpoints/*' \
+    -not -path '*/.venv/*' \
+    | sed 's#^\./##' | sort)"
+fi
 
 n_modules=0
 n_deps_total=0

@@ -8,7 +8,10 @@
 # spending extra paid GitHub Actions minutes on those steps.
 #
 # INSTALLS:
-#   .git/hooks/pre-push -> scripts/supply-chain-guard.sh   (symlink; runs govulncheck)
+#   .git/hooks/pre-push   -> scripts/supply-chain-guard.sh    (symlink; runs govulncheck)
+#   .git/hooks/pre-commit -> scripts/license-gate-precommit.sh (symlink; conditional
+#                            license gate — runs license-audit.sh --root-only ONLY when
+#                            the staged changes touch a dependency/image manifest)
 #
 # The hook is a symlink to the repo script, so re-running this installer is
 # idempotent and the hook always reflects the committed script. An existing,
@@ -26,26 +29,34 @@ HOOK_DIR="$(git rev-parse --git-path hooks)"
 case "$HOOK_DIR" in /*) : ;; *) HOOK_DIR="$REPO_ROOT/$HOOK_DIR" ;; esac
 mkdir -p "$HOOK_DIR"
 
-GATE="$REPO_ROOT/scripts/supply-chain-guard.sh"
-[ -f "$GATE" ] || { echo "missing $GATE" >&2; exit 2; }
-chmod +x "$GATE" 2>/dev/null || true
-
-LINK="$HOOK_DIR/pre-push"
-
+# install_hook <hook-name> <target-script> <bypass-hint>
 # Absolute symlink: robust across worktrees and hook-dir relocation. Hooks are
 # not committed, so a machine-absolute target is fine (re-created per clone).
-if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$GATE" ]; then
-  echo "install-hooks: pre-push already points at scripts/supply-chain-guard.sh — nothing to do."
-  exit 0
-fi
+# An existing, unrelated hook of the same name is backed up rather than clobbered.
+install_hook() {
+  hook_name="$1"; gate="$2"; bypass="$3"
+  [ -f "$gate" ] || { echo "missing $gate" >&2; exit 2; }
+  chmod +x "$gate" 2>/dev/null || true
+  link="$HOOK_DIR/$hook_name"
 
-if [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
-  backup="$LINK.bak.$(date +%Y%m%d%H%M%S)"
-  mv "$LINK" "$backup"
-  echo "install-hooks: existing pre-push hook backed up to $backup"
-fi
+  if [ -L "$link" ] && [ "$(readlink "$link")" = "$gate" ]; then
+    echo "install-hooks: $hook_name already points at ${gate#"$REPO_ROOT/"} — nothing to do."
+    return 0
+  fi
 
-ln -sf "$GATE" "$LINK"
-echo "install-hooks: installed pre-push -> scripts/supply-chain-guard.sh"
-echo "               (bypass once with: SKIP_SUPPLY_CHAIN_GUARD=1 git push … or git push --no-verify)"
+  if [ -e "$link" ] && [ ! -L "$link" ]; then
+    backup="$link.bak.$(date +%Y%m%d%H%M%S)"
+    mv "$link" "$backup"
+    echo "install-hooks: existing $hook_name hook backed up to $backup"
+  fi
+
+  ln -sf "$gate" "$link"
+  echo "install-hooks: installed $hook_name -> ${gate#"$REPO_ROOT/"}"
+  echo "               (bypass once with: $bypass)"
+}
+
+install_hook pre-push   "$REPO_ROOT/scripts/supply-chain-guard.sh" \
+  "SKIP_SUPPLY_CHAIN_GUARD=1 git push … or git push --no-verify"
+install_hook pre-commit "$REPO_ROOT/scripts/license-gate-precommit.sh" \
+  "SKIP_LICENSE_AUDIT=1 git commit … or git commit --no-verify"
 exit 0
