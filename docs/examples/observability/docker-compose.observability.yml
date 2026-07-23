@@ -1,0 +1,33 @@
+# Local-development observability overlay (ADR-0065).
+#
+# Boots the standalone .NET Aspire Dashboard (MIT) as a local OTLP trace viewer
+# for aisotropyd. aisotropyd is OTLP-native and backend-agnostic — this adds NO
+# product dependency; you just point OTEL_EXPORTER_OTLP_ENDPOINT at the endpoint
+# below. DEV ONLY: anonymous access + unsecured transport + ephemeral (in-RAM)
+# storage. Never use this configuration outside a local developer loop.
+#
+#   docker compose -f docs/examples/observability/docker-compose.observability.yml up -d
+#   # then run aisotropyd with:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 ./aisotropyd
+#   # open the UI:
+#   open http://localhost:18888
+#
+# The exporter is otlptracehttp (HTTP/protobuf, internal/llm/otel.go), so it
+# posts to the OTLP/HTTP endpoint on host :4318 (container 18890). Content is
+# stripped by redactingExporter before export (commit 7b229be) — the dashboard
+# shows gen_ai.* + tenant_id/user_id, never prompt/response text.
+
+services:
+  aspire-dashboard:
+    # Pin to a concrete version tag (not :latest) for reproducibility. Bump
+    # deliberately; digest-pin if this graduates out of docs/examples.
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:9.0
+    container_name: aisotropy-aspire-dashboard
+    environment:
+      # Local dev only: skip the login token and allow plain-HTTP OTLP ingest.
+      - DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true
+    ports:
+      - "18888:18888"   # Dashboard UI (http://localhost:18888)
+      - "4317:18889"    # OTLP/gRPC  ingest  (host 4317  -> container 18889)
+      - "4318:18890"    # OTLP/HTTP  ingest  (host 4318  -> container 18890)
+    restart: unless-stopped
