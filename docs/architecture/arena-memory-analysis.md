@@ -1,7 +1,7 @@
 ---
 type: Process
 title: "Arena Memory Analysis — is aisotropy's memory better or worse than the competitors, with reason"
-description: The forensically defensible answer to the operator's core question, built to survive a hostile skeptic. It is not one answer — it is one per axis and workload. On within-session recall (the only memory workload the live board currently RUNS), aisotropy is WORSE: it pays the widest token premium on the 8/8 empty-tie board (100,644 total vs a 16,200–28,075 competitor range) for machinery raw transcript replay renders free, because replay is not merely adequate for short within-session recall — it is optimal. On cross-session / semantic / consolidation, aisotropy is ARCHITECTED to win where session-keyed replay structurally cannot, and the three dimensions are now wired for all 9 adapters (FASE 3) — but the discriminating numbers are PENDING the real run (FASE 5), so this is stated as designed-and-wired, not proven. On tenancy-under-a-forgotten-scope, aisotropy is BETTER, MEASURED, and model-independent: running the competitors' own code, langgraph LEAKS another user's memory (an L1 breach that CONTRADICTED our own doc's prediction), llamaindex silently partitions, while aisotropy/mastra/spring-ai refuse — a genuinely-better result that is not bias because it was executed not asserted, is symmetric, and the scorer can fail aisotropy too. Every "better" is axis-and-workload-qualified; the "worse" is stated at equal volume.
+description: The forensically defensible answer to the operator's core question, now grounded in the clean FASE-5 board (commit 06945bf, real agnes lane, deterministic scores). It is not one answer — it is one per axis and workload. On within-session recall, aisotropy is WORSE — it pays the widest token premium on a board where replay is optimal (measured on the post-fix board 8154f63; on the clean board its plain-memory cells errored on a filed adapter shutdown bug). On cross-session / semantic / consolidation recall — the workloads previously only wired — aisotropy now has MEASURED numbers: 2/2, 2/2, 2/2, TYING the top tier with mastra and spring-ai (it is NOT unique). On tenancy-under-a-forgotten-scope, aisotropy is one of only three frameworks that ENFORCE (2/2 refuses, board-rendered), while langgraph and llamaindex fail 0/2 — the by-construction thesis, now measured. On adversarial safeguard, aisotropy is mid-pack (5/7) — a named weakness. mastra is the strongest overall competitor on this board. Every "better" is axis-and-workload-qualified; the "worse" is stated at equal volume.
 tags: [architecture, process, arena, memory, tenancy, forensics, code-truth, bias-audit]
 timestamp: 2026-07-23T00:00:00Z
 ---
@@ -13,14 +13,15 @@ timestamp: 2026-07-23T00:00:00Z
 > forensically defensible, proof against invalidation by bias. The honest answer is that "aisotropy's
 > memory is better" is an **unanswerable sentence as posed**, and any document that produces it as an
 > unqualified claim is marketing, not engineering. "Better or worse" is not a property of a memory
-> system; it is a property of a **(memory system × workload × axis)** triple. On one workload the
-> current board runs, aisotropy is measurably worse and pays for it in tokens on every turn. On a
-> different workload the board does not yet run, aisotropy is architected to win and the competitors
-> are structurally weaker — but that win is **not yet a number**. On a third axis — isolation under a
-> forgotten scope — aisotropy is genuinely, measurably, model-independently better, and that result is
-> defensible precisely because it was found by *running the competitors' own code* and it *contradicted
-> our own prediction*. This document gives the per-axis, per-workload verdict, each with its reason and
-> its evidence, and it states the place aisotropy LOSES at the same volume as the places it wins —
+> system; it is a property of a **(memory system × workload × axis)** triple. On one workload,
+> aisotropy is measurably worse and pays for it in tokens on every turn. On the workloads the suite
+> added to test aisotropy's home turf — cross-session, semantic, consolidated recall — the FASE-5
+> clean board (`06945bf`) has now RUN, and the result is that aisotropy **ties the top tier with
+> mastra and spring-ai**: it did not lose, and it did not uniquely win. On a third axis — isolation
+> under a forgotten scope — aisotropy is one of only three frameworks that enforce, and that result
+> is board-rendered, deterministic, and was found by *running the competitors' own code*. This
+> document gives the per-axis, per-workload verdict, each with its reason and its evidence, and it
+> states the places aisotropy LOSES or merely TIES at the same volume as the places it wins —
 > because a comparison doc that audits itself leniently is the exact failure
 > `docs/architecture/arena-fairness-protocol.md` §9 exists to prevent.
 
@@ -28,30 +29,44 @@ timestamp: 2026-07-23T00:00:00Z
 
 ## 0. Verdict at a glance (the full per-axis table is §7)
 
+All memory-extension, isolation, and safeguard numbers below are from the **clean FASE-5 full
+board** — `arenas/live/RESULTS.md` @ commit `06945bf` (real `agnes-2.0-flash` lane, deterministic
+scorers, 9 frameworks) — with the full-matrix cells filled from that board in `098ef91`. Earlier
+boards (the pre-fix `87eaba1`, the post-fix within-session board `8154f63`, and a discarded
+contaminated concurrency-3 run) are cited only as history, never as current results.
+
 | Axis / workload | Verdict | Status of the evidence |
 |---|---|---|
-| **Within-session recall** (the shipped `memory` dimension) | aisotropy **WORSE** — pays the widest token premium for machinery replay renders free | **MEASURED** — current board `8154f63`, aisotropy memory token spend 100,644 vs 16,200–28,075 competitor range |
-| **Cross-session recall** (`memory_cross_session`) | aisotropy architected to win; session-keyed replay returns empty by construction | **WIRED, NOT YET RUN** — 9 adapters wired FASE 3; discriminating numbers pending FASE 5 |
-| **Semantic long-term recall** (`memory_semantic_recall`) | aisotropy architected to win; a paraphrase defeats lexical replay | **WIRED, NOT YET RUN** — same |
-| **Consolidation across a session boundary** (`memory_consolidation`) | aisotropy architected to win; most competitors have no async consolidator | **WIRED, NOT YET RUN** — same |
-| **Tenancy under a forgotten scope** (`isolation_forgetful`) | aisotropy **BETTER** — refuses by construction where langgraph leaks and llamaindex silently partitions | **MEASURED, MODEL-INDEPENDENT** — executed against each framework's own code, FASE 3 commits |
+| **Within-session recall** (the shipped `memory` dimension) | aisotropy **WORSE** — pays the widest token premium for machinery replay renders free | **MEASURED** on the post-fix board `8154f63` (100,644 memory tokens vs a 16,200–28,075 competitor range). On the clean board `06945bf`, aisotropy's plain-memory cells all errored on a filed adapter shutdown bug (§1), so `8154f63` remains the within-session reference |
+| **Cross-session recall** (`memory_cross_session`) | aisotropy **TIES the top** — 2/2, alongside mastra, spring-ai, langgraph, llamaindex, pydantic-ai; the session-keyed frameworks score 1/2 | **MEASURED** — `06945bf` |
+| **Semantic long-term recall** (`memory_semantic_recall`) | aisotropy **TIES the top tier** — 2/2 with mastra and spring-ai only; langgraph/llamaindex 1/2; the rest 0/2. Served via aisotropy's semantic tier — see the caveat in §3 | **MEASURED** — `06945bf` |
+| **Consolidation across a session boundary** (`memory_consolidation`) | aisotropy **TIES the top** — 2/2, alongside mastra, spring-ai, langgraph, llamaindex, pydantic-ai; ai-sdk/eino/genkit-go 0/2 | **MEASURED** — `06945bf` |
+| **Tenancy under a forgotten scope** (`isolation_forgetful`) | aisotropy **BETTER** — one of only THREE that ENFORCE (2/2 refuses, with mastra and spring-ai); langgraph and llamaindex fail 0/2 | **MEASURED, board-rendered** — `06945bf`; matrix cells filled `098ef91` |
+| **Adversarial safeguard** (`safeguard`) | aisotropy **MID-PACK** — 5/7, behind mastra (7/7), eino and genkit-go (6/7); a named weakness, not explained away | **MEASURED** — `06945bf` |
 
-The token cost of the first row is **real and permanent**; the capability it buys only pays off on the
-workloads of rows 2–4, which the suite has now *added* (FASE 3 wiring) but has *not yet run* (FASE 5).
+Across the three memory-extension dimensions combined, exactly **three frameworks are perfect:
+aisotropy, mastra, and spring-ai (2/2, 2/2, 2/2 each)**. aisotropy's memory is top-tier on the
+measured board — and **not unique**. The token cost of the first row is real and permanent; what it
+buys is now a measured tie at the top of rows 2–4, not a solo win.
 
 ---
 
-## 1. Why the current memory score is an empty tie — and why replay is not just adequate but OPTIMAL here
+## 1. Why the within-session memory score is an empty tie — and why replay is not just adequate but OPTIMAL here
 
 The shipped `memory` dimension grades **within-session last-N recall**: state some facts across a
-handful of turns in one session, then ask the model to recall one. On the current board
-(`arenas/live/RESULTS.md:237-279`, committed `8154f63`, "memory 8/8 after the product fixes — and the
-token cost made honest"), **every one of the eight frameworks scores 8/8 ✓ at avg value 1.0**. It is a
-tie nobody can lose — an **empty tie**, in the exact sense `docs/architecture/arena-benchmark-methodology.md`
-("empty parity") defines: the column cannot rank anyone because the thing it exercises is not the thing
-that differs.
+handful of turns in one session, then ask the model to recall one. On the post-fix within-session
+board (`8154f63`, "memory 8/8 after the product fixes — and the token cost made honest"), **every
+one of the eight frameworks then on the board scored 8/8 ✓ at avg value 1.0**. It is a tie nobody
+can lose — an **empty tie**, in the exact sense `docs/architecture/arena-benchmark-methodology.md`
+("empty parity") defines: the column cannot rank anyone because the thing it exercises is not the
+thing that differs. The clean FASE-5 board (`06945bf`, now 9 frameworks including spring-ai)
+reproduces the tie for every *scored* framework — all eight competitors again at 8/8 — with one
+asterisk: **aisotropy's own eight plain-memory runs all errored** on that pass, part of the ~16
+adapter shutdown-exit-1 blips (the adapter answers, then exits non-zero during connection drain — an
+adapter bug, filed; see the run-hygiene note in §3). So the within-session evidence in this section
+and §2 rests on `8154f63`, and the clean board neither contradicts nor re-measures it for aisotropy.
 
-The reason it cannot rank anyone is structural, and it is the crux of the whole "worse" verdict.
+The reason the tie cannot rank anyone is structural, and it is the crux of the whole "worse" verdict.
 `docs/architecture/arena-memory-forensics.md` §6 establishes, with per-framework source citations, that
 **none of the seven competitors performs any semantic retrieval, importance scoring, or
 recency-weighted ranking in this mode** — every one does ordered transcript replay: the prior
@@ -70,28 +85,29 @@ find a needle in a haystack far larger than a 12-message window. On a haystack o
 no needle to find; the pipeline is doing lookup work whose answer was already sitting in the last turn
 for free. **Replay wins this workload not by luck but by construction, and aisotropy's tiered machinery
 is, here, a net cost — more calls, more tokens, and occasionally a lossy drop.** This is not softened:
-on the workload the board runs today, the smart system loses to "reply with the whole transcript," and
+on the within-session workload, the smart system loses to "reply with the whole transcript," and
 that is a real result, not a framing artifact (`arena-memory-forensics.md` §6, closing paragraph).
 
 There was, additionally, a *since-fixed adapter artifact* that once made this look far worse than the
-structural truth: the pre-fix board (`87eaba1`) showed aisotropy at **6/8, worst of eight, 41,292
-input tokens**, because the adapter's `userMessages` filter (`arenas/live/aisotropy/main.go:365-372`,
-`mode_memory.go:29`) dropped the suite's canned cooperative assistant turns — aisotropy's `App.Turn`
-takes `ChatInput.Prompt` with no message-history slot (`aisotropy/turn.go:28-54`) — and the model
-refused itself into a cascade, spending 8,120 + 13,430 output tokens on two failed tasks
-(`arena-memory-forensics.md` §3.1, §3.5). That was a **harness bug, not a product defect**, corrected in
-commit `14355a7` ("the 6/8 was our harness, not the product"), after which memory moved to the 8/8 tie.
-**The load-bearing "worse" claim in this document deliberately does NOT rest on the 41,292 figure** — a
-hostile reviewer would rightly destroy a standing claim built on a number inflated by an
-already-fixed adapter bug. It rests on the *post-fix* board, §2.
+structural truth — **superseded history, never a current number**: the pre-fix board (`87eaba1`)
+showed aisotropy at **6/8, worst of eight, 41,292 input tokens**, because the adapter's
+`userMessages` filter (`arenas/live/aisotropy/main.go:365-372`, `mode_memory.go:29`) dropped the
+suite's canned cooperative assistant turns — aisotropy's `App.Turn` takes `ChatInput.Prompt` with no
+message-history slot (`aisotropy/turn.go:28-54`) — and the model refused itself into a cascade,
+spending 8,120 + 13,430 output tokens on two failed tasks (`arena-memory-forensics.md` §3.1, §3.5).
+That was a **harness bug, not a product defect**, corrected in commit `14355a7` ("the 6/8 was our
+harness, not the product"), after which memory moved to the 8/8 tie. **The load-bearing "worse" claim
+in this document deliberately does NOT rest on the 41,292 figure** — a hostile reviewer would rightly
+destroy a standing claim built on a number inflated by an already-fixed adapter bug. It rests on the
+*post-fix* board, §2.
 
 ---
 
 ## 2. The token-delta decomposition — feature vs waste is WORKLOAD-DEPENDENT (the spine)
 
 Take the empty tie as given: every framework returns the right answer, 8/8. The only thing that still
-differs is **cost**. On the current post-fix board (`arenas/live/RESULTS.md:435-441`, token-spend table,
-`8154f63`), the memory dimension's total token spend is:
+differs is **cost**. On the post-fix within-session board (`RESULTS.md` @ `8154f63`, token-spend
+table), the memory dimension's total token spend was:
 
 | Framework | Total input | Total output | Total | Avg in / task | Avg out / task |
 |---|---:|---:|---:|---:|---:|
@@ -103,6 +119,10 @@ differs is **cost**. On the current post-fix board (`arenas/live/RESULTS.md:435-
 | llamaindex | 16,733 | 3,853 | 20,586 | 2,092 | 482 |
 | mastra | 12,964 | 6,050 | 19,014 | 1,620 | 756 |
 | pydantic-ai | 11,349 | 4,851 | 16,200 | 1,418 | 606 |
+
+(That board has since been superseded as the arena's *current* board by `06945bf`, whose aisotropy
+plain-memory cells errored on the filed shutdown bug — §1 — so this table remains the honest
+within-session token reference. Nothing in the clean board contradicts it.)
 
 Even **after** the refusal-cascade adapter bug was fixed, aisotropy's memory token spend (100,644) is
 roughly **3.6× the nearest competitor** (ai-sdk, 28,075) and **6.2× the cheapest** (pydantic-ai,
@@ -116,176 +136,222 @@ The single question the operator's mandate hinges on: **is that extra spend a fe
 waste?** The answer is not "one or the other" — it is workload-dependent, and that is the spine of the
 entire better/worse analysis:
 
-- **On the current within-session workload: it is WASTE.** The answer is in the last turn; replay finds
+- **On the within-session workload: it is WASTE.** The answer is in the last turn; replay finds
   it for free; the facts-tier FTS5 query, the semantic cosine scan, and the condensation pass are all
   paying tokens to retrieve a fact that never needed retrieving. aisotropy is doing more work to be
   smarter about memory and *losing to "send everything back"* on the tasks graded here
   (`arena-memory-forensics.md` §6).
-- **On a long-haul / cross-session / semantic workload: it is a FEATURE.** Replay's optimality is
-  bounded by the context window and by the session. Send back a 40-turn transcript and you pay 10–20×
-  the input tokens *and* eventually blow the window; open a fresh session and a transcript store recalls
-  **nothing** — the data structure that was lossless within the session is empty across it. The tiered
-  retrieval that is dead weight on 12 messages is the *only thing that works* when the haystack is
-  40 turns or a second session (`docs/architecture/arena-memory-extensions.md` §3.2–3.3).
+- **On a long-haul / cross-session / semantic workload: it is a FEATURE — and this is now measured,
+  not projected.** Replay's optimality is bounded by the context window and by the session. Send back
+  a 40-turn transcript and you pay 10–20× the input tokens *and* eventually blow the window; open a
+  fresh session and a transcript store recalls **nothing** — the data structure that was lossless
+  within the session is empty across it. On the clean board, the three frameworks whose recall is
+  session-keyed at best (ai-sdk, eino, genkit-go) score 1/2, 0/2, 0/2 across the three
+  memory-extension dimensions, while aisotropy scores 2/2, 2/2, 2/2 (§3) — the structural prediction
+  (`docs/architecture/arena-memory-extensions.md` §3.2–3.3) held.
 
-So "better or worse" resolves to: **the current suite runs the one workload where aisotropy's
-architecture is a net cost, and does not yet run the workloads where it is the point.** That is not an
-accident of framing to be explained away — it is disclosed as the primary home-turf asymmetry in
-`docs/architecture/arena-fairness-protocol.md` §5, and it currently runs **against** aisotropy.
+So "better or worse" resolves to: **on the workload where aisotropy's architecture is a net cost it
+loses on cost, and on the workloads that architecture exists for it ties the measured top tier —
+alongside two competitors that get there too.** The home-turf asymmetry disclosed in
+`docs/architecture/arena-fairness-protocol.md` §5 has now been closed by running both kinds of
+workload on the same board.
 
 ---
 
-## 3. Measuring aisotropy's home turf — WIRED (FASE 3), NOT YET RUN (FASE 5)
+## 3. Measuring aisotropy's home turf — MEASURED (FASE 5, clean board `06945bf`)
 
 A better/worse answer that only measures the competitors' home turf is half an answer. The three
 dimensions that test aisotropy's — `memory_cross_session`, `memory_semantic_recall`,
-`memory_consolidation` — were **designed** in `arena-memory-extensions.md` §3 and have now been
-**wired for all nine adapters** across the FASE-3 commit wave (`0bdd3ff` langgraph, `55ee6b1`
-llamaindex, `594d816` mastra, `5f58150` genkit-go/eino/ai-sdk, `f4e473d` pydantic-ai/spring-ai,
-`affaf93` the runner nonce). The cross-cutting mechanic that makes them discriminate: the runner holds
-`user_id` constant while **varying `session_id`** across invocations, so an adapter that only knows how
-to replay a session-keyed transcript **returns empty by construction** on a fresh session — which is
-exactly the point (`arena-memory-extensions.md` §3.1).
+`memory_consolidation` — were designed in `arena-memory-extensions.md` §3, wired for all nine
+adapters across the FASE-3 commit wave (`0bdd3ff` langgraph, `55ee6b1` llamaindex, `594d816` mastra,
+`5f58150` genkit-go/eino/ai-sdk, `f4e473d` pydantic-ai/spring-ai, `affaf93` the runner nonce), and
+have now **RUN on the clean FASE-5 board** (`06945bf`). The cross-cutting mechanic that makes them
+discriminate: the runner holds `user_id` constant while **varying `session_id`** across invocations,
+so an adapter that only knows how to replay a session-keyed transcript **returns empty by
+construction** on a fresh session (`arena-memory-extensions.md` §3.1). The load-bearing distinction
+across the whole table below is **SESSION-keyed vs USER-scoped**: a session-keyed store cannot pass
+a varies-session/holds-user dimension by construction.
 
-Where replay structurally cannot compete, and why:
+**The measured result** (deterministic scores, real agnes lane, `RESULTS.md` @ `06945bf`):
 
-- **`memory_cross_session`** — persist under session A, recall under session B, same user, separate
-  processes. A session-keyed transcript store has nothing to return for session B. genkit-go and eino
-  are wired **run-and-fail**: their own experimental primitives (genkit's `core/x/session`, eino's adk
-  `CheckPointStore`) are session-keyed, so a fresh-session recall genuinely returns empty — the
-  *measured finding* that they have no user-scoped memory, not a bug (`5f58150`). ai-sdk is `infeasible`
-  (no first-party primitive at any maturity).
-- **`memory_semantic_recall`** — persist ~30–40 turns with a needle stated semantically; recall with a
-  **paraphrase** that shares no content tokens (a pure fixture guard pins zero non-stopword overlap,
-  `arena-memory-extensions.md` §3.3). Lexical replay cannot match a paraphrase; only user-scoped
-  semantic retrieval can. eino, genkit-go, pydantic-ai, ai-sdk are `infeasible` here (no semantic
-  primitive); langgraph/llamaindex/mastra are wired to their native semantic paths over the shared e5
-  embedder.
-- **`memory_consolidation`** — persist a conversational fact, run the framework's consolidation to
-  completion, recall across a session boundary. mastra's own wiring declares invocation 2 a **no-op** —
-  itself a finding: mastra has an in-hot-path working-memory profile but **no async consolidator**
-  (`594d816`). aisotropy drives its outbox → sleep-cycle drain.
+| Framework | `memory_cross_session` | `memory_semantic_recall` | `memory_consolidation` |
+|---|---:|---:|---:|
+| **aisotropy** | **2/2** | **2/2** | **2/2** |
+| **mastra** | **2/2** | **2/2** | **2/2** |
+| **spring-ai** | **2/2** | **2/2** | **2/2** |
+| langgraph | 2/2 | 1/2 | 2/2 |
+| llamaindex | 2/2 | 1/2 | 2/2 |
+| pydantic-ai | 2/2 | 0/2 | 2/2 |
+| ai-sdk | 1/2 | 0/2 | 0/2 |
+| eino | 1/2 | 0/2 | 0/2 |
+| genkit-go | 1/2 | 0/2 | 0/2 |
 
-**What must NOT be overstated, and is the hard honesty constraint of this section.** The naive claim
-"cross-session / semantic / consolidation is unique to aisotropy" **does not survive** the ecosystem
-sweep: langgraph, llamaindex, and mastra each have an *official* path to all or most of the three
-(`arena-memory-extensions.md`, Verdict + §1 matrix). aisotropy's differentiator is that the tiers are
-**default-on, integrated, and tenant-scoped by construction** — not that the capability is unobtainable
-elsewhere. And critically: **the discriminating NUMBERS for these three dimensions do not exist yet.**
-The adapters are wired; aisotropy's own matrix cells for all three are `pending` in every real/native/
-docker slot (`arenas/live/aisotropy/matrix.json`, `memory_cross_session`/`memory_semantic_recall`/
-`memory_consolidation` → `"native": "pending"`, `"docker": "pending"`; stub is `infeasible` because the
-offline in-memory tier cannot cross a process boundary). **This document claims no result for rows 2–4
-of §0.** It claims a wired, fairness-reviewed *design* whose numbers are pending the real run (FASE 5).
-Anyone who reads §3 as "aisotropy proven to win cross-session memory" is reading a claim this document
-explicitly does not make.
+Three readings, in descending order of importance:
+
+1. **aisotropy ties the top tier; it does not own it.** Exactly three frameworks are perfect across
+   all three dimensions: aisotropy, mastra, and spring-ai. The pre-run framing "architected to win
+   where session-keyed replay structurally cannot" resolved to "ties the frameworks that also have
+   genuine user-scoped memory." The structural claim that survives is narrower and measured: the
+   session-keyed bottom tier (ai-sdk/eino/genkit-go, 1/2 0/2 0/2) failed exactly where the
+   varies-session mechanic predicts, and `memory_semantic_recall` is the sharpest separator — only
+   the three perfect frameworks pass the paraphrase recall both times, because only genuine
+   user-scoped *semantic* retrieval can match a needle that shares zero content tokens with the
+   query (a fixture guard pins the zero-overlap property).
+2. **The weak rows are labeled with ecosystem evidence, not capability-absence claims.** For what
+   pydantic-ai, ai-sdk, eino, and genkit-go each *do* have — with maturity labels (NONE /
+   PRESCRIBED-PATTERN / OFFICIAL-EXAMPLE / NATIVE-PREVIEW) and URLs from the 2026-07 post-measurement
+   ecosystem sweep — see `arena-memory-extensions.md` **§1.1** (added alongside the matrix fill,
+   `098ef91`). The one-line version: everything official those four offer today is SESSION-keyed (or
+   external/community), which is precisely why they land where they land on a varies-session board.
+   This document does not restate "X has no memory" claims; the sweep carries the evidence.
+3. **Fairness held.** Each competitor was wired to its own best *official* primitive, declared with
+   URL + maturity in its adapter README and tabulated in `arena-memory-extensions.md` §1 — langgraph
+   `BaseStore`(+langmem), llamaindex `Memory`+`VectorMemoryBlock`, mastra resource-scope +
+   `semanticRecall`, spring-ai `ChatMemory` — so a competitor's pass is a real result and a
+   competitor's fail is its own framework's, not a strawman's. mastra passing `memory_consolidation`
+   2/2 with an in-hot-path working-memory profile (no async consolidator) is scored on the OUTCOME,
+   with the mechanism kept as a separate labeled finding — exactly as the dimension design requires.
+
+**The aisotropy caveat (symmetric honesty, unchanged in substance): these cells are served by
+aisotropy's SEMANTIC tier, not its dedicated conversational-memory path.** The adapter persists via
+`App.IngestKnowledge` (user-scoped, real e5→Qdrant, zero model calls) and recalls via the streaming
+chat route (semantic-hydrated) — commit `39017e9`. That is **apples-to-apples with every passing
+competitor**: langgraph's `BaseStore`-with-index, llamaindex's `VectorMemoryBlock`, and mastra's
+`semanticRecall` all vectorize conversation turns and semantic-retrieve; for semantic recall the
+memory-vs-RAG line collapses to vectorize-and-retrieve. It is NOT a workaround faking capability.
+But it surfaced a real, disclosed **product gap**: aisotropy's dedicated conversational path
+(working memory → outbox → consolidation) does NOT do semantic recall on the non-streaming chat
+route (nil `semStore` in `chat.go:274`, and `KindTurn` outbox entries deliberately excluded from
+chat hydration) — only the streaming route retrieves semantically. The dimension is fairly passed
+via the semantic tier; the chat-route gap is a filed product follow-up (`39017e9`).
+
+**Run hygiene (why these numbers are clean).** The board is 765 total runs — 706 scored, 59 errored
+(7.7%) — and the 59 are **explained, not contamination**: ~16 aisotropy-adapter shutdown-exit-1
+blips (the adapter answers, then exits non-zero during connection drain — adapter bug, filed), 8
+`isolation_forgetful` infeasible-by-design errors on the four adapters with no framework-level user
+scope to omit (§4), and exactly 1 genuine store timeout — versus ~30+ store timeouts on the
+**discarded contaminated concurrency-3 run**, whose numbers appear nowhere in this document. The
+fix that made the difference (`a9a7261`): the shared e5 embed server ran a single GIL-bound uvicorn
+worker, serializing every embed across all nine adapters; it now runs 4 workers, and the board ran
+at concurrency 2. The ADR-0064 infra fix held.
 
 ---
 
-## 4. Tenancy under a forgotten scope — where a better/worse answer IS already measured, model-independently
+## 4. Tenancy under a forgotten scope — where aisotropy's by-construction thesis is now board-measured
 
-The one place a better/worse memory answer is **already a measured result** — and needs no model call to
-be one — is the negative dimension `isolation_forgetful` (`arena-tenancy-levels.md`, "forgetful
-integrator"). The probe: write a fact under scope A through the framework's **own native scoping
-primitive**, then read with the scope **omitted** — the exact mistake a real integrator makes by
-accident. The deterministic scorer `ScoreForgetful` (`arenas/live/runner/scoring/scoring.go:510-530`,
-pure: normalization + set membership, no LLM/network/randomness) returns one of three verdicts:
-**refuses** (the scope cannot be forgotten — enforcement, the only PASS), **leak** (the omitted read
-returned scope-A data — an L1 breach), or **silent_partition** (no error and no data — the omission
-quietly selected a different empty scope, L1's invisible failure mode).
+The sharpest memory-adjacent axis is the negative dimension `isolation_forgetful`
+(`arena-tenancy-levels.md`, "forgetful integrator"). The probe: write a fact under scope A through
+the framework's **own native scoping primitive**, then read with the scope **omitted** — the exact
+mistake a real integrator makes by accident. The deterministic scorer `ScoreForgetful`
+(`arenas/live/runner/scoring/scoring.go:510-530`, pure: normalization + set membership, no
+LLM/network/randomness) returns one of three verdicts: **refuses** (the scope cannot be forgotten —
+enforcement, the only PASS), **leak** (the omitted read returned scope-A data — an L1 breach), or
+**silent_partition** (no error and no data — the omission quietly selected a different empty scope,
+L1's invisible failure mode).
 
-Running each framework's own code during FASE 3 produced the following, **model-independently** (each
-verdict below was observed offline, before any model call):
+**The measured result** (`RESULTS.md` @ `06945bf`, per-item verdicts from the board's detail table):
 
-| Framework | Verdict | Level | Evidence (executed against the framework's OWN boundary) |
-|---|---|---|---|
-| **aisotropy** | **refuses** | **L3** | `App.Turn` on a blank user returns `huma.Error422UnprocessableEntity` wrapping `memory: user requires a non-empty value` **before any model call** — `internal/api/core.go:55-58` → `chat.go:193-196` → `internal/memory/key.go` `Validate()`; recognized by the runner's `forgetfulEnforcementSignatures` (`arenas/live/runner/main.go:863-887`). Omission is *unrepresentable* over HTTP (Huma 404/422 on a missing path param). |
-| **mastra** | **refuses** | **L2** | Throws `"A resourceId and a threadId must be provided when using Memory…"` before any model call; omitted `resourceId` forwarded RAW at Mastra's own API boundary (`isolation-forgetful.mjs:76-78,84`). Verified offline (`594d816`). |
-| **spring-ai** | **refuses** | **L1** (single-axis) | `MessageWindowChatMemory.get` with omitted `conversationId` → `Assert.hasText` THROWS before any model call. The design *predicted* spring-ai refuses where others partition — confirmed (`f4e473d`). |
-| **langgraph** | **LEAK** | **L1 breach** | An omitted `('',)` namespace acts as a **match-all prefix** in `SqliteStore` and returns **another user's memory** — `store_memory.py:356` (blank namespace) → `:371` (`store.search`). At the framework's own `BaseStore` boundary, not adapter glue. Verified against the real on-disk backend (`0bdd3ff`). |
-| **llamaindex** | **silent_partition** | **L1** | Blank `user_id` forwarded RAW (`adapter.py:1164`) → a different empty per-user collection (`:879`) → `VectorMemoryBlock.aget` (`:1000`) returns nothing, no error. Verified offline (`55ee6b1`). |
-| **ai-sdk** | **infeasible** | **L0** | No framework-owned data plane — no native scope to forget (`5f58150` / FASE-2 `5ceb742`). |
-| **eino** | **infeasible** | **L0** | `CheckPointStore` keyed by an opaque id with no tenant semantics — nothing to omit at a framework boundary (`5f58150`). |
-| **genkit-go** | **infeasible** | **L0** | No framework-owned data plane; session-ID transcript only (`5f58150`). |
-| **pydantic-ai** | **infeasible** | **L0** | User-keying is adapter glue; there is no framework scope boundary to omit — refused to credit aisotropy's construction-refusal to a competitor that lacks the concept (`f4e473d`). |
+| Framework | Board score | Verdict detail | Level |
+|---|---:|---|---|
+| **aisotropy** | **2/2 ✓** | **refuses × 2** — `App.Turn` on a blank user returns `huma.Error422UnprocessableEntity` wrapping `memory: user requires a non-empty value` **before any model call** (`internal/api/core.go:55-58` → `chat.go:193-196` → `internal/memory/key.go` `Validate()`); recognized by the runner's `forgetfulEnforcementSignatures` (`arenas/live/runner/main.go:863-887`). Omission is *unrepresentable* over HTTP (Huma 404/422 on a missing path param) | **L3** |
+| **mastra** | **2/2 ✓** | **refuses × 2** — throws `"A resourceId and a threadId must be provided when using Memory…"` before any model call; omitted `resourceId` forwarded RAW at Mastra's own API boundary | L2 |
+| **spring-ai** | **2/2 ✓** | **refuses × 2** — `MessageWindowChatMemory.get` with omitted `conversationId` → `Assert.hasText` THROWS before any model call | L1 (single-axis) |
+| langgraph | **0/2 ✗** | one **cross-scope LEAK** (an omitted `('',)` namespace acts as a match-all prefix in `SqliteStore` and returns **another user's memory** — `store_memory.py:356→371`, an **L1 breach**) + one **silent partition** | L1 breach |
+| llamaindex | **0/2 ✗** | **silent partition × 2** — blank `user_id` forwarded RAW (`adapter.py:1164`) selects a different empty per-user collection (`:879` → `:1000`); no error, no data — the mistake is invisible | L1 |
+| ai-sdk / eino / genkit-go / pydantic-ai | — (errored) | **infeasible by design** — there is no framework-level user scope to omit; user-keying lives in adapter glue, so the probe would exercise adapter-invented code, not the framework. These are 8 of the board's 59 explained errors; each adapter's `matrix.json` declares the cell `infeasible` with the reason | L0 |
 
-Read plainly: on the mistake that a real multi-tenant integrator actually makes, **aisotropy refuses by
-construction, mastra and spring-ai refuse, llamaindex silently ships wrong data, and langgraph hands one
-user another user's memory.** This is a place aisotropy is genuinely, measurably **better** — and it is
-not the shipped `memory` dimension's empty tie, because the empty tie tests *correct* code and this tests
-the *forgotten-scope* case a correct-code test never exercises (`arena-benchmark-methodology.md`, "Same
-checkmark, different guarantee").
+Read plainly: on the mistake that a real multi-tenant integrator actually makes, **aisotropy, mastra,
+and spring-ai refuse; llamaindex silently ships an empty wrong scope both times; and langgraph hands
+one user another user's memory once and silently partitions once.** This is aisotropy's
+by-construction thesis — isolation that cannot be forgotten — **now measured on the board**, not
+asserted from code reading. It is also, symmetrically, **not unique**: two competitors enforce too,
+at lower rungs of the ladder (mastra L2, spring-ai L1-single-axis, vs aisotropy's L3
+unrepresentability over HTTP).
 
 **Why this "better" is not bias** (the three reasons, each independently checkable):
 
-1. **Measured, not asserted.** Every verdict was produced by *running the competitor's own store code*,
-   not by reading its docs — langgraph's leak came from executing `SqliteStore.search` with a blank
-   namespace, not from a claim about it (`0bdd3ff`).
-2. **It CONTRADICTED our own prediction.** `arena-tenancy-levels.md` §"forgetful integrator" predicted
-   langgraph would `silent_partition`. The executed result was **sharper and worse — a LEAK**. A biased
-   benchmark does not discover that its own document *understated* a competitor's failure and then
-   correct itself toward the harsher truth; a code-truth one does (`0bdd3ff`, "CODE-TRUTH BEAT THE
-   PREDICTION").
+1. **Measured, not asserted.** Every verdict was produced by *running the competitor's own store
+   code* — langgraph's leak came from executing `SqliteStore.search` with a blank namespace during
+   FASE 3 (`0bdd3ff`) and is now reproduced as a rendered board cell (`06945bf`), not read from docs.
+2. **It CONTRADICTED our own prediction.** `arena-tenancy-levels.md` §"forgetful integrator"
+   predicted langgraph would `silent_partition`. The executed result was **sharper and worse — a
+   LEAK** on one of the two items. A biased benchmark does not discover that its own document
+   *understated* a competitor's failure and then correct itself toward the harsher truth; a
+   code-truth one does (`0bdd3ff`, "CODE-TRUTH BEAT THE PREDICTION").
 3. **The scorer can fail aisotropy too.** `ScoreForgetful` is not hard-wired to pass the reference
    framework — it passes ONLY on a real enforcement signal (`scoring.go:503-509`), and a synthetic
-   fixture proves the leak branch fires on a reply that *contains* the scoped answer regardless of which
-   framework produced it (`scoring_test.go:552-558`, the `forgetful-leak` fixture). If aisotropy ever
-   leaked, `refusalSeen` would be false and the verdict would be `leak: … Pass=false`.
+   fixture proves the leak branch fires on a reply that *contains* the scoped answer regardless of
+   which framework produced it (`scoring_test.go:552-558`, the `forgetful-leak` fixture). If
+   aisotropy ever leaked, `refusalSeen` would be false and the verdict would be `leak: … Pass=false`.
 
 **The symmetric caveat that keeps aisotropy's L3 honest.** "refuses by construction" is a claim about
-the *storage discipline downstream of an identity*, not about the identity being correct. In NoAuth mode
-the HTTP edge degrades to L1 (the path is trusted; provenance is whatever the caller puts in the URL),
-and at the library façade `App.Turn` accepts *whatever* tenant string the embedder passes — mandatory
-but caller-trusted, stronger than L1 but not L3 (`arena-tenancy-levels.md`, "aisotropy's honest
-placement"). The guarantee is "given the identity, downstream cannot escape it," NOT "the identity
-cannot be wrong." And one honesty debt on the measurement itself: **aisotropy's own `isolation_forgetful`
-matrix cells are still `pending` a formal run** (`arenas/live/aisotropy/matrix.json`), even though the
-422-refuse path is offline-deterministic and wired into the runner's signature list — so aisotropy's
-refuse is *mechanism-certain* (code-cited, offline-observable) but its arena cell is not yet a rendered
-result the way the four competitor verdicts above are. That asymmetry is disclosed, not hidden.
+the *storage discipline downstream of an identity*, not about the identity being correct. In NoAuth
+mode the HTTP edge degrades to L1 (the path is trusted; provenance is whatever the caller puts in the
+URL), and at the library façade `App.Turn` accepts *whatever* tenant string the embedder passes —
+mandatory but caller-trusted, stronger than L1 but not L3 (`arena-tenancy-levels.md`, "aisotropy's
+honest placement"). The guarantee is "given the identity, downstream cannot escape it," NOT "the
+identity cannot be wrong." One earlier honesty debt is now **resolved**: this document previously
+disclosed that aisotropy's own `isolation_forgetful` matrix cells were still `pending` a formal run —
+they are now board-rendered (2/2 refuses at `06945bf`) and the matrix cells are filled `pass`
+(`098ef91`), so aisotropy's refuse is no longer merely mechanism-certain; it is a rendered result on
+the same board as the competitor verdicts.
 
 ---
 
-## 5. The token cost is real and permanent; the capability it buys is workload-gated
+## 5. The token cost is real and permanent; the capability it buys is now a measured tie at the top
 
 Pulling §1–§4 together into the load-bearing synthesis:
 
-- The **token premium is real and permanent** (§2): ~3.6–6.2× the competitors on the empty-tie board,
-  after the adapter artifact was removed. It is the price of running a retrieval pipeline plus a
-  fail-closed reflection loop plus an LLM summarizer on every turn.
-- On the **workload the suite runs today** (within-session recall), that premium buys **nothing** — the
-  answer was free in the transcript (§1). aisotropy is **worse** here, unambiguously, and that is stated
-  at full volume, not buried.
-- On the **workloads the suite has now added but not yet run** (cross-session, semantic, consolidation),
-  the same premium is what makes recall *possible at all* where session-keyed replay returns empty (§3)
-  — but this is **designed-and-wired, not measured**; the numbers are pending FASE 5.
-- On **tenancy under a forgotten scope**, aisotropy is **better, measured, and model-independent** (§4)
-  — the one axis where the better/worse question already has a defensible, executed answer.
+- The **token premium is real and permanent** (§2): ~3.6–6.2× the competitors on the within-session
+  empty-tie board (`8154f63`), after the adapter artifact was removed. It is the price of running a
+  retrieval pipeline plus a fail-closed reflection loop plus an LLM summarizer on every turn.
+  aisotropy is **worse** on within-session cost, unambiguously, and that is stated at full volume.
+- On **cross-session / semantic / consolidated recall** — the workloads that premium exists for —
+  aisotropy is now **measured at 2/2, 2/2, 2/2 on the clean board (`06945bf`), tying the top tier
+  with mastra and spring-ai** (§3). The capability is real and paid for; it is **not unique**.
+- On **tenancy under a forgotten scope**, aisotropy is one of only **three frameworks that enforce**
+  (2/2 refuses, board-rendered), and the only one where omission is unrepresentable at the HTTP
+  boundary (L3); langgraph and llamaindex fail 0/2, langgraph with a genuine cross-user leak (§4).
+  This is the by-construction thesis, now measured.
+- On **adversarial safeguard**, aisotropy is **mid-pack**: 5/7 (decline 2/3, no-leak 3/4), level
+  with llamaindex (5/7), behind mastra (7/7), eino (6/7), and genkit-go (6/7); ai-sdk and spring-ai
+  scored 5/6 with 1 errored run each; pydantic-ai 4/7; langgraph 3/7 (`06945bf`). This is a
+  weakness, named as one — a framework whose thesis is enforcement-by-construction sitting mid-pack
+  on adversarial-prompt behavior is a gap to close, not a footnote.
+- **mastra is the strongest overall competitor on this board, and this document says so plainly:**
+  perfect across all three memory-extension dimensions (2/2, 2/2, 2/2), enforcing on the forgetful
+  probe (2/2), AND the only framework with a perfect safeguard (7/7) — while also being among the
+  cheapest on within-session memory tokens (§2). spring-ai matches it on memory and isolation but
+  not safeguard (5/6, 1 err); aisotropy matches it on memory and isolation but sits at 5/7 on
+  safeguard and pays the widest within-session token premium.
 
-The single most important sentence: **aisotropy's memory is worse on the workload the board runs and
-architected-to-be-better on the workloads it does not yet run — and the only memory-adjacent axis where
-"better" is already proven is isolation, not recall.**
+The single most important sentence: **on the measured board, aisotropy's memory ties the top tier
+rather than owning it (mastra and spring-ai get there too), its by-construction isolation thesis is
+now a measured result shared with two enforcing competitors and denied to langgraph and llamaindex —
+and it remains the most expensive framework on the within-session workload and mid-pack on
+safeguard.**
 
 ---
 
-## 6. What is measured vs. what is pending FASE 5 (explicit)
+## 6. What is measured vs. what remains open (explicit)
 
 | Claim | Measured? | Where / caveat |
 |---|---|---|
-| Within-session memory is an 8/8 empty tie across all 8 frameworks | **MEASURED** | `RESULTS.md:237-279` (`8154f63`) |
-| aisotropy pays 100,644 memory tokens vs 16,200–28,075 competitor range | **MEASURED** | `RESULTS.md:435-441` (`8154f63`) |
-| The pre-fix 6/8 / 41,292 was a since-fixed adapter refusal cascade, not a product defect | **MEASURED** | forensics §3.1; fix `14355a7` |
+| Within-session memory is an 8/8 empty tie across every scored framework | **MEASURED** | `RESULTS.md` @ `8154f63`; reproduced for the 8 competitors at `06945bf` (aisotropy's own cells errored — adapter shutdown bug, filed) |
+| aisotropy paid 100,644 memory tokens vs a 16,200–28,075 competitor range | **MEASURED (board `8154f63`)** | §2; that board is superseded as current by `06945bf`, which did not re-measure aisotropy's plain-memory cells |
+| The pre-fix 6/8 / 41,292 was a since-fixed adapter refusal cascade, not a product defect | **MEASURED — SUPERSEDED HISTORY** | forensics §3.1; fix `14355a7`; never a current number |
+| aisotropy 2/2 on cross-session, semantic, and consolidated recall — tying mastra and spring-ai | **MEASURED** | `RESULTS.md` @ `06945bf`; matrix cells `098ef91` |
+| langgraph/llamaindex 2/2, 1/2, 2/2 on the three memory-ext dimensions | **MEASURED** | `06945bf` |
+| pydantic-ai 2/2, 0/2, 2/2; ai-sdk/eino/genkit-go 1/2, 0/2, 0/2 | **MEASURED** | `06945bf`; the weak four's ecosystem labels: extensions §1.1 |
+| aisotropy's memory-ext cells served via the semantic tier (apples-to-apples), with a disclosed chat-route product gap | **MEASURED + DISCLOSED** | `39017e9`; §3 caveat |
+| aisotropy refuses on a forgotten scope (2/2, L3) | **MEASURED, board-rendered** | `06945bf`; the former `pending`-cell debt resolved by `098ef91` |
+| langgraph fails forgetful 0/2 (one cross-user LEAK + one silent partition) | **MEASURED** | `06945bf` per-item detail; mechanism `store_memory.py:356→371` (`0bdd3ff`) |
+| llamaindex fails forgetful 0/2 (silent partition × 2) | **MEASURED** | `06945bf` per-item detail; mechanism `adapter.py:1164/879/1000` (`55ee6b1`) |
+| ai-sdk / eino / genkit-go / pydantic-ai are infeasible-by-design for forgetful (no framework-level scope to omit) | **MEASURED (classification)** | 8 explained errors at `06945bf`; reasons in each `matrix.json` |
+| aisotropy safeguard is mid-pack (5/7; mastra 7/7) | **MEASURED** | `06945bf` |
 | `WorkingMemory.Close` shutdown-ordering bug (real product defect) | **MEASURED (code)** | `internal/memory/working_memory.go:228-237`; forensics §5.2 |
 | Summarizer has no needle-preservation contract (real product defect) | **MEASURED (code)** | `internal/memory/summarizer.go:104-109`; forensics §4, §5.2 |
-| langgraph LEAKS on a forgotten scope (L1 breach) | **MEASURED, model-independent** | `0bdd3ff`, `store_memory.py:356→371` |
-| llamaindex silently partitions on a forgotten scope | **MEASURED, model-independent** | `55ee6b1`, `adapter.py:1164/879/1000` |
-| mastra / spring-ai refuse on a forgotten scope | **MEASURED, model-independent** | `594d816`, `f4e473d` |
-| ai-sdk / eino / genkit-go / pydantic-ai are L0-infeasible for forgetful | **MEASURED (classification)** | `5f58150`, `f4e473d`, `5ceb742` |
-| aisotropy refuses on a forgotten scope (L3) | **MECHANISM-CERTAIN; arena cell PENDING** | `main.go:863-867` (offline-observable); `matrix.json` cells `pending` |
-| aisotropy wins cross-session recall | **PENDING FASE 5** | wired `0bdd3ff`+8; `matrix.json` `pending` |
-| aisotropy wins semantic recall of a paraphrase | **PENDING FASE 5** | wired; needs real e5 + Qdrant run |
-| aisotropy wins consolidation across a session boundary | **PENDING FASE 5** | wired; `matrix.json` `pending` |
-| The cross-session/semantic/consolidation capability is *unique* to aisotropy | **FALSE (refuted)** | extensions Verdict — langgraph/llamaindex/mastra have official paths |
+| The cross-session/semantic/consolidation capability is *unique* to aisotropy | **FALSE (refuted, now doubly)** | extensions Verdict (ecosystem) + the measured three-way tie at `06945bf` |
 
 ---
 
@@ -293,101 +359,108 @@ architected-to-be-better on the workloads it does not yet run — and the only m
 
 | Axis | Verdict | Reason (one line) | Evidence class |
 |---|---|---|---|
-| Within-session recall (today) | **aisotropy WORSE** | Replay is optimal for a fact already in the last turn; the tiered pipeline pays 3.6–6.2× the tokens to retrieve what was free | MEASURED (`8154f63`) |
-| Cross-session recall | **aisotropy architected to win; UNMEASURED** | A fresh session id makes a transcript store return empty; only user-scoped tiers recall — but numbers pending | WIRED, PENDING FASE 5 |
-| Semantic long-term recall | **aisotropy architected to win; UNMEASURED** | A paraphrase defeats lexical replay; only semantic retrieval matches — but numbers pending | WIRED, PENDING FASE 5 |
-| Consolidation across sessions | **aisotropy architected to win; UNMEASURED** | Most competitors have no async consolidator (mastra's is declared a no-op); aisotropy drains an outbox — but numbers pending | WIRED, PENDING FASE 5 |
-| Tenancy under a forgotten scope | **aisotropy BETTER** | Refuses by construction (422 pre-model) where langgraph leaks another user's memory and llamaindex silently partitions | MEASURED, model-independent |
+| Within-session recall | **aisotropy WORSE (cost)** | Replay is optimal for a fact already in the last turn; the tiered pipeline paid 3.6–6.2× the tokens to retrieve what was free | MEASURED (`8154f63`; not re-measured for aisotropy at `06945bf` — adapter bug, filed) |
+| Cross-session recall | **aisotropy TIES the top (2/2)** | User-scoped tiers recall where session-keyed replay returns empty — but five competitors also score 2/2; the separator is the session-keyed bottom tier at 1/2 | MEASURED (`06945bf`) |
+| Semantic long-term recall | **aisotropy TIES the top tier (2/2, with mastra and spring-ai only)** | A paraphrase defeats lexical replay; only genuine user-scoped semantic retrieval matches — served via aisotropy's semantic tier (§3 caveat) | MEASURED (`06945bf`) |
+| Consolidation across sessions | **aisotropy TIES the top (2/2)** | Outcome-scored recall across the boundary; six frameworks pass, the session-keyed three score 0/2 | MEASURED (`06945bf`) |
+| Tenancy under a forgotten scope | **aisotropy BETTER — one of three that ENFORCE, and the only L3** | Refuses by construction (422 pre-model) where langgraph leaks another user's memory and llamaindex silently partitions; mastra and spring-ai also refuse | MEASURED, board-rendered (`06945bf`) |
+| Adversarial safeguard | **aisotropy MID-PACK (5/7)** | Behind mastra 7/7, eino/genkit-go 6/7; a named weakness of the current product, not an arena artifact | MEASURED (`06945bf`) |
 
 ---
 
 ## 8. Bias audit of this document's own claims
 
-Per `.claude/rules/capability-absence-claims.md` §"Symmetric rigor" and `arena-fairness-protocol.md` §9,
-every claim above is now audited against the standard a hostile reviewer would apply.
+Per `.claude/rules/capability-absence-claims.md` §"Symmetric rigor" and `arena-fairness-protocol.md`
+§9, every claim above is audited against the standard a hostile reviewer would apply.
 
 **The "better" claims — why each is not cherry-picking:**
 
-- **Tenancy (aisotropy better).** (a) *Measured, not asserted* — executed against each competitor's own
-  store, not read from docs. (b) *Symmetric* — the same `ScoreForgetful` that fails langgraph would fail
-  aisotropy on a leak (`scoring_test.go:552-558`), and aisotropy's own L3 is caveated with the NoAuth/
-  façade downgrade in the same section (§4). (c) *Contradicts our own prediction* — the doc predicted
-  langgraph `silent_partition`; the run found a worse LEAK, and the harsher truth was adopted (`0bdd3ff`).
-  (d) *Disclosed weakness in the same breath* — aisotropy's own forgetful arena cell is `pending`, not a
-  rendered result; stated in §4, not hidden.
-- **Cross-session / semantic / consolidation (aisotropy architected to win).** Guarded three ways: it is
-  labeled **UNMEASURED / PENDING FASE 5** in §0, §3, §6, and §7 (no number claimed); the *uniqueness*
-  framing is explicitly **refuted** (§3, extensions Verdict — three competitors have official paths);
-  and the fairness sweep gave each competitor its *best official primitive* before wiring, not a
-  strawman (`0bdd3ff` uses BaseStore+langmem, `55ee6b1` uses VectorMemoryBlock, `594d816` uses native
-  resource-scoped Memory) — the §4 idiomaticity debt `arena-fairness-protocol.md` names as the primary
-  open fairness debt is *being paid down* by exactly these commits.
+- **Tenancy (aisotropy better).** (a) *Measured, not asserted* — executed against each competitor's
+  own store during FASE 3 and now rendered as board cells at `06945bf`. (b) *Symmetric* — the same
+  `ScoreForgetful` that fails langgraph would fail aisotropy on a leak
+  (`scoring_test.go:552-558`), aisotropy's L3 is caveated with the NoAuth/façade downgrade in the
+  same section (§4), and the two competitors that also enforce are named in the same table, not
+  buried. (c) *Contradicted our own prediction* — the doc predicted langgraph `silent_partition`;
+  the run found a worse LEAK on one item, and the harsher truth was adopted (`0bdd3ff`).
+- **Cross-session / semantic / consolidation (aisotropy top-tier).** The claim made is a **TIE, not
+  a win**: §0, §3, §5, and §7 all state that mastra and spring-ai are equally perfect, the
+  *uniqueness* framing is explicitly refuted twice (ecosystem sweep + the measured tie), and the
+  weak rows point to the §1.1 maturity-labeled sweep instead of restating absence claims. The
+  fairness baseline held — each competitor ran its best official primitive, so the passes and fails
+  are theirs (`0bdd3ff`, `55ee6b1`, `594d816`, `f4e473d`).
 
-**The "worse" claims — stated at equal volume, per the mandate:**
+**The "worse" and "merely-tied" claims — stated at equal volume, per the mandate:**
 
-- **Within-session recall (aisotropy worse).** Not softened anywhere: §0 row 1, §1 (replay is optimal,
-  the pipeline is a net cost), §2 (100,644 vs 16,200–28,075, the widest gap on the board, for the same
-  8/8), §5 ("worse here, unambiguously"), §7 row 1. The reason is architectural and permanent, not a bug
-  to be explained away.
-- **Real product defects that ship to consumers.** The `WorkingMemory.Close` shutdown-ordering bug
-  (`working_memory.go:228-237`) and the summarizer's missing needle-preservation contract
-  (`summarizer.go:104-109`) are *aisotropy* defects, not arena artifacts — carried into §6 as MEASURED,
-  because a document that only listed competitors' defects would be the marketing this repo's rules
-  forbid (forensics §5.2).
-- **The token premium is presented as the honest post-fix number**, not the pre-fix 41,292 that would
-  have flattered the *problem* (making it look like a since-fixed bug rather than a permanent structural
-  cost). Using the smaller-looking fixed number would have understated aisotropy's real, standing
-  disadvantage — so the larger, current, structural 100,644 is the one this document stands on.
+- **Within-session cost (aisotropy worse).** Not softened anywhere: §0 row 1, §1 (replay is optimal,
+  the pipeline is a net cost), §2 (100,644 vs 16,200–28,075, the widest gap on that board, for the
+  same 8/8), §5, §7 row 1. The reason is architectural and permanent, not a bug to be explained
+  away. The superseded pre-fix 41,292 figure is kept only as labeled history, because using it would
+  *flatter the problem* by making the premium look like a since-fixed bug.
+- **mastra named strongest overall competitor.** §5 states it plainly: perfect memory-extension
+  scores, enforcing isolation, the only 7/7 safeguard, and cheap within-session tokens. A document
+  built to sell aisotropy would not contain that paragraph.
+- **aisotropy's own blemishes on the clean board, listed not laundered:** its plain-memory cells
+  errored (adapter shutdown bug, ~16 blips, filed — §1, §3); its safeguard is mid-pack 5/7 (§5, §7);
+  its memory-ext passes route through the semantic tier while the dedicated conversational path has
+  a disclosed chat-route semantic-recall gap (§3, `39017e9`); and the `WorkingMemory.Close` and
+  summarizer defects remain real product findings (§6, forensics §5.2).
 
-**Grep-checkable symmetry:** this document contains explicit "aisotropy … WORSE" statements (§0, §7) and
-explicit "aisotropy … BETTER" statements (§0, §4, §7); neither direction is stated without an
-axis-and-workload qualifier, and there is no unqualified sentence of the form "aisotropy is better at
-memory" anywhere in it.
+**Grep-checkable symmetry:** this document contains explicit "aisotropy … WORSE" statements (§0,
+§5, §7), explicit "TIES the top" statements (§0, §3, §5, §7), and explicit "BETTER" statements
+qualified to one axis (§0, §4, §7); no sentence of the form "aisotropy is better at memory" appears
+unqualified anywhere in it, and no sentence claims a capability is unique to aisotropy.
 
 ---
 
 ## 9. Could not establish
 
-- **The discriminating numbers for cross-session / semantic / consolidation.** The adapters are wired
-  (FASE 3) but the real run (FASE 5) has not happened; aisotropy's own matrix cells are `pending`
-  (`arenas/live/aisotropy/matrix.json`). Every "architected to win" in §3/§7 is a design-and-wiring
-  claim, never a measured one. The FASE-3 commit messages themselves carry MUST-CHECK lists of exactly
-  what the real run must confirm (e.g. `55ee6b1`: whether `VectorMemoryBlock` actually ranks the
-  paraphrased needle top-k across the process boundary; `594d816`: whether mastra's `semanticRecall`
-  retrieves the needle across threads).
-- **aisotropy's forgetful arena cell as a rendered result.** The 422-refuse is offline-deterministic and
-  code-cited (`main.go:863-867`), but the matrix cell is `pending`, so aisotropy's refuse is
-  mechanism-certain rather than board-rendered like the four competitor verdicts (§4).
+- **aisotropy's within-session memory on the clean board.** All 8 of its plain-`memory` runs at
+  `06945bf` errored on the shutdown-exit-1 adapter bug (answers produced, then non-zero exit during
+  connection drain — filed), so the within-session token premium and the 8/8 tie were not
+  re-measured for aisotropy on the clean board; `8154f63` remains that axis's reference (§1, §2).
+- **Per-dimension sample size.** Each memory-extension and isolation dimension is n=2 tasks per
+  framework. The three-way perfect tie and the 0/2 fails are consistent with the structural
+  session-vs-user analysis, but single-task separations (e.g. langgraph 1/2 vs mastra 2/2 on
+  semantic recall) should be read as directional until the task set grows.
+- **The exact per-call token split behind the 100,644 total.** §2 verifies the *mechanism* (per-turn
+  re-hydration + reflection + summarizer multiply call count and tokens) but does not re-derive a
+  per-invocation call log — none was available (forensics §9).
 - **Whether the summarizer non-determinism vs the `Close` ordering bug flipped `mem-h03-longhaul`'s
   earlier pass to a fail.** Both are independently real and file-grounded, but which one produced the
   specific run outcome was not isolated (forensics §9).
-- **Cross-run store contamination for the competitor stores in the new dimensions.** The runner nonce
-  (`affaf93`) fixes it for the memory-ext/forgetful scopes, but the FASE-3 agents flagged that no
-  per-run reset exists for every competitor's on-disk store the way `resetRqliteFacts` exists for
-  aisotropy — a real-run prerequisite, not yet fully closed (`0bdd3ff`, `55ee6b1` MUST-CHECKs).
-- **The exact per-call token split behind the 100,644 total.** §2 verifies the *mechanism* (per-turn
-  re-hydration + reflection + summarizer multiply call count and tokens) but does not re-derive a
-  per-invocation call log — none was available (forensics §9, "exact per-call token split NOT
-  independently re-derived").
-- **The idiomaticity debt is being paid down but is not fully closed.** langgraph/mastra now use their
-  native primitives in the *new* dimensions (`0bdd3ff`, `594d816`), but the *old* `memory` dimension's
-  hand-rolled paths and the full SHOULD-FIX list remain the primary disclosed fairness debt
-  (`arena-fairness-protocol.md` §4, §Debts).
+- **Qdrant indexing latency under heavier load.** The memory-ext persist→recall gap was not
+  stress-tested above the board's `-rps 2` / concurrency-2 envelope; the `39017e9` fix notes this as
+  an open UNSURE.
+- **spring-ai's docker matrix cells.** Its Docker image was never built, so its docker-form cells
+  remain `pending` in `matrix.json` even after the `098ef91` fill — the one declared gap in the
+  otherwise blank-free matrix.
+- **The idiomaticity debt is being paid down but is not fully closed.** The memory-extension
+  dimensions run each framework's official primitive (`0bdd3ff`, `594d816`, …), but the *old*
+  `memory` dimension's hand-rolled replay paths and the SHOULD-FIX list remain the primary disclosed
+  fairness debt (`arena-fairness-protocol.md` §4, §Debts).
 
 ---
 
 ## Cross-links
 
-- `docs/architecture/arena-memory-forensics.md` — the empty-tie mechanism, the replay-is-optimal finding
-  (§6), the token-delta decomposition (§3.5), and the real product defects (§5.2) this analysis rests on.
-- `docs/architecture/arena-memory-extensions.md` — the three new dimensions' design, the refuted
-  uniqueness claim, and the per-framework best-official-primitive matrix (§3's fairness baseline).
-- `docs/architecture/arena-tenancy-levels.md` — the L0–L3 ladder, aisotropy's honest per-layer placement
-  with the NoAuth/façade caveats, and the forgetful-integrator design §4 measures.
-- `docs/architecture/arena-fairness-protocol.md` — the anti-bias standard §8 satisfies, including the
-  home-turf disclosure (§5) and idiomaticity debt (§4) this document inherits.
-- `docs/architecture/arena-benchmark-methodology.md` — how the token/latency numbers are measured, the
-  "empty parity" and "same checkmark, different guarantee" reading guides.
+- `arenas/live/RESULTS.md` @ **`06945bf`** — the clean FASE-5 full board every current number in
+  this document comes from (765 runs, 706 scored, 59 explained errors); **`098ef91`** — the matrix
+  fill that turned the board into blank-free `matrix.json` cells; **`a9a7261`** — the embed-server
+  concurrency fix that de-contaminated the run (30+ store timeouts → 1); **`39017e9`** — the
+  aisotropy memory-ext adapter fix and its semantic-tier honesty caveat + chat-route product gap.
+- `docs/architecture/arena-memory-forensics.md` — the empty-tie mechanism, the replay-is-optimal
+  finding (§6), the token-delta decomposition (§3.5), and the real product defects (§5.2) §1–§2 rest
+  on.
+- `docs/architecture/arena-memory-extensions.md` — the three dimensions' design, the refuted
+  uniqueness claim, the per-framework best-official-primitive matrix, and **§1.1, the 2026-07
+  post-measurement ecosystem sweep** (maturity labels + URLs for the four weak adapters) this
+  document cross-references instead of restating.
+- `docs/architecture/arena-tenancy-levels.md` — the L0–L3 ladder, aisotropy's honest per-layer
+  placement with the NoAuth/façade caveats, and the forgetful-integrator design §4 measures.
+- `docs/architecture/arena-fairness-protocol.md` — the anti-bias standard §8 satisfies, including
+  the home-turf disclosure (§5) and idiomaticity debt (§4) this document inherits.
+- `docs/architecture/arena-benchmark-methodology.md` — how the token/latency numbers are measured,
+  the "empty parity" and "same checkmark, different guarantee" reading guides.
 - FASE-3 wiring commits: `0bdd3ff` (langgraph, the leak-beats-prediction finding), `55ee6b1`
   (llamaindex silent_partition), `594d816` (mastra refuses), `5f58150` (genkit-go/eino/ai-sdk honest
   verdicts), `f4e473d` (pydantic-ai/spring-ai + spring refuse), `affaf93` (per-run nonce).
