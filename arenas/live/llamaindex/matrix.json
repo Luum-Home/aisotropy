@@ -1,6 +1,54 @@
 {
   "framework": "llamaindex",
   "dimensions": {
+    "isolation_forgetful": {
+      "stub": {
+        "native": "fail",
+        "docker": "fail",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "memory_cross_session": {
+      "stub": {
+        "native": "infeasible:offline stub uses an in-memory VectorMemoryBlock store that does not survive the persist→recall process boundary — cross-session retrieval needs the persistent real Qdrant collection",
+        "docker": "infeasible:offline stub uses an in-memory VectorMemoryBlock store that does not survive the persist→recall process boundary — cross-session retrieval needs the persistent real Qdrant collection",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "memory_semantic_recall": {
+      "stub": {
+        "native": "infeasible:offline stub uses an in-memory VectorMemoryBlock store that does not survive the persist→recall process boundary, and MockEmbedding returns constant vectors so ranking is not semantic — real e5 + persistent Qdrant needed",
+        "docker": "infeasible:offline stub uses an in-memory VectorMemoryBlock store that does not survive the persist→recall process boundary, and MockEmbedding returns constant vectors so ranking is not semantic — real e5 + persistent Qdrant needed",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
+    "memory_consolidation": {
+      "stub": {
+        "native": "infeasible:FactExtractionMemoryBlock runs against MockLLM offline (no real extraction) and the in-memory VectorMemoryBlock store does not survive the persist→recall process boundary — real agnes + persistent Qdrant needed",
+        "docker": "infeasible:FactExtractionMemoryBlock runs against MockLLM offline (no real extraction) and the in-memory VectorMemoryBlock store does not survive the persist→recall process boundary — real agnes + persistent Qdrant needed",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
     "crash_recovery": {
       "stub": {
         "native": "pass",

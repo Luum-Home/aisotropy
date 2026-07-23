@@ -201,6 +201,61 @@ invocation 1 is correctly recalled in invocation 2, in a fresh Python process).
 here distinguishes one tenant's facts from another's. See `memory_scoped` and `isolation_leak`
 below.
 
+### memory-extension family — `Memory` + native long-term blocks, keyed by USER
+
+The runner's three memory-extension dimensions — `memory_cross_session`, `memory_semantic_recall`,
+`memory_consolidation` (`docs/architecture/arena-memory-extensions.md`) — all arrive over the wire
+as ordinary `mode:"memory"` turns carrying a `user_id`, with `session_id` VARYING across a task's
+invocations while `user_id` is HELD. A session-keyed transcript store therefore returns empty on
+the fresh recall session, so only genuine USER-scoped memory can recall the fact — transcript
+replay is defeated by construction (`arenas/live/runner/tasks.go` `buildMemoryExt`). Because the
+wire mode is plain `memory`, no new adapter mode is dispatched: `run_memory` detects the `user_id`
+and switches to LlamaIndex's NATIVE long-term memory-blocks path (`_build_user_memory_blocks` /
+`_user_memory_turn`) instead of the session-keyed SQLite path above. Plain `memory` (no `user_id`)
+is byte-for-byte unchanged.
+
+| Dimension | LlamaIndex primitive (all NATIVE, in `llama-index-core==0.14.23`) | What it does here |
+|---|---|---|
+| `memory_cross_session` | `llama_index.core.memory.Memory` + `VectorMemoryBlock` keyed by USER | A fact written in session A recalls in session B for the same user: the persisted turns are stored in a per-USER `QdrantVectorStore` collection (`arena_mem_llamaindex__<user>`), and the recall session — whose session-keyed short-term `Memory` is empty — retrieves them from that user-scoped block. |
+| `memory_semantic_recall` | `llama_index.core.memory.VectorMemoryBlock` | Retrieval is SEMANTIC (embedding similarity via the SAME shared e5 path `rag` mode uses — `OpenAILikeEmbedding` over `EMBED_URL`), not lexical: `VectorMemoryBlock.aget(messages=[question])` embeds the paraphrase and queries the user's vector collection. |
+| `memory_consolidation` | `llama_index.core.memory.FactExtractionMemoryBlock` | On persist/flush an LLM extracts durable facts (LlamaIndex's native consolidation primitive). The `"consolidate"` directive invocation is itself an ordinary `mode:"memory"` turn that runs the extraction; the durable cross-process carrier of the recalled fact is the `VectorMemoryBlock` vector store (the extracted-fact list is process-local — see MUST-CHECK in the arena report). |
+
+Maturity: **NATIVE** for all three — `Memory`, `VectorMemoryBlock`, `FactExtractionMemoryBlock`
+all ship in `llama-index-core==0.14.23` (no extra package). Docs:
+https://developers.llamaindex.ai/python/framework/module_guides/deploying/agents/memory/ ;
+https://developers.llamaindex.ai/python/examples/memory/memory/ ;
+https://www.llamaindex.ai/blog/improved-long-and-short-term-memory-for-llamaindex-agents .
+The vector store binding is `llama-index-vector-stores-qdrant==0.10.2` (real lane) /
+`qdrant-client==1.18.0` in-memory (offline stub); embeddings via
+`llama-index-embeddings-openai-like==0.3.1`.
+
+**Offline stub (`ARENA_STUB=1`):** the vector store is an in-process in-memory Qdrant
+(`QdrantClient(location=":memory:")`) with `MockEmbedding`. This proves the memory-blocks WIRING
+drives offline (verified: `VectorMemoryBlock.aput` then `.aget` retrieves the needle in one
+process), but the in-memory store does NOT survive the persist→recall PROCESS boundary, so
+offline cross-session RETRIEVAL is infeasible — hence the `memory_*` stub matrix cells are
+`infeasible`, real cells `pending` (they need real e5 + a persistent Qdrant collection + agnes;
+see the MUST-CHECKs).
+
+### `isolation_forgetful` — the omitted-scope read at LlamaIndex's own boundary
+
+The "forgetful integrator" negative-tenancy probe (`docs/architecture/arena-tenancy-levels.md`
+§"forgetful integrator"). LlamaIndex is **L1**: its first-party multi-tenancy pattern is per-query
+`MetadataFilters` (https://docs.llamaindex.ai/en/stable/examples/multi_tenancy/multi_tenancy_rag/) —
+a scoping PARAMETER that partitions data only if the caller passes it correctly every time; a wrong
+or omitted value silently reads another scope. The PERSIST invocation writes the fact under an
+explicit user through the user-scoped memory-blocks path above; the RECALL invocation arrives as
+`mode:"isolation_forgetful"` with `user_id` DELIBERATELY BLANK (`arenas/live/runner/tasks.go`
+`buildForgetful`). `run_isolation_forgetful` forwards that blank scope RAW to LlamaIndex's own query
+boundary — no default is backfilled (`_user_memory_turn(..., scope_user="")` → `_user_mem_collection("")`
+→ a different, empty collection → `VectorMemoryBlock.aget` returns nothing). LlamaIndex has no
+by-construction way to REFUSE a blank scope, so the runner's `scoring.ScoreForgetful` sees neither
+the scoped answer (no leak) nor an enforcement error → `silent_partition` → **FAIL**. That FAIL is
+the measured L1-vs-L3 point (aisotropy, L3, `refuses` → PASS). Primitive: `VectorMemoryBlock` /
+`MetadataFilters` (`llama-index-core==0.14.23`), maturity **NATIVE** (L1). Verified offline
+(stub matrix cell `fail`); the real-lane label (silent_partition vs an accidental leak) is a
+MUST-CHECK.
+
 ### `crash_recovery` — kill -9 durability vs. `memory`'s clean-exit recall
 
 `memory` mode (above) proves cross-process recall across two **clean** `bash run.sh` exits. It

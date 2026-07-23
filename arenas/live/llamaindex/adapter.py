@@ -80,6 +80,18 @@ Modes (see README.md for the exact LlamaIndex classes/source lines backing each 
                  process invocation with the same `session_id` recalls facts from an earlier one.
                  NOTE: this mode does NOT test multi-tenant isolation — a single `session_id`
                  axis has no concept of tenant/user/product at all. See `memory_scoped` below.
+                 When the wire carries a `user_id` (the memory-extension family:
+                 memory_cross_session / memory_semantic_recall / memory_consolidation, ALL of
+                 which arrive as ordinary mode:"memory" turns — zero new adapter mode), this
+                 handler switches to LlamaIndex's NATIVE long-term memory blocks keyed by USER
+                 instead of session: a `VectorMemoryBlock` (flushed turns -> vector store,
+                 semantic retrieval) over a per-USER Qdrant collection, plus a
+                 `FactExtractionMemoryBlock` (LLM extracts facts on flush -> consolidation).
+                 Because the runner VARIES session_id while HOLDING user_id, a fact written in
+                 session A recalls in session B for the same user through the user-scoped vector
+                 block — while the session-keyed short-term Memory is empty on session B, which
+                 is exactly how transcript replay is defeated. See `run_memory` / the
+                 `_build_user_memory_blocks` docstring.
   structured     `LLMTextCompletionProgram` + `PydanticOutputParser` (LlamaIndex's native
                  PydanticProgram structured-prediction path) producing a validated typed object.
   stream         Real token streaming via `llm.stream_chat()`; records time-to-first-token.
@@ -91,6 +103,20 @@ Modes (see README.md for the exact LlamaIndex classes/source lines backing each 
   isolation_leak Tenant A writes a secret into its scope; a real agnes recall turn runs AS
                  tenant B (different compound scope) and the adapter asserts the secret does
                  NOT come back out of tenant B's scoped store.
+  isolation_forgetful  The "forgetful integrator" negative-tenancy probe (docs/architecture/
+                 arena-tenancy-levels.md §"forgetful integrator"). The PERSIST invocation is an
+                 ordinary mode:"memory" turn under an explicit user (scope A) — writing the fact
+                 through LlamaIndex's OWN user-scoped memory (the `VectorMemoryBlock`-over-a-
+                 per-user-collection path above). The RECALL invocation arrives as mode:
+                 "isolation_forgetful" with `user_id` DELIBERATELY BLANK — the exact real-world
+                 integrator mistake. The handler forwards that blank scope RAW to LlamaIndex's
+                 own query boundary (never backfilling a default), so LlamaIndex — not adapter
+                 glue — decides the outcome: the blank user resolves to a DIFFERENT, empty
+                 collection, so the omitted-scope read returns nothing (a silent partition), the
+                 honest L1 failure mode. LlamaIndex is L1 (per-query `MetadataFilters`, a
+                 forgettable parameter) — it has no by-construction enforcement to REFUSE the
+                 blank scope, so this dimension is expected to FAIL for LlamaIndex, and that
+                 FAIL is the measured point.
   crash_recovery Reuses `memory` mode's EXACT on-disk store. `role=process_a` runs 2+ sequential
                  turns against a real session_id db, committing each turn (via `memory.aput()`,
                  which internally awaits `session.commit()`) before starting the next — a test
@@ -187,6 +213,19 @@ EMBED_QUERY_MODEL = "multilingual-e5-small-query"  # "-query" suffix -> e5 query
 # filter returns the same doc set an unfiltered top-k would; it only adds work.
 ARENA_TENANT = os.environ.get("ARENA_TENANT", "arena")
 
+# Per-USER long-term memory collection for the memory-extension family
+# (memory_cross_session / memory_semantic_recall / memory_consolidation — all of
+# which arrive over the wire as ordinary mode:"memory" turns carrying `user_id`).
+# The USER is the isolation axis: the runner VARIES session_id across a task's
+# invocations while HOLDING user_id, so a session-keyed transcript store returns
+# empty on the fresh recall session and only genuine user-scoped memory can recall.
+# The base name is read from the environment per the arena's per-framework
+# unique-collection rule (.claude/rules/arena-deterministic-judging.md); the actual
+# collection embeds the sanitized user_id (see `_user_mem_collection`). This is a
+# SEPARATE collection from the RAG corpus collection (ARENA_COLLECTION) — the memory
+# family self-ingests conversational turns, it does not read the pre-seeded RAG corpus.
+ARENA_MEM_COLLECTION = os.environ.get("ARENA_MEM_COLLECTION", "arena_mem_llamaindex")
+
 MEMORY_DIR = Path(os.environ.get("LLAMAINDEX_MEMORY_DIR", str(SCRIPT_DIR / ".memory")))
 
 # Offline stub toggle (see module docstring "Offline stub toggle") — swaps the agnes-backed LLM
@@ -209,6 +248,7 @@ VALID_MODES = {
     "stream",
     "memory_scoped",
     "isolation_leak",
+    "isolation_forgetful",
     "observability",
     "crash_recovery",
     "middleware",
@@ -819,6 +859,192 @@ def run_tools(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
     return {"reply": reply_text, "tool_calls": tool_calls, "latency_ms": latency_ms}
 
 
+def _sanitize_scope(value: str) -> str:
+    """Filesystem/collection-safe scope segment (untrusted user/tenant ids must not escape)."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", str(value))
+
+
+def _user_mem_collection(user_id: str) -> str:
+    """Per-USER Qdrant collection name for the memory-extension long-term store.
+
+    The user is the isolation axis for the memory-extension family (session VARIES,
+    user is HELD). A BLANK user_id — which is exactly what the `isolation_forgetful`
+    omitted-scope read forwards RAW — yields the base name with an empty suffix, a
+    DIFFERENT, empty collection than any real user's. That is the load-bearing reason
+    an omitted-scope read *silently partitions* (returns nothing) at LlamaIndex's own
+    query boundary rather than leaking another user's data: LlamaIndex's `Memory`/
+    `VectorMemoryBlock` has no user concept, so the only scope is the collection the
+    adapter chose, and choosing it from a blank id lands on an empty collection.
+    """
+    return f"{ARENA_MEM_COLLECTION}__{_sanitize_scope(user_id)}"
+
+
+def _build_user_memory_blocks(user_id: str, llm: Any) -> tuple[Any, Any, str, Callable[[], Any]]:
+    """Construct LlamaIndex's OWN native long-term memory blocks scoped to `user_id`.
+
+    Returns (vector_block, fact_block, collection_name, async_closer).
+
+    - `VectorMemoryBlock` (`llama_index.core.memory.VectorMemoryBlock`, ships in
+      llama-index-core): flushed conversation turns -> a vector store; retrieval is
+      SEMANTIC (embedding similarity), not lexical. Its vector store is a
+      `QdrantVectorStore` pointed at the PER-USER collection above, so a turn written
+      in session A is retrievable in session B for the same user.
+    - `FactExtractionMemoryBlock` (same package): on flush an LLM extracts durable
+      facts from the turns — LlamaIndex's native consolidation primitive. Its
+      extracted-fact list lives on the block instance (process-local); the durable
+      cross-process carrier is the VectorMemoryBlock's vector store (see README
+      "consolidation" MUST-CHECK).
+
+    Real lane: QdrantVectorStore over the arena's real Qdrant (`QDRANT_URL`), per-user
+    collection, e5 query embeddings via `OpenAILikeEmbedding` (the SAME e5 path
+    `run_rag` uses) — a like-for-like semantic comparison.
+
+    Stub lane (`ARENA_STUB=1`): QdrantVectorStore over an IN-PROCESS in-memory Qdrant
+    (`QdrantClient(location=":memory:")`) + `MockEmbedding` — zero network, proves the
+    blocks WIRING drives offline, but the in-memory store does NOT survive the
+    persist->recall process boundary, so offline cross-session RETRIEVAL is infeasible
+    (see matrix.json memory_* stub cells and the README).
+    """
+    from llama_index.core.memory import FactExtractionMemoryBlock, VectorMemoryBlock
+    from llama_index.vector_stores.qdrant import QdrantVectorStore
+    from qdrant_client import AsyncQdrantClient, QdrantClient
+
+    collection = _user_mem_collection(user_id)
+
+    if ARENA_STUB:
+        embed_model = _stub_embed_model()
+        client = QdrantClient(location=":memory:")
+        aclient = AsyncQdrantClient(location=":memory:")
+    else:
+        from llama_index.embeddings.openai_like import OpenAILikeEmbedding
+
+        embed_model = OpenAILikeEmbedding(
+            model_name=EMBED_QUERY_MODEL, api_base=EMBED_URL, api_key="none", timeout=30.0
+        )
+        client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
+        aclient = AsyncQdrantClient(url=QDRANT_URL, check_compatibility=False)
+
+    vector_store = QdrantVectorStore(client=client, aclient=aclient, collection_name=collection)
+    # similarity_top_k comfortably above the arena's needle count so a MockEmbedding
+    # stub (which returns constant vectors -> ties) still surfaces the needle, and a
+    # real e5 embed ranks it first among the user's stored turns.
+    vector_block = VectorMemoryBlock(
+        vector_store=vector_store, embed_model=embed_model, similarity_top_k=8, name="user_memory"
+    )
+    fact_block = FactExtractionMemoryBlock(llm=llm, name="user_facts", max_facts=50)
+
+    async def _closer() -> None:
+        for c in (aclient, client):
+            try:
+                res = c.close()
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:  # noqa: BLE001 — best-effort teardown of a CLI-lifetime client
+                pass
+
+    return vector_block, fact_block, collection, _closer
+
+
+async def _user_memory_turn(
+    payload: dict[str, Any], llm: Any, scope_user: str, *, write: bool
+) -> tuple[str, str, str]:
+    """One memory-blocks turn scoped to `scope_user`, at LlamaIndex's own boundary.
+
+    Retrieves the user's long-term memory via `VectorMemoryBlock.aget` (semantic),
+    grounds a real LLM recall turn in it, and (when `write`) persists this
+    invocation's new turns into the user-scoped vector block plus runs
+    `FactExtractionMemoryBlock` (consolidation). The session-keyed short-term
+    `Memory` (SQLite) is loaded too so within-session continuity works and so the
+    session store is honestly empty on a fresh recall session (transcript-replay
+    defeat is visible, not asserted).
+
+    `scope_user=""` is the `isolation_forgetful` omitted-scope read: the blank user
+    is forwarded RAW to `_user_mem_collection` -> a different, empty collection ->
+    LlamaIndex's own `aget` returns nothing. No default is backfilled; the framework
+    decides the outcome. Returns (reply, retrieved_context, collection).
+    """
+    from llama_index.core.llms import ChatMessage, MessageRole
+    from llama_index.core.memory import Memory
+
+    new_messages = [m for m in (payload.get("messages") or []) if (m.get("content") or "").strip()]
+    question = _last_user_message(payload)
+    session_id = payload.get("session_id") or "arena-default"
+    system_prompt = payload.get("system") or (
+        "You are a helpful assistant. Use the conversation history and the relevant "
+        "memory from earlier sessions to recall facts the user told you. If you have no "
+        "relevant memory, say you don't know — never invent an answer."
+    )
+
+    role_map = {"user": MessageRole.USER, "assistant": MessageRole.ASSISTANT}
+    new_chat_messages = [
+        ChatMessage(role=role_map.get(m.get("role", "user"), MessageRole.USER), content=m.get("content", ""))
+        for m in new_messages
+    ]
+
+    vector_block, fact_block, collection, closer = _build_user_memory_blocks(scope_user, llm)
+
+    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    db_uri = f"sqlite+aiosqlite:///{MEMORY_DIR / f'{_sanitize_scope(session_id)}.db'}"
+
+    try:
+        # SEMANTIC retrieval of the user's long-term memory at LlamaIndex's own
+        # boundary (VectorMemoryBlock.aget). Query = this turn's user question. A
+        # never-written user (first persist turn, OR the isolation_forgetful blank
+        # scope's empty collection) has no collection yet — Qdrant raises "Collection
+        # ... not found", which is precisely "no memory in this scope": treat it as
+        # empty context, never a crash. This is also the load-bearing forgetful
+        # outcome: the omitted scope reads an empty collection -> no scope-A data.
+        retrieved_context = ""
+        if question:
+            try:
+                got = await vector_block.aget(messages=[ChatMessage(role=MessageRole.USER, content=question)])
+                retrieved_context = got if isinstance(got, str) else str(got or "")
+            except Exception as exc:  # noqa: BLE001 — missing/empty collection == empty scope memory
+                _progress(f"[memory/user] no long-term memory for this scope (empty retrieval): {exc}")
+                retrieved_context = ""
+
+        # Session-keyed short-term Memory (SQLite) — EMPTY on a fresh recall session,
+        # which is precisely how the varies-session/holds-user design defeats replay.
+        memory = Memory.from_defaults(session_id=session_id, token_limit=8000, async_database_uri=db_uri)
+        session_history = await memory.aget()
+
+        context_block = (
+            [ChatMessage(role=MessageRole.SYSTEM, content=f"Relevant memory from earlier sessions:\n{retrieved_context}")]
+            if retrieved_context.strip()
+            else []
+        )
+        messages = (
+            [ChatMessage(role=MessageRole.SYSTEM, content=system_prompt)]
+            + context_block
+            + list(session_history)
+            + new_chat_messages
+        )
+        response = await llm.achat(messages)
+        reply_text = response.message.content or ""
+
+        if write:
+            # Persist this invocation's turns to BOTH tiers: the user-scoped vector
+            # block (durable cross-session carrier) and the session-keyed short-term
+            # store; run FactExtractionMemoryBlock (consolidation mechanism). We call
+            # the blocks' OWN public aput so every persisted turn reaches the durable
+            # user store regardless of Memory's token waterline (which keeps the most
+            # recent turn in session-scoped short-term and would otherwise never flush
+            # a late needle to the user store).
+            persisted = new_chat_messages + [ChatMessage(role=MessageRole.ASSISTANT, content=reply_text)]
+            await vector_block.aput(persisted)
+            try:
+                await fact_block.aput(new_chat_messages)
+            except Exception as exc:  # extraction is best-effort; the vector block is the durable carrier
+                _progress(f"WARNING: [memory/user] FactExtractionMemoryBlock.aput failed non-fatally: {exc}")
+            for msg in new_chat_messages:
+                await memory.aput(msg)
+            await memory.aput(ChatMessage(role=MessageRole.ASSISTANT, content=reply_text))
+
+        return reply_text, retrieved_context, collection
+    finally:
+        await closer()
+
+
 def run_memory(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
     """Persist chat turns to a REAL on-disk SQLite store (llama_index.core.memory.Memory).
 
@@ -834,9 +1060,36 @@ def run_memory(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
     fact stated in an EARLIER turn of the same invocation is silently lost and the later
     recall invocation cannot answer it. (This adapter previously persisted only the LAST user
     message of the payload, so "Pepper" never reached disk — verified in the on-disk store.)
+
+    Memory-extension family (wire carries `user_id`): the runner's memory_cross_session /
+    memory_semantic_recall / memory_consolidation dimensions all arrive here as ordinary
+    mode:"memory" turns plus a `user_id`, with session_id VARYING across the task's invocations
+    while user_id is HELD. When `user_id` is present this handler delegates to the USER-scoped
+    LlamaIndex memory-blocks path (`_user_memory_turn`) — semantic `VectorMemoryBlock` +
+    consolidating `FactExtractionMemoryBlock` over a per-user collection — so a fact from session
+    A recalls in session B for the same user. When `user_id` is absent the original session-keyed
+    behavior below is unchanged (plain `memory` mode stays byte-for-byte identical).
     """
     from llama_index.core.llms import ChatMessage, MessageRole
     from llama_index.core.memory import Memory
+
+    user_id = payload.get("user_id")
+    if user_id:
+        _progress(
+            f"[memory] user_id={user_id!r} present -> USER-scoped memory-blocks path "
+            f"(VectorMemoryBlock + FactExtractionMemoryBlock, collection="
+            f"{_user_mem_collection(user_id)!r}); session_id={payload.get('session_id')!r} varies"
+        )
+        start = time.monotonic()
+        reply_text, retrieved, collection = asyncio.run(
+            _user_memory_turn(payload, llm, user_id, write=True)
+        )
+        latency_ms = int((time.monotonic() - start) * 1000)
+        _progress(
+            f"[memory] user-scoped turn done: collection={collection!r} "
+            f"retrieved_chars={len(retrieved)}"
+        )
+        return {"reply": reply_text, "latency_ms": latency_ms}
 
     new_messages = [m for m in (payload.get("messages") or []) if (m.get("content") or "").strip()]
     if not any(m.get("role") == "user" for m in new_messages):
@@ -884,6 +1137,55 @@ def run_memory(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
     _progress(f"[memory] loaded {prior_turn_count} prior message(s) from disk before this turn")
 
     return {"reply": reply_text, "latency_ms": latency_ms}
+
+
+def run_isolation_forgetful(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
+    """The "forgetful integrator" omitted-scope READ (docs/architecture/arena-tenancy-levels.md).
+
+    The PERSIST invocation already ran as an ordinary mode:"memory" turn under an explicit user
+    (scope A), writing the fact through LlamaIndex's OWN user-scoped `VectorMemoryBlock` (see
+    `run_memory` / `_user_memory_turn`). THIS invocation is the omitted-scope recall: the runner
+    sends it as mode:"isolation_forgetful" with `user_id` DELIBERATELY BLANK (the exact real-world
+    integrator mistake — see arenas/live/runner/tasks.go buildForgetful).
+
+    The blank user is forwarded RAW to LlamaIndex's own query boundary — NO default is backfilled
+    (that is the fairness constraint: the framework, not adapter glue, decides). `_user_memory_turn`
+    with `scope_user=""` builds the per-user collection from the blank id (`_user_mem_collection("")`
+    -> a DIFFERENT, empty collection than scope A's) and calls `VectorMemoryBlock.aget` against it,
+    which returns nothing. The LLM therefore has no scope-A context and cannot echo the scoped
+    fact — so the runner's `scoring.ScoreForgetful` sees neither the scoped answer key (no leak)
+    nor an enforcement error (LlamaIndex is L1: a forgettable `MetadataFilters` parameter, no
+    by-construction refusal) and scores `silent_partition` — the honest L1 failure. LlamaIndex is
+    EXPECTED to FAIL this dimension; that failure is the measured L1-vs-L3 point.
+
+    Emits the uniform envelope with a plain `reply` (what the runner scores) plus a diagnostic
+    `forgetful` block. `write=False`: an omitted-scope READ never writes.
+    """
+    forget_user = payload.get("user_id") or ""  # RAW blank per the wire — never backfilled
+    _progress(
+        f"[isolation_forgetful] omitted-scope read: user_id={forget_user!r} (blank=forgotten) "
+        f"-> collection={_user_mem_collection(forget_user)!r} (empty; different from any real user)"
+    )
+    start = time.monotonic()
+    reply_text, retrieved, collection = asyncio.run(
+        _user_memory_turn(payload, llm, forget_user, write=False)
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+    leaked_context = bool(retrieved.strip())
+    _progress(
+        f"[isolation_forgetful] done: collection={collection!r} retrieved_chars={len(retrieved)} "
+        f"leaked_context={leaked_context} (expected False — omitted scope reads an empty collection)"
+    )
+    return {
+        "reply": reply_text,
+        "latency_ms": latency_ms,
+        "forgetful": {
+            "omitted_scope_collection": collection,
+            "retrieved_context_chars": len(retrieved),
+            "leaked_context": leaked_context,
+            "enforced_refusal": False,  # LlamaIndex L1: no by-construction refusal of a blank scope
+        },
+    }
 
 
 def _scope_key(tenant_id: str, user_id: str, product_id: str, session_id: str | None = None) -> str:
@@ -1856,6 +2158,7 @@ MODE_HANDLERS: dict[str, Callable[[dict[str, Any], Any], dict[str, Any]]] = {
     "stream": run_stream,
     "memory_scoped": run_memory_scoped,
     "isolation_leak": run_isolation_leak,
+    "isolation_forgetful": run_isolation_forgetful,
     "observability": run_observability,
     "crash_recovery": run_crash_recovery,
     "middleware": run_middleware,
