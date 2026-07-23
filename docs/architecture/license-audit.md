@@ -52,9 +52,12 @@ every compose image is on the allowlist.
 - **`github.com/fugue-labs/gollem-langsmith@v0.0.2`** — no `LICENSE` file upstream (verified
   2026-07-23 against the packaged module and the GitHub repo). **Not an aisotropy dependency**:
   absent from the root `go.mod`/`go.sum`; pulled only by `external/gollem`'s own CLI tooling.
-  Risk: low, upstream's responsibility. See
+  Risk: low, upstream's responsibility. **Operator decision (2026-07-23): documented in-repo,
+  not reported upstream.** Tripwire: if this module ever enters the root `go.mod`/`go.sum` or is
+  imported by aisotropy-owned code, remove the whitelist entry and treat it as a **BLOCKER** until
+  upstream publishes a LICENSE (no license = no rights granted). See
   [ADR-0067](../decisions/0067-grafana-agpl-exception-observability-stack.md) "Adjacent 2026-07-23
-  license-audit verdicts" for the full writeup and the upstream-issue follow-up.
+  license-audit verdicts" for the full writeup.
 - **`github.com/cloudwego/eino-ext/components/model/openai@v0.1.13`** — a monorepo nested-module
   packaging artifact: the `eino-ext` repo root **is Apache-2.0** (verified 2026-07-23 via
   `gh api repos/cloudwego/eino-ext/license` → `spdx_id: apache-2.0`), but Go's module zip for this

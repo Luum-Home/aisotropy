@@ -130,11 +130,18 @@ introduced) but are recorded here so the full 2026-07-23 license posture lives i
   `git grep -rn "gollem-langsmith" -- ':!external'` returns zero matches in code aisotropy owns. It
   is pulled in only by the CLI tooling of the vendored upstream clone at `external/gollem` (a
   dependency of gollem's own tooling, not of aisotropy). Risk is assessed **low** and the
-  responsibility is **upstream's** (gollem, not aisotropy) — action item: file an upstream issue on
-  `fugue-labs/gollem-langsmith` requesting a LICENSE file; no aisotropy code or dependency change is
-  needed. This is *not* a license-policy exception (nothing here is a copyleft/restrictive license
-  being adopted) — it is a missing-license hygiene gap in a transitive dependency of a vendored
-  clone, tracked here so it isn't silently dropped between audits.
+  responsibility is **upstream's** (gollem, not aisotropy). **Operator decision (2026-07-23):
+  document in-repo, do not report upstream** — the gap is recorded here and enforced locally
+  instead of filed as an external issue. Enforcement is the whitelist entry in
+  `scripts/license-audit.sh` plus this **tripwire**: if `gollem-langsmith` ever appears in the
+  root `go.mod`/`go.sum`, or any aisotropy-owned code imports it
+  (`git grep -rn "gollem-langsmith" -- ':!external'` stops returning empty), the whitelist entry
+  MUST be removed and the module treated as a **BLOCKER** until upstream publishes a LICENSE — a
+  module with no license grants no rights (all rights reserved by default), so adoption without
+  one is not a CAUTION, it is prohibited. This is *not* a license-policy exception (nothing here
+  is a copyleft/restrictive license being adopted) — it is a missing-license hygiene gap in a
+  transitive dependency of a vendored clone, tracked here so it isn't silently dropped between
+  audits.
 
 ## Consequences
 
@@ -151,8 +158,10 @@ introduced) but are recorded here so the full 2026-07-23 license posture lives i
 - **Perses swap stays live as the permissive escape hatch.** Documented in
   `deploy/observability/README.md` §Licensing; revisit if Grafana's AGPL terms change materially or
   if a future audit tightens the gate to disallow exceptions entirely.
-- **Follow-up (not this ADR, not blocking):** file the gollem-langsmith upstream LICENSE issue
-  (tracked above); no code change required in this repo either way.
+- **gollem-langsmith: documented, not reported.** Operator decision 2026-07-23: the
+  missing-LICENSE gap is documented in-repo (above) and enforced by the `scripts/license-audit.sh`
+  whitelist + tripwire, instead of filing an upstream issue. No code change required; the tripwire
+  turns the entry into a BLOCKER the moment the module enters aisotropy's dependency graph.
 
 ## Sources
 
