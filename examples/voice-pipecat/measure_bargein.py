@@ -23,8 +23,11 @@ cancelled request stops the UPSTREAM model spend is asserted by the Go suite
 Usage:
     export AISOTROPY_TENANT_JWT=$(python3 mint_jwt.py --tenant acme --user alice)
     python3 measure_bargein.py [--runs 5]
+    python3 measure_bargein.py --assert-bargein-ms 250   # threshold mode
+                                                         # (ADR-0069): exit 1 on breach
 
-Exit codes: 0 = measured, 2 = configuration/connectivity error.
+Exit codes: 0 = measured (and under threshold when asserting),
+1 = --assert-bargein-ms threshold breached, 2 = configuration/connectivity error.
 """
 
 from __future__ import annotations
@@ -73,6 +76,13 @@ async def run_once(client: AsyncOpenAI) -> float:
 async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", type=int, default=5, help="measurement runs (median reported; default 5)")
+    ap.add_argument(
+        "--assert-bargein-ms",
+        type=float,
+        default=None,
+        metavar="N",
+        help="threshold mode: exit 1 if the median barge-in-to-silence exceeds N milliseconds",
+    )
     args = ap.parse_args()
 
     if not TENANT_JWT:
@@ -90,8 +100,18 @@ async def main() -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
+    median_ms = statistics.median(times) * 1000
     print("---")
-    print(f"median barge-in-to-silence = {statistics.median(times) * 1000:.1f} ms   (shim {SHIM_BASE_URL})")
+    print(f"median barge-in-to-silence = {median_ms:.1f} ms   (shim {SHIM_BASE_URL})")
+
+    if args.assert_bargein_ms is not None:
+        if median_ms > args.assert_bargein_ms:
+            print(
+                f"FAIL: median barge-in-to-silence {median_ms:.1f} ms > threshold {args.assert_bargein_ms:.1f} ms",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"PASS: median barge-in-to-silence {median_ms:.1f} ms <= threshold {args.assert_bargein_ms:.1f} ms")
     return 0
 
 

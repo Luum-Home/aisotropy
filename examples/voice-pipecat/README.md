@@ -28,9 +28,11 @@ used — see `docs/research/voice-pipeline-landscape-2026-07-23.md`.
 |---|---|
 | `bot.py` | The voice sandwich: mic → VAD → whisper STT → shim LLM → Kokoro TTS → speaker |
 | `mint_jwt.py` | Dev HS256 tenant-JWT minting (stdlib only; matches `internal/auth/jwt.go`) |
-| `measure_ttfab.py` | **Metric #1**: time-to-first-audio-byte (LLM TTFT + TTS first byte) |
-| `measure_bargein.py` | **Metric #2**: barge-in-to-silence (cancel → stream torn down) |
+| `measure_ttfab.py` | **Metric #1**: time-to-first-audio-byte (LLM TTFT + TTS first byte); `--assert-ttfab-ms N` = threshold mode, exit 1 on breach (ADR-0069) |
+| `measure_bargein.py` | **Metric #2**: barge-in-to-silence (cancel → stream torn down); `--assert-bargein-ms N` = threshold mode, exit 1 on breach (ADR-0069) |
 | `requirements.txt` | Python deps (own venv; this dir is never part of the Go module) |
+| `requirements-test.txt` | Test-lane extras (pytest, soundfile, websockets — licenses noted inline) |
+| `tests/` | The voice testing lane (ADR-0069): WER round-trip, pinned fixtures, file-based pipeline test |
 
 ## Bring-up
 
@@ -56,7 +58,9 @@ export AISOTROPY_TENANT_JWT=$(python3 mint_jwt.py --tenant acme --user alice)
 ### 3. Python environment
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
+# Python <= 3.13 required: the pinned pipecat-ai 0.0.x line depends on numba,
+# which does not build on 3.14 (verified 2026-07-23).
+python3.13 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 # macOS: local audio needs portaudio first:  brew install portaudio
 ```
@@ -96,6 +100,47 @@ Both scripts talk to the shim through the SAME client stack Pipecat uses
 (`AsyncOpenAI`, `stream:true` + `stream_options.include_usage`), so their
 numbers transfer to the bot.
 
+Threshold mode (ADR-0069) turns either script into a CI-usable gate — the
+measurement is unchanged; a breached median exits 1 (exit 2 stays reserved for
+configuration/connectivity errors):
+
+```bash
+python3 measure_ttfab.py --runs 5 --assert-ttfab-ms 800
+python3 measure_bargein.py --runs 5 --assert-bargein-ms 250
+```
+
+## The voice testing lane (ADR-0069) — no audio hardware needed
+
+`tests/` holds the automated lane: TTS→STT round-trip gated on WER, pinned WAV
+fixtures with known transcripts, and a file-based Pipecat pipeline test (WAV in
+→ captured TTS frames out). It is **opt-in** — without `VOICE_LANE=real` every
+model-dependent test SKIPs with an actionable reason and only the pure-stdlib
+WER unit tests run (safe for any CI, zero downloads):
+
+```bash
+pip install -r requirements-test.txt        # pytest + soundfile + websockets
+pytest tests/ -q                            # lane off: 8 passed, 8 skipped
+
+# The real lane needs: the Kokoro container (step 4 above; image ~several GB,
+# first pull is slow) and the faster-whisper model (base.en, ~74MB,
+# auto-downloads on first run into the HF cache).
+# Canonical invocation — resource-guard + cross-session lock + nice
+# (from the repo root; the lane also self-checks the guard and skips when
+# the machine is saturated, degrading to tiny.en when it is merely tight):
+VOICE_LANE=real scripts/with-heavy-lane.sh pytest examples/voice-pipecat/tests/ -q
+# or directly, from this directory:
+VOICE_LANE=real pytest tests/ -q
+
+# The pipeline test additionally needs aisotropyd up with JWT auth (steps 1-2):
+VOICE_LANE=real AISOTROPY_TENANT_JWT=$(python3 mint_jwt.py --tenant acme --user alice) \
+  pytest tests/test_pipeline_file.py -q
+```
+
+Knobs for constrained machines: `VOICE_STT_MODEL=tiny.en` (~40MB; slightly
+higher WER than the base.en the thresholds were calibrated on) and
+`VOICE_STT_THREADS=2`. WER thresholds and their measured grounding live in
+ADR-0069 and in the test files' comments.
+
 ## Configuration
 
 | Env var | Default | Meaning |
@@ -115,8 +160,17 @@ numbers transfer to the bot.
 - The **LLM leg of this PoC** (openai-SDK-shaped streaming against a live
   `aisotropyd` running the stub LLM client, JWT as api_key) was smoke-tested at
   implementation time — transcript in the ADR-0066 apply report.
-- `bot.py` and the STT/TTS legs require local audio hardware and model
-  downloads (faster-whisper weights, the Kokoro container), which the
-  implementation environment did not have: they are complete, syntax-checked
-  code but have NOT been executed end-to-end here. Run steps 1–5 above to
-  produce real numbers; do not quote any until you have.
+- The **STT/TTS legs and the full sandwich** are now covered by the ADR-0069
+  test lane and HAVE been executed end-to-end (2026-07-23): the WER round-trip
+  and fixture tests passed against the real Kokoro container + faster-whisper
+  base.en, and the file-based pipeline test (WAV → whisper STT → shim LLM →
+  Kokoro TTS frames, via `pipecat.tests.utils.run_test`) passed against a live
+  stub-backed aisotropyd — no audio hardware involved.
+- `bot.py` itself (mic/speaker via `LocalAudioTransport`) still requires real
+  audio hardware and has NOT been run here. Known latent issue found while
+  building the lane: pipecat 0.0.x's `OpenAITTSService` rejects non-OpenAI
+  voice ids (`VALID_VOICES` lookup), so `KOKORO_VOICE=af_heart` will produce a
+  silent error at the TTS leg — use an OpenAI-style voice id (e.g.
+  `KOKORO_VOICE=alloy`, mapped server-side by Kokoro-FastAPI) until bot.py is
+  updated. Run steps 1–5 above to produce real numbers; do not quote any until
+  you have.

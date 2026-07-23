@@ -20,11 +20,14 @@ Usage:
     python3 measure_ttfab.py                       # both legs
     python3 measure_ttfab.py --skip-tts            # LLM leg only (no Kokoro up)
     python3 measure_ttfab.py --runs 5              # median over 5 runs
+    python3 measure_ttfab.py --assert-ttfab-ms 800 # threshold mode (ADR-0069):
+                                                   # exit 1 if median TTFAB > 800ms
 
 Environment: AISOTROPY_OPENAI_BASE_URL, AISOTROPY_TENANT_JWT, KOKORO_BASE_URL,
 KOKORO_VOICE (same defaults as bot.py).
 
-Exit codes: 0 = measured, 2 = configuration/connectivity error.
+Exit codes: 0 = measured (and under threshold when asserting),
+1 = --assert-ttfab-ms threshold breached, 2 = configuration/connectivity error.
 """
 
 from __future__ import annotations
@@ -114,6 +117,14 @@ async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", type=int, default=3, help="measurement runs (median reported; default 3)")
     ap.add_argument("--skip-tts", action="store_true", help="measure the LLM leg only (Kokoro not running)")
+    ap.add_argument(
+        "--assert-ttfab-ms",
+        type=float,
+        default=None,
+        metavar="N",
+        help="threshold mode: exit 1 if the median TTFAB exceeds N milliseconds "
+        "(with --skip-tts the threshold applies to the LLM leg alone)",
+    )
     args = ap.parse_args()
 
     if not TENANT_JWT:
@@ -135,11 +146,21 @@ async def main() -> int:
 
     llm_med = statistics.median(llm_times)
     tts_med = statistics.median(tts_times)
+    total_med_ms = (llm_med + tts_med) * 1000
     print("---")
     print(f"median llm_ttft   = {llm_med * 1000:.1f} ms   (shim {SHIM_BASE_URL})")
     if not args.skip_tts:
         print(f"median tts_ttfab  = {tts_med * 1000:.1f} ms   (kokoro {KOKORO_BASE_URL})")
-    print(f"median TTFAB      = {(llm_med + tts_med) * 1000:.1f} ms")
+    print(f"median TTFAB      = {total_med_ms:.1f} ms")
+
+    if args.assert_ttfab_ms is not None:
+        if total_med_ms > args.assert_ttfab_ms:
+            print(
+                f"FAIL: median TTFAB {total_med_ms:.1f} ms > threshold {args.assert_ttfab_ms:.1f} ms",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"PASS: median TTFAB {total_med_ms:.1f} ms <= threshold {args.assert_ttfab_ms:.1f} ms")
     return 0
 
 

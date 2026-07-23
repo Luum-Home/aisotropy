@@ -1,0 +1,7 @@
+# Python env for the PoC + test lane (never part of the Go module)
+.venv/
+__pycache__/
+.pytest_cache/
+
+# NOTE: tests/fixtures/*.wav are deliberately NOT ignored — small (<1MB total)
+# pinned WAVs are committed for determinism (ADR-0069).
