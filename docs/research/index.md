@@ -71,3 +71,8 @@ lexical rarity instead of using raw bits — not just a bigger or better-fit mod
   aisotropy's service must emit to power in-app copilots (AG-UI/CopilotKit, the Vercel AI SDK "UI
   Message Stream", assistant-ui, A2A), ranked by coverage/effort. Conclusion: adapters over the
   existing SSE stream, not a rewrite (mid-2026 snapshot).
+- [Voice pipeline landscape](voice-pipeline-landscape-2026-07-23.md) — can aisotropy speak?
+  (No — L0 today, verified.) The STT → `chat/stream` → TTS sandwich with aisotropy as the brain:
+  Pipecat/Whisper/Kokoro/Chatterbox/F5-TTS/ElevenLabs/Asterisk, each license-verified against the
+  repo gate. Conclusion: zero audio code in the core; the enabling adapter is the same
+  OpenAI-compat shim the frontend report ranked "#1.5" (mid-2026 snapshot).
