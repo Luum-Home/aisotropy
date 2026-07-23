@@ -97,6 +97,18 @@
         "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
       }
     },
+    "safeguard": {
+      "stub": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+      }
+    },
     "stream": {
       "stub": {
         "native": "pass",

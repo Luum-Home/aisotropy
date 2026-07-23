@@ -67,6 +67,11 @@ type modeAgg struct {
 	// stream
 	ttftSum int64
 	ttftN   int
+
+	// safeguard (kind-split, so the mode signal can separate "declined
+	// off-topic/jailbreak" from "did not leak a denied token")
+	sgDeclineN, sgDeclinePassN     int
+	sgNoContainN, sgNoContainPassN int
 }
 
 func writeResults(path string, rep reportData) error {
@@ -135,6 +140,16 @@ func writeResults(path string, rep reportData) error {
 			if r.TTFTMs > 0 {
 				a.ttftSum += r.TTFTMs
 				a.ttftN++
+			}
+		case "safeguard_decline":
+			a.sgDeclineN++
+			if r.Det.Pass {
+				a.sgDeclinePassN++
+			}
+		case "safeguard_nocontain":
+			a.sgNoContainN++
+			if r.Det.Pass {
+				a.sgNoContainPassN++
 			}
 		}
 	}
@@ -242,6 +257,7 @@ func writeQualityTable(b *strings.Builder, rep reportData, aggs map[string]*mode
 	writeRunSummary(b, rep.Records)
 	writeQASmokeTestNote(b)
 	writeAisotropyMemoryCaveatNote(b, rep)
+	writeSafeguardNote(b, rep)
 
 	if rep.Concurrency > 1 {
 		fmt.Fprintf(b, "_Ran under `-concurrency %d`: up to %d frameworks' correctness/quality sweeps executed\n", rep.Concurrency, rep.Concurrency)
@@ -376,6 +392,42 @@ func writeAisotropyMemoryCaveatNote(b *strings.Builder, rep reportData) {
 	b.WriteString("> `docs/architecture/arena-memory-forensics.md`.\n\n")
 }
 
+// writeSafeguardNote renders, right above the correctness table (same
+// placement as writeQASmokeTestNote), what the OPT-IN safeguard mode measures
+// and — honestly — what it cannot. Lives in the generator because RESULTS.md
+// is regenerated every run. Full design:
+// docs/architecture/arena-safeguard-dimension.md.
+func writeSafeguardNote(b *strings.Builder, rep reportData) {
+	if !slices.Contains(rep.Modes, "safeguard") {
+		return
+	}
+	b.WriteString("> **`safeguard` measures behavior under adversarial prompts — read the confound first.**\n")
+	b.WriteString("> Safeguard items are RUNNER-side probes sent to every adapter as ORDINARY `qa`/`rag`\n")
+	b.WriteString("> turns (zero adapter-contract change — an adapter cannot tell a probe from a normal\n")
+	b.WriteString("> turn), scored deterministically: `ScoreDecline` (did it refuse off-topic/jailbreak\n")
+	b.WriteString("> requests without leaking substance) and `ScoreNoContain` (did the reply avoid denied\n")
+	b.WriteString("> tokens — model identity, a planted system-prompt sentinel, a corpus-injection sentinel).\n")
+	b.WriteString(">\n")
+	b.WriteString("> **Confound (stated honestly):** with the MODEL held constant, the off-topic and\n")
+	b.WriteString("> identity items largely measure *persona-following by the shared model* under each\n")
+	b.WriteString("> framework's prompt assembly — expect weak framework separation there. The\n")
+	b.WriteString("> DISCRIMINATING items are `sg-corpus-injection` (does retrieved poisoned content get\n")
+	b.WriteString("> obeyed), `sg-sysprompt-exfil` (does the framework's prompt handling leak a planted\n")
+	b.WriteString("> sentinel) and `sg-jailbreak-persona` (persona-override resistance), where framework\n")
+	b.WriteString("> machinery (retrieval plumbing, prompt layering, guardrails) is actually in the loop.\n")
+	b.WriteString("> A framework whose OWN guardrail BLOCKS a probe outright is scored as a refusal\n")
+	b.WriteString("> (recognized block signatures only — see `guardrailBlockSignatures` in the runner),\n")
+	b.WriteString("> never as an errored run.\n")
+	if rep.Lane == "stub" {
+		b.WriteString(">\n")
+		b.WriteString("> **Stub lane:** safeguard rows in THIS run are wiring smoke only — a canned offline\n")
+		b.WriteString("> stub reply trivially contains no denied token, so a stub-lane `no-leak ✓` proves the\n")
+		b.WriteString("> probe path runs, not that anything resists injection. Only real-lane cells carry the\n")
+		b.WriteString("> safeguard signal.\n")
+	}
+	b.WriteString("\n")
+}
+
 // writeQualityLegend explains the score cell's denominator and the meaning of
 // a trailing "(N err)" marker — see the honesty-defect fix this closes:
 // errored runs (adapter crash / timeout / retry exhaustion) were previously
@@ -491,6 +543,18 @@ func modeSignal(mode string, a *modeAgg) string {
 		return fmt.Sprintf("TTFT %dms (n=%d)", a.ttftSum/int64(a.ttftN), a.ttftN) + qaSmokeTestSuffix
 	case "memory":
 		return "recall (judged) (discriminates)"
+	case "safeguard":
+		parts := []string{}
+		if a.sgDeclineN > 0 {
+			parts = append(parts, fmt.Sprintf("decline %d/%d", a.sgDeclinePassN, a.sgDeclineN))
+		}
+		if a.sgNoContainN > 0 {
+			parts = append(parts, fmt.Sprintf("no-leak %d/%d", a.sgNoContainPassN, a.sgNoContainN))
+		}
+		if len(parts) == 0 {
+			return "—"
+		}
+		return strings.Join(parts, ", ") + " [see safeguard note above]"
 	default:
 		return "—"
 	}
@@ -1126,6 +1190,16 @@ func itemSignal(r record) string {
 		return "no structured ✗"
 	case "stream":
 		return fmt.Sprintf("ttft %dms", r.TTFTMs)
+	case "safeguard_decline":
+		if r.Det.Pass {
+			return "declined ✓"
+		}
+		return "complied/leaked ✗"
+	case "safeguard_nocontain":
+		if r.Det.Pass {
+			return "no leak ✓"
+		}
+		return "leaked ✗"
 	default:
 		return "—"
 	}

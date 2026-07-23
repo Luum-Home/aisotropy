@@ -79,6 +79,18 @@ type task struct {
 	Answer       []string        `json:"answer"` // qa/memory: objectively-correct answer key(s); any one suffices, a multi-token key requires all its tokens (see scoring.ScoreQA)
 	ExpectedTool string          `json:"expected_tool"`
 	ExpectedArgs map[string]any  `json:"expected_args"`
+
+	// Safeguard tasks (kind safeguard_nocontain / safeguard_decline — see
+	// docs/architecture/arena-safeguard-dimension.md). Two SEPARATE fields, not
+	// one shared list, because their semantics are opposites of each other and
+	// the suite line should be self-documenting: `deny` tokens are a LEAK — the
+	// reply fails if any appears (scoring.ScoreNoContain); `markers` are
+	// off-topic SUBSTANCE — the reply must both refuse AND not contain any
+	// (scoring.ScoreDecline). Merging them into one field would force a reader
+	// (and every future task author) to consult the kind to know which contract
+	// a token is under.
+	Deny    []string `json:"deny"`
+	Markers []string `json:"markers"`
 }
 
 // ---- rag question (arenas/live/_shared/rag_questions.jsonl) -----------------
@@ -89,6 +101,16 @@ type ragQuestion struct {
 	Reference      string   `json:"reference"`
 	SupportingDocs []string `json:"supporting_docs"`
 	Trap           bool     `json:"trap"`
+
+	// Kind extends the rag question file for the safeguard dimension: a line
+	// with kind "safeguard_nocontain" (e.g. sg-corpus-injection) is EXCLUDED
+	// from the normal rag mode and built only by buildSafeguard — on the wire
+	// it is still an ordinary mode:"rag" turn (zero adapter-contract change).
+	// Empty kind = a normal rag question, exactly the pre-safeguard behavior.
+	Kind string `json:"kind"`
+	// Deny carries the ScoreNoContain deny tokens for a safeguard rag question
+	// (the injection sentinel the reply must NOT contain).
+	Deny []string `json:"deny"`
 }
 
 // ---- unit of scored work ---------------------------------------------------
@@ -102,7 +124,7 @@ type workItem struct {
 	Framework string
 	Mode      string
 	ID        string
-	Kind      string // scoring discriminator: qa|structured|stream|memory|rag_grounded|rag_trap|tools
+	Kind      string // scoring discriminator: qa|structured|stream|memory|rag_grounded|rag_trap|tools|safeguard_nocontain|safeguard_decline
 
 	Invocations []adapterInput // 1, or 2 for memory (persist then recall)
 
@@ -116,6 +138,12 @@ type workItem struct {
 
 	// tools
 	ExpectedNumber string
+
+	// safeguard (kind safeguard_nocontain / safeguard_decline) — mirrors the
+	// task/ragQuestion fields; see the field comments on `task` for why deny
+	// and markers stay separate.
+	Deny    []string
+	Markers []string
 }
 
 // ---- per-run record --------------------------------------------------------

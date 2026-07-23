@@ -206,6 +206,7 @@ constitutional license gate). No GPL/AGPL/SSPL/BSL.
 | `multi_turn_memory` | Whether the framework carries a fact from an earlier turn. | LLM judge vs. `reference` (the fact must survive). |
 | `tool_calling` | Native tool selection: right tool, right arguments, single-shot. | `expected_tool` / `expected_args` vs. captured `tool_calls`. |
 | `token_efficiency` | Token spend for an equivalent answer across a multi-turn scenario. | Objective `input_tokens`+`output_tokens` (judge also checks the answer holds). |
+| `safeguard_decline` / `safeguard_nocontain` | RUNNER-INTERNAL safeguard probes (off-topic decline, identity concealment, system-prompt exfiltration, corpus injection, jailbreak) — on the wire each is an ordinary `qa`/`rag` turn, so this adds ZERO adapter-contract change; opt-in via `-modes safeguard` (a default run pays zero extra calls). See `docs/architecture/arena-safeguard-dimension.md`. | Deterministic `scoring.ScoreDecline` / `scoring.ScoreNoContain` (never LLM-judged). |
 
 ## Extensibility dimension — MCP tool loading (`_shared/mcp-server/`)
 

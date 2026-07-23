@@ -300,6 +300,8 @@ func buildWork(framework, mode string, tasks []task, rag []ragQuestion, maxTasks
 		return buildTools(framework, maxTasks)
 	case "rag":
 		return buildRAG(framework, rag, maxTasks)
+	case "safeguard":
+		return buildSafeguard(framework, tasks, rag, maxTasks)
 	default:
 		return nil
 	}
@@ -395,18 +397,96 @@ func buildTools(framework string, maxTasks int) []workItem {
 	return out
 }
 
+// isSafeguardKind reports whether a task/rag-question/workItem kind belongs to
+// the safeguard dimension (docs/architecture/arena-safeguard-dimension.md).
+// Shared by the builders (routing), the scorer dispatch (eval.go) and the
+// guardrail-block softening rule (main.go).
+func isSafeguardKind(kind string) bool {
+	return kind == "safeguard_nocontain" || kind == "safeguard_decline"
+}
+
+// buildSafeguard builds the OPT-IN safeguard dimension's work items
+// (docs/architecture/arena-safeguard-dimension.md). The invariant is ZERO
+// adapter-contract change: every safeguard item goes over the wire as an
+// ordinary single-shot mode:"qa" (the six suite tasks — persona-following,
+// identity concealment, system-prompt exfiltration, jailbreak) or mode:"rag"
+// (sg-corpus-injection, reusing the exact rag machinery/TopK/collection envs)
+// turn — an adapter cannot tell a safeguard turn from a normal one, so no
+// adapter code changes and no adapter can special-case the probe. All
+// safeguard-ness lives runner-side: the workItem's Kind/Deny/Markers select
+// scoring.ScoreNoContain / scoring.ScoreDecline in eval.go.
+//
+// maxTasks caps the COMBINED item list (suite tasks first, then safeguard rag
+// questions) — the safeguard family is one small, deliberately-ordered set,
+// not two independent pools like the grounded/trap split in buildRAG.
+func buildSafeguard(framework string, tasks []task, rag []ragQuestion, maxTasks int) []workItem {
+	var out []workItem
+	for _, t := range tasks {
+		if !isSafeguardKind(t.Kind) {
+			continue
+		}
+		out = append(out, workItem{
+			Framework: framework,
+			Mode:      "safeguard",
+			ID:        t.ID,
+			Kind:      t.Kind,
+			Invocations: []adapterInput{{
+				Mode:     "qa", // wire mode: an ordinary qa turn — see the builder godoc
+				System:   t.System,
+				Messages: t.Messages,
+			}},
+			Question:  lastUser(t.Messages),
+			Reference: t.Reference,
+			Deny:      t.Deny,
+			Markers:   t.Markers,
+		})
+	}
+	for _, q := range rag {
+		if !isSafeguardKind(q.Kind) {
+			continue
+		}
+		out = append(out, workItem{
+			Framework: framework,
+			Mode:      "safeguard",
+			ID:        q.ID,
+			Kind:      q.Kind,
+			Invocations: []adapterInput{{
+				Mode:     "rag", // wire mode: an ordinary rag turn against the same corpus/collection
+				Messages: []inMessage{{Role: "user", Content: q.Question}},
+				TopK:     4,
+			}},
+			Question:       q.Question,
+			Reference:      q.Reference,
+			SupportingDocs: q.SupportingDocs,
+			Deny:           q.Deny,
+		})
+	}
+	if maxTasks > 0 && maxTasks < len(out) {
+		out = out[:maxTasks]
+	}
+	return out
+}
+
 // buildRAG runs each rag question through rag mode. When capping, it keeps the
 // grounded questions first but guarantees at least one trap is included so the
-// trap-refusal metric is always exercised.
+// trap-refusal metric is always exercised. Safeguard rag questions (kind
+// safeguard_*) are EXCLUDED here — they belong to the opt-in safeguard mode
+// (buildSafeguard), so a default rag sweep is byte-identical to pre-safeguard
+// behavior and pays zero extra calls.
 func buildRAG(framework string, rag []ragQuestion, maxTasks int) []workItem {
-	var grounded, traps []ragQuestion
+	var normal, grounded, traps []ragQuestion
 	for _, q := range rag {
+		if isSafeguardKind(q.Kind) {
+			continue
+		}
+		normal = append(normal, q)
 		if q.Trap {
 			traps = append(traps, q)
 		} else {
 			grounded = append(grounded, q)
 		}
 	}
+	rag = normal
 	selected := rag
 	if maxTasks > 0 && maxTasks < len(rag) {
 		selected = nil

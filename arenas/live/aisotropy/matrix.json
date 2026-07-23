@@ -97,6 +97,18 @@
         "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
       }
     },
+    "safeguard": {
+      "stub": {
+        "native": "pass",
+        "docker": "pending",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
+    },
     "stream": {
       "stub": {
         "native": "pass",
