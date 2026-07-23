@@ -213,6 +213,67 @@ cross-framework conclusion from it:
   675`) — a blank/`—` Build-time cell means the image was already present and reused, not
   that the build was instant.
 
+## How to read the correctness board — empty parity vs. real signal
+
+The correctness table needs its own reading guide, because its most common misreading is taking a
+perfect score as evidence of quality. Two concepts govern it.
+
+### Empty parity: qa, structured, and stream are smoke tests, not quality signals
+
+Every framework in this arena drives the **same model** (`agnes-2.0-flash`, held constant by
+design). In `qa` mode the task is "What is the capital of France?" — the framework's entire job is
+carrying a prompt to the model and carrying the answer back. That is plumbing. The model, identical
+for all nine, is the one that knows it is Paris.
+
+Picture nine mail carriers delivering **the same letter to the same address**: all nine deliver it.
+You have learned nothing about which carrier is better — only that none of them lost the envelope.
+That is why every adapter scores 1.0 on these modes, and a tie that nobody *can* lose is not
+information. We call it **empty parity**: the column cannot rank anyone, because the thing it
+exercises is not the thing that differs.
+
+It compounds: `structured` and `stream` reuse the **identical qa task list**
+(`arenas/live/runner/tasks.go` — the `"qa", "structured", "stream"` case shares one
+`single_shot_qa` slice), differing only in what they measure about it (valid JSON? did it stream?).
+So three of the six correctness columns are the same trivial test measured three ways.
+
+They are kept anyway, on purpose: a smoke test that catches gross breakage is worth having. When an
+adapter is miswired, qa fails loudly and immediately — that is exactly how a stale `SPEC.md` bug
+that broke seven adapters at once was surfaced (see
+`docs/architecture/arena-adapter-artifacts.md`, instance 1). The rendered board therefore labels
+these rows `[smoke test, not a quality signal]` (`arenas/live/runner/results.go`,
+`writeQASmokeTestNote`), and the modes where frameworks genuinely separate — because the framework
+has work of its own to do — are `rag` (retrieve the right document), `tools` (execute and chain
+calls), and `memory` (recall across turns).
+
+The empirical proof that this distinction matters: before the suite was redesigned to discriminate,
+47 of 48 framework × mode cells sat at a perfect 1.0 (`arenas/live/runner/suite_test.go`) — a
+board that measured its own author, not its subjects.
+
+### Same checkmark, different guarantee: the isolation rows
+
+The multi-tenant isolation dimensions (`memory_scoped`, `isolation_leak`) have the opposite
+subtlety: everyone passes, but the ✓ does not mean the same thing in every row.
+
+For aisotropy, isolation is a property of the **product, by construction**: `tenant_id` travels
+only via `context.Context` from the handler down, storage keys carry a mandatory `(tenant, user)`
+prefix, and Qdrant filters by tenant **during** the HNSW scan (an in-scan payload filter — a
+post-filter would itself be a leak; see `.claude/rules/constitutional-gates.md`). A consumer of
+aisotropy cannot easily forget isolation, because it is the only code path that exists.
+
+For the seven competitor frameworks, the framework has **no concept of a tenant**. The isolation
+that passes this test was written in each ARENA ADAPTER — compound keys hand-concatenated into
+store keys, one collection per scope, by convention. It passes because that adapter code is
+careful, not because the framework guarantees anything. A real team adopting one of those
+frameworks writes and maintains that same code themselves, and any mistake is a cross-tenant leak
+with no framework backstop.
+
+Eight lockers, all locked when tested. One is a safe whose design does not open without the right
+key; seven are boxes that currently have a padlock someone remembered to put on. Today's test
+cannot tell those apart — both render ✓. The difference only appears when the person assembling
+the system makes a mistake, which is precisely the case a test of correct code never exercises.
+The board's own "Native vs hand-rolled" caveat (rendered above the scoped-memory table,
+`results.go`) records this; this section is the longer form of why it matters when comparing.
+
 ## Cross-links
 
 - `docs/architecture/arena-rate-limiting.md` — the `-rps` adaptive pacer and retry-backoff schedules
