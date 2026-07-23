@@ -102,6 +102,39 @@ graph entirely, one a false-positive of Go's monorepo module packaging — not a
 and 1 deliberate, ADR-backed copyleft exception in the Docker image layer (Grafana). Re-run
 `scripts/license-audit.sh` whenever a `go.mod` or `docker-compose*.yml` changes.
 
+## Registry verification of the "ecosystem-knowledge" verdicts (closed 2026-07-23)
+
+The original pass left 14 verdicts backed only by ecosystem knowledge (no local cargo cache, no
+venv for 4 Python manifests, 2 Windows-only Go modules never downloaded on this machine). All 14
+were re-verified against their registries the same day — **every one permissive, zero surprises**:
+
+| Dependency | Registry says | Source |
+|---|---|---|
+| candle-core / candle-nn / candle-transformers | MIT OR Apache-2.0 | crates.io API |
+| tokenizers | Apache-2.0 | crates.io API |
+| serde / serde_json | MIT OR Apache-2.0 | crates.io API |
+| datafusion | Apache-2.0 | crates.io API |
+| tokio | MIT | crates.io API |
+| pipecat-ai | BSD-2-Clause | PyPI JSON API |
+| httpx | BSD-3-Clause | PyPI JSON API |
+| attrs | MIT | PyPI JSON API |
+| python-dateutil | Dual Apache-2.0/BSD-3-Clause | PyPI JSON API |
+| github.com/erikgeiser/coninput | MIT | GitHub license API |
+| github.com/mattn/go-localereader | MIT | GitHub license API |
+
+Reproduce (read-only; crates.io requires a User-Agent):
+
+```bash
+curl -s -A "license-audit" https://crates.io/api/v1/crates/tokio | jq -r '.versions[0] | "\(.num) \(.license)"'
+curl -s https://pypi.org/pypi/pipecat-ai/json | jq -r '.info | "\(.version) \(.license_expression // .license)"'
+curl -s https://api.github.com/repos/erikgeiser/coninput/license | jq -r .license.spdx_id
+```
+
+Honest caveat: the crates.io API reports the **latest** published version's license, not the exact
+version the `"0.9"`/`"1"` ranges in `crates/*/Cargo.toml` resolve to. A crate relicensing between
+versions would not be caught by this check alone — for first-party evidence at the resolved
+version, run `cargo fetch && cargo license` inside each crate.
+
 ## Enforcement (wired 2026-07-23 — no longer memory-dependent)
 
 The re-run is no longer something to remember; it fires automatically at both choke points:
