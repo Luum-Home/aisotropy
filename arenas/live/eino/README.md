@@ -280,6 +280,28 @@ mistake this mode exists to catch.
 [Verified smoke tests](#isolation--multi-tenant-scoped-memory-real-agnes-calls) below for the
 real seed-under-A / probe-as-B run.
 
+### Memory-extension dimensions — the honest verdict (`memory_cross_session` / `memory_semantic_recall` / `memory_consolidation`)
+
+These runner-internal dimensions (`docs/architecture/arena-memory-extensions.md`) arrive on the wire
+as ordinary `memory` turns plus a second scope axis, `user_id`, HELD constant while `session_id`
+VARIES across invocations — defeating session-keyed transcript replay by construction. The verdict is
+**honest, not inflated**: Eino has no user-scoped (indeed no official persisted) memory component, so
+this adapter's SQLite store stays keyed by `session_id` (the level Eino's own primitives reach) and
+it does **not** synthesize a user-keyed store from `user_id` — that would be a hand-rolled strawman
+the fairness protocol forbids (`docs/architecture/arena-fairness-protocol.md`). Pinned version:
+**`github.com/cloudwego/eino` v0.9.12** (`go.mod`); the research checked the `adk` subpackage at
+v0.9.13 on pkg.go.dev.
+
+| Dimension | Verdict | Framework primitive (maturity) | Evidence / matrix cell |
+|---|---|---|---|
+| `memory_cross_session` | **run-and-fail** (wired) | `adk` in-process ctx KV + `CheckPointStore` (interrupt/resume only) — session/interrupt-keyed, NOT user-scoped; `MemoryStore` exists only in `eino-examples`. Maturity: NONE in core (example-only). https://pkg.go.dev/github.com/cloudwego/eino/adk ; https://github.com/cloudwego/eino/issues/203 | `mode_memory.go` reads `user_id` and logs that Eino has no user-scoped store, keying `session_id`; a fresh-session recall loads zero turns → honest FAIL. Matrix: real=`pending` (scored on the real lane), stub=`infeasible` (`:memory:` SQLite can't cross the persist→recall process boundary), wasm=`infeasible` (sockets). |
+| `memory_semantic_recall` | **infeasible** | NONE — no semantic-memory component in Eino core; ranked recall would be adapter-invented. | Matrix: `infeasible` all lanes. |
+| `memory_consolidation` | **infeasible** | NONE — no fact-extraction/consolidation component in Eino core. | Matrix: `infeasible` all lanes. |
+
+Ecosystem sweep basis: `docs/architecture/arena-memory-extensions.md` §1. Eino's `.cn` docs were
+DNS-unreachable during the research (open question #4); the pkg.go.dev `adk` API surface (no
+memory-store types) is the substitute evidence.
+
 ### `structured` mode
 
 Binds Eino's native structured-output config (`ChatModelConfig.ResponseFormat`, forwarded to

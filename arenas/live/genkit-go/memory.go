@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/firebase/genkit/go/ai"
@@ -24,6 +25,24 @@ func runMemory(rc *runCtx, out *arenaOutput) error {
 	}
 	if len(rc.in.Messages) == 0 {
 		return fmt.Errorf("memory mode: at least one new message is required")
+	}
+
+	// Memory-extension dimensions (memory_cross_session / memory_semantic_recall /
+	// memory_consolidation — docs/architecture/arena-memory-extensions.md) arrive
+	// on the wire as ordinary `memory` turns plus a SECOND scope axis, user_id,
+	// which the runner HOLDS constant while VARYING session_id across invocations.
+	// Genkit Go has NO user-scoped memory primitive: its experimental
+	// core/x/session (genkit.WithExperimental) is transcript-BY-SESSION-ID only —
+	// server-managed replay keyed on the session, not on the user. So this adapter
+	// keys the framework's NATIVE scope (session_id) and deliberately does NOT
+	// synthesize a user-keyed store from user_id (that would be a hand-rolled
+	// strawman the fairness protocol forbids — docs/architecture/
+	// arena-fairness-protocol.md). The honest, MEASURED consequence: a
+	// cross-session probe (fresh session_id, same user_id) re-hydrates zero prior
+	// turns below and run-and-fails — the finding that Genkit Go has no
+	// user-scoped memory, not a bug in this adapter.
+	if uid := strings.TrimSpace(rc.in.UserID); uid != "" {
+		fmt.Fprintf(os.Stderr, "PROGRESS: memory: wire user_id=%q acknowledged, but Genkit Go has no user-scoped memory primitive (core/x/session is session-keyed) — keying NATIVE scope session_id=%q; a different-session recall for this user run-and-fails by construction\n", uid, rc.in.SessionID)
 	}
 
 	rq := newRqliteClient(rc.rqliteURL)

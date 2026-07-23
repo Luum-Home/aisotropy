@@ -302,6 +302,28 @@ reply-level check is a belt-and-suspenders second signal, not a substitute for i
 key structurally starves the model of the secret before generation even happens, so a clean store
 recall should make a reply-level leak impossible by construction — see `test-isolation.sh`.
 
+### Memory-extension dimensions — the honest verdict (`memory_cross_session` / `memory_semantic_recall` / `memory_consolidation`)
+
+These runner-internal dimensions (`docs/architecture/arena-memory-extensions.md`) arrive on the
+wire as ordinary `memory` turns plus a second scope axis, `user_id`, which the runner HOLDS constant
+while VARYING `session_id` across invocations — a probe that defeats session-keyed transcript replay
+by construction. The verdict here is **honest, not inflated**: Genkit Go has no user-scoped memory
+primitive, so this adapter drives its NATIVE scope (`session_id`) and does **not** synthesize a
+user-keyed store from `user_id` (that would be a hand-rolled strawman the fairness protocol forbids —
+`docs/architecture/arena-fairness-protocol.md`). Pinned version: **`github.com/firebase/genkit/go`
+v1.10.0** (`go.mod`).
+
+| Dimension | Verdict | Framework primitive (maturity) | Evidence / matrix cell |
+|---|---|---|---|
+| `memory_cross_session` | **run-and-fail** (wired) | Experimental `core/x/session` (`genkit.WithExperimental`) — transcript **by session ID only**, server-managed replay, NOT user-scoped. Maturity: OFFICIAL-EXPERIMENTAL. https://firebase.google.com/docs/genkit/chat | `memory.go` reads `user_id` and logs that Genkit has no user-scoped store, keying the native `session_id`; a fresh-session recall re-hydrates zero turns → honest FAIL. Matrix: real=`pending` (scored on the real lane), stub=`infeasible` (process-local in-memory stub store can't cross the persist→recall boundary), wasm=`infeasible` (sockets). |
+| `memory_semantic_recall` | **infeasible** | NONE at any maturity — `core/x/session` replays raw transcript; there is no embedding-ranked recall component. https://firebase.google.com/docs/genkit/chat | Hand-rolling ranked recall would benchmark adapter authorship, not the framework. Matrix: `infeasible` all lanes. |
+| `memory_consolidation` | **infeasible** | NONE at any maturity — no fact-extraction/summarization memory component. | Nothing to exercise. Matrix: `infeasible` all lanes. |
+
+Ecosystem sweep basis: `docs/architecture/arena-memory-extensions.md` §1 (core + official
+extensions + platform + integrations + vendor docs). Genkit's July 2026 Agents-API preview was read
+as an announcement only (open question #6) — no memory semantics established, so it does not upgrade
+any verdict here.
+
 ### `structured` — native schema-validated output
 
 `structured.go` defines a Go struct `structuredAnswer{Answer, Confidence, KeyPoints}`

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	einochatopenai "github.com/cloudwego/eino-ext/components/model/openai"
@@ -27,6 +28,24 @@ func runMemory(ctx context.Context, env *arenaEnv, in adapterInput, out *adapter
 	}
 	if len(in.Messages) == 0 {
 		return errors.New("memory mode requires at least one message in this turn")
+	}
+
+	// Memory-extension dimensions (memory_cross_session / memory_semantic_recall /
+	// memory_consolidation — docs/architecture/arena-memory-extensions.md) arrive
+	// on the wire as ordinary `memory` turns plus a SECOND scope axis, user_id,
+	// which the runner HOLDS constant while VARYING session_id across invocations.
+	// Eino has NO user-scoped (indeed no official persisted) memory component:
+	// adk is in-process ctx KV + CheckPointStore (interrupt/resume only);
+	// its MemoryStore lives only in eino-examples. This adapter's SQLite store is
+	// therefore session-keyed (the level Eino's own primitives reach), and it
+	// deliberately does NOT synthesize a user-keyed store from user_id — that
+	// would be a hand-rolled strawman the fairness protocol forbids
+	// (docs/architecture/arena-fairness-protocol.md). The honest, MEASURED
+	// consequence: a cross-session probe (fresh session_id, same user_id) loads
+	// zero prior turns below and run-and-fails — the finding that Eino has no
+	// user-scoped memory, not a bug in this adapter.
+	if uid := strings.TrimSpace(in.UserID); uid != "" {
+		fmt.Fprintf(os.Stderr, "PROGRESS: memory: wire user_id=%q acknowledged, but Eino has no user-scoped memory primitive (adk CheckPointStore is session/interrupt-keyed) — keying session_id=%q; a different-session recall for this user run-and-fails by construction\n", uid, in.SessionID)
 	}
 
 	store, err := openMemoryStore(env.memoryDBPath)
