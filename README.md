@@ -6,7 +6,7 @@ A local-first, sovereign AI-agent runtime in Go. A different `TenantID` *cannot*
 tenant's data — the unscoped read is **unrepresentable**, enforced per statement/key and propagated
 by `context.Context`, not by a filter you have to remember to add. On top of that isolation spine
 sits a memory hierarchy organized by access temperature (working → facts → semantic → offline
-consolidation). Zero opaque abstractions ("anti-magic"), a 100% MIT/Apache-2.0 stack, and **no
+consolidation). Zero opaque abstractions ("anti-magic"), a 100% permissively-licensed stack (MIT/BSD/Apache-2.0), and **no
 Docker, Rust, or Python in the default boot** — `go get`, `go run .`, done.
 
 > **New here?** Start at [Getting Started](docs/getting-started.md) → the [Tutorial](docs/tutorial/index.md).
@@ -196,7 +196,7 @@ that situates it against E2B / Daytona / the coding-CLI-in-a-box pattern.
   runs by default vs. what is dormant behind an env var. Read this before treating any capability as live.
 - **[Getting Started](docs/getting-started.md)** and **[the Tutorial](docs/tutorial/index.md)** —
   the 30-second pitch, a keyless 2-minute agent, and a 10-rung ladder.
-- **[The stack](docs/architecture/overview.md)** (closed, 100% MIT/Apache-2.0): Huma (Go/MIT) for
+- **[The stack](docs/architecture/overview.md)** (closed, 100% permissive: MIT/BSD/Apache-2.0): Huma (Go/MIT) for
   struct-as-contract HTTP + OpenAPI 3.1 + SSE; Gollem (Go/MIT) for the in-process reflection loop;
   BadgerDB (Go/Apache-2.0) working memory; Qdrant (Rust/Apache-2.0) and rqlite (Go/MIT) as the
   optional networked scale tiers; Apache DataFusion (Rust) for the offline "sleep-cycle." Golden

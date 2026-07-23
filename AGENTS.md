@@ -45,7 +45,7 @@ go run ./cmd/x <task>          # dev console / CI dispatcher: build|fmt|vet|lint
    `FromContext` validation before returning their VO. Composed nodes and internal packages receive
    identity via `context.Context` or an injected `Scope`; they never mint one from arbitrary or
    client-supplied strings.
-3. **Sovereignty / license (ADR-0001).** 100% MIT/Apache-2.0 — no GPL/AGPL/BSL/source-available deps,
+3. **Sovereignty / license (ADR-0001).** 100% permissive (MIT/BSD/Apache-2.0/ISC) — no GPL/AGPL/BSL/source-available deps,
    ever, without an ADR. Secrets via env vars only; never committed, never logged.
 4. **Fail-closed structured output & SSE ctx-cancellation** on the LLM path (constitutional gates).
 

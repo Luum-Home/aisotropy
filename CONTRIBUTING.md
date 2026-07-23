@@ -114,7 +114,7 @@ expect extra scrutiny and include a test that proves the boundary holds.
 
 ### Dependency & license policy
 
-The stack is deliberately **100% MIT / Apache-2.0**. Do not add a dependency
+The stack is deliberately **100% permissive (MIT / BSD / Apache-2.0 / ISC)**. Do not add a dependency
 under a copyleft (GPL/AGPL) or source-available (BUSL/SSPL/ELv2) license without
 an explicit ADR justifying it. Prefer the standard library; when a test needs to
 stand in for an external service, use `net/http/httptest` and small in-memory

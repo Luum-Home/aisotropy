@@ -8,7 +8,7 @@ timestamp: 2026-07-08T00:00:00Z
 
 # Architecture overview
 
-## The stack (closed, 100% MIT/Apache-2.0)
+## The stack (closed, 100% permissive: MIT/BSD/Apache-2.0)
 
 | Layer | Technology | Language / License | Role |
 |---|---|---|---|
