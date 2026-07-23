@@ -83,6 +83,24 @@ func runMemory(req *request, out *result) error {
 		return fmt.Errorf("memory mode requires at least one message this turn")
 	}
 
+	// Memory-EXTENSION dimensions (memory_cross_session / memory_semantic_recall /
+	// memory_consolidation) ride the wire as mode:"memory" but carry a per-task
+	// user_id while VARYING the session across invocations — plain `memory` sends
+	// no user_id and reuses ONE session. A non-empty user_id is therefore the
+	// memory-ext signal; route it to the user-scoped semantic-memory path
+	// (mode_memory_ext.go), which persists with zero model calls and recalls
+	// through the semantic-hydrated streaming route. Plain `memory` (user_id "")
+	// keeps the working-memory App.Turn path below unchanged.
+	//
+	// (The isolation_forgetful PERSIST invocation also arrives as mode:"memory"
+	// with a user_id; routing it here is harmless — it writes the fact under that
+	// user exactly as before, and the separate isolation_forgetful RECALL handler,
+	// mode_forgetful.go, still refuses the omitted-scope read at aisotropy's own
+	// Key.Validate boundary regardless of which tier holds the fact.)
+	if strings.TrimSpace(req.UserID) != "" {
+		return runMemoryExt(req, out)
+	}
+
 	agnes, err := newAgnesClient()
 	if err != nil {
 		return err
