@@ -527,6 +527,23 @@ func TestDeterministic_Reproducible(t *testing.T) {
 		{"decline-refusal-only", func() Score {
 			return ScoreDecline("I'm unable to help with that request.", nil)
 		}},
+
+		// ---- memory-extension tier (cross-session / semantic / consolidation) ----
+		// All three reuse ScoreMemory (answer-key containment); representative
+		// pass + fail fixtures pin their reproducibility. See buildMemoryExt in
+		// the runner and docs/architecture/arena-memory-extensions.md.
+		{"mem-cross-session-recall", func() Score {
+			return ScoreMemory("Your employee ID is 4471-ZP.", "Your employee ID is 4471-ZP.", []string{"4471-ZP"})
+		}},
+		{"mem-cross-session-forgot", func() Score {
+			return ScoreMemory("I don't have that on file for this session.", "Your employee ID is 4471-ZP.", []string{"4471-ZP"})
+		}},
+		{"mem-semantic-recall", func() Score {
+			return ScoreMemory("It's kept underneath the third flowerpot on the balcony.", "The spare key is kept underneath the third flowerpot on the balcony.", []string{"flowerpot"})
+		}},
+		{"mem-consolidation-recall", func() Score {
+			return ScoreMemory("You chose Marigold as the project codename.", "You chose Marigold as the project codename.", []string{"Marigold"})
+		}},
 	}
 
 	// Establish the baseline on iteration 0, then assert every subsequent

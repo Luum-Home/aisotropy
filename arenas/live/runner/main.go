@@ -43,19 +43,26 @@ import (
 // allModes is the full mode VOCABULARY -modes accepts. Note "safeguard" is a
 // RUNNER-side mode only: on the wire its items are ordinary qa/rag turns (see
 // buildSafeguard in tasks.go) — no adapter exposes or knows a "safeguard" mode.
-var allModes = []string{"qa", "rag", "tools", "memory", "structured", "stream", "safeguard"}
+var allModes = []string{"qa", "rag", "tools", "memory", "structured", "stream", "safeguard", "memory_cross_session", "memory_semantic_recall", "memory_consolidation"}
 
 // defaultModes is what an unflagged run sweeps. The safeguard dimension is
 // deliberately OPT-IN (pass `-modes safeguard`, or list it explicitly): it adds
 // ~7 model calls per framework, and the operator decision is that a default
 // full run pays ZERO extra spend for it — see
 // docs/architecture/arena-safeguard-dimension.md §cost.
+//
+// The three memory-extension modes (memory_cross_session,
+// memory_semantic_recall, memory_consolidation — see buildMemoryExt in tasks.go
+// and docs/architecture/arena-memory-extensions.md) are OPT-IN for the same
+// reason: each drives 2–3 model calls per task per framework, so a default run
+// pays zero extra spend. They are in allModes (so `-modes memory_cross_session`
+// works) but not here.
 var defaultModes = []string{"qa", "rag", "tools", "memory", "structured", "stream"}
 
 func main() {
 	liveDir := flag.String("live", defaultLiveDir(), "path to arenas/live")
 	frameworksFlag := flag.String("frameworks", "", "comma-separated framework names to run (default: all discovered)")
-	modesFlag := flag.String("modes", strings.Join(defaultModes, ","), "comma-separated modes to sweep. NOT in the default set: 'safeguard' (opt-in — runner-side safeguard probes sent to adapters as ordinary qa/rag turns and scored by ScoreNoContain/ScoreDecline; a default run pays zero extra calls for it — see docs/architecture/arena-safeguard-dimension.md)")
+	modesFlag := flag.String("modes", strings.Join(defaultModes, ","), "comma-separated modes to sweep. NOT in the default set: 'safeguard' (opt-in — runner-side safeguard probes sent to adapters as ordinary qa/rag turns and scored by ScoreNoContain/ScoreDecline; a default run pays zero extra calls for it — see docs/architecture/arena-safeguard-dimension.md); and the three memory-extension modes 'memory_cross_session'/'memory_semantic_recall'/'memory_consolidation' (opt-in — session_id varies while user_id holds across 2-3 wire-mode:memory invocations, scored by ScoreMemory; a default run pays zero extra calls — see docs/architecture/arena-memory-extensions.md)")
 	dimensionsFlag := flag.String("dimensions", strings.Join(allDimensions, ","), "comma-separated NEW dimensions to run: memory_scoped,isolation_leak,crash_recovery,observability (empty/none to skip)")
 	benchModesFlag := flag.String("bench-modes", "qa", "comma-separated modes to benchmark latency on (kept cheap; qa recommended)")
 	benchIters := flag.Int("bench-iters", 5, "warm iterations per benchmark cell (N>=5 for a real p50/p95)")

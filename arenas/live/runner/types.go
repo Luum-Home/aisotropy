@@ -27,11 +27,32 @@ type inTool struct {
 // use are omitted (omitempty) so a single-mode adapter that only reads
 // system/messages still parses it unchanged.
 type adapterInput struct {
-	Mode       string          `json:"mode"`
-	System     string          `json:"system,omitempty"`
-	Messages   []inMessage     `json:"messages"`
-	Tools      []inTool        `json:"tools,omitempty"`
-	SessionID  string          `json:"session_id,omitempty"`
+	Mode      string      `json:"mode"`
+	System    string      `json:"system,omitempty"`
+	Messages  []inMessage `json:"messages"`
+	Tools     []inTool    `json:"tools,omitempty"`
+	SessionID string      `json:"session_id,omitempty"`
+
+	// UserID is the SECOND scope axis alongside SessionID, added for the memory-
+	// extension dimensions (memory_cross_session / memory_semantic_recall /
+	// memory_consolidation — see buildMemoryExt in tasks.go and
+	// docs/architecture/arena-memory-extensions.md). Those dimensions VARY the
+	// session_id while HOLDING user_id constant across invocations, which is what
+	// defeats transcript replay BY CONSTRUCTION: a fresh session_id makes a
+	// session-keyed transcript store return empty, so only genuine user-scoped
+	// memory can recall the fact.
+	//
+	// This is an ADDITIVE, omitempty wire-contract change (unlike safeguard,
+	// which needed none): a single-mode adapter that only reads system/messages
+	// still parses the request unchanged, and every EXISTING dimension omits the
+	// field entirely, so a default run's wire bytes are byte-identical to before.
+	// Only the aisotropy reference adapter reads it today (threading it into its
+	// tenant/user scope, mode_memory.go); the competitor adapters must be taught
+	// to read it in the separate per-adapter follow-up phase — until then they
+	// ignore it and a cross-session probe is expected to RUN AND FAIL for them
+	// (the honest verdict for a session-keyed store under a cross-session test).
+	UserID string `json:"user_id,omitempty"`
+
 	TopK       int             `json:"top_k,omitempty"`
 	Schema     json.RawMessage `json:"schema,omitempty"`
 	SchemaName string          `json:"schema_name,omitempty"`
@@ -124,9 +145,9 @@ type workItem struct {
 	Framework string
 	Mode      string
 	ID        string
-	Kind      string // scoring discriminator: qa|structured|stream|memory|rag_grounded|rag_trap|tools|safeguard_nocontain|safeguard_decline
+	Kind      string // scoring discriminator: qa|structured|stream|memory|rag_grounded|rag_trap|tools|safeguard_nocontain|safeguard_decline|memory_cross_session|memory_semantic_recall|memory_consolidation
 
-	Invocations []adapterInput // 1, or 2 for memory (persist then recall)
+	Invocations []adapterInput // 1; 2 for memory (persist then recall) and the memory-ext cross-session/semantic dimensions; 3 for memory_consolidation (persist, consolidate, recall)
 
 	// judge inputs
 	Question  string

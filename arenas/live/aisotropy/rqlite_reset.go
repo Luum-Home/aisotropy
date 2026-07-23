@@ -115,10 +115,23 @@ func factsMarkerPath(rqliteHost, tenant, user, session string) string {
 // (qa, rag, tools, memory, structured, stream, ...) drives aisotropy under
 // the fixed arena/live identity (see e.g. mode_qa.go, mode_memory.go).
 func factsIdentity(req *request) (tenant, user string) {
-	if strings.TrimSpace(req.TenantID) != "" && strings.TrimSpace(req.UserID) != "" {
+	t := strings.TrimSpace(req.TenantID)
+	u := strings.TrimSpace(req.UserID)
+	switch {
+	case t != "" && u != "":
+		// Scoped modes (memory_scoped, isolation_leak, crash_recovery) carry an
+		// explicit (tenant, user).
 		return req.TenantID, req.UserID
+	case u != "":
+		// Memory-EXTENSION second scope axis (arena-memory-extensions.md): a
+		// per-task user_id under the FIXED arena tenant. The user alone carries
+		// the fact across the session boundary, so the reset (and the App.Turn
+		// scope in mode_memory.go) must resolve to (arena, user) — not fall back
+		// to arena/live and erase the wrong scope.
+		return arenaTenant, req.UserID
+	default:
+		return arenaTenant, arenaUser
 	}
-	return arenaTenant, arenaUser
 }
 
 // resetRqliteFacts scopes and, when this is a genuinely new task, clears the
@@ -145,7 +158,28 @@ func resetRqliteFacts(req *request) {
 		return
 	}
 
-	marker := factsMarkerPath(u.Host, tenant, user, req.SessionID)
+	// Per-RUN (not per-boot, not per-session) reset scoping for the memory-
+	// EXTENSION dimensions. Those dimensions VARY session_id across a task's
+	// invocations while holding a UNIQUE-per-task user_id. Keying the marker on
+	// session here would make the RECALL process (a DIFFERENT session_id than the
+	// persist process) miss the persist process's fresh marker and re-run the
+	// (tenant,user)-wide erase — deleting the very fact the cross-session recall
+	// must find (facts.Scope has no session column, so the erase is not
+	// session-scoped). Dropping session from the marker keys the reset on the
+	// erase scope itself (tenant,user): the unique per-task user already isolates
+	// one memory-ext task from the next, and a same-user later session (the
+	// recall) then correctly finds the fresh marker and LEAVES the rows.
+	//
+	// Plain `memory` mode sends NO user_id, so it keeps session in the marker for
+	// its constant-arena/live, session-differentiated per-task isolation — that
+	// path is byte-identical to before this change (the marker session only
+	// changes when a request is wire-mode "memory" AND carries a user_id, which
+	// only the memory-ext builder does).
+	markerSession := req.SessionID
+	if req.Mode == modeMemory && strings.TrimSpace(req.UserID) != "" {
+		markerSession = ""
+	}
+	marker := factsMarkerPath(u.Host, tenant, user, markerSession)
 	info, statErr := os.Stat(marker)
 	fresh := statErr == nil && time.Since(info.ModTime()) < factsMarkerTTL
 	if fresh {

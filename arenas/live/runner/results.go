@@ -258,6 +258,7 @@ func writeQualityTable(b *strings.Builder, rep reportData, aggs map[string]*mode
 	writeQASmokeTestNote(b)
 	writeAisotropyMemoryCaveatNote(b, rep)
 	writeSafeguardNote(b, rep)
+	writeMemoryExtNote(b, rep)
 
 	if rep.Concurrency > 1 {
 		fmt.Fprintf(b, "_Ran under `-concurrency %d`: up to %d frameworks' correctness/quality sweeps executed\n", rep.Concurrency, rep.Concurrency)
@@ -428,6 +429,51 @@ func writeSafeguardNote(b *strings.Builder, rep reportData) {
 	b.WriteString("\n")
 }
 
+// writeMemoryExtNote renders, right above the correctness table (same placement
+// as writeSafeguardNote), what the three OPT-IN memory-extension modes measure
+// and — honestly — the cross-cutting mechanic and its confounds. Lives in the
+// generator because RESULTS.md is regenerated every run. Full design:
+// docs/architecture/arena-memory-extensions.md.
+func writeMemoryExtNote(b *strings.Builder, rep reportData) {
+	on := slices.Contains(rep.Modes, "memory_cross_session") ||
+		slices.Contains(rep.Modes, "memory_semantic_recall") ||
+		slices.Contains(rep.Modes, "memory_consolidation")
+	if !on {
+		return
+	}
+	b.WriteString("> **Memory-extension modes — the varies-session/holds-user mechanic (read first).**\n")
+	b.WriteString("> `memory_cross_session`, `memory_semantic_recall` and `memory_consolidation` all VARY the\n")
+	b.WriteString("> `session_id` across a task's 2–3 invocations while HOLDING one `user_id` constant. That\n")
+	b.WriteString("> single change defeats transcript replay BY CONSTRUCTION: a session-keyed store returns\n")
+	b.WriteString("> empty for the fresh recall session, so only genuine USER-scoped memory can recall the\n")
+	b.WriteString("> planted fact. On the wire every invocation is an ordinary `memory` turn plus the additive\n")
+	b.WriteString("> `user_id` field — zero new adapter mode. Scored by `ScoreMemory` (answer-key containment).\n")
+	b.WriteString(">\n")
+	b.WriteString("> - `memory_cross_session`: fact in session A, recall in session B (same user, no wall-clock gap).\n")
+	b.WriteString("> - `memory_semantic_recall`: an early needle stated semantically, recalled by a PARAPHRASE\n")
+	b.WriteString(">   that shares NO content tokens with the needle (a fixture guard pins zero-overlap forever),\n")
+	b.WriteString(">   so a raw-transcript replayer must re-send ~40 turns and pays 10–20× the input tokens —\n")
+	b.WriteString(">   visible directly in the token table.\n")
+	b.WriteString("> - `memory_consolidation`: persist, then a `consolidate` directive turn (the deterministic\n")
+	b.WriteString(">   barrier — the framework runs its consolidation to completion before the process exits),\n")
+	b.WriteString(">   then recall across the session boundary. What is SCORED is the OUTCOME; the MECHANISM\n")
+	b.WriteString(">   (async worker vs. in-hot-path vs. none) is a separate, labeled finding, never folded in.\n")
+	b.WriteString(">\n")
+	b.WriteString("> **Fairness / follow-up (stated honestly):** only the aisotropy reference adapter reads\n")
+	b.WriteString("> `user_id` today; the competitor adapters are wired to their best OFFICIAL memory primitive\n")
+	b.WriteString("> in a separate per-adapter phase. Until then a competitor cell here is a RUN-AND-FAIL (its\n")
+	b.WriteString("> session-keyed store cannot recall a different-session fact), not an infeasible — an honest\n")
+	b.WriteString("> gap, not a hidden one.\n")
+	if rep.Lane == "stub" {
+		b.WriteString(">\n")
+		b.WriteString("> **Stub lane:** these dimensions are cross-PROCESS by construction; the offline stub runs an\n")
+		b.WriteString("> in-memory store per process (and no real embedder/Qdrant for the semantic needle), so a\n")
+		b.WriteString("> stub cell proves the WIRING reaches the adapter (varying session + user_id + recall\n")
+		b.WriteString("> invocation), NOT that anything recalled. Only real-lane cells carry the memory signal.\n")
+	}
+	b.WriteString("\n")
+}
+
 // writeQualityLegend explains the score cell's denominator and the meaning of
 // a trailing "(N err)" marker — see the honesty-defect fix this closes:
 // errored runs (adapter crash / timeout / retry exhaustion) were previously
@@ -543,6 +589,12 @@ func modeSignal(mode string, a *modeAgg) string {
 		return fmt.Sprintf("TTFT %dms (n=%d)", a.ttftSum/int64(a.ttftN), a.ttftN) + qaSmokeTestSuffix
 	case "memory":
 		return "recall (judged) (discriminates)"
+	case "memory_cross_session":
+		return "cross-session recall — session varies, user held (discriminates)"
+	case "memory_semantic_recall":
+		return "semantic paraphrase recall — no shared tokens (discriminates)"
+	case "memory_consolidation":
+		return "consolidated recall across the session boundary (discriminates)"
 	case "safeguard":
 		parts := []string{}
 		if a.sgDeclineN > 0 {
@@ -1200,6 +1252,11 @@ func itemSignal(r record) string {
 			return "no leak ✓"
 		}
 		return "leaked ✗"
+	case "memory_cross_session", "memory_semantic_recall", "memory_consolidation":
+		if r.Det.Pass {
+			return "recalled ✓"
+		}
+		return "not recalled ✗"
 	default:
 		return "—"
 	}

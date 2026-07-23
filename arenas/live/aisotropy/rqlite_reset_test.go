@@ -195,6 +195,56 @@ func TestResetRqliteFacts_EraseFailure_DoesNotWriteMarker(t *testing.T) {
 	}
 }
 
+// TestResetRqliteFacts_MemoryExt_CrossSessionRecallSurvives is the memory-
+// extension regression: a memory_cross_session task persists under (arena, U,
+// session A) and recalls under (arena, U, session B — a DIFFERENT session, same
+// user). The recall boot must NOT re-erase the (arena, U) scope, or it would
+// wipe the fact the persist boot just wrote via the outbox. Because the marker
+// drops session for a user_id-bearing memory request, the recall finds the
+// persist boot's fresh marker and leaves the rows. (Contrast with plain memory
+// mode, where a different session under the same user DOES re-erase — see
+// TestResetRqliteFacts_DifferentSession_ErasesIndependently.)
+func TestResetRqliteFacts_MemoryExt_CrossSessionRecallSurvives(t *testing.T) {
+	isolatedMarkerDir(t)
+	f := newFakeRqliteExecute(t)
+	t.Setenv("RQLITE_URL", f.srv.URL)
+
+	user := "u-memory_cross_session-xsession-01-empid"
+	persist := &request{Mode: modeMemory, UserID: user, SessionID: "arena-memory_cross_session-xsession-01-empid-a"}
+	resetRqliteFacts(persist) // persist boot
+	if got := f.callCount(); got != 1 {
+		t.Fatalf("persist boot: expected 1 erase call, got %d", got)
+	}
+
+	recall := &request{Mode: modeMemory, UserID: user, SessionID: "arena-memory_cross_session-xsession-01-empid-b"}
+	resetRqliteFacts(recall) // recall boot: DIFFERENT session, SAME user
+	if got := f.callCount(); got != 1 {
+		t.Fatalf("recall boot (different session, same user) must NOT erase — the persisted fact would be wiped; call count should stay 1, got %d", got)
+	}
+}
+
+// TestResetRqliteFacts_MemoryExt_DistinctUsersEraseIndependently pins task
+// isolation for the memory-extension dimensions: because session is dropped
+// from the marker, isolation between tasks comes from the UNIQUE-per-task
+// user_id. Two different memory-ext tasks (different users) must each erase
+// their own scope, so task B never inherits task A's facts.
+func TestResetRqliteFacts_MemoryExt_DistinctUsersEraseIndependently(t *testing.T) {
+	isolatedMarkerDir(t)
+	f := newFakeRqliteExecute(t)
+	t.Setenv("RQLITE_URL", f.srv.URL)
+
+	taskA := &request{Mode: modeMemory, UserID: "u-memory_cross_session-xsession-01", SessionID: "s-a"}
+	resetRqliteFacts(taskA)
+	if got := f.callCount(); got != 1 {
+		t.Fatalf("task A: expected 1 erase call, got %d", got)
+	}
+	taskB := &request{Mode: modeMemory, UserID: "u-memory_cross_session-xsession-02", SessionID: "s-b"}
+	resetRqliteFacts(taskB)
+	if got := f.callCount(); got != 2 {
+		t.Fatalf("task B (different memory-ext user) must erase its own scope — expected 2 calls, got %d", got)
+	}
+}
+
 // TestFactsIdentity covers the (tenant,user) fallback resolution: the scoped
 // modes (memory_scoped, isolation_leak, crash_recovery) always carry an
 // explicit identity; every other mode (qa, rag, tools, memory, ...) resolves
@@ -208,6 +258,7 @@ func TestFactsIdentity(t *testing.T) {
 		{"explicit tenant/user (scoped modes)", &request{TenantID: "tenantA", UserID: "userB"}, "tenantA", "userB"},
 		{"empty tenant/user falls back to arena/live", &request{}, arenaTenant, arenaUser},
 		{"tenant set but user empty still falls back (both required)", &request{TenantID: "tenantA"}, arenaTenant, arenaUser},
+		{"user set, tenant empty (memory-ext second axis) -> arena tenant + that user", &request{UserID: "u-memory_cross_session-xsession-01"}, arenaTenant, "u-memory_cross_session-xsession-01"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

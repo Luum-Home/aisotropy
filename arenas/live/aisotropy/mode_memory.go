@@ -90,6 +90,19 @@ func runMemory(req *request, out *result) error {
 	app := newApp(agnes, effectiveMemorySystem(req.System))
 	defer func() { _ = app.Close() }()
 
+	// SECOND scope axis (arena-memory-extensions.md): the memory-EXTENSION
+	// dimensions (memory_cross_session / memory_semantic_recall /
+	// memory_consolidation) VARY session_id while HOLDING a per-task user_id
+	// constant, and that user is what carries the fact across the session
+	// boundary through aisotropy's user-scoped facts/semantic tiers (working
+	// memory is session-keyed, so it deliberately does NOT help here). Plain
+	// `memory` mode sends no user_id, so it keeps the fixed arena/live user
+	// unchanged. tenant stays arenaTenant either way.
+	user := arenaUser
+	if strings.TrimSpace(req.UserID) != "" {
+		user = req.UserID
+	}
+
 	start := time.Now()
 	var lastReply string
 	var turnsRun int
@@ -113,7 +126,7 @@ func runMemory(req *request, out *result) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
 		o, terr := app.Turn(ctx, aisotropy.ChatInput{
 			TenantID:  arenaTenant,
-			UserID:    arenaUser,
+			UserID:    user,
 			Prompt:    prompt,
 			SessionID: req.SessionID,
 			ProductID: productID,
@@ -134,8 +147,42 @@ func runMemory(req *request, out *result) error {
 	out.LatencyMs = time.Since(start).Milliseconds()
 	out.Reply = lastReply
 	setUsage(out, app)
-	logf("memory turn(s) ok on session %q (data_dir persists across processes)", req.SessionID)
+	// Consolidation drain barrier (arena-memory-extensions.md §3.4). Close the
+	// App NOW, before the process returns/exits, rather than leaving it solely to
+	// the deferred Close: App.Close() tears the runtime down, which STOPS the
+	// consolidation outbox worker only AFTER it has drained (aisotropy/app.go's
+	// runtime.close), flushing this invocation's persisted turn toward the facts
+	// tier. This is the deterministic barrier the memory_consolidation dimension
+	// needs — no sleep, no polling: process teardown IS the barrier. Idempotent
+	// (closeOnce), so the deferred Close above is a safe no-op afterward. Cross-
+	// PROCESS completion is additionally guaranteed by the recall process's own
+	// cold-boot outbox reconciliation (aisotropy/app.go's RecoverOutbox at
+	// startRuntime), which drains any residual on-disk outbox events before it
+	// hydrates — so a fact persisted here is queryable in the next process
+	// regardless of exact worker timing.
+	drainConsolidation(app)
+	logf("memory turn(s) ok on session %q user=%q (data_dir persists across processes)", req.SessionID, user)
 	return nil
+}
+
+// drainConsolidation is the memory_consolidation deterministic drain barrier:
+// it closes the App so the runtime teardown stops the outbox worker only after
+// it has drained, flushing persisted turns toward the durable facts tier before
+// the process exits. Named + extracted so the barrier is an explicit, testable
+// step rather than an implicit consequence of a deferred Close. Idempotent and
+// nil-safe via the façade's closeOnce (aisotropy/knowledge.go's App.Close).
+//
+// Scope note: this is the strongest barrier reachable from the adapter with the
+// PUBLIC façade alone. A truly synchronous "block until the fact is queryable in
+// rqlite" barrier would need a façade drain/pending-count accessor (the internal
+// memory.WorkingMemory.PendingOutboxCount/RecoverOutbox are not exported on the
+// aisotropy.App surface, and this adapter is a separate module that cannot reach
+// internal packages) — a follow-up on the core façade, out of adapter scope.
+func drainConsolidation(app *aisotropy.App) {
+	if app == nil {
+		return
+	}
+	_ = app.Close()
 }
 
 // withEstablishedContext (F1a) folds the canned assistant lines seen so far in

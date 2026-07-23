@@ -296,6 +296,8 @@ func buildWork(framework, mode string, tasks []task, rag []ragQuestion, maxTasks
 		return buildQAStyle(framework, mode, filterKind(tasks, "single_shot_qa"), maxTasks)
 	case "memory":
 		return buildMemory(framework, filterKind(tasks, "multi_turn_memory"), maxTasks)
+	case memoryCrossSessionMode, memorySemanticRecallMode, memoryConsolidationMode:
+		return buildMemoryExt(framework, mode, tasks, maxTasks)
 	case "tools":
 		return buildTools(framework, maxTasks)
 	case "rag":
@@ -363,6 +365,96 @@ func buildMemory(framework string, mem []task, maxTasks int) []workItem {
 			Mode:        "memory",
 			ID:          t.ID,
 			Kind:        "memory",
+			Invocations: invs,
+			Question:    t.Messages[idx].Content,
+			Reference:   t.Reference,
+			Answer:      t.Answer,
+		})
+	}
+	return out
+}
+
+// The three memory-EXTENSION dimensions (docs/architecture/arena-memory-
+// extensions.md). Each is a RUNNER-side mode whose suite `kind` equals the mode
+// name, exactly like the `safeguard` family. On the wire every invocation is an
+// ordinary mode:"memory" turn — so a memory-capable adapter needs no new mode
+// dispatch — plus the additive `user_id` field (adapterInput.UserID) and a
+// session_id that VARIES across the task's invocations while user_id is HELD.
+// That varies-session/holds-user mechanic is the whole design: a session-keyed
+// transcript store returns empty for the fresh recall session, so only genuine
+// user-scoped memory can recall — transcript replay is defeated by construction.
+const (
+	memoryCrossSessionMode   = "memory_cross_session"
+	memorySemanticRecallMode = "memory_semantic_recall"
+	memoryConsolidationMode  = "memory_consolidation"
+)
+
+// consolidateDirective is the synthetic middle invocation of a
+// memory_consolidation work item: a directive turn the runner inserts between
+// persist and recall so a framework whose consolidation is TRIGGERED (langmem's
+// manager, llamaindex's flush) runs it to completion before the process exits —
+// process exit is the deterministic barrier the design mandates (no sleeps, no
+// polling). For a framework that consolidates continuously in the hot path
+// (aisotropy's outbox/sleep-cycle, mastra's working-memory profile) this turn is
+// approximately a no-op trigger — itself a reportable finding, not a defect.
+const consolidateDirective = "Please consolidate and durably remember the key facts from our conversation so far, so you can recall them in a later session."
+
+// isMemoryExtKind reports whether a suite task/workItem kind belongs to the
+// memory-extension family — shared by the builder routing and the eval/results
+// dispatch, mirroring isSafeguardKind.
+func isMemoryExtKind(kind string) bool {
+	return kind == memoryCrossSessionMode || kind == memorySemanticRecallMode || kind == memoryConsolidationMode
+}
+
+// buildMemoryExt builds the OPT-IN memory-extension work items for one of the
+// three dimensions (mode == the suite kind). The load-bearing shape:
+//
+//   - PERSIST invocation(s): every message up to (but excluding) the final user
+//     turn, sent under session A and the task's constant user_id.
+//   - CONSOLIDATE invocation (memory_consolidation ONLY): the consolidateDirective
+//     under session A, same user — the deterministic consolidation barrier.
+//   - RECALL invocation: the final user turn, sent under a DIFFERENT session B,
+//     the SAME user_id. A session-keyed store finds nothing here; only genuine
+//     user-scoped memory recalls the persisted fact.
+//
+// Every invocation goes over the wire as mode:"memory" (zero new adapter mode)
+// carrying user_id — the only wire change versus plain `memory`. The user_id is
+// UNIQUE PER TASK (isolation is by user, since session now varies within a task),
+// so the aisotropy adapter's per-run facts reset can scope task boundaries by
+// user without needing session in its marker (see arenas/live/aisotropy/
+// rqlite_reset.go). Scored by scoring.ScoreMemory (answer-key containment), the
+// design's chosen primary — no new scorer.
+func buildMemoryExt(framework, mode string, tasks []task, maxTasks int) []workItem {
+	mem := capTasks(filterKind(tasks, mode), maxTasks)
+	out := make([]workItem, 0, len(mem))
+	for _, t := range mem {
+		idx := lastUserIndex(t.Messages)
+		if idx < 0 {
+			continue
+		}
+		persist := t.Messages[:idx]
+		recall := []inMessage{t.Messages[idx]}
+		// Unique-per-task user (the constant scope across this task's invocations)
+		// and two DISTINCT sessions: session A holds persist (+consolidate),
+		// session B is the fresh recall session that defeats transcript replay.
+		user := "u-" + mode + "-" + t.ID
+		sessionA := fmt.Sprintf("arena-%s-%s-a", mode, t.ID)
+		sessionB := fmt.Sprintf("arena-%s-%s-b", mode, t.ID)
+
+		var invs []adapterInput
+		if len(persist) > 0 {
+			invs = append(invs, adapterInput{Mode: "memory", System: t.System, Messages: persist, SessionID: sessionA, UserID: user})
+		}
+		if mode == memoryConsolidationMode {
+			invs = append(invs, adapterInput{Mode: "memory", Messages: []inMessage{{Role: "user", Content: consolidateDirective}}, SessionID: sessionA, UserID: user})
+		}
+		invs = append(invs, adapterInput{Mode: "memory", Messages: recall, SessionID: sessionB, UserID: user})
+
+		out = append(out, workItem{
+			Framework:   framework,
+			Mode:        mode,
+			ID:          t.ID,
+			Kind:        mode, // suite kind == mode name; scored by ScoreMemory in eval.go
 			Invocations: invs,
 			Question:    t.Messages[idx].Content,
 			Reference:   t.Reference,

@@ -49,6 +49,42 @@
         "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
       }
     },
+    "memory_cross_session": {
+      "stub": {
+        "native": "infeasible:ARENA_STUB=1 forces in-memory-per-process BadgerDB (clearBackendTierEnv, app.go) and a process-local in-process facts tier, so a recall in a SECOND process cannot see the first process's user-scoped fact; memory_cross_session structurally requires on-disk BadgerDB + networked rqlite cross-process persistence (same class as crash_recovery's stub-infeasibility)",
+        "docker": "infeasible:same in-memory-per-process stub semantics as native (clearBackendTierEnv fires regardless of execution form); the persist container's user-scoped fact is not visible to the separate recall container without the real on-disk/networked tiers",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
+    },
+    "memory_semantic_recall": {
+      "stub": {
+        "native": "infeasible:ARENA_STUB=1 has no real embedder/Qdrant and runs in-memory-per-process, so the semantic needle cannot be embedded, stored, and retrieved across the cross-session boundary; the dimension requires the real e5+Qdrant semantic tier plus cross-process persistence",
+        "docker": "infeasible:same as native — the offline stub provides neither the real embedder/Qdrant nor cross-process persistence a paraphrase recall needs",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
+    },
+    "memory_consolidation": {
+      "stub": {
+        "native": "infeasible:ARENA_STUB=1 forces in-memory-per-process BadgerDB and a process-local facts tier, so the consolidated fact cannot cross the persist->recall process boundary; memory_consolidation requires on-disk BadgerDB + networked rqlite (the outbox->facts drain barrier is only observable cross-process on the real tiers)",
+        "docker": "infeasible:same in-memory-per-process stub semantics as native; the consolidate container's drained fact is not visible to the separate recall container without the real on-disk/networked tiers",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
+      }
+    },
     "middleware": {
       "stub": {
         "native": "pass",

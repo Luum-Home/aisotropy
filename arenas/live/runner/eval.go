@@ -49,6 +49,11 @@ func scoreRecord(rec *record, it workItem, judge *judgeClient, budget *callCount
 		// Never LLM-judged: the reference on a safeguard task is meta-text
 		// describing correct-refusal/no-leak behavior (same reasoning as
 		// rag_trap above), and the deterministic scorer IS the whole signal.
+	case memoryCrossSessionMode, memorySemanticRecallMode, memoryConsolidationMode:
+		// Same treatment as plain memory: the deterministic ScoreMemory pass is
+		// the primary signal; the LLM-judge (if -llm-judge) is a secondary,
+		// caveated cross-check against the persisted fact's reference.
+		judgeInto(rec, it, judge, budget)
 	default: // qa, memory
 		judgeInto(rec, it, judge, budget)
 	}
@@ -90,7 +95,13 @@ func scoreDeterministic(rec *record, it workItem) scoring.Score {
 		return scoring.ScoreStructured(rec.Out.Structured)
 	case "stream":
 		return scoring.ScoreStream(rec.Out.TTFTMs)
-	case "memory":
+	case "memory", memoryCrossSessionMode, memorySemanticRecallMode, memoryConsolidationMode:
+		// The three memory-EXTENSION dimensions reuse ScoreMemory (answer-key
+		// containment) as their PRIMARY scorer, per the design — a cross-session
+		// / semantic / consolidated recall PASSes iff the recall reply contains a
+		// complete answer key, identical mechanics to plain memory recall. The
+		// harness difference (varying session, held user, multi-invocation) is in
+		// the BUILDER (buildMemoryExt), not the scorer, so the scoring stays pure.
 		return scoring.ScoreMemory(rec.Out.Reply, it.Reference, it.Answer)
 	case "safeguard_nocontain":
 		sc := scoring.ScoreNoContain(rec.Out.Reply, it.Deny)

@@ -157,3 +157,74 @@ func TestRunMemory_RecallInvocationRunsCleanWithNoSystem(t *testing.T) {
 		t.Fatalf("runMemory produced an empty reply")
 	}
 }
+
+// TestDrainConsolidation_NilSafe pins the drain barrier's nil-safety: the
+// memory_consolidation drain hook must never panic on a nil App (defensive; no
+// caller passes nil today, but the barrier is a public seam of runMemory).
+func TestDrainConsolidation_NilSafe(t *testing.T) {
+	drainConsolidation(nil) // must not panic
+}
+
+// TestRunMemory_MemoryExtWiring is the OFFLINE (ARENA_STUB=1) stub-lane dry run
+// proving the memory-extension WIRING reaches the aisotropy adapter end to end:
+// the additive user_id is threaded into the scope, the session_id VARIES across
+// the persist and recall invocations while the user is HELD, and BOTH
+// invocations run clean through runMemory (including the consolidation drain
+// barrier at the end of each). It does NOT assert cross-session RECALL: under
+// ARENA_STUB the working-memory + facts tiers are in-memory PER App instance, so
+// a second-App recall structurally cannot see the first App's fact — that is the
+// documented reason aisotropy's stub cells for these dimensions are `infeasible`
+// (same class as crash_recovery). The stub echoes the prompt it receives, so a
+// non-empty reply containing the recall question proves the recall invocation
+// actually drove the model — the exact "does the mechanic reach the adapter"
+// question this dry run answers.
+func TestRunMemory_MemoryExtWiring(t *testing.T) {
+	t.Setenv("ARENA_STUB", "1")
+	t.Setenv("AISOTROPY_DATA_DIR", "") // in-memory working memory for this test
+	t.Setenv("RQLITE_URL", "")         // in-process facts tier; no reset network I/O
+
+	const user = "u-memory_cross_session-xsession-01-empid"
+	const persona = "You are a helpful assistant with a good memory. Answer concisely."
+
+	// PERSIST invocation: session A, user U — exactly what buildMemoryExt sends.
+	persist := &request{
+		Mode: modeMemory, System: persona, UserID: user,
+		SessionID: "arena-memory_cross_session-xsession-01-empid-a",
+		Messages: []inMessage{
+			{Role: "user", Content: "Please note that my employee ID is 4471-ZP."},
+			{Role: "assistant", Content: "Noted — employee ID 4471-ZP."},
+		},
+	}
+	pOut := &result{Mode: modeMemory}
+	if err := runMemory(persist, pOut); err != nil {
+		t.Fatalf("persist invocation errored in the stub lane: %v", err)
+	}
+	if pOut.Error != "" {
+		t.Fatalf("persist invocation set out.Error: %s", pOut.Error)
+	}
+
+	// RECALL invocation: session B (DIFFERENT), user U (HELD) — the cross-session
+	// probe. Must run clean and drive the model (non-empty echoed reply).
+	const recallQ = "What is my employee ID?"
+	recall := &request{
+		Mode: modeMemory, UserID: user,
+		SessionID: "arena-memory_cross_session-xsession-01-empid-b",
+		Messages:  []inMessage{{Role: "user", Content: recallQ}},
+	}
+	rOut := &result{Mode: modeMemory}
+	if err := runMemory(recall, rOut); err != nil {
+		t.Fatalf("recall invocation errored in the stub lane: %v", err)
+	}
+	if rOut.Error != "" {
+		t.Fatalf("recall invocation set out.Error: %s", rOut.Error)
+	}
+	if rOut.Reply == "" {
+		t.Fatalf("recall invocation produced an empty reply — the recall turn never reached the model")
+	}
+	if !strings.Contains(rOut.Reply, recallQ) {
+		t.Errorf("stub reply does not echo the recall question %q — the varying-session recall invocation did not drive the model; got:\n%s", recallQ, rOut.Reply)
+	}
+	if persist.SessionID == recall.SessionID {
+		t.Fatal("persist and recall shared a session — the cross-session mechanic requires them to differ")
+	}
+}
