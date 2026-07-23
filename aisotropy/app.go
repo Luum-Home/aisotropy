@@ -1233,6 +1233,13 @@ func (a *App) Run(ctx context.Context) error {
 	// guarantees (see internal/api/aisdk.go, internal/api/agui.go).
 	api.RegisterAISDK(humaAPI, rt.streamClient, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.costMeter, rt.cheapStreamClient, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, a.inPricePer1M, a.outPricePer1M, rt.bptSampler, rt.gateway, rt.guard)
 	api.RegisterAGUI(humaAPI, rt.streamClient, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.costMeter, rt.cheapStreamClient, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, a.inPricePer1M, a.outPricePer1M, rt.bptSampler, rt.gateway, rt.guard)
+	// OpenAI Chat-Completions-compatible shim (ADR-0066): the THIRD protocol
+	// costume over the same StreamCore pipeline. Unlike the two adapters above
+	// it mounts OUTSIDE the tenant/user prefix (POST /v1/chat/completions) and
+	// derives identity EXCLUSIVELY from the verified credential via the authn
+	// middleware's principal-derived mode — a NoAuth or unauthenticated setup
+	// gets 401 on this route by construction (see internal/api/openai_compat.go).
+	api.RegisterOpenAICompat(humaAPI, rt.streamClient, rt.wm, rt.factsStore, rt.limiter, rt.toolRegistry, rt.costMeter, rt.cheapStreamClient, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, a.inPricePer1M, a.outPricePer1M, rt.bptSampler, rt.gateway, rt.guard)
 	// Knowledge ingestion (ADR-0018): the HTTP arm of the dual-surface
 	// capability, sharing the exact same semantic store/embedder pair the
 	// chat routes' RAG hydration reads from above.

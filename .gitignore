@@ -96,3 +96,7 @@ examples/graphbot/graphbot
 arenas/live/*/.aisotropy-data
 arenas/live/*/.aisotropy-data.arena-run-marker
 arenas/live/*/.data
+
+# Python bytecode (examples/ PoCs)
+__pycache__/
+*.pyc

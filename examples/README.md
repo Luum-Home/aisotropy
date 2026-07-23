@@ -51,6 +51,7 @@ Each example's own `README.md` states exactly what is real keyless vs. what a ke
 | Example | What it is |
 |---|---|
 | [`helpdesk/`](helpdesk) | A realistic bot that combines the whole ladder: YAML wiring, secure-by-config auth, typed tools, a seeded knowledge base (RAG), and the full memory moat. Run: `cd examples/helpdesk && go run . -config helpdesk.yaml` |
+| [`voice-pipecat/`](voice-pipecat) | The voice sandwich (ADR-0066): Pipecat + local STT/TTS over the OpenAI-compat shim (`POST /v1/chat/completions`), tenant JWT as the api_key, plus two executable latency metrics. Python — see its README for bring-up |
 
 For the reference field manual, see
 [`docs/guides/build-your-own-agent`](../docs/guides/build-your-own-agent.md); for the

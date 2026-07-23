@@ -34,6 +34,32 @@ import (
 // scopes) through context.Context, alongside tenantCtxKey/userCtxKey.
 type principalCtxKey struct{}
 
+// identityMetadataKey / identityModePrincipal select the PRINCIPAL-DERIVED
+// identity mode of BindAuthMiddleware (ADR-0066). A route that carries
+// huma.Operation.Metadata[identityMetadataKey] == identityModePrincipal has no
+// tenant/user path params: its identity comes EXCLUSIVELY from the verified
+// principal the authenticator returned (the credential IS the identity —
+// OpenAI's own model, used by the /v1/chat/completions compat shim). The mode
+// is opt-in per operation and never inferred: any route without the metadata
+// gets the byte-identical must-agree bind below.
+const (
+	identityMetadataKey   = "identity"
+	identityModePrincipal = "principal"
+)
+
+// principalDerivedOperation reports whether the current operation opted into
+// principal-derived identity via its registration metadata. Reading
+// hctx.Operation() is safe in an API-wide middleware: Huma resolves the
+// operation before running the operation middleware chain.
+func principalDerivedOperation(hctx huma.Context) bool {
+	op := hctx.Operation()
+	if op == nil || op.Metadata == nil {
+		return false
+	}
+	mode, _ := op.Metadata[identityMetadataKey].(string)
+	return mode == identityModePrincipal
+}
+
 // humaAuthRequest adapts a huma.Context to the auth.Request the Authenticator
 // inspects, so internal/auth never depends on huma. tenant_id/user_id are the
 // operation's path params; Header/TLS read the underlying request.
@@ -56,6 +82,24 @@ func BindAuthMiddleware(api huma.API, authn auth.Authenticator) func(huma.Contex
 		principal, err := authn.Authenticate(hctx.Context(), req)
 		if err != nil {
 			writeAuthError(api, hctx, err)
+			return
+		}
+
+		// Principal-derived mode (ADR-0066, opt-in via operation metadata): the
+		// route has no tenant/user path params, so the must-agree bind cannot
+		// apply — identity comes exclusively from the VERIFIED principal. The
+		// principal must carry a non-empty tenant/user AND verified scopes:
+		// NoAuth returns the (empty, on this route) path identity with
+		// ScopesVerified=false, so "JWT mandatory even when the rest of the
+		// server runs NoAuth" holds BY CONSTRUCTION, not by configuration. A
+		// nil authenticator never reaches here (DenyAllMiddleware 401s first).
+		if principalDerivedOperation(hctx) {
+			if principal.TenantID == "" || principal.UserID == "" || !principal.ScopesVerified {
+				_ = huma.WriteErr(api, hctx, http.StatusUnauthorized,
+					"this route derives identity from the credential: a verified bearer credential carrying tenant/user claims is required")
+				return
+			}
+			next(huma.WithContext(hctx, withVerifiedPrincipal(hctx.Context(), principal)))
 			return
 		}
 

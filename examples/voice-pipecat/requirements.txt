@@ -1,0 +1,15 @@
+# Voice PoC dependencies (ADR-0066 §4). Licenses verified against the voice
+# landscape research (docs/research/voice-pipeline-landscape-2026-07-23.md):
+# Pipecat BSD-2, faster-whisper MIT, openai SDK Apache-2.0, httpx BSD-3.
+# Kokoro-FastAPI (Apache-2.0) is a separate service (Docker), not a pip dep.
+#
+# The pipecat extras pull the pieces the pipeline uses:
+#   silero  -> Silero VAD (voice activity detection / barge-in trigger)
+#   whisper -> WhisperSTTService backed by faster-whisper (local STT)
+#   local   -> LocalAudioTransport (mic/speaker via PyAudio; needs portaudio:
+#              `brew install portaudio` on macOS, libportaudio2 on Debian)
+pipecat-ai[silero,whisper,local]>=0.0.60,<0.1
+
+# The metric scripts talk to the shim/TTS directly (no Pipecat needed there).
+openai>=1.50
+httpx>=0.27
