@@ -1,6 +1,6 @@
 ---
 type: ADR
-title: "ADR-0066 — Observability architecture: three signals, one context-metadata spine"
+title: "ADR-0068 — Observability architecture: three signals, one context-metadata spine"
 description: aisotropy today emits OTLP traces only — few spans (the boundary span, little else), slog logs with no trace correlation, and zero metrics. This ADR defines the target architecture; a single typed tag vocabulary carried in context.Context and auto-hydrated into every span, log line, and metric; two-stage trace-log correlation; transparent client decorators that turn every downstream call (rqlite, Qdrant, embed, LLM) into a child span; an slog fan-out to OTLP logs; an OTLP-push MeterProvider with RED instruments; and a masking layer that extends the existing redactingExporter with a structural-attribute allowlist. Implemented in layers, vocabulary first.
 tags: [decisions, adr, observability, opentelemetry, traces, logs, metrics, slog, correlation, masking, sre]
 timestamp: 2026-07-23T00:00:00Z
@@ -8,7 +8,7 @@ supersedes: []
 revisits: []
 ---
 
-# ADR-0066 — Observability: three signals, one context-metadata spine
+# ADR-0068 — Observability: three signals, one context-metadata spine
 
 ## Status
 
