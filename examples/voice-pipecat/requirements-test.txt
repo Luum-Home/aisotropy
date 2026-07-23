@@ -1,11 +1,9 @@
 # Voice testing lane deps (ADR-0069) — on top of requirements.txt.
 # Licenses (verified via `pip show` on 2026-07-23):
 #   pytest      MIT
-#   soundfile   BSD-3-Clause  (WAV read/write helpers; libsndfile is LGPL-2.1,
-#               used unmodified as a dynamically loaded library — the
-#               license-policy CAUTION tier, not the blocked tier)
 # faster-whisper (MIT) + httpx (BSD-3) + openai (Apache-2.0) + pipecat (BSD-2)
-# already come from requirements.txt.
+# already come from requirements.txt. WAV I/O is stdlib `wave` only — no
+# soundfile (was declared but never imported; removed post-verify ADR-0069).
 #
 # DELIBERATELY ABSENT: kokoro-onnx. Its hard deps include phonemizer-fork
 # (GPL-3.0) and a bundled espeak-ng (GPL-3.0) — blocked by the repo license
@@ -13,7 +11,6 @@
 # Kokoro-FastAPI container instead (Apache-2.0, the separate-service license
 # boundary the PoC already uses). Full rationale: ADR-0069.
 pytest>=8
-soundfile>=0.12
 # pipecat 0.0.x's stt_service imports `websockets` at module import time but
 # the [whisper] extra does not pull it — needed by test_pipeline_file.py.
 websockets>=13  # BSD-3-Clause

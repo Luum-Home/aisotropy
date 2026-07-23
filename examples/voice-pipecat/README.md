@@ -31,7 +31,7 @@ used — see `docs/research/voice-pipeline-landscape-2026-07-23.md`.
 | `measure_ttfab.py` | **Metric #1**: time-to-first-audio-byte (LLM TTFT + TTS first byte); `--assert-ttfab-ms N` = threshold mode, exit 1 on breach (ADR-0069) |
 | `measure_bargein.py` | **Metric #2**: barge-in-to-silence (cancel → stream torn down); `--assert-bargein-ms N` = threshold mode, exit 1 on breach (ADR-0069) |
 | `requirements.txt` | Python deps (own venv; this dir is never part of the Go module) |
-| `requirements-test.txt` | Test-lane extras (pytest, soundfile, websockets — licenses noted inline) |
+| `requirements-test.txt` | Test-lane extras (pytest, websockets — licenses noted inline) |
 | `tests/` | The voice testing lane (ADR-0069): WER round-trip, pinned fixtures, file-based pipeline test |
 
 ## Bring-up
@@ -47,6 +47,12 @@ go run ./cmd/aisotropyd
 # No ANTHROPIC/OPENROUTER key needed to smoke-test: llm.FromEnv() falls back
 # to the deterministic stub client. Set a real key for actual conversations.
 ```
+
+> **Known issue (2026-07-23):** under go1.26.5 `cmd/aisotropyd` can deadlock at
+> boot (slog CtxHandler ↔ std-log bridge recursion, `main.go:172`; tracked as a
+> spawned fix task). Workaround until fixed: run a minimal main that imports the
+> public façade — `aisotropy.App` registers the same shim route — which is how
+> the pipeline test's live pass was produced.
 
 ### 2. A tenant JWT (this is the OpenAI `api_key`)
 
@@ -118,7 +124,7 @@ model-dependent test SKIPs with an actionable reason and only the pure-stdlib
 WER unit tests run (safe for any CI, zero downloads):
 
 ```bash
-pip install -r requirements-test.txt        # pytest + soundfile + websockets
+pip install -r requirements-test.txt        # pytest + websockets
 pytest tests/ -q                            # lane off: 8 passed, 8 skipped
 
 # The real lane needs: the Kokoro container (step 4 above; image ~several GB,
