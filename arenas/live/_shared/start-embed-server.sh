@@ -41,5 +41,13 @@ else
   source "$VENV/bin/activate"
 fi
 
-echo "PROGRESS: starting embed server on http://$HOST:$PORT" >&2
-exec uvicorn app:app --app-dir "$SRV" --host "$HOST" --port "$PORT" --log-level warning
+# --workers > 1: the e5 encode is CPU-bound (holds the GIL), so a single uvicorn
+# worker SERIALIZES every embed request across all arena adapters. Under a
+# concurrency>1 correctness sweep the 30-message semantic-recall persists queue
+# behind one another, blow each adapter's per-turn budget, and surface as
+# cascading "context deadline exceeded" (rqlite) / "TimeoutError" (node) errors
+# that are pure infra contention, not framework quality. N worker PROCESSES
+# (each loads its own ~120MB model copy) parallelize the CPU work. Env-tunable.
+WORKERS="${ARENA_EMBED_WORKERS:-4}"
+echo "PROGRESS: starting embed server on http://$HOST:$PORT (workers=$WORKERS)" >&2
+exec uvicorn app:app --app-dir "$SRV" --host "$HOST" --port "$PORT" --log-level warning --workers "$WORKERS"

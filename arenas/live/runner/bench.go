@@ -210,9 +210,28 @@ func dockerImageTag(fw adapter) string {
 		return ""
 	}
 	if m := imageTagRe.FindSubmatch(b); m != nil {
-		return string(m[1])
+		return resolveShellTag(string(m[1]))
 	}
 	return fw.name + "-live-arena:local"
+}
+
+// shellDefaultRe matches a bash `${VAR:-default}` parameter expansion, which
+// some adapters' run-docker.sh use on the IMAGE= line so CI can override the
+// tag. The runner reads IMAGE= LITERALLY (no shell), so an unresolved
+// `${VAR:-default}` reached `docker build -t` verbatim and failed with
+// `invalid reference format` (observed: genkit-go, spring-ai). resolveShellTag
+// collapses it to the env override when set, else the default — a plain tag
+// passes through untouched.
+var shellDefaultRe = regexp.MustCompile(`^\$\{([A-Za-z_][A-Za-z0-9_]*):-([^}]+)\}$`)
+
+func resolveShellTag(tag string) string {
+	if m := shellDefaultRe.FindStringSubmatch(tag); m != nil {
+		if v := os.Getenv(m[1]); v != "" {
+			return v
+		}
+		return m[2]
+	}
+	return tag
 }
 
 // ensureDockerImage returns the image size (humanized) and, if the image had to
