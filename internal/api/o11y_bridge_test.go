@@ -14,7 +14,7 @@ import (
 
 // recordedSpanCtx starts a REAL (recorded, sampled) span via a provider wired
 // to a tracetest.SpanRecorder and returns its ctx + a cleanup that shuts the
-// provider down — the ADR-0066 testing-kit pattern.
+// provider down — the ADR-0068 testing-kit pattern.
 func recordedSpanCtx(t *testing.T) context.Context {
 	t.Helper()
 	recorder := tracetest.NewSpanRecorder()

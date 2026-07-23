@@ -85,7 +85,7 @@ func TestAll(t *testing.T) {
 	}
 }
 
-// TestKeyConstantsAreSnakeCase pins the ADR-0066 convention: every constant
+// TestKeyConstantsAreSnakeCase pins the ADR-0068 convention: every constant
 // in every bucket is snake_case (lowercase letters, digits, underscores).
 func TestKeyConstantsAreSnakeCase(t *testing.T) {
 	for _, bucket := range [][]Key{TelemetryBucket, ServiceBucket, IdentityBucket, ExecutionBucket} {

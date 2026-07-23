@@ -1,4 +1,4 @@
-// ADR-0066 Layer 2, stage 1: the boundary bridge. Exactly once per request —
+// ADR-0068 Layer 2, stage 1: the boundary bridge. Exactly once per request —
 // at the same Huma-handler boundary where tenant_id/user_id enter ctx
 // (chatIdentity, StreamCore) — the active span's TraceID/SpanID plus the
 // request/session/identity ids are drained into the internal/o11y/keys ctx

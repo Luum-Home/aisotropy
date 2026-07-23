@@ -1,5 +1,5 @@
 // Slim carry/read helpers for the vocabulary over plain context.Context —
-// deliberately NOT a bespoke context-manager framework (ADR-0066 §Decision).
+// deliberately NOT a bespoke context-manager framework (ADR-0068 §Decision).
 // The metadata is an immutable copy-on-write map: With never mutates the
 // parent ctx's view, so a ctx handed to a goroutine is race-free by
 // construction, matching how identity already travels (internal/api,

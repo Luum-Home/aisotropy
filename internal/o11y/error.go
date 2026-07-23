@@ -1,4 +1,4 @@
-// Error ergonomics for ADR-0066 Layer 2: one helper that logs an error with
+// Error ergonomics for ADR-0068 Layer 2: one helper that logs an error with
 // the standard `error` field and, when the error carries its own program
 // counters, a formatted `stack_trace` — the ONLY stack-trace path in the
 // codebase. Per-call stack-walking anywhere else is deliberately rejected by

@@ -164,7 +164,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 }
 
 func main() {
-	// ADR-0066 Layer 2: wrap the process default handler so every *Context log
+	// ADR-0068 Layer 2: wrap the process default handler so every *Context log
 	// call carries the telemetry+identity correlation fields the boundary
 	// bridge stamps into ctx (internal/api's stampTelemetry). Behavior-
 	// preserving: a record whose ctx carries no metadata — every non-request

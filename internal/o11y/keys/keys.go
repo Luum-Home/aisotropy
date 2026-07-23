@@ -1,4 +1,4 @@
-// Package keys is ADR-0066 Layer 1: the typed observability tag vocabulary.
+// Package keys is ADR-0068 Layer 1: the typed observability tag vocabulary.
 //
 // Every cross-signal field name (span attribute, log field, metric label)
 // that is NOT already covered by an OTel semantic convention (http.*, db.*,
@@ -15,7 +15,7 @@
 // MeterProvider, no exporter, no I/O lives here.
 package keys
 
-// Key is a typed observability field name from the ADR-0066 vocabulary.
+// Key is a typed observability field name from the ADR-0068 vocabulary.
 // Using a distinct type (not bare string) makes call sites compile-time
 // checked: a handler hydrating "the telemetry bucket" iterates Key constants,
 // never ad-hoc literals.
@@ -23,7 +23,7 @@ type Key string
 
 // Telemetry bucket: correlation identifiers that tie a log line or metric to
 // its trace and request. These are on the masking contract's never-mask
-// allowlist — correlation must survive redaction (ADR-0066 §Masking).
+// allowlist — correlation must survive redaction (ADR-0068 §Masking).
 const (
 	// TraceID is the W3C trace id of the active span, hex-encoded.
 	TraceID Key = "trace_id"
@@ -80,7 +80,7 @@ var (
 )
 
 // MeterScope names the per-layer meter a metric instrument is created under
-// (ADR-0066: one meter per architectural layer, low-cardinality by
+// (ADR-0068: one meter per architectural layer, low-cardinality by
 // construction). Constants only — the MeterProvider itself is Layer 4.
 type MeterScope string
 

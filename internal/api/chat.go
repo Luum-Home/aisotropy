@@ -237,7 +237,7 @@ func chatIdentity(ctx context.Context, in *ChatInput) (outCtx context.Context, k
 	}
 	outCtx = llm.WithTenant(outCtx, in.TenantID)
 	outCtx = llm.WithUser(outCtx, in.UserID)
-	// Boundary bridge (ADR-0066 Layer 2): drain trace/span ids and stamp the
+	// Boundary bridge (ADR-0068 Layer 2): drain trace/span ids and stamp the
 	// request/session/identity observability metadata once, here, so every
 	// downstream *Context log line auto-correlates (see o11y_bridge.go).
 	outCtx = stampTelemetry(outCtx, in.TenantID, in.UserID, in.Body.SessionID)

@@ -1,4 +1,4 @@
-// Package o11y is ADR-0066 Layer 2: auto-hydration of the typed tag
+// Package o11y is ADR-0068 Layer 2: auto-hydration of the typed tag
 // vocabulary (internal/o11y/keys) into every signal. This file provides the
 // slog side — a Handler wrapper that appends the telemetry+identity buckets
 // from ctx to every record logged with a *Context call, so
