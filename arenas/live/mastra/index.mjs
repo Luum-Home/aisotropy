@@ -58,6 +58,7 @@ import { runIsolationLeak } from './lib/modes/isolation-leak.mjs';
 import { runObservability } from './lib/modes/observability.mjs';
 import { runCrashRecovery } from './lib/modes/crash-recovery.mjs';
 import { runMiddleware } from './lib/modes/middleware.mjs';
+import { runIsolationForgetful } from './lib/modes/isolation-forgetful.mjs';
 
 const MODE_HANDLERS = {
   qa: runQa,
@@ -71,6 +72,14 @@ const MODE_HANDLERS = {
   observability: runObservability,
   crash_recovery: runCrashRecovery,
   middleware: runMiddleware,
+  // The memory-EXTENSION dimensions (memory_cross_session / memory_semantic_recall
+  // / memory_consolidation) arrive over the wire as ordinary mode:"memory" turns
+  // carrying user_id + a varying session_id (arenas/live/runner/tasks.go
+  // buildMemoryExt) — so `runMemory` (resource-scoped when user_id is present)
+  // serves all three; no new dispatch entry is needed for them. Only
+  // isolation_forgetful uses a distinct wire mode, to route the omitted-scope
+  // recall to a handler that forwards the blank identity RAW to Mastra's API.
+  isolation_forgetful: runIsolationForgetful,
 };
 
 /** Read the entire stdin stream and return it as a UTF-8 string. */

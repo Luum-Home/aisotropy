@@ -11,20 +11,37 @@
 // -- so a fact stated in invocation #1 is recalled in invocation #2 purely via the
 // persisted store.
 //
-// semanticRecall is disabled (it would require an embedder and a vector index);
-// this mode proves durable conversational recall via Mastra's message store, the
-// dimension the arena `memory` task grades.
+// TWO configurations, selected by whether the wire carries a `user_id`:
+//
+//   - THREAD-SCOPED (no user_id) — the ORIGINAL `multi_turn_memory` dimension.
+//     `semanticRecall:false`, `lastMessages:30`, thread-only. The invocations
+//     share ONE session_id, so thread-scoped recall is exactly right; the
+//     idiomaticity doc (docs/architecture/arena-idiomaticity-and-dx.md) records
+//     this `semanticRecall:false` as a JUSTIFIED deviation for THIS dimension.
+//
+//   - RESOURCE-SCOPED (user_id present) — the memory-EXTENSION dimensions
+//     (memory_cross_session / memory_semantic_recall / memory_consolidation, and
+//     the persist leg of isolation_forgetful). These VARY the session_id
+//     (threadId) while HOLDING the user_id (resourceId), so thread-scoped recall
+//     would find nothing on the fresh recall session by construction. Mastra's
+//     official cross-thread primitive is `scope:'resource'` on both working memory
+//     and semanticRecall (lib/memory-store.mjs) — the idiomaticity doc's
+//     SHOULD-FIX turning semanticRecall ON for exactly these dimensions.
 
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { LibSQLStore } from '@mastra/libsql';
+import { buildResourceScopedMemory } from '../memory-store.mjs';
 import { buildMessages, extractTokenCounts, msSince } from '../output.mjs';
 
 const DEFAULT_INSTRUCTIONS =
   'You are a helpful assistant with real persisted memory of this conversation. ' +
   'Use facts stated earlier in the conversation (shown as prior turns) when answering.';
 
-function buildMemory(libsqlUrl) {
+// Thread-scoped Memory for the ORIGINAL memory dimension (no user_id): durable
+// conversational recall keyed by (resourceId, threadId) where the threadId (the
+// shared session_id) carries the recall — semanticRecall intentionally off.
+function buildThreadMemory(libsqlUrl) {
   const storage = new LibSQLStore({ id: 'arena-mastra-memory', url: libsqlUrl });
   return new Memory({
     storage,
@@ -50,27 +67,34 @@ export async function runMemory(input, env) {
     throw new Error('memory mode requires at least one message in "messages"');
   }
 
-  // resourceId groups threads by owner; default to the caller's user_id when
-  // provided, else a stable arena default. threadId IS the session_id.
-  const resourceId =
-    typeof input.user_id === 'string' && input.user_id.length > 0 ? input.user_id : 'arena-user';
+  // The wire's user_id IS Mastra's resourceId (docs/architecture/arena-tenancy-
+  // levels.md). Its PRESENCE selects the configuration: present -> the memory-
+  // extension dimensions vary session_id/hold user_id, so recall must be
+  // resource-scoped across threads; absent -> the original thread-scoped
+  // dimension with a stable arena-default resource.
+  const hasUser = typeof input.user_id === 'string' && input.user_id.length > 0;
+  const resourceId = hasUser ? input.user_id : 'arena-user';
 
   const instructions =
     typeof input.system === 'string' && input.system.length > 0
       ? input.system
       : DEFAULT_INSTRUCTIONS;
 
+  const memory = hasUser ? buildResourceScopedMemory(env) : buildThreadMemory(env.libsqlUrl);
+
   const agent = new Agent({
     name: 'arena-memory',
     instructions,
     model: env.chatModel,
-    memory: buildMemory(env.libsqlUrl),
+    memory,
   });
 
   const startedAt = process.hrtime.bigint();
   // Mastra auto-persists these new messages + the assistant reply to the libsql
-  // store under (resourceId, threadId), and auto-loads prior turns for the same
-  // thread before the model call -- no manual history append needed.
+  // store under (resourceId, threadId), and auto-loads prior turns before the
+  // model call. In the resource-scoped configuration it ALSO retrieves relevant
+  // messages from OTHER threads of the same resourceId (semanticRecall +
+  // working-memory profile, scope:'resource') -- the cross-session mechanic.
   const result = await agent.generate(newMessages, {
     memory: { resource: resourceId, thread: sessionId },
   });

@@ -79,11 +79,12 @@ mode uses `.chat` explicitly.
 | `OPENAI_API_KEY` | *(required)* | chat model (never logged) |
 | `OPENAI_BASE_URL` | `https://apihub.agnes-ai.com/v1` (from `.env`) | chat model |
 | `OPENAI_MODEL` | `agnes-2.0-flash` (from `.env`) | chat model |
-| `EMBED_URL` | `http://127.0.0.1:8899` | `rag` (real e5, 384-dim) |
-| `QDRANT_URL` | `http://localhost:6333` | `rag` (real Qdrant `arena_rag`) |
+| `EMBED_URL` | `http://127.0.0.1:8899` | `rag` (real e5, 384-dim); memory-ext `semanticRecall` embedder |
+| `QDRANT_URL` | `http://localhost:6333` | `rag` (real Qdrant `arena_rag`); memory-ext `semanticRecall` vector store (`QdrantVector`) |
 | `QDRANT_COLLECTION` | `arena_rag` | `rag` |
+| `ARENA_MASTRA_MEM_INDEX` | `arena_mem_mastra` | memory-ext `semanticRecall` index name (framework-unique, never the shared `arena_rag`) |
 | `RQLITE_URL` | `http://localhost:4001` | `memory_scoped`, `isolation_leak`, `crash_recovery` |
-| `AISOTROPY_MASTRA_LIBSQL` | `file:/tmp/mastra_arena_memory.db` | `memory` (Mastra-native Memory store) |
+| `AISOTROPY_MASTRA_LIBSQL` | `file:/tmp/mastra_arena_memory.db` | `memory` (Mastra Memory store); memory-ext + `isolation_forgetful` storage, and the stub-lane `LibSQLVector` |
 
 Every host URL is env-configurable so the containerized adapter can reach the
 same real services via `host.docker.internal` (`run-docker.sh` rewrites
@@ -133,8 +134,80 @@ turns before the model call. A second, completely fresh `node index.mjs` process
 with the same `session_id` reopens the same libsql file and recalls a fact stated
 in the first process — **real cross-process persistence, not an in-process Map**.
 
-`semanticRecall` is disabled (it would require an embedder + vector index); this
-mode grades durable conversational recall via Mastra's message store.
+For the ORIGINAL `multi_turn_memory` dimension (no `user_id` on the wire, one
+shared `session_id` across invocations) `semanticRecall` is disabled — thread
+recall is exactly right, and the idiomaticity doc records this as a **justified
+deviation for this dimension only**. When the wire carries a `user_id` (the
+memory-extension dimensions below) the same handler switches to the
+**resource-scoped** configuration in `lib/memory-store.mjs`.
+
+### Memory-extension dimensions — resource-scoped `Memory` *(NEW)*
+The runner's `memory_cross_session` / `memory_semantic_recall` /
+`memory_consolidation` dimensions (`docs/architecture/arena-memory-extensions.md`)
+all arrive over the wire as ordinary `mode:"memory"` turns that **hold `user_id`
+(→ `resourceId`) while VARYING `session_id` (→ `threadId`)** — so a thread-keyed
+store returns empty on the fresh recall session by construction, and only genuine
+**user-scoped** memory can recall the fact (transcript replay is defeated). The
+adapter answers with Mastra's OWN official cross-thread primitives, turned ON
+exactly here (the idiomaticity doc's SHOULD-FIX):
+
+- **`workingMemory: { enabled: true, scope: 'resource' }`** — Mastra's
+  LLM-maintained profile that persists across every thread of a `resourceId`
+  (cross-session).
+- **`semanticRecall: { scope: 'resource', … }`** backed by a real **vector store
+  + embedder** — resource-scoped vector retrieval across threads (semantic
+  recall). Vector store: **`@mastra/qdrant` `QdrantVector`** against the arena's
+  real Qdrant on the real lane (the idiomaticity doc's SHOULD-FIX #2 — the SAME
+  vector infra the other adapters use), **`@mastra/libsql` `LibSQLVector`**
+  file-backed on the stub lane; embedder is the SAME `multilingual-e5` server the
+  `rag` mode uses (real) or a deterministic hash (stub).
+
+| Dimension | Mastra primitive | Maturity | Docs URL |
+|---|---|---|---|
+| `memory_cross_session` | `Memory` + `workingMemory` / `semanticRecall` `scope:'resource'` | NATIVE | https://mastra.ai/docs/memory/working-memory |
+| `memory_semantic_recall` | `semanticRecall:true, scope:'resource'` + vector store + embedder | NATIVE (OFF by default) | https://mastra.ai/docs/memory/semantic-recall |
+| `memory_consolidation` | in-hot-path working-memory profile — **no async consolidator** | PARTIAL-NATIVE | https://mastra.ai/docs/memory/working-memory |
+
+> **HONEST FINDING — `memory_consolidation`.** Mastra ships **no async
+> consolidator**: its "consolidation" is the working-memory profile the model
+> maintains **in the hot path** during each turn. So the runner's synthetic
+> `consolidate` directive turn (invocation 2) is a **near-no-op** for Mastra — it
+> persists like any other turn; there is no background job to drain. This is
+> reported as a finding, not hidden as a pass: what is scored is the OUTCOME
+> (does the fact recall across the session boundary), and the MECHANISM
+> (in-hot-path vs async) is a separate, labeled fact.
+
+### `isolation_forgetful` — the "forgetful integrator" tenancy probe *(NEW)*
+Measures the L1-vs-L3 tenancy difference the `memory_scoped`/`isolation_leak`
+dimensions only ASSERT (`docs/architecture/arena-tenancy-levels.md`). The runner
+writes a fact under scope A through Mastra's own memory API (the persist leg is a
+`mode:"memory"` turn carrying `user_id=A`), then the RECALL leg
+(`mode:"isolation_forgetful"`, `user_id ""`) reads back with the **user scope
+DELIBERATELY OMITTED** — the exact mistake a real integrator makes.
+
+Per the fairness rule, the omission happens at **Mastra's own API boundary**, not
+in adapter glue: `lib/modes/isolation-forgetful.mjs` forwards the `resourceId`
+**raw** (blank → the `resource` key is left off the `agent.generate({ memory })`
+call) and never backfills a default. **Observed verdict (offline, model-
+independent):** Mastra **refuses** — `@mastra/core` throws
+`"A resourceId and a threadId must be provided when using Memory. Saw threadId <B>
+and resourceId "undefined""` **before any model call**, which propagates verbatim
+to the contract `error` field. That is the L2-style boundary refusal (Mastra is
+L1 as a bare library, L2 with the Mastra server).
+
+- Mastra primitive: `(resourceId, threadId)` scope — https://mastra.ai/docs/server/request-context
+- Maturity: **NATIVE** (the refusal is a first-class `Memory` invariant, not an
+  arena-added check).
+
+> **KNOWN GAP — scored PASS needs a one-line runner addition.** Mastra's native
+> refusal wording matches NONE of the runner's current
+> `forgetfulEnforcementSignatures` (`arenas/live/runner/main.go` — they look for
+> aisotropy's `"requires a non-empty value"` / `"invalid tenant/user identity"` /
+> `"422"+"identity"`). Until Mastra's wording (e.g. `"a resourceId and a threadId
+> must be provided"`) is added to that list — a **runner-side** change outside
+> this adapter's scope — the honest refusal is scored as an unrecognized-refusal
+> run-and-fail rather than the `refuses` PASS it earns. The matrix keeps these
+> cells `pending` for that reason (never a fake `pass`).
 
 ### `memory_scoped` + `isolation_leak` — hand-rolled compound scope *(MUST)*
 > **HONEST NOTE.** Mastra *does* ship a native `Memory` primitive, but it scopes
@@ -378,26 +451,34 @@ Latest run on real infra:
 
 ## Dependency licenses — 100% permissive
 
-Verified across the full installed tree (280 packages): **zero** copyleft
-(GPL/AGPL/LGPL), **zero** source-available (BSL/ELv2/SSPL/Commons Clause/FSL). No
-ADR exception needed; consistent with aisotropy's MIT/Apache-2.0-only stack
-policy (`.claude/rules/cos/license-policy.md`).
+Verified across the full installed tree (281 packages, incl. the newly added
+`@mastra/qdrant@1.1.1`): **zero** copyleft (GPL/AGPL/LGPL), **zero**
+source-available (BSL/ELv2/SSPL/Commons Clause/FSL). No ADR exception needed;
+consistent with aisotropy's MIT/Apache-2.0-only stack policy
+(`.claude/rules/cos/license-policy.md`).
 
-| Dependency | License |
-|---|---|
-| `@mastra/core` | Apache-2.0 |
-| `@mastra/memory` | Apache-2.0 |
-| `@mastra/libsql` | Apache-2.0 |
-| `@mastra/observability` | Apache-2.0 |
-| `@ai-sdk/openai` | Apache-2.0 |
-| `ai` | Apache-2.0 |
-| `@qdrant/js-client-rest` | Apache-2.0 |
-| `@opentelemetry/api` | Apache-2.0 |
-| `@opentelemetry/sdk-trace-node` | Apache-2.0 |
-| `zod` | MIT |
+| Dependency | Installed version | License |
+|---|---|---|
+| `@mastra/core` | 1.51.0 | Apache-2.0 |
+| `@mastra/memory` | 1.23.0 | Apache-2.0 |
+| `@mastra/libsql` | 1.16.0 | Apache-2.0 |
+| `@mastra/qdrant` | 1.1.1 | Apache-2.0 |
+| `@mastra/observability` | 1.16.1 | Apache-2.0 |
+| `@ai-sdk/openai` | 4.0.16 | Apache-2.0 |
+| `ai` | 7.0.31 | Apache-2.0 |
+| `@qdrant/js-client-rest` | 1.18.0 | Apache-2.0 |
+| `@opentelemetry/api` | 1.9.1 | Apache-2.0 |
+| `@opentelemetry/sdk-trace-node` | 2.9.0 | Apache-2.0 |
+| `zod` | 4.4.3 | MIT |
 
-Full-tree tally: MIT 218, Apache-2.0 36, ISC 11, BSD-3-Clause 7, BlueOak-1.0.0 3,
-BSD-2-Clause 3, `(AFL-2.1 OR BSD-3-Clause)` 1, 0BSD 1 — all permissive.
+> The memory code path (`@mastra/core`, `@mastra/memory`, `@mastra/libsql`,
+> `@mastra/qdrant`) is **Apache-2.0** — verified in each package's own
+> `package.json` `license` field. `@mastra/qdrant@1.1.1` (`QdrantVector`) was
+> added for the memory-extension `semanticRecall` vector store.
+
+Full-tree tally: MIT 218, Apache-2.0 37 (`@mastra/qdrant` added), ISC 11,
+BSD-3-Clause 7, BlueOak-1.0.0 3, BSD-2-Clause 3, `(AFL-2.1 OR BSD-3-Clause)` 1,
+0BSD 1 — all permissive.
 
 ---
 
