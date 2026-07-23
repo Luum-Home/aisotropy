@@ -44,7 +44,7 @@ composable SDKs (LangChain/Mastra) on the import axis — Aisotropy is deliberat
 | **Import-me library / SDK** | LangChain, Mastra, Vercel AI SDK, Genkit | `import`-ing packages and composing them inside *your* application | **Yes, since Phase 8/9** — the public `aisotropy/` façade + builder is importable (`aisotropy.New`, `WithTypedTool`, `App.Turn`); only the isolation-critical kernel stays sealed under `internal/`. |
 | **Hostable runtime / server** | Letta/MemGPT, Aisotropy | Running the server (`aisotropyd`) and talking to it over its HTTP contract | **Yes.** |
 | **Single application / bot** | any concrete assistant with a persona + domain tools | Using the one product it is | **No** — there is no persona and no domain anywhere; every route is tenant/user/product-parametric. |
-| **Managed SaaS platform** | LangSmith platform, Letta Cloud | Signing up and paying per use | **No** — it is self-hosted and sovereign by design (100% MIT/Apache, runs on your hardware). |
+| **Managed SaaS platform** | LangSmith platform, Letta Cloud | Signing up and paying per use | **No** — it is self-hosted and sovereign by design (100% permissive license, zero copyleft, runs on your hardware). |
 
 ### The sealed kernel vs. the importable façade
 

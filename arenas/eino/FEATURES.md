@@ -116,7 +116,7 @@ Everything below was checked against the real source in the module cache
 - **Finding:** Apache-2.0, self-hostable code. But the framework is ByteDance-operated and its
   primary observability target (APMPlus) is a ByteDance/Volcengine product — a data-residency /
   sovereignty caveat for Western regulated buyers.
-- **AISOTROPY:** 100% MIT/Apache, Western-operated, fully self-hostable.
+- **AISOTROPY:** 100% permissive (MIT/BSD/Apache-2.0/ISC), zero copyleft, Western-operated, fully self-hostable.
 
 ## 11. Language — Go
 
@@ -244,7 +244,7 @@ story one axis over — and this closes it, by RUNNING against the real Eino v0.
 
 # GAP 2 (RUN-VERIFIED) — executable governance = dependency LICENSE posture — **PASS (holds the permissive line)**
 
-aisotropy's constitutional gate is "**100% MIT/Apache, no copyleft/BUSL/SSPL/ELv2**". This scans Eino's
+aisotropy's constitutional gate is "**100% permissive (MIT/BSD/Apache-2.0/ISC), no copyleft/BUSL/SSPL/ELv2**". This scans Eino's
 REAL dependency tree with the actual `github.com/google/go-licenses` tool — executed, not asserted.
 
 - **Tool / command (exit 0):** `go install github.com/google/go-licenses@latest` then

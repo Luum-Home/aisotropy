@@ -41,8 +41,8 @@ but Mastra implements this at the framework level rather than requiring manual c
 
 ### Apache 2.0 license
 Relicensed from ELv2 after enterprise pushback — this is empirical market proof that permissive
-licensing matters for adoption. aisotropy's 100% MIT/Apache stance is validated by Mastra's
-experience.
+licensing matters for adoption. aisotropy's 100% permissive (MIT/BSD/Apache-2.0/ISC), zero-copyleft
+stance is validated by Mastra's experience.
 
 ## The painful
 

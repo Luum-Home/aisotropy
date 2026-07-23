@@ -236,7 +236,7 @@ construction**.
 
 ## Executable governance — dependency LICENSE posture (run-verified)
 
-aisotropy's constitutional gate: **100% MIT/Apache, no copyleft/BUSL/SSPL/ELv2**. Ran the REAL
+aisotropy's constitutional gate: **100% permissive (MIT/BSD/Apache-2.0/ISC), no copyleft/BUSL/SSPL/ELv2**. Ran the REAL
 tool over this arena's actual installed tree:
 
 ```

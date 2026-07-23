@@ -303,7 +303,7 @@ supplied the identity ([ADR-0031](../decisions/0031-embeddable-in-process-turn.m
   scope or read across tenants ([ADR-0011](../decisions/0011-tenant-scoped-statement-builder.md)).
 - **Anti-magic** — your persona is the literal string you wrote; nothing is templated or injected
   behind your back (ADR-0002). Every token sent to the LLM traces to something you supplied.
-- **Sovereignty** — 100% MIT/Apache runtime; bring your own LLM key via env or `aisotropy.WithLLM(...)`.
+- **Sovereignty** — 100% permissive-licensed runtime (MIT/BSD/Apache-2.0/ISC, zero copyleft); bring your own LLM key via env or `aisotropy.WithLLM(...)`.
 
 ## Configuration knobs
 

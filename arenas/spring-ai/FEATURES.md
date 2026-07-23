@@ -211,9 +211,11 @@ Apache-2.0, fully self-hostable, no SaaS gate anywhere in the framework. BUILT-I
 - **Strong copyleft (GPL/AGPL/LGPL): 0. Weak copyleft (MPL-2.0): 0. Restricted/source-available
   (BUSL/SSPL/ELv2/Commons-Clause/FSL): 0.**
 - **Verdict:** a **pure permissive line** — stronger than the Python arenas (Pydantic AI / LangGraph /
-  Letta each carry an MPL-2.0 leaf via `certifi`). Spring AI joins Mastra / Eino / ADK / Genkit with
-  no weak-copyleft even. Clears aisotropy's hard gate outright; does not literally match the strict
-  "100% MIT/Apache" (BSD/CC0 present) but carries zero caution items.
+  Letta each carry an MPL-2.0 leaf via `certifi`), and stronger than aisotropy's own tree (which
+  carries 1 transitive MPL-2.0 leaf, see `docs/architecture/license-audit.md`). Spring AI joins
+  Mastra / Eino / ADK / Genkit with no weak-copyleft even. Clears aisotropy's hard gate outright;
+  does not literally match the strict "100% MIT/Apache" wording (BSD/CC0 present) — and neither
+  does aisotropy's own tree — but carries zero caution items.
 
 ---
 

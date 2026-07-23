@@ -47,7 +47,7 @@ middleware now sits in front of every `/v1` route and closes the front-door gap.
   silent default.
 - **Reference JWT impl:** `aisotropy.NewJWTAuthenticator` (`internal/auth/jwt.go`) verifies an
   `Authorization: Bearer <jwt>` credential — HS256 signature + `exp`, using **only the Go standard
-  library** (no `golang-jwt`, so the 100% MIT/Apache dependency policy is untouched). Claims map
+  library** (no `golang-jwt`, so the 100% permissive dependency policy is untouched). Claims map
   `tenant_id|tid → TenantID`, `user_id|uid|sub → UserID`, `scope|scp|scopes → Scopes`. RS256/JWKS
   is a documented follow-on.
 

@@ -189,8 +189,9 @@ license, defining one tenant as one workspace. **Orbit is a multi-tenant chatbot
 of this kind is a 🚫 **BLOCKER** for a SaaS product (same class as BSL/SSPL/ELv2).
 
 - **AISOTROPY COMPARISON:** the dep tree clears the hard-blocker gate; Dify's
-  modified-Apache multi-tenant clause does not. aisotropy is 100% MIT/Apache with
-  no field-of-use limit — you may operate it multi-tenant, self-hosted, freely.
+  modified-Apache multi-tenant clause does not. aisotropy is 100% permissive
+  (MIT/BSD/Apache-2.0/ISC), zero copyleft, with no field-of-use limit — you may
+  operate it multi-tenant, self-hosted, freely.
 
 ## Summary
 

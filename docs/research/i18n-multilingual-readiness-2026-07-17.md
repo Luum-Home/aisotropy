@@ -92,8 +92,8 @@ embeddings, or personas to the detected language because it never determines it)
 ### (d) Do the guardrails use hardcoded data or a library/model? — **Hardcoded data.**
 All three built-in detectors are **hand-maintained regex/keyword tables compiled into the binary** — no
 library, no model, no lookup table sourced externally. This is a deliberate design choice (deterministic,
-zero-dependency, µs-cheap, no network — consistent with the sovereignty thesis and the 100% MIT/Apache
-stack). The trade-off is exactly the language problem: hardcoded English data doesn't generalize. The
+zero-dependency, µs-cheap, no network — consistent with the sovereignty thesis and the 100%
+permissive (MIT/BSD/Apache-2.0/ISC), zero-copyleft stack). The trade-off is exactly the language problem: hardcoded English data doesn't generalize. The
 codebase already exposes the *right* extension seams (`WithToxicKeywords`, `OutputCheck`, custom redaction
 patterns, `PersonaProvider`) — they're just English/empty by default.
 

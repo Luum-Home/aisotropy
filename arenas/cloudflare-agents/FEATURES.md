@@ -189,11 +189,13 @@ PASS: zero hard-blocker licenses.
 ```
 
 **Verdict:** the `agents` SDK itself is **MIT**. The tree clears aisotropy's *hard* blocker
-gate (0 GPL/AGPL/SSPL/BUSL/ELv2/Commons-Clause/FSL) but is **not** literally "100% MIT/Apache":
+gate (0 GPL/AGPL/SSPL/BUSL/ELv2/Commons-Clause/FSL) but is **not** purely permissive:
 the shipped tree carries **MPL-2.0** (`lightningcss`, weak-copyleft leaf, CAUTION under
 aisotropy's `license-policy.md`), and the dev toolchain adds one **LGPL-3.0** leaf
 (`@img/sharp-libvips`, build-time only, never deployed). Comparable posture to the MPL-leaf
-arenas (Pydantic AI / LangGraph / Letta). The bigger sovereignty caveat is not the licenses —
+arenas (Pydantic AI / LangGraph / Letta) — and to aisotropy's own tree, which likewise carries
+one transitive MPL-2.0 leaf (`docs/architecture/license-audit.md`); both clear the same hard
+gate. The bigger sovereignty caveat is not the licenses —
 it's that the *runtime* is rented (row 5.6), which no license scan captures.
 
 ## Summary vs aisotropy

@@ -96,7 +96,7 @@ timestamp: 2026-07-15T00:00:00Z
 
 ### Dependency license posture (executable governance)
 - **Status:** RUN-VERIFIED — the real dep tree holds the permissive line aisotropy claims
-- aisotropy's constitutional gate is "100% MIT/Apache, no copyleft/BUSL/SSPL/ELv2". This is the
+- aisotropy's constitutional gate is "100% permissive (MIT/BSD/Apache-2.0/ISC), no copyleft/BUSL/SSPL/ELv2". This is the
   same gate executed against **this arena's actual dependency tree** (not a guess).
 - **RUN-VERIFIED** (`.venv/bin/python -m piplicenses --format=csv`, pip-licenses 5.5.5, exit 0):
   - **53 packages** in the arena venv (pip-licenses excludes itself + its two deps

@@ -64,7 +64,7 @@ runs of **two or more** single-character tokens (lone articles like `a`/`i` are 
 
 Everything remains stdlib + `golang.org/x/text/unicode/norm` (BSD-3-Clause, already vendored), no
 network, no model, deterministic and table-testable — consistent with the sovereignty thesis and the
-100% MIT/Apache/BSD license gate.
+100% permissive (MIT/BSD/Apache-2.0/ISC), zero-copyleft license gate.
 
 ## 3. The Detector seam (opt-in multilingual backend)
 

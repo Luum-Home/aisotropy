@@ -146,7 +146,7 @@ under both the naive raw-store posture and the correct identity-bound posture.
 ### Dependency LICENSE posture (executable governance) — RUN-VERIFIED via `scripts/license_scan.sh`
 Run: `./scripts/license_scan.sh` (exit 0; OFFLINE; reads installed venv metadata). Tool:
 `pip-licenses 5.5.5` over the real langchain/langgraph venv tree. aisotropy's constitutional
-gate: "100% MIT/Apache, no copyleft/BUSL". This scans whether the framework's **actual**
+gate: "100% permissive (MIT/BSD/Apache-2.0/ISC), no copyleft/BUSL". This scans whether the framework's **actual**
 dependency tree holds that line — reporting REAL `pip-licenses` output, not guesses.
 
 - **Total packages scanned:** **53** (transitive tree of langgraph 1.2.9 / langchain 1.3.13 /
@@ -160,12 +160,14 @@ dependency tree holds that line — reporting REAL `pip-licenses` output, not gu
   (`MPL-2.0 AND (Apache-2.0 OR MIT)`, i.e. dual-licensed, usable under a permissive option).
   MPL-2.0 is file-level weak copyleft = **⚠️ CAUTION** per aisotropy's `license-policy.md`,
   **not a BLOCKER** (the constitutional gate names GPL/AGPL + source-available specifically).
-- **Verdict:** The langgraph tree does **not literally** hold "100% MIT/Apache" — it is
+- **Verdict:** The langgraph tree is **not purely permissive** — it is
   ~96% permissive with BSD/PSF permissive licenses and **2 weak-copyleft MPL-2.0** packages
   (`certifi`, `orjson`). It carries **zero** strong-copyleft and **zero** source-available/BUSL
   packages, so it clears aisotropy's *hard* blocker gate; the two MPL-2.0 deps are the only
-  non-permissive items and are advisory (CAUTION), not fatal. The scan script exits non-zero
-  if any hard-blocker license ever enters the tree — governance you can run in CI.
+  non-permissive items and are advisory (CAUTION), not fatal. aisotropy's own tree is not
+  literally 100% MIT/Apache either — it carries BSD/ISC plus 1 transitive MPL-2.0 leaf
+  (`docs/architecture/license-audit.md`) — both pass the same hard-blocker gate. The scan script
+  exits non-zero if any hard-blocker license ever enters the tree — governance you can run in CI.
 
 ## Comprehensive feature parity (#1–#26) — RUN-VERIFIED via `feature_parity_demo.py`
 

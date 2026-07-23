@@ -154,7 +154,7 @@ wired in `aisotropy/app.go:404-417`) now sits in front of every `/v1` route:
   now *proven equal to a verified principal*. The `Scope` is minted from a verified identity.
 - **Reference impls:** `NoAuth()` (named, opt-in, trusts the path verbatim — for local/dev or an
   upstream gateway) and `NewJWTAuthenticator` (`internal/auth/jwt.go`: stdlib-only HS256 Bearer,
-  **no new dependency**, so the 100% MIT/Apache policy is untouched; RS256/JWKS is a follow-on).
+  **no new dependency**, so the 100% permissive-license policy is untouched; RS256/JWKS is a follow-on).
 
 So `/v1/tenant/{any}/user/{any}/chat` is **no longer** served to any client: without a
 credential the request is denied, and with one the verified principal must match the path.
@@ -234,7 +234,8 @@ activate the end-to-end guarantee.
 
 ## Sovereignty
 
-**100% MIT/Apache-2.0** stack — zero BSL or commercial licenses. Everything runs on your
+**100% permissive (MIT/BSD/Apache-2.0/ISC)** stack — zero copyleft, no BSL or commercial
+licenses. Everything runs on your
 own hardware, in-process where possible, with megabyte-sized native binaries (not gigabytes
 of JVM). Your data, your infrastructure, auditable end to end. See the
 [stack overview](../architecture/overview.md).

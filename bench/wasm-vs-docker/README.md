@@ -101,8 +101,8 @@ the container tier.
 
 ## Toolchains & licenses
 
-All three toolchains are permissively licensed (matching the repo's 100% MIT/Apache
-posture — `.claude/rules/constitutional-gates.md`):
+All three toolchains are permissively licensed (matching the repo's 100% permissive
+(MIT/BSD/Apache-2.0/ISC), zero-copyleft posture — `.claude/rules/constitutional-gates.md`):
 
 | Toolchain | License |
 |---|---|

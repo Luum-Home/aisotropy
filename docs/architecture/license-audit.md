@@ -96,8 +96,8 @@ so it isn't mistaken for an unreviewed gap.
 
 ## Conclusion
 
-The Go/Docker half of the stack upholds the repo's "100% MIT/Apache, copyleft only by explicit
-exception" posture: 0 BLOCKER, 2 fully-documented exceptions (one out of aisotropy's dependency
+The Go/Docker half of the stack upholds the repo's "100% permissive (MIT/BSD/Apache-2.0/ISC),
+copyleft only by explicit exception" posture: 0 BLOCKER, 2 fully-documented exceptions (one out of aisotropy's dependency
 graph entirely, one a false-positive of Go's monorepo module packaging — not a real license risk),
 and 1 deliberate, ADR-backed copyleft exception in the Docker image layer (Grafana). Re-run
 `scripts/license-audit.sh` whenever a `go.mod` or `docker-compose*.yml` changes.

@@ -189,9 +189,11 @@ Node agent runtime hot path, all used as unmodified dynamically-linked libraries
 are **Apache-2.0**.
 
 **Verdict:** Flue's real tree **clears aisotropy's hard-blocker gate** (0 strong-copyleft, 0
-restricted). It does not hold the *strict* "100% MIT/Apache" line by construction — BSD/ISC/PSF and 4
-weak-copyleft build leaves appear — but nothing blocks self-hosted multi-tenant use. aisotropy alone
-holds the strict MIT/Apache line by construction.
+restricted). It is not *purely* permissive by construction — BSD/ISC/PSF and 4
+weak-copyleft build leaves appear — but nothing blocks self-hosted multi-tenant use. Neither is
+aisotropy's own tree literally 100% MIT/Apache (it carries BSD/ISC plus 1 transitive MPL-2.0
+leaf, see `docs/architecture/license-audit.md`); both clear the same hard-blocker gate
+(permissive-only, zero strong-copyleft/restricted).
 
 ## Summary
 

@@ -144,9 +144,10 @@ friction patterns that trigger [primitive self-improvement](#primitive-self-impr
 
 ## Sovereignty
 
-The stance that Aisotropy runs 100% on your own hardware, with a 100% MIT/Apache-2.0 stack
-(zero BSL or commercial licenses), in-process wherever latency matters, with megabyte-sized
-native binaries. Your own data and infrastructure, auditable end to end — no dependency on a
+The stance that Aisotropy runs 100% on your own hardware, with a 100% permissive
+(MIT/BSD/Apache-2.0/ISC) stack, zero copyleft (no BSL or commercial licenses), in-process
+wherever latency matters, with megabyte-sized native binaries. Your own data and
+infrastructure, auditable end to end — no dependency on a
 cloud or proprietary SDK. See [thesis](thesis.md#sovereignty) and
 [stack overview](../architecture/overview.md).
 

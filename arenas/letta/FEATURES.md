@@ -304,7 +304,9 @@ copyleft — it obligates publishing modifications to the MPL-covered files them
 does not reach into separately-licensed code and does **not** trigger SaaS source-disclosure
 (unlike AGPL/SSPL). Under aisotropy's own `license-policy.md` it is classified ⚠️ **CAUTION**,
 not a 🚫 BLOCKER. certifi is a ubiquitous CA-bundle transitive dep pulled by `httpx`; it is
-the single technical exception to the literal "100% MIT/Apache" wording.
+the single non-permissive package in this scan — comparable to aisotropy's own tree, which
+carries one equivalent transitive MPL-2.0 leaf (`docs/architecture/license-audit.md`); neither
+tree is literally 100% MIT/Apache, both clear the permissive-only hard gate.
 
 - **AISOTROPY COMPARISON:** the executed scan confirms Letta's client tree essentially holds
   the permissive line aisotropy claims — **zero** strong-copyleft, **zero** BUSL/SSPL/ELv2,

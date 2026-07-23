@@ -171,8 +171,8 @@ runtime** — a *different* niche. They overlap on exactly one axis (isolation-b
 ### 10. Sovereignty / licensing — BUILT-IN (good), run-verified against aisotropy's gate
 - Apache-2.0, Go-style stability promise, fully self-hostable. No SaaS lock-in for the core.
 - **Executable governance (`scripts/license_scan.sh`, exit 0).** aisotropy's constitutional gate
-  is "the stack is deliberately 100% MIT/Apache-2.0 ... no copyleft or source-available/BUSL
-  without an explicit ADR." Scanned THIS arena's **actual** dependency tree with
+  is "the stack is deliberately 100% permissive (MIT/BSD/Apache-2.0/ISC) ... no copyleft or
+  source-available/BUSL without an explicit ADR." Scanned THIS arena's **actual** dependency tree with
   `go-licenses report ./...` (the REAL tool output, not a guess):
   - **24 external deps** — **24 permissive, 0 copyleft, 0 restricted/source-available, 0 unclassified.**
   - Breakdown: **13 Apache-2.0 · 6 MIT · 4 BSD-3-Clause · 1 ISC.**

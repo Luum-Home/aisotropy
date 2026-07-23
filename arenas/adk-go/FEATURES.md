@@ -225,7 +225,7 @@ spans ADK emits (ADK's `internal/telemetry` acquires its tracer from
 
 **RUN-VERIFIED** by `scripts/license-scan.sh` (`google/go-licenses report ./...`,
 exit 0; raw output in `licenses.csv`) — the REAL tool output, no guessed
-licenses. aisotropy's constitutional gate is "100% MIT/Apache, no
+licenses. aisotropy's constitutional gate is "100% permissive (MIT/BSD/Apache-2.0/ISC), no
 copyleft/BUSL"; this scans THIS arena's actual dependency tree to test whether
 ADK Go's real deps hold that line.
 

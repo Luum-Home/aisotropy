@@ -1,7 +1,7 @@
 ---
 type: Research Report
 title: "Competitive landscape — agent frameworks vs. aisotropy (mid-2026)"
-description: An architect-level scan of LangChain/LangGraph, Mastra, Letta, Eino, ADK Go and Genkit Go, judging whether aisotropy's combination (Go-native, tenant-isolation-by-construction, temperature-tiered memory, pre-spend cost governance, 100% MIT/Apache) solves a genuinely unaddressed problem.
+description: An architect-level scan of LangChain/LangGraph, Mastra, Letta, Eino, ADK Go and Genkit Go, judging whether aisotropy's combination (Go-native, tenant-isolation-by-construction, temperature-tiered memory, pre-spend cost governance, 100% permissive licensing) solves a genuinely unaddressed problem.
 tags: [research, competitive, landscape, langchain, langgraph, mastra, letta, eino, adk, genkit, go, memory, multi-tenancy]
 timestamp: 2026-07-09T00:00:00Z
 ---
@@ -30,7 +30,8 @@ aisotropy is not "another agent framework." Its thesis is a specific *combinatio
    facts/FTS5 (rqlite) → semantic vectors (Qdrant) → sleep-cycle batch (DataFusion).
 3. **Pre-spend cost governance** — reject/degrade before the LLM call, not accounting after.
 4. **Memory as governed, deletable data** — retention/deletion as a first-class concern.
-5. **All of the above in Go, in-process latency class**, on a 100% MIT/Apache stack.
+5. **All of the above in Go, in-process latency class**, on a 100% permissive
+   (MIT/BSD/Apache-2.0/ISC), zero-copyleft stack.
 
 The test for "does aisotropy solve a real problem" is whether any incumbent covers these
 five together. As of mid-2026, none covers even three.
@@ -217,7 +218,7 @@ Across the field, practitioners report the same gaps
 - **Durable-execution substrates** (Temporal MIT server but ops-heavy; Inngest/Restate
   cloud-oriented; Restate server license **UNCERTAIN** — verify current terms).
 
-**Bottom line:** aisotropy's 100% MIT/Apache stack is a real adoption advantage, not ideology —
+**Bottom line:** aisotropy's 100% permissive, zero-copyleft stack is a real adoption advantage, not ideology —
 Mastra's forced ELv2→Apache reversal is the market proof.
 
 ## Positioning conclusion for aisotropy

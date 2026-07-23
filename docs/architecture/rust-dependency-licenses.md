@@ -49,7 +49,8 @@ because a scanner might flag them:
 
 ## Conclusion
 
-The Rust half of the stack upholds the repo's "100% MIT/Apache" posture: every crate offers a
+The Rust half of the stack upholds the repo's "100% permissive (MIT/BSD/Apache-2.0/ISC), zero
+copyleft" posture: every crate offers a
 permissive option and we take it. The debt-ledger item "274 Rust crates unreviewed for license" is
 **closed**. Re-run the `cargo metadata` command above whenever `Cargo.lock` changes; wire `cargo-deny`
 into CI when a Rust CI lane exists (a follow-up, not a blocker — the tree is clean today).
