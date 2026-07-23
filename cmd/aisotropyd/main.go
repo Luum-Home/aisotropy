@@ -30,6 +30,7 @@ import (
 
 	"github.com/Luum-Home/aisotropy/aisotropy"
 	"github.com/Luum-Home/aisotropy/internal/api"
+	"github.com/Luum-Home/aisotropy/internal/o11y"
 )
 
 // The boot-time NoAuth non-loopback guard must evaluate the SAME address the server
@@ -163,7 +164,14 @@ func run(ctx context.Context, logger *slog.Logger) error {
 }
 
 func main() {
-	if err := run(context.Background(), slog.Default()); err != nil {
+	// ADR-0066 Layer 2: wrap the process default handler so every *Context log
+	// call carries the telemetry+identity correlation fields the boundary
+	// bridge stamps into ctx (internal/api's stampTelemetry). Behavior-
+	// preserving: a record whose ctx carries no metadata — every non-request
+	// line — passes through byte-identical to the unwrapped handler.
+	logger := slog.New(o11y.NewCtxHandler(slog.Default().Handler()))
+	slog.SetDefault(logger)
+	if err := run(context.Background(), logger); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}

@@ -140,6 +140,10 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 	// "Observability decision" and internal/llm/context.go).
 	ctx = llm.WithTenant(ctx, in.TenantID)
 	ctx = llm.WithUser(ctx, in.UserID)
+	// Boundary bridge (ADR-0066 Layer 2): drain trace/span ids and stamp the
+	// request/session/identity observability metadata once, here, so every
+	// downstream *Context log line auto-correlates (see o11y_bridge.go).
+	ctx = stampTelemetry(ctx, in.TenantID, in.UserID, in.Body.SessionID)
 	key := memory.Key{Tenant: in.TenantID, User: in.UserID, Session: in.Body.SessionID}
 	// Facts memory (Phase 3) is scoped per (tenant, user) — not per session: an
 	// Engram journal persists across a user's sessions. NewScope validates
