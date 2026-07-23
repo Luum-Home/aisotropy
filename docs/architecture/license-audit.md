@@ -1,0 +1,100 @@
+---
+type: Reference
+title: "Go dependency + compose-image license audit"
+description: The constitutional license gate applied to the repo's Go module graph (root + 23 nested modules — arenas/*, bench/*, examples/*, external/gollem) and every docker-compose*.yml image. Result — 0 BLOCKER, 2 documented exceptions, reproducible with scripts/license-audit.sh.
+tags: [licenses, go, docker, supply-chain, constitutional-gate, license-policy]
+timestamp: 2026-07-23T00:00:00Z
+---
+
+# Go dependency + compose-image license audit
+
+This is the Go/Docker sibling of [`rust-dependency-licenses.md`](rust-dependency-licenses.md) — the
+constitutional license-gate review ([license-policy](../../.claude/rules/cos/license-policy.md),
+[constitutional-gates](../../.claude/rules/constitutional-gates.md)) applied to the **Go module
+graph** (24 real `go.mod` files: the root module plus `arenas/*`, `bench/*`, `examples/*`,
+`external/gollem`, `arenas/live/*`) and every `image:` line in every `docker-compose*.yml`.
+
+## Method (reproduce anytime)
+
+```bash
+scripts/license-audit.sh
+```
+
+Read-only, deterministic, no network calls, no `go mod download` (a module missing from
+`$(go env GOMODCACHE)` is reported as `MISSING_FROM_CACHE`, never auto-fetched — populate the cache
+first with `go mod download` in the relevant module directory if a full run is needed). For each
+direct (non-`// indirect`) `require` in each `go.mod`, resolves the module in the local Go module
+cache, looks for a `LICENSE`/`COPYING` file, and greps it for prohibited copyleft/source-available
+text (`GNU AFFERO|GNU GENERAL PUBLIC|Server Side Public|Business Source|Elastic License|Commons
+Clause|Functional Source`). Separately, checks every compose `image:` against an explicit allowlist
+derived from the compose files themselves.
+
+## Result (2026-07-23) — PASS: exit 0
+
+```
+go.mod files scanned:        24
+direct deps enumerated:      98
+first-party (local replace): 13   (replaced with a local filesystem path — same repo, not audited)
+whitelisted (known, docs'd): 2    (see below)
+SAFE (permissive license):   83
+findings from this pass:     0
+
+compose files scanned: 5
+images found:          12
+images allowlisted:    12
+```
+
+**0 BLOCKER.** No prohibited license text was found in any resolved `LICENSE`/`COPYING` file, and
+every compose image is on the allowlist.
+
+## The 2 documented exceptions (not blockers — verified, not silently passed)
+
+- **`github.com/fugue-labs/gollem-langsmith@v0.0.2`** — no `LICENSE` file upstream (verified
+  2026-07-23 against the packaged module and the GitHub repo). **Not an aisotropy dependency**:
+  absent from the root `go.mod`/`go.sum`; pulled only by `external/gollem`'s own CLI tooling.
+  Risk: low, upstream's responsibility. See
+  [ADR-0067](../decisions/0067-grafana-agpl-exception-observability-stack.md) "Adjacent 2026-07-23
+  license-audit verdicts" for the full writeup and the upstream-issue follow-up.
+- **`github.com/cloudwego/eino-ext/components/model/openai@v0.1.13`** — a monorepo nested-module
+  packaging artifact: the `eino-ext` repo root **is Apache-2.0** (verified 2026-07-23 via
+  `gh api repos/cloudwego/eino-ext/license` → `spdx_id: apache-2.0`), but Go's module zip for this
+  per-directory nested module does not include the repo-root `LICENSE` file — so the script's
+  per-module scan reports `UNKNOWN` for a module that is, in fact, Apache-2.0. Whitelisted in
+  `scripts/license-audit.sh` with the verification command inline; re-run that command if the
+  pinned version bumps.
+
+Both exceptions are hardcoded, commented whitelist entries in `scripts/license-audit.sh` (not a
+blanket suppression) — a *new* unresolved module still fails the gate.
+
+## Docker image allowlist
+
+`scripts/license-audit.sh` checks every `image:` in `docker-compose.yml`,
+`docker-compose.sleepcycle.yml`, `test/proxy/docker-compose.yml`, and
+`deploy/observability/docker-compose.observability.yml` against an explicit allowlist. One entry is
+a deliberate copyleft exception, not an oversight:
+
+| Image | License | Status |
+|---|---|---|
+| `grafana/grafana` | AGPL-3.0 | **Exception** — [ADR-0067](../decisions/0067-grafana-agpl-exception-observability-stack.md) |
+| `mcr.microsoft.com/dotnet/aspire-dashboard` | MIT | Allowed — [ADR-0065](../decisions/0065-local-otel-backend-aspire-dashboard.md) |
+| everything else (`qdrant/qdrant`, `rqlite/rqlite`, `otel/opentelemetry-collector-contrib`, `prom/*`, `json-exporter`, `caddy`, `nginx`) | Apache-2.0 / MIT / BSD-2 | Allowed — no exception needed |
+
+An image not on this list is a **finding** (exit 1) — add it to the allowlist in
+`scripts/license-audit.sh` only after checking its license, and cite the check inline as a comment.
+
+## Non-goal of this pass: `k6`
+
+`bench/streaming/README.md:83` cites `k6` as AGPL-3.0 — confirmed correct against upstream
+(`github.com/grafana/k6`, verified 2026-07-23). `k6` is invoked as an **external CLI binary**
+(`k6 run …`), never imported as a Go dependency (absent from any `go.mod`/`go.sum` in this repo), so
+it never appears in this audit's Go-dependency sweep and needs no allowlist/exception entry —
+recorded here, and in [ADR-0067](../decisions/0067-grafana-agpl-exception-observability-stack.md),
+so it isn't mistaken for an unreviewed gap.
+
+## Conclusion
+
+The Go/Docker half of the stack upholds the repo's "100% MIT/Apache, copyleft only by explicit
+exception" posture: 0 BLOCKER, 2 fully-documented exceptions (one out of aisotropy's dependency
+graph entirely, one a false-positive of Go's monorepo module packaging — not a real license risk),
+and 1 deliberate, ADR-backed copyleft exception in the Docker image layer (Grafana). Re-run
+`scripts/license-audit.sh` whenever a `go.mod` or `docker-compose*.yml` changes.

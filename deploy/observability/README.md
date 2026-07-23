@@ -48,8 +48,12 @@ curl -s 'localhost:9090/api/v1/rules' | jq '.data.groups[].name'  # rules loaded
 ## Licensing (honest distinction — license gate)
 
 The repo license gate (`.claude/rules/cos/license-policy.md`) **blocks AGPL for a
-code dependency**. Grafana core is **AGPL-3.0**. That block does **not** apply
-here, and the distinction is deliberate:
+code dependency**, and the sibling constitutional gate
+(`.claude/rules/constitutional-gates.md`) requires "an explicit ADR" for any
+copyleft exception. Grafana core is **AGPL-3.0**. That block does **not** apply
+here, and the distinction is deliberate — formalized as the required exception
+ADR in [ADR-0067 — Grafana AGPL-3.0 exception for the local observability
+stack](../../docs/decisions/0067-grafana-agpl-exception-observability-stack.md):
 
 - Grafana is **not an aisotropy dependency**. It is not imported, linked,
   vendored, or shipped with the runtime. No aisotropy artifact contains Grafana
@@ -78,7 +82,14 @@ is a drop-in if you want it).
    or guardrail hits.** `internal/llm/breaker.go` and `internal/memory/quota.go`
    expose no metric; guardrails only `slog`. Alerts for these are intentionally
    absent (a placeholder is documented in `aisotropy-alerts.yml`). Ship the
-   audit log / slog to Loki for log-derived panels, or add counters upstream.
+   audit log / slog to **Loki** for log-derived panels, or add counters
+   upstream. **Loki is AGPL-3.0** (same family as Grafana below) and is **not
+   implemented** — this overlay is a suggestion, not shipped config. If it is
+   ever built, it is covered by the Grafana exception in
+   [ADR-0067](../../docs/decisions/0067-grafana-agpl-exception-observability-stack.md)
+   under the same five conditions (separate service, unmodified, API-only,
+   documented risk, operator-approved) — verify those conditions against the
+   actual Loki wiring before shipping it; no second ADR is required if they hold.
 3. **USD cost is opt-in.** Real token *counts* are always available; USD *cost*
    requires the `/costs` scrape with an ops token (json_exporter can't expand env
    vars — render the config first). Token spend is the always-on proxy.
