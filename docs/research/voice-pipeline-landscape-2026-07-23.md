@@ -8,6 +8,22 @@ timestamp: 2026-07-23T00:00:00Z
 
 # Voice pipeline landscape — can aisotropy speak?
 
+> **Outcome addendum (same day, 2026-07-23).** This report's recommendations were executed the
+> day it was written, through two SDD cycles:
+> - **Move #1 shipped**: the OpenAI-compat shim is implemented and adversarially verified —
+>   [ADR-0066](../decisions/0066-openai-compat-shim-voice-gateway.md) (Accepted),
+>   `internal/api/openai_compat.go`.
+> - **Move #2 shipped as code + test lane**: the Pipecat PoC lives at `examples/voice-pipecat/`
+>   and its hardware-free, WER-gated test lane is
+>   [ADR-0069](../decisions/0069-voice-testing-lane-wer-roundtrip.md) (Accepted) — measured
+>   round-trip WER 0.000–0.100 (Kokoro af_heart + whisper base.en), thresholds 0.20/0.15.
+> - The "no latency numbers exist yet" caveat below is partially closed: stub-lane
+>   TTFT/barge-in are measured; full-stack numbers with real STT/TTS models remain pending an
+>   idle-machine run.
+> - Still true as written: the CORE has no audio code (by design — that was the
+>   recommendation), telephony/Asterisk remains deferred, F5-TTS official weights remain barred.
+> The body below is the original analysis, unmodified.
+
 > **Purpose.** Answer, code-grounded: does aisotropy support voice (speech in, speech out,
 > telephony)? And if not: what is the correct architecture to add it, with which pieces, and what
 > does the repo's [license gate](../../.claude/rules/cos/license-policy.md) allow?

@@ -36,6 +36,9 @@ protocols emit a **single unnamed event whose JSON carries a `type` field**.
 Optional cheap add: an **OpenAI-compatible `/chat/completions` shim** would make aisotropy a drop-in
 backend for **Open WebUI** and **LibreChat** (self-hosted ChatGPT-style UIs) for near-zero
 protocol work — a "#1.5" if self-hosted chat UIs are a target audience.
+*(Update 2026-07-23: shipped as [ADR-0066](../decisions/0066-openai-compat-shim-voice-gateway.md) —
+built for the voice-gateway use case, which upgraded this from "#1.5 optional" to the Pipecat
+voice enabler; see [voice-pipeline-landscape](voice-pipeline-landscape-2026-07-23.md).)*
 
 ## What each thing is, and the exact contract
 
