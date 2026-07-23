@@ -188,7 +188,7 @@ var nativeObsPlatform = map[string]obsPlatform{
 // runDimensions fills the three new dimension record sets for every framework.
 // isolation (memory_scoped + isolation_leak) is served by test-isolation.sh;
 // crash by test-crash.sh; observability by a direct observability-mode call.
-func runDimensions(frameworks []adapter, dims []string, budget *callCounter) ([]isoRecord, []crashRecord, []obsRecord) {
+func runDimensions(frameworks []adapter, dims []string, budget *callCounter, durLog *durableLog, lane string) ([]isoRecord, []crashRecord, []obsRecord) {
 	want := map[string]bool{}
 	for _, d := range dims {
 		want[d] = true
@@ -201,18 +201,33 @@ func runDimensions(frameworks []adapter, dims []string, budget *callCounter) ([]
 	var crashRecs []crashRecord
 	var obsRecs []obsRecord
 
+	// Dimension records are durabled too (ADR-0064 Layer 1 append-on-complete)
+	// so -render-only reproduces these tables. A durable-write failure never
+	// aborts the pass.
 	for _, fw := range frameworks {
 		if isolationWanted {
 			logf("[dimensions] %s scoped-memory + isolation ...", fw.name)
-			isoRecs = append(isoRecs, runIsolation(fw, budget))
+			ir := runIsolation(fw, budget)
+			isoRecs = append(isoRecs, ir)
+			if err := durLog.appendIso(ir, lane); err != nil {
+				logf("WARNING: durable append failed for iso %s: %v", fw.name, err)
+			}
 		}
 		if crashWanted {
 			logf("[dimensions] %s crash_recovery ...", fw.name)
-			crashRecs = append(crashRecs, runCrash(fw, budget))
+			cr := runCrash(fw, budget)
+			crashRecs = append(crashRecs, cr)
+			if err := durLog.appendCrash(cr, lane); err != nil {
+				logf("WARNING: durable append failed for crash %s: %v", fw.name, err)
+			}
 		}
 		if obsWanted {
 			logf("[dimensions] %s observability ...", fw.name)
-			obsRecs = append(obsRecs, runObservability(fw, budget))
+			or := runObservability(fw, budget)
+			obsRecs = append(obsRecs, or)
+			if err := durLog.appendObs(or, lane); err != nil {
+				logf("WARNING: durable append failed for obs %s: %v", fw.name, err)
+			}
 		}
 	}
 	return isoRecs, crashRecs, obsRecs

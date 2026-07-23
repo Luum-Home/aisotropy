@@ -43,20 +43,30 @@ type benchCell struct {
 // automatic — no manual step. Latency is measured on the (cheap) bench modes to
 // bound spend; cold-start uses an empty-stdin probe that costs zero model calls;
 // footprint/build-time need no model calls either.
-func runBenchmarks(frameworks []adapter, benchModes, forms []string, tasks []task, rag []ragQuestion, iters, coldProbes int, budget *callCounter) []benchCell {
+func runBenchmarks(frameworks []adapter, benchModes, forms []string, tasks []task, rag []ragQuestion, iters, coldProbes int, budget *callCounter, durLog *durableLog, lane string) []benchCell {
 	dockerOK := dockerAvailable()
 	var cells []benchCell
+
+	// emit appends a bench cell to the report AND durables it (ADR-0064 Layer 1
+	// append-on-complete), so -render-only can reproduce the benchmark section.
+	// A durable-write failure never aborts the pass.
+	emit := func(c benchCell) {
+		cells = append(cells, c)
+		if err := durLog.appendBench(c, lane); err != nil {
+			logf("WARNING: durable append failed for bench %s/%s/%s: %v", c.Framework, c.Form, c.Mode, err)
+		}
+	}
 
 	for _, fw := range frameworks {
 		for _, form := range forms {
 			script := fw.script(form)
 			if form == "docker" && script == "" {
-				cells = append(cells, benchCell{Framework: fw.name, Form: form, Mode: "*", Skipped: true,
+				emit(benchCell{Framework: fw.name, Form: form, Mode: "*", Skipped: true,
 					Note: "native-only adapter (no run-docker.sh)"})
 				continue
 			}
 			if form == "docker" && !dockerOK {
-				cells = append(cells, benchCell{Framework: fw.name, Form: form, Mode: "*", Skipped: true,
+				emit(benchCell{Framework: fw.name, Form: form, Mode: "*", Skipped: true,
 					Note: "docker unavailable on this host"})
 				continue
 			}
@@ -122,7 +132,7 @@ func runBenchmarks(frameworks []adapter, benchModes, forms []string, tasks []tas
 					}
 				}
 				logf("[bench] %s/%s/%s p50=%dms p95=%dms (%d ok)", fw.name, form, mode, cell.WarmP50, cell.WarmP95, len(walls))
-				cells = append(cells, cell)
+				emit(cell)
 			}
 		}
 	}

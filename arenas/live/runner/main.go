@@ -81,7 +81,19 @@ func main() {
 	skipDims := flag.Bool("skip-dimensions", false, "skip the new-dimensions pass (scoped-memory, isolation, crash, observability)")
 	skipMatrixGate := flag.Bool("skip-matrix-gate", false, "skip the full-matrix completeness gate over arenas/live/<fw>/matrix.json (still renders the matrix section)")
 	skipDeterminismGate := flag.Bool("skip-determinism-gate", false, "skip the scripts/arena-determinism-guard.sh purity+reproducibility gate over arenas/live/runner/scoring (the PRIMARY score's enforcement gate — see .claude/rules/arena-deterministic-judging.md)")
+	renderOnlyFlag := flag.Bool("render-only", false, "ADR-0064 Layer 1: regenerate RESULTS.md purely from arenas/live/RESULTS.records.jsonl (+ the matrix.json manifests) with ZERO model calls and ZERO adapter spawns, then exit. Proves the render is decoupled from the run — the durable record stream is the single source of truth. All run/pass flags are ignored in this mode.")
+	resumeFlag := flag.Bool("resume", false, "ADR-0064 Layer 1: on a normal run, load any existing arenas/live/RESULTS.records.jsonl and SKIP every correctness cell already present (keyed framework|mode|lane|form|task-id), so a killed board continues instead of re-doing work — the resumed cells are folded back into the report. Default OFF preserves exact pre-Layer-1 behavior (a fresh run with no records file is byte-identical to before). A schema-version (v) mismatch invalidates the stale file (renamed aside), never crashes. NOTE: durable append to RESULTS.records.jsonl is ALWAYS on (the durability half of Layer 1); -resume only controls the skip-on-restart half.")
 	flag.Parse()
+
+	// ---- render-only: derive RESULTS.md from the durable record stream ------
+	// A pure render (no model calls, no adapter spawns, no scoring) — it exits
+	// before every pass and every gate. See ADR-0064 Layer 1.
+	if *renderOnlyFlag {
+		if err := renderOnly(*liveDir); err != nil {
+			fatal("render-only: %v", err)
+		}
+		return
+	}
 
 	if *nativeOnly && *dockerOnly {
 		fatal("-native-only and -docker are mutually exclusive")
@@ -221,22 +233,59 @@ func main() {
 
 	callBudget := &callCounter{}
 
-	// ---- pass 1: correctness/quality (native) ------------------------------
-	var records []record
-	if !*skipCorrect {
-		records = runCorrectnessPass(frameworks, modes, tasks, rag, *maxTasks, judge, callBudget, *concurrency, *retry)
-	}
-
-	// ---- lane label + leak guard (P0 reporting discipline) -----------------
-	// A run scores either the REAL model or the offline STUB. Record which, and
-	// in a stub run assert NO adapter secretly called the real model — the exact
-	// failure that made aisotropy's "stub" run agnes-2.0-flash for ~20s/call,
-	// burning billable free-tier quota (see docs/architecture/arena-
-	// infrastructure-parity.md). Deterministic: a pure scan of reported models.
+	// ---- lane label (needed early: it is part of every durable cell key) ----
+	// A run scores either the REAL model or the offline STUB. This is a pure
+	// function of the environment, so it is computed BEFORE pass 1 — the durable
+	// records log (ADR-0064 Layer 1) keys every cell by framework|mode|lane|form|
+	// task-id, and resume-skip must know the lane before the pass runs. The
+	// stub-lane leak guard (which needs the scored records) stays after pass 1.
 	lane := "real"
 	if os.Getenv("ARENA_STUB") == "1" {
 		lane = "stub"
 	}
+
+	// ---- durable record stream + resume (ADR-0064 Layer 1) ------------------
+	// Append-on-complete to RESULTS.records.jsonl is ALWAYS on (the durability
+	// half). -resume additionally loads any existing log and skips correctness
+	// cells already present (the resume half); default OFF is byte-identical to
+	// pre-Layer-1 behavior.
+	recordsPath := filepath.Join(*liveDir, recordsFileName)
+	resume := emptyResumeState()
+	if *resumeFlag {
+		resume, err = loadDurableLog(recordsPath)
+		if err != nil {
+			fatal("load resume log %s: %v", recordsPath, err)
+		}
+		if len(resume.present) > 0 {
+			logf("resume: %d cell(s) already present in %s will be skipped (%d correctness records folded back into the report)",
+				len(resume.present), recordsPath, len(resume.records))
+		}
+	}
+	durLog, err := openDurableLog(recordsPath)
+	if err != nil {
+		fatal("open durable records log %s: %v", recordsPath, err)
+	}
+	defer durLog.close()
+
+	// ---- pass 1: correctness/quality (native) ------------------------------
+	var records []record
+	if !*skipCorrect {
+		records = runCorrectnessPass(frameworks, modes, tasks, rag, *maxTasks, judge, callBudget, *concurrency, *retry, resume.present, durLog, lane)
+		// Fold any resumed correctness records back in, then re-sort so the
+		// per-item detail table is stable across resume boundaries. Only taken
+		// under -resume (with no prior file, resume.records is empty and this is
+		// a no-op that leaves the pass's own ordering untouched).
+		if len(resume.records) > 0 {
+			records = append(resume.records, records...)
+			sortRecords(records)
+		}
+	}
+
+	// ---- lane leak guard (P0 reporting discipline) -------------------------
+	// In a stub run assert NO adapter secretly called the real model — the exact
+	// failure that made aisotropy's "stub" run agnes-2.0-flash for ~20s/call,
+	// burning billable free-tier quota (see docs/architecture/arena-
+	// infrastructure-parity.md). Deterministic: a pure scan of reported models.
 	var laneLeaks []string
 	if lane == "stub" {
 		laneLeaks = laneLeakFrameworks(records, modelName())
@@ -251,9 +300,12 @@ func main() {
 	}
 
 	// ---- pass 2: benchmarks (native + docker) ------------------------------
+	// Bench cells are appended to the durable log too (so -render-only can
+	// reproduce this section), but the bench pass is cheap and always re-runs —
+	// it is not resume-skipped.
 	var benches []benchCell
 	if !*skipBench && len(benchModes) > 0 {
-		benches = runBenchmarks(frameworks, benchModes, forms, tasks, rag, *benchIters, *coldProbes, callBudget)
+		benches = runBenchmarks(frameworks, benchModes, forms, tasks, rag, *benchIters, *coldProbes, callBudget, durLog, lane)
 	}
 
 	// ---- pass 3: new dimensions (scoped-memory, isolation, crash, obs) -----
@@ -261,7 +313,7 @@ func main() {
 	var crashRecs []crashRecord
 	var obsRecs []obsRecord
 	if !*skipDims && len(dims) > 0 {
-		isoRecs, crashRecs, obsRecs = runDimensions(frameworks, dims, callBudget)
+		isoRecs, crashRecs, obsRecs = runDimensions(frameworks, dims, callBudget, durLog, lane)
 	}
 
 	// ---- emit ---------------------------------------------------------------
@@ -309,7 +361,7 @@ func main() {
 // particular the per-item detail table, which walks the slice directly) stays
 // deterministic regardless of goroutine completion order. concurrency=1
 // reproduces the exact old sequential loop and ordering.
-func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag []ragQuestion, maxTasks int, judge *judgeClient, budget *callCounter, concurrency int, retries int) []record {
+func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag []ragQuestion, maxTasks int, judge *judgeClient, budget *callCounter, concurrency int, retries int, resume map[string]bool, durLog *durableLog, lane string) []record {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -332,6 +384,13 @@ func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag 
 			for _, mode := range modes {
 				items := buildWork(fw.name, mode, tasks, rag, maxTasks)
 				for _, it := range items {
+					// Resume-skip (ADR-0064 Layer 1): a cell already durable in
+					// RESULTS.records.jsonl is not re-run — no model spend. The
+					// resumed record is folded back into the report by the caller.
+					if resume[cellKey(fw.name, mode, lane, "native", it.ID)] {
+						logf("[correctness] %s/%s %s (resumed — skipped)", fw.name, mode, it.ID)
+						continue
+					}
 					logf("[correctness] %s/%s %s ...", fw.name, mode, it.ID)
 					rec := runWorkItem(fw, it, budget, retries)
 					softened := false
@@ -350,6 +409,15 @@ func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag 
 					}
 					if !rec.failed() && !softened {
 						scoreRecord(&rec, it, judge, budget)
+					}
+					// Append-on-complete: durable the moment the cell finishes,
+					// before it is even merged into the report. Line-atomic and
+					// concurrency-safe (durableLog serialises writes under its
+					// own mutex), so this is safe to call from every framework
+					// goroutine. A write failure must not abort the board — the
+					// record still counts in-memory; log and continue.
+					if err := durLog.appendCorrectness(rec, lane); err != nil {
+						logf("WARNING: durable append failed for %s/%s %s: %v", fw.name, rec.Mode, rec.ID, err)
 					}
 					local = append(local, rec)
 				}
