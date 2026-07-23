@@ -149,6 +149,7 @@ func writeResults(path string, rep reportData) error {
 	writeObservabilityTable(&b, rep)
 	writeBenchmarks(&b, rep)
 	writeTokenTable(&b, rep, aggs, get)
+	writeFrameworkOverheadTable(&b, rep, aggs, get)
 	writePerItemDetail(&b, rep.Records)
 	writeNotes(&b, rep)
 
@@ -337,7 +338,12 @@ func writeQASmokeTestNote(b *strings.Builder) {
 	b.WriteString("> llamaindex scored `memory` 2/2 and `tools` 7/7 in that run. Weight the `memory`/`rag`/\n")
 	b.WriteString("> `tools` rows below as the primary quality signal in this board; read `qa`/`structured`/\n")
 	b.WriteString("> `stream` as wiring/smoke coverage, not a quality ranking. All modes keep running — a\n")
-	b.WriteString("> smoke test that catches gross breakage is still worth having.\n\n")
+	b.WriteString("> smoke test that catches gross breakage is still worth having.\n")
+	b.WriteString(">\n")
+	b.WriteString("> **The flip side: qa is the arena's purest OVERHEAD measurement.** The same property\n")
+	b.WriteString("> that makes `qa` a correctness smoke test (identical model + identical question, every\n")
+	b.WriteString("> run) makes it the most controlled experiment for a *different* axis — see\n")
+	b.WriteString("> \"Framework overhead on identical work\" below, after the token-spend table.\n\n")
 }
 
 // writeAisotropyMemoryCaveatNote renders a MODE-SPECIFIC caveat, right above
@@ -509,10 +515,19 @@ func writeScopedIsolationTable(b *strings.Builder, rep reportData) {
 	b.WriteString("> **Native vs hand-rolled (honest caveat).** aisotropy enforces tenant isolation\n")
 	b.WriteString("> **by construction** in the core runtime — `tenant_id` travels only via\n")
 	b.WriteString("> `context.Context` and Qdrant does payload-filtered HNSW scans (a constitutional\n")
-	b.WriteString("> gate), so it ships **no** hand-rolled arena isolation harness. Every other\n")
-	b.WriteString("> framework here has **no native multi-tenant memory primitive** and hand-rolls a\n")
-	b.WriteString("> compound scope key over its store; this table exercises exactly that hand-rolled\n")
-	b.WriteString("> key. A blank aisotropy row is therefore *by design*, not a failure.\n\n")
+	b.WriteString("> gate), so it ships **no** hand-rolled arena isolation harness. For the other\n")
+	b.WriteString("> frameworks the gradation matters (an ecosystem audit corrected an earlier\n")
+	b.WriteString("> blanket claim here): four (ai-sdk, pydantic-ai, eino, genkit-go) have no\n")
+	b.WriteString("> framework-owned data plane to scope at all, while others ship a SCOPING\n")
+	b.WriteString("> PARAMETER (langgraph BaseStore namespaces, mastra resource/thread, spring-ai\n")
+	b.WriteString("> conversationId) that partitions data only if passed correctly on every call —\n")
+	b.WriteString("> unenforced in every surveyed OSS core; enforcement exists only in commercial/\n")
+	b.WriteString("> server tiers. Either way, the compound (tenant,user,product) key this table\n")
+	b.WriteString("> exercises was hand-rolled in each arena adapter — because the framework offers\n")
+	b.WriteString("> nothing, or its native scope has fewer axes than the test. See\n")
+	b.WriteString("> docs/architecture/arena-benchmark-methodology.md (\"Same checkmark, different\n")
+	b.WriteString("> guarantee\") for the L0-L3 ladder. A blank aisotropy row is *by design*, not a\n")
+	b.WriteString("> failure.\n\n")
 	b.WriteString("| Framework | Same-scope hit | Cross-tenant miss | `memory_scoped` | Leak? (none=pass) | Suite (test-isolation.sh) |\n")
 	b.WriteString("|---|:--:|:--:|:--:|:--:|---|\n")
 	for _, fw := range rep.Frameworks {
@@ -788,6 +803,249 @@ func writeTokenTable(b *strings.Builder, rep reportData, aggs map[string]*modeAg
 		}
 	}
 	b.WriteString("\n")
+}
+
+// overheadRow is one framework's row in the "framework overhead on identical
+// work" table — computed purely from data writeResults already aggregated
+// (modeAgg's qa cell + rep.Benches' qa/native cells). No new record fields,
+// no scoring change, no network call: this keeps
+// scripts/arena-determinism-guard.sh's purity check trivially satisfied,
+// since arenas/live/runner/scoring is untouched by this section.
+type overheadRow struct {
+	Framework string
+
+	// token side — sourced from modeAgg's qa aggregate (a.inSum / a.tokN).
+	HasTokens bool
+	AvgIn     float64
+	DeltaTok  float64 // AvgIn - min(AvgIn) across frameworks WITH usage data
+	DeltaPct  float64 // DeltaTok / min(AvgIn) * 100
+
+	// bench side — sourced from rep.Benches, qa mode, native form only (the
+	// uncontended bench pass, never the correctness-pass latency — see
+	// docs/architecture/arena-benchmark-methodology.md).
+	HasBench   bool
+	BenchP50   int64
+	BenchDelta int64 // BenchP50 - min(BenchP50) across frameworks WITH bench data
+
+	HasTTFT   bool
+	TTFT      int64
+	TTFTDelta int64 // TTFT - min(TTFT) across frameworks WITH TTFT data
+}
+
+// computeOverheadRows derives the "framework overhead on identical work"
+// rows: qa mode only, ranked ascending by avg input tokens. A framework with
+// no usage data (-1/absent — see record.HasTok) is still LISTED (never
+// silently dropped) but carries HasTokens=false and is excluded from the
+// delta/min computation — never fabricated as a zero delta. Frameworks
+// without qa usage data sort after every framework that has it, alphabetically
+// among themselves, since there is no numeric basis to rank them.
+func computeOverheadRows(rep reportData, get func(fw, mode string) *modeAgg) []overheadRow {
+	if !slices.Contains(rep.Modes, "qa") || len(rep.Frameworks) == 0 {
+		return nil
+	}
+
+	var withTok, withoutTok []overheadRow
+	for _, fw := range rep.Frameworks {
+		a := get(fw, "qa")
+		if a.tokN > 0 {
+			withTok = append(withTok, overheadRow{
+				Framework: fw,
+				HasTokens: true,
+				AvgIn:     avg(a.inSum, a.tokN),
+			})
+		} else {
+			withoutTok = append(withoutTok, overheadRow{Framework: fw})
+		}
+	}
+	if len(withTok) == 0 {
+		return nil
+	}
+
+	slices.SortFunc(withTok, func(x, y overheadRow) int {
+		switch {
+		case x.AvgIn < y.AvgIn:
+			return -1
+		case x.AvgIn > y.AvgIn:
+			return 1
+		default:
+			return strings.Compare(x.Framework, y.Framework)
+		}
+	})
+	minIn := withTok[0].AvgIn
+
+	// qa/native bench p50 + TTFT per framework, deduped to the first
+	// non-skipped cell (mirrors writeBenchmarks' TTFT dedup). Bench data may
+	// be entirely absent this run (e.g. -bench-iters 0) — that is a guarded
+	// absence, not an error.
+	benchP50 := map[string]int64{}
+	ttft := map[string]int64{}
+	for _, c := range rep.Benches {
+		if c.Skipped || c.Form != "native" {
+			continue
+		}
+		if c.Mode == "qa" {
+			if _, ok := benchP50[c.Framework]; !ok {
+				benchP50[c.Framework] = c.WarmP50
+			}
+		}
+		if c.TTFTMs > 0 {
+			if _, ok := ttft[c.Framework]; !ok {
+				ttft[c.Framework] = c.TTFTMs
+			}
+		}
+	}
+
+	minBench := minInt64OfPresent(withTok, benchP50)
+	minTTFT := minInt64OfPresent(withTok, ttft)
+
+	for i := range withTok {
+		r := &withTok[i]
+		r.DeltaTok = r.AvgIn - minIn
+		if minIn > 0 {
+			r.DeltaPct = r.DeltaTok / minIn * 100
+		}
+		if v, ok := benchP50[r.Framework]; ok {
+			r.HasBench = true
+			r.BenchP50 = v
+			r.BenchDelta = v - minBench
+		}
+		if v, ok := ttft[r.Framework]; ok {
+			r.HasTTFT = true
+			r.TTFT = v
+			r.TTFTDelta = v - minTTFT
+		}
+	}
+
+	slices.SortFunc(withoutTok, func(x, y overheadRow) int { return strings.Compare(x.Framework, y.Framework) })
+	return append(withTok, withoutTok...)
+}
+
+// minInt64OfPresent returns the minimum value in data restricted to the
+// frameworks named in rows; -1 (no minimum) if none of those frameworks are
+// present in data.
+func minInt64OfPresent(rows []overheadRow, data map[string]int64) int64 {
+	min := int64(-1)
+	for _, r := range rows {
+		v, ok := data[r.Framework]
+		if !ok {
+			continue
+		}
+		if min < 0 || v < min {
+			min = v
+		}
+	}
+	return min
+}
+
+// writeFrameworkOverheadTable renders "Framework overhead on identical
+// work" — the flip side of writeQASmokeTestNote's finding. qa mode sends the
+// SAME question to the SAME model for every framework, which makes qa a
+// correctness smoke test (nothing to discriminate on the answer) but ALSO
+// the arena's most controlled experiment for a different measurement: since
+// model and question are held constant, every difference in tokens/latency
+// is what the framework itself adds on top of the identical work. Computed
+// purely from already-aggregated data (modeAgg qa cells + rep.Benches qa
+// native cells) — no new record fields, no scoring change, no network call.
+func writeFrameworkOverheadTable(b *strings.Builder, rep reportData, aggs map[string]*modeAgg, get func(fw, mode string) *modeAgg) {
+	rows := computeOverheadRows(rep, get)
+	if len(rows) == 0 {
+		return
+	}
+
+	b.WriteString("## Framework overhead on identical work — qa as a controlled experiment\n\n")
+	b.WriteString("> **Same model + same question ⇒ every difference below is the framework's own\n")
+	b.WriteString("> addition.** `qa` sends the IDENTICAL trivial question to the IDENTICAL model for every\n")
+	b.WriteString("> framework (see the smoke-test note above) — which is exactly what makes it useless for\n")
+	b.WriteString("> ranking correctness but the SIGNAL, not noise, for this table: nothing but the\n")
+	b.WriteString("> framework's own wire footprint and processing can explain a difference in tokens or\n")
+	b.WriteString("> latency on the same question against the same model.\n")
+	b.WriteString(">\n")
+	b.WriteString("> **An addition is not automatically waste.** It can be scaffolding (prompt wrappers,\n")
+	b.WriteString("> JSON envelopes, tool-schema boilerplate injected on every call) — or it can be a\n")
+	b.WriteString("> FEATURE doing real work, e.g. aisotropy's delta is its per-turn memory-hydration\n")
+	b.WriteString("> context (facts + semantic + summary injected into every call, by design — see\n")
+	b.WriteString("> `docs/architecture/request-lifecycle.md`). This table measures COST, not merit; read\n")
+	b.WriteString("> it next to the capability dimensions (memory/rag/tools) above, not in isolation.\n")
+	b.WriteString(">\n")
+	b.WriteString("> **Latency deltas here come from the BENCH pass** (uncontended, sequential,\n")
+	b.WriteString("> steady-state warm p50 — see \"Benchmarks (automatic)\" above), never the\n")
+	b.WriteString("> correctness-pass latency, which can run under `-concurrency` contention. See\n")
+	b.WriteString("> `docs/architecture/arena-benchmark-methodology.md` for why.\n\n")
+
+	b.WriteString("| Framework | Avg input tok (qa) | Δ vs leanest | Bench p50 qa, native (ms) | Δ vs fastest | TTFT (ms) | Δ vs fastest |\n")
+	b.WriteString("|---|---:|---:|---:|---:|---:|---:|\n")
+	for _, r := range rows {
+		fmt.Fprintf(b, "| %s | %s | %s | %s | %s | %s | %s |\n",
+			overheadFrameworkCell(r),
+			overheadTokCell(r), overheadTokDeltaCell(r),
+			overheadBenchCell(r), overheadBenchDeltaCell(r),
+			overheadTTFTCell(r), overheadTTFTDeltaCell(r),
+		)
+	}
+	b.WriteString("\n")
+	b.WriteString("> A blank `—` on the bench/TTFT columns means the benchmark pass did not produce that\n")
+	b.WriteString("> cell this run (e.g. `-bench-iters 0`, a docker-only adapter with no native form, or a\n")
+	b.WriteString("> stream-mode run that never happened) — never a fabricated 0. A framework with no `qa`\n")
+	b.WriteString("> usage data this run (provider reported `-1`/absent for every invocation) is listed with\n")
+	b.WriteString("> `—` and excluded from every delta/minimum in this table, never counted as a 0-token row.\n\n")
+}
+
+func overheadFrameworkCell(r overheadRow) string {
+	if r.HasTokens {
+		return r.Framework
+	}
+	return r.Framework + " _(no qa usage data — excluded)_"
+}
+
+func overheadTokCell(r overheadRow) string {
+	if !r.HasTokens {
+		return "—"
+	}
+	return fmt.Sprintf("%.0f", r.AvgIn)
+}
+
+func overheadTokDeltaCell(r overheadRow) string {
+	if !r.HasTokens {
+		return "—"
+	}
+	if r.DeltaTok == 0 {
+		return "0 (leanest)"
+	}
+	return fmt.Sprintf("+%.0f (+%.0f%%)", r.DeltaTok, r.DeltaPct)
+}
+
+func overheadBenchCell(r overheadRow) string {
+	if !r.HasBench {
+		return "—"
+	}
+	return fmt.Sprintf("%d", r.BenchP50)
+}
+
+func overheadBenchDeltaCell(r overheadRow) string {
+	if !r.HasBench {
+		return "—"
+	}
+	if r.BenchDelta == 0 {
+		return "0 (fastest)"
+	}
+	return fmt.Sprintf("+%d", r.BenchDelta)
+}
+
+func overheadTTFTCell(r overheadRow) string {
+	if !r.HasTTFT {
+		return "—"
+	}
+	return fmt.Sprintf("%d", r.TTFT)
+}
+
+func overheadTTFTDeltaCell(r overheadRow) string {
+	if !r.HasTTFT {
+		return "—"
+	}
+	if r.TTFTDelta == 0 {
+		return "0 (fastest)"
+	}
+	return fmt.Sprintf("+%d", r.TTFTDelta)
 }
 
 func writePerItemDetail(b *strings.Builder, records []record) {

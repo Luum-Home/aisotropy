@@ -260,19 +260,41 @@ prefix, and Qdrant filters by tenant **during** the HNSW scan (an in-scan payloa
 post-filter would itself be a leak; see `.claude/rules/constitutional-gates.md`). A consumer of
 aisotropy cannot easily forget isolation, because it is the only code path that exists.
 
-For the seven competitor frameworks, the framework has **no concept of a tenant**. The isolation
-that passes this test was written in each ARENA ADAPTER — compound keys hand-concatenated into
-store keys, one collection per scope, by convention. It passes because that adapter code is
-careful, not because the framework guarantees anything. A real team adopting one of those
-frameworks writes and maintains that same code themselves, and any mistake is a cross-tenant leak
-with no framework backstop.
+For the seven competitor frameworks, isolation is not a property of the framework CORE — but the
+honest gradation matters, and an earlier revision of this section overstated it as "no concept of
+a tenant." An ecosystem-level audit (core + extensions + platform offerings, per
+framework) corrected that. Four of them (AI SDK, Pydantic AI, Eino, Genkit-Go) genuinely have no
+framework-owned data plane at all — nothing to scope, so no tenant concept. The others ship a
+*scoping parameter*: LangGraph's `BaseStore` hierarchical namespace tuples, Mastra's
+`(resourceId, threadId)`, Spring AI's required `conversationId`, LlamaIndex's first-party
+documented per-user metadata-filter pattern. A parameter partitions data if the caller passes it
+correctly on every call; nothing in any surveyed OSS core enforces that, and a wrong or defaulted
+value silently reads another scope. Enforcement appears only in commercial/server layers
+(LangGraph Platform's authz handlers, Mastra server's request-context override with documented
+ownership 403s) — a boundary the embedder must adopt and configure, not a property of the
+library. The isolation that passes this arena's test was still written in each ARENA ADAPTER —
+either because the framework offers nothing, or because its native scope has fewer axes than the
+test's `(tenant, user, product)`.
+
+aisotropy's difference, stated precisely, is *where the guarantee lives*: the only storage path
+that exists carries a validated `(tenant, user)` scope (`internal/memory/key.go`), the Qdrant
+filter runs in-scan with a meta-test that fails the build if it is weakened to a post-filter
+(`internal/semantic/isolation_test.go`), and the HTTP edge binds a verified JWT identity to the
+path with must-agree 403 semantics — with the honest caveat that in NoAuth mode, or through the
+library façade (`App.Turn`/`SeedHistory` accept whatever tenant string the embedder passes),
+identity PROVENANCE is the embedder's responsibility there too. The guarantee is "given the
+identity, downstream cannot escape it," not "the identity cannot be wrong."
 
 Eight lockers, all locked when tested. One is a safe whose design does not open without the right
-key; seven are boxes that currently have a padlock someone remembered to put on. Today's test
-cannot tell those apart — both render ✓. The difference only appears when the person assembling
-the system makes a mistake, which is precisely the case a test of correct code never exercises.
-The board's own "Native vs hand-rolled" caveat (rendered above the scoped-memory table,
-`results.go`) records this; this section is the longer form of why it matters when comparing.
+key. Four had no lock of their own — the arena adapter bolted one on. Three came with a latch you
+must remember to fasten on every use (and their vendors sell a doorman for the commercial tier).
+Today's test cannot tell these apart — every row renders ✓. The difference only appears when the
+person assembling the system makes a mistake, which is precisely the case a test of correct code
+never exercises. A "forgetful integrator" negative dimension — write under a scope through the
+framework's own primitive, then read with the scope omitted, and score refuses/leaks/silently-
+partitions deterministically — would turn this distinction into a measured result instead of
+prose; it is designed but not yet implemented. The board's own "Native vs hand-rolled" caveat
+(rendered above the scoped-memory table, `results.go`) is the short form of this section.
 
 ## Cross-links
 
