@@ -130,10 +130,15 @@ curl -s https://pypi.org/pypi/pipecat-ai/json | jq -r '.info | "\(.version) \(.l
 curl -s https://api.github.com/repos/erikgeiser/coninput/license | jq -r .license.spdx_id
 ```
 
-Honest caveat: the crates.io API reports the **latest** published version's license, not the exact
-version the `"0.9"`/`"1"` ranges in `crates/*/Cargo.toml` resolve to. A crate relicensing between
-versions would not be caught by this check alone — for first-party evidence at the resolved
-version, run `cargo fetch && cargo license` inside each crate.
+Resolved-version evidence (2026-07-23, closing the latest-vs-resolved caveat): `cargo fetch` +
+`cargo metadata --offline` in each of the 4 crates confirms the licenses at the **exact resolved
+versions** of the direct deps — candle-core/nn/transformers 0.9.2 (MIT OR Apache-2.0), serde
+1.0.228 / serde_json 1.0.150 (MIT OR Apache-2.0), tokenizers 0.20.4 (Apache-2.0), datafusion
+43.0.0 (Apache-2.0), tokio 1.52.3 (MIT). Reproduce:
+
+```bash
+cd crates/<crate> && cargo fetch -q && cargo metadata --format-version 1 --offline   | jq -r '.packages[] | "\(.name) \(.version): \(.license)"'
+```
 
 ## Enforcement (wired 2026-07-23 — no longer memory-dependent)
 
