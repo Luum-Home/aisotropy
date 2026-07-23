@@ -409,22 +409,51 @@ def _prune_history(history: list) -> list:
     return trimmed
 
 
-def _load_prior_history(session_id: str) -> list | None:
+def _load_prior_history(store_key: str) -> list | None:
     """Load + validate + prune the persisted history, tolerating an unreadable row."""
     from pydantic_ai.messages import ModelMessagesTypeAdapter
 
-    prior_json = load_history_json(session_id)
+    prior_json = load_history_json(store_key)
     if not prior_json:
         return None
     try:
         prior = ModelMessagesTypeAdapter.validate_json(prior_json)
     except Exception as exc:  # noqa: BLE001 - a corrupt row must not fail the turn
         log(
-            f"memory: stored history for session_id={session_id!r} is not valid Pydantic AI "
+            f"memory: stored history for store_key={store_key!r} is not valid Pydantic AI "
             f"message JSON ({type(exc).__name__}: {exc}) -- discarding it and starting fresh"
         )
         return None
     return _prune_history(prior) or None
+
+
+def _memory_store_key(payload: dict, session_id: str) -> str:
+    """Return the persistence key for the `memory` wire mode.
+
+    Plain `memory` (no `user_id`) keys by `session_id` -- unchanged, byte-for-byte.
+
+    The memory-EXTENSION dimensions (`memory_cross_session` etc.) arrive on the
+    wire as an ordinary `memory` turn PLUS the additive `user_id` field, with the
+    runner VARYING `session_id` while HOLDING `user_id` constant across the task's
+    invocations (arenas/live/runner/tasks.go buildMemoryExt). When `user_id` is
+    present this keys by the USER instead, so a recall in a DIFFERENT session for
+    the SAME user replays the persisted transcript.
+
+    HONEST CLASSIFICATION (see README "Memory-extension dimensions"): this is
+    APP-LEVEL transcript replay keyed by user (L1) built on Pydantic AI's OWN
+    native `ModelMessagesTypeAdapter` message-history serialization -- it is NOT
+    the pydantic-ai-harness `Memory` capability (the OFFICIAL-EXTENSION cross-
+    session primitive, which is not installed and not installable offline in this
+    pinned pre-harness adapter), and it is NOT a hand-rolled semantic store. The
+    user-keying itself lives in THIS adapter, not in a Pydantic AI scope
+    primitive -- which is exactly why `isolation_forgetful` is infeasible for this
+    framework (no framework scope to forget; the scope here is adapter glue).
+    """
+    user_id = payload.get("user_id")
+    if user_id:
+        log(f"memory: user_id present -> app-level replay keyed by user (cross-session), user_id={user_id!r}")
+        return f"user:{user_id}"
+    return session_id
 
 
 async def mode_memory(payload: dict) -> dict:
@@ -434,6 +463,7 @@ async def mode_memory(payload: dict) -> dict:
     session_id = payload.get("session_id")
     if not session_id:
         raise ValueError("mode=memory requires payload.session_id")
+    store_key = _memory_store_key(payload, session_id)
     prior_turns, prompt = _split_memory_turn(payload)
     system = payload.get("system") or "You are a helpful assistant with persistent memory across turns."
 
@@ -441,7 +471,7 @@ async def mode_memory(payload: dict) -> dict:
 
     # Persisted (cross-process) history first, then any turns this invocation
     # itself carries ahead of the prompt -- both as native Pydantic AI messages.
-    history = _load_prior_history(session_id) or []
+    history = _load_prior_history(store_key) or []
     if prior_turns:
         log(f"memory: replaying {len(prior_turns)} in-payload turn(s) ahead of this prompt")
         history = history + _payload_history(prior_turns)
@@ -454,11 +484,11 @@ async def mode_memory(payload: dict) -> dict:
     input_tokens, output_tokens = _usage_tokens(result.usage)
 
     # Persist the PRUNED list, not the raw accumulation: the deterministic
-    # session_id means this same row is re-opened on every arena re-run, so an
+    # store_key means this same row is re-opened on every arena re-run, so an
     # unbounded append eventually makes the row (and every recall prompt) grow
     # without limit.
     updated_json = ModelMessagesTypeAdapter.dump_json(_prune_history(result.all_messages()))
-    save_history_json(session_id, updated_json)
+    save_history_json(store_key, updated_json)
 
     out = _base_result("memory", model_name)
     out.update(

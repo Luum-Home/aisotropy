@@ -53,6 +53,76 @@ the image.
 | `memory` | Cross-process chat memory over real rqlite via the `ChatMemoryRepository` SPI. | `RqliteChatMemoryRepository` |
 | `structured` | Schema-constrained, fail-closed structured output. | `BeanOutputConverter` |
 | `stream` | Real token streaming; `ttft_ms` measured; stream usage enabled. | `ChatModel.stream` |
+| `isolation_forgetful` | Omitted-scope read routed through Spring AI's own `ChatMemory` boundary — it REFUSES (throws) on a blank conversationId. | `MessageWindowChatMemory.get` |
+
+## Memory-extension dimensions + tenancy (`memory_cross_session` / `memory_semantic_recall` / `memory_consolidation` / `isolation_forgetful`)
+
+These RUNNER-INTERNAL dimensions (`docs/architecture/arena-memory-extensions.md`,
+`docs/architecture/arena-tenancy-levels.md`) arrive on the wire as ordinary `memory` turns plus the
+additive `user_id` field (and a distinct `isolation_forgetful` recall mode), with the runner VARYING
+`session_id` while HOLDING `user_id` constant. Before wiring, the **capability-absence sweep** was run
+against Spring AI 1.0.0's actual jars — not docs — to avoid both a strawman (understating Spring AI) and a
+faked pass (overstating it). Per-dimension primitive, maturity, version, and verdict:
+
+| Dimension | Spring AI primitive | Maturity | Version | Arena verdict |
+|---|---|---|---|---|
+| `memory_cross_session` | native `ChatMemory` (`ChatMemoryRepository` SPI / `MessageWindowChatMemory`), `CONVERSATION_ID` = user-derived | **NATIVE, single-axis** (one memory key; user mapped onto conversationId) — https://docs.spring.io/spring-ai/reference/api/chat-memory.html | spring-ai 1.0.0 | **real: pending** (mechanism proven offline; scoring needs real rqlite + real model) |
+| `memory_semantic_recall` | — none — | **NONE** (jar-verified) | — | **infeasible: no native semantic-recall chat-memory primitive** |
+| `memory_consolidation` | — none — | **NONE** (jar-verified) | — | **infeasible: no native consolidation primitive** |
+| `isolation_forgetful` | native `ChatMemory.get` refuses a blank `conversationId` | **L1** (loud-refuse, single-axis) — https://docs.spring.io/spring-ai/reference/api/chat-memory.html | spring-ai 1.0.0 | **pending** (refusal proven offline; blocked on a runner signature — below) |
+
+**`memory_cross_session` — NATIVE, single-axis.** Spring AI's `ChatMemory` has exactly ONE key
+(`CONVERSATION_ID`); it has no native second (user/resource) axis. So `Modes.conversationId(ctx)` maps
+`user_id` onto that single axis (`user:<id>`) when present, else keys by `session_id` (plain `memory`,
+byte-for-byte unchanged). A recall in a DIFFERENT `session_id` for the SAME user re-hydrates the persisted
+turns via the native `RqliteChatMemoryRepository` (the `ChatMemoryRepository` SPI). Verified offline that
+persist and recall both key `user:<id>`; `ARENA_STUB`'s per-JVM static map cannot cross the persist→recall
+PROCESS boundary and the stub model cannot echo the recalled fact, so the SCORED cell is `real: pending`,
+stub `infeasible` — same convention as every wired competitor. **This is declared single-axis, honestly:
+user and session collapse onto one conversationId, which is the real shape of Spring AI's memory, not a
+workaround.**
+
+**`memory_semantic_recall` / `memory_consolidation` — infeasible (jar-verified, not a strawman).** Spring
+AI 1.0.0's `org.springframework.ai.chat.memory` package ships **only** `ChatMemory`,
+`MessageWindowChatMemory`, `ChatMemoryRepository`, `InMemoryChatMemoryRepository` — a conversationId-keyed
+**last-N window**, nothing semantic and nothing consolidating (verified by unzipping `spring-ai-model-1.0.0.jar`;
+the chat-memory advisors are only `MessageChatMemoryAdvisor` / `PromptChatMemoryAdvisor`, both last-N). Spring
+AI *does* have `VectorStore` + `QuestionAnswerAdvisor`, but those are **document RAG**, not conversational
+memory recall — bolting the RAG retriever onto conversation turns would score adapter-invented code, not a
+Spring AI memory primitive. So both cells are `infeasible: no native primitive`, the honest label, rather
+than a contrived pass.
+
+**`isolation_forgetful` — REFUSES, and the exact string the runner needs.** Spring AI is **L1** with a
+*loud* failure mode (`docs/architecture/arena-tenancy-levels.md`): `CONVERSATION_ID` is required and
+Spring AI throws if it is omitted. The `isolation_forgetful` recall (`Modes.isolationForgetful`) routes the
+omitted (blank) conversationId through Spring AI's OWN `ChatMemory` boundary —
+`MessageWindowChatMemory.get(conversationId)` — where `Assert.hasText` throws **before any model call**.
+The omission lands at the *framework's* boundary, not adapter glue (fairness). Verified offline
+(`env -u OPENAI_API_KEY ARENA_STUB=1`, mode `isolation_forgetful`, blank `user_id`), the adapter's error
+envelope carries the exact Spring AI message:
+
+```
+conversationId cannot be null or empty
+```
+
+This is a model-independent **refuses → PASS** verdict. But `arenas/live/runner/main.go`'s
+`forgetfulEnforcementSignatures` does not yet recognize it, so the cell currently scores run-and-fail. Held
+at **`pending`** (never a faked `pass`), pending this **runner follow-up** (NOT edited by this adapter — the
+runner is out of scope): add a signature such as
+
+```go
+{name: "spring-ai-conversationid-required", all: []string{"conversationid cannot be null or empty"}},
+```
+
+(matching case-insensitively, all-substrings, exactly like the existing `mastra-scope-required` entry).
+Once that lands, `softenForgetfulRefusal` classifies Spring AI's throw as enforcement=PASS — the L2/L3-ish
+"refuses" behavior it earns. An even more robust signature is `all: []string{"conversationid", "null or empty"}`.
+
+Enforcement nuance, surfaced honestly: Spring AI's conversationId assertion lives in the `ChatMemory`
+FACADE (`MessageWindowChatMemory`), **not** in the `ChatMemoryRepository` SPI that the `memory` handler
+writes through. An integrator who drops to the repository loses even that guarantee — a real L1 property,
+not hidden. The `isolation_forgetful` handler deliberately routes the omission through the enforcing facade,
+which is what a Spring AI user of `ChatMemory` actually gets.
 
 ## Offline stub lane (`ARENA_STUB=1`)
 

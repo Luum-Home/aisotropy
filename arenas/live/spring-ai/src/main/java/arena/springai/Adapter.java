@@ -69,10 +69,12 @@ public final class Adapter {
                 case "rag" -> Modes.rag(ctx, out);
                 case "tools" -> Modes.tools(ctx, out);
                 case "memory" -> Modes.memory(ctx, out);
+                case "isolation_forgetful" -> Modes.isolationForgetful(ctx, out);
                 case "structured" -> Modes.structured(ctx, out);
                 case "stream" -> Modes.stream(ctx, out);
                 default -> throw new IllegalArgumentException(
-                        "unknown mode " + mode + " (want one of: qa, rag, tools, memory, structured, stream)");
+                        "unknown mode " + mode
+                                + " (want one of: qa, rag, tools, memory, isolation_forgetful, structured, stream)");
             }
         } catch (Throwable t) {
             // Any failure becomes an error envelope with tokens -1.

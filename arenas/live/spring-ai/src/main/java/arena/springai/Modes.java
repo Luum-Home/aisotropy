@@ -5,6 +5,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -192,15 +194,44 @@ final class Modes {
     // ---- memory ----
 
     /**
+     * The Spring AI memory KEY (conversationId — its single memory axis).
+     *
+     * <p>Plain {@code memory} (no {@code user_id}) keys by {@code session_id},
+     * unchanged. The memory-EXTENSION dimensions (SPEC.md) carry the additive
+     * {@code user_id} while the runner VARIES {@code session_id}; when
+     * {@code user_id} is present this keys by the USER instead, so a recall in a
+     * DIFFERENT session for the SAME user re-hydrates the persisted turns.
+     *
+     * <p>HONEST LIMITATION (docs/architecture/arena-tenancy-levels.md, Spring AI
+     * = L1, single-axis): Spring AI's {@code ChatMemory} has ONE key
+     * ({@code CONVERSATION_ID}); there is no native second (user) axis, so
+     * user-scoping is MAPPED onto the one conversationId axis here. The plain and
+     * cross-session paths therefore share one axis — a real single-axis property
+     * of the framework, not a workaround.
+     */
+    private static String conversationId(Ctx ctx) {
+        String user = ctx.userId();
+        if (!user.isEmpty()) {
+            return "user:" + user;
+        }
+        return ctx.sessionId();
+    }
+
+    /**
      * Cross-process chat memory via the native Spring AI ChatMemoryRepository
      * SPI ({@link RqliteChatMemoryRepository}) over real networked rqlite: prior
      * turns written by an earlier process are re-hydrated here, and this turn is
      * persisted for a later, separate process to recall.
+     *
+     * <p>Also serves the {@code memory_cross_session} extension dimension: when
+     * the wire carries {@code user_id}, {@link #conversationId(Ctx)} keys by the
+     * user, so a recall in a different {@code session_id} for the same user
+     * replays the persisted turns (single-axis; see that method's note).
      */
     static void memory(Ctx ctx, Map<String, Object> out) {
-        String session = ctx.sessionId();
-        if (session.isEmpty()) {
-            throw new IllegalArgumentException("memory mode: session_id is required");
+        String conversationId = conversationId(ctx);
+        if (conversationId.isEmpty()) {
+            throw new IllegalArgumentException("memory mode: session_id (or user_id) is required");
         }
         List<Map<String, Object>> inbound = ctx.messages();
         if (inbound.isEmpty()) {
@@ -208,8 +239,8 @@ final class Modes {
         }
 
         RqliteChatMemoryRepository repo = new RqliteChatMemoryRepository(ctx.mapper, ctx.rqliteUrl, ctx.stub);
-        List<Message> prior = repo.findByConversationId(session);
-        Adapter.log("PROGRESS: memory: loaded " + prior.size() + " prior turn(s) for session " + session);
+        List<Message> prior = repo.findByConversationId(conversationId);
+        Adapter.log("PROGRESS: memory: loaded " + prior.size() + " prior turn(s) for conversation " + conversationId);
 
         List<Message> inboundMsgs = conversationMessages(ctx);
 
@@ -232,8 +263,70 @@ final class Modes {
         List<Message> toSave = new ArrayList<>(prior);
         toSave.addAll(inboundMsgs);
         toSave.add(new AssistantMessage(reply));
-        repo.saveAll(session, toSave);
-        Adapter.log("PROGRESS: memory: persisted turns to rqlite for session " + session);
+        repo.saveAll(conversationId, toSave);
+        Adapter.log("PROGRESS: memory: persisted turns to rqlite for conversation " + conversationId);
+    }
+
+    /**
+     * The {@code isolation_forgetful} omitted-scope read — the "forgetful
+     * integrator" tenancy probe (docs/architecture/arena-tenancy-levels.md).
+     *
+     * <p>The persist invocation (wire mode {@code memory}, an explicit
+     * {@code user_id}) wrote turns under {@code user:<id>}. THIS invocation is the
+     * recall with the user scope DELIBERATELY OMITTED ({@code user_id} blank).
+     * The omission is forwarded to Spring AI's OWN {@code ChatMemory} boundary —
+     * {@link MessageWindowChatMemory#get(String)} — NOT to adapter glue: Spring AI
+     * enforces a non-empty conversationId with
+     * {@code Assert.hasText(conversationId, "conversationId cannot be null or
+     * empty")} and throws {@link IllegalArgumentException} BEFORE any model call.
+     *
+     * <p>That throw IS the deterministic "refuses" verdict — model-independent and
+     * offline-observable (no agnes call). It propagates to {@code Adapter.main}'s
+     * catch and becomes the error envelope the runner's
+     * {@code softenForgetfulRefusal} classifies as enforcement=PASS ONCE the
+     * runner learns Spring AI's signature (see README "isolation_forgetful" — the
+     * exact string the runner needs; this adapter does NOT edit the runner).
+     *
+     * <p>Note the L1 nuance surfaced honestly: Spring AI's conversationId
+     * enforcement lives in the {@code ChatMemory} FACADE ({@code
+     * MessageWindowChatMemory}), NOT in the {@code ChatMemoryRepository} SPI the
+     * {@code memory} handler writes through — an integrator who drops to the
+     * repository loses even that guarantee. This handler deliberately routes the
+     * omission through the enforcing facade, which is what a Spring AI user of
+     * {@code ChatMemory} actually gets.
+     */
+    static void isolationForgetful(Ctx ctx, Map<String, Object> out) {
+        // Map the OMITTED user scope onto Spring AI's single conversationId axis
+        // WITHOUT a session fallback: the whole point is that the scope (user) was
+        // forgotten, so the blank must reach Spring AI's own API boundary.
+        String user = ctx.userId();
+        String conversationId = user.isEmpty() ? "" : "user:" + user;
+
+        RqliteChatMemoryRepository repo = new RqliteChatMemoryRepository(ctx.mapper, ctx.rqliteUrl, ctx.stub);
+        ChatMemory memory = MessageWindowChatMemory.builder().chatMemoryRepository(repo).build();
+
+        Adapter.log("PROGRESS: isolation_forgetful: omitted-scope read via ChatMemory.get(conversationId="
+                + (conversationId.isEmpty() ? "<blank>" : conversationId) + ")");
+
+        // Spring AI's Assert.hasText throws IllegalArgumentException
+        // ("conversationId cannot be null or empty") here when the scope is blank
+        // — the enforcement (refuses) verdict, before any model call.
+        List<Message> prior = memory.get(conversationId);
+
+        // Reached ONLY if conversationId was non-empty (Spring AI did NOT refuse):
+        // surface whatever that scope returned so the runner can score
+        // silent_partition (empty) or leak (scoped data) — still no model call.
+        StringBuilder sb = new StringBuilder();
+        for (Message m : prior) {
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append(nz(m.getText()));
+        }
+        out.put("reply", sb.toString());
+        out.put("latency_ms", 0L);
+        Adapter.log("PROGRESS: isolation_forgetful: no refusal — returned " + prior.size()
+                + " message(s) for the non-blank conversationId");
     }
 
     // ---- structured ----

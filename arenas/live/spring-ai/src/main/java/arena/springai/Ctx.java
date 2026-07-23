@@ -109,6 +109,17 @@ final class Ctx {
         return Adapter.strOr(in.get("session_id"), "");
     }
 
+    /**
+     * The additive {@code user_id} wire field (SPEC.md, memory-extension
+     * dimensions). Absent on a plain {@code memory} turn; present (and held
+     * constant while {@code session_id} varies) on the cross-session dimensions;
+     * DELIBERATELY BLANK on the {@code isolation_forgetful} omitted-scope read.
+     * Returns "" when absent.
+     */
+    String userId() {
+        return Adapter.strOr(in.get("user_id"), "");
+    }
+
     int topK() {
         Object v = in.get("top_k");
         if (v instanceof Number n && n.intValue() > 0) {

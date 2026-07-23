@@ -198,6 +198,63 @@ persisted history to rqlite for session_id=... (2526 bytes)` — the growing byt
 correctly recalled fact prove the second, independently-started process retrieved state that only
 existed in rqlite, not in any shared memory.
 
+### Memory-extension dimensions (`memory_cross_session` / `memory_semantic_recall` / `memory_consolidation`)
+
+These three RUNNER-INTERNAL dimensions (`docs/architecture/arena-memory-extensions.md`) arrive on the
+wire as an ordinary `memory` turn PLUS one additive `omitempty` field — `user_id` — with the runner
+VARYING `session_id` while HOLDING `user_id` constant across a task's 2–3 invocations. The fairness
+question is: does Pydantic AI have an OFFICIAL primitive for each, or is a "pass" only adapter-authored
+glue? The **capability-absence sweep** (core + official extension + docs) was run before wiring, and the
+honest answers differ by dimension. Where there is no official primitive, the cell is declared
+`infeasible` **with a precise reason** rather than faked with a strawman pass — that honesty is the point.
+
+| Dimension | Pydantic AI primitive | Maturity | Version | Arena verdict |
+|---|---|---|---|---|
+| `memory_cross_session` | native `message_history` + `ModelMessagesTypeAdapter` serialization, keyed by `user_id` at the **application level** (`adapter.py` `_memory_store_key`) | **App-level replay keyed by user (L1)** — the persistence/replay is NATIVE, but the user-keying is adapter convention, NOT a framework scope primitive | pydantic-ai 2.12.0 | **real: pending** (mechanism proven offline; scoring needs real rqlite + real model) |
+| `memory_semantic_recall` | — none — | **NONE** (see below) | — | **infeasible: no official semantic-recall primitive** |
+| `memory_consolidation` | — none — | **NONE** | — | **infeasible: no official consolidation primitive** |
+
+**`memory_cross_session` — the honest primitive, and what it is NOT.** Pydantic AI's OFFICIAL cross-session
+memory is the **pydantic-ai-harness `Memory` capability** (a persistent namespaced notebook —
+OFFICIAL-EXTENSION per `docs/architecture/arena-memory-extensions.md` §1, https://pydantic.dev/docs/ai/harness/).
+That package is **not installed and not installable offline** in this adapter, which is pinned
+**pre-harness** (`requirements.txt`: `pydantic-ai>=2.12.0`; `import pydantic_ai_harness` → `ModuleNotFoundError`,
+verified this session). Rather than hand-roll a semantic store to fake the harness (a strawman in the
+*author's* favour), this adapter wires the framework's **own native** message-history serialization
+(`ModelMessagesTypeAdapter`, the same primitive the `memory` mode uses) keyed by `user_id` — so a recall in
+a DIFFERENT session for the SAME user replays the persisted transcript. This is **app-level transcript
+replay keyed by user (L1)**: legitimate, but it is NOT the harness Memory primitive, and the token table
+will show it pays full-transcript-replay cost, not a retrieval cost. Mechanism proven offline in one process
+(store keys `user:u-42` / `user:u-99`, a `sessB` recall loads the `sessA`-persisted `user:u-42` blob, and a
+different user gets a fresh key — no cross-user bleed); `ARENA_STUB`'s per-process `_stub_history` cannot
+cross the persist→recall PROCESS boundary and `TestModel` cannot echo the recalled fact, so the SCORED cell
+is `real: pending`, stub `infeasible` (same convention as every wired competitor).
+
+**`memory_semantic_recall` — infeasible over a strawman.** Pydantic AI ships **no embedding-backed
+conversational memory**. The harness `Memory` capability's on-demand search mechanism is unconfirmed
+(lexical vs embedding — open question #1 in the memory-extensions doc) and, again, the harness is not
+installable offline. Native `message_history` is *verbatim* transcript replay, not semantic retrieval — the
+`memory_semantic_recall` fixture is deliberately designed (paraphrase needle, zero content-token overlap,
+30–40 turns) to defeat exactly that. Pointing the same replay mechanism at this fixture would either fail or
+pass only by brute-force replaying all ~40 turns for the model to search — which measures **adapter-authored
+brute force, not a Pydantic AI primitive**. So the cell is `infeasible: no official semantic-recall
+primitive`, the same run-and-fail-vs-infeasible rule the doc applies to eino/genkit-go: `infeasible` is for
+"no framework capability to exercise," which is the truthful state here.
+
+**`memory_consolidation` — infeasible.** Neither Pydantic AI core nor the harness ships a
+fact-extraction / background-consolidation memory component (memory-extensions doc §1:
+pydantic-ai consolidation = NONE). A consolidate directive would be a no-op; there is nothing
+framework-owned to exercise → `infeasible: no official consolidation primitive`.
+
+**`isolation_forgetful` — infeasible: no native scope to forget (L0).** Pydantic AI is **L0** for a data
+plane (`docs/architecture/arena-tenancy-levels.md`): `message_history` is a raw parameter with no tenant/user
+scope concept. The `user_id` keying introduced above for `memory_cross_session` lives in **adapter glue**
+(`adapter.py` `_memory_store_key`), NOT at a Pydantic AI API boundary — so omitting it would exercise this
+adapter's own code, not the framework, which is precisely why the arena's fairness rule marks L0 frameworks
+`infeasible` for this dimension (there is no *framework* scope to forget). Marking it `infeasible` — instead
+of contriving an adapter-level "leak" or "refuse" — is the anti-strawman choice: aisotropy's own
+construction-enforced refusal is NOT credited here to a competitor that structurally lacks the concept.
+
 ### `memory_scoped` — hand-rolled COMPOUND-SCOPE isolation (not framework-native)
 
 **Why this mode exists:** the `memory` mode above only ever keys by `session_id`. That proves

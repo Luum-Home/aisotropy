@@ -1,7 +1,7 @@
 {
   "framework": "spring-ai",
   "candidate": true,
-  "_note": "SCAFFOLD (partial). Authored + compiled against Spring AI 1.0.0 GA (mvn package OK, 50MB uber-jar). stub.native is 'pass' for every dimension — actually built and run offline this session (env -u OPENAI_API_KEY ARENA_STUB=1, verified zero-network against bogus unreachable RQLITE/QDRANT/EMBED hosts, valid contract JSON incl. tool-call capture, structured schema validation, stream ttft, rag retrieval). stub.docker and BOTH real cells are 'pending': the real lane cannot be verified (agnes free-tier quota exhausted) and Docker/native-image were not built (no GraalVM installed). wasm is uniformly infeasible (the Spring AI HTTP model client needs host sockets). A follow-up with quota + a built image replaces each pending cell. See README.md 'What remains to verify'.",
+  "_note": "SCAFFOLD (partial). Authored + compiled against Spring AI 1.0.0 GA (mvn package OK, 50MB uber-jar). stub.native is 'pass' for the six base dimensions — actually built and run offline this session (env -u OPENAI_API_KEY ARENA_STUB=1, verified zero-network against bogus unreachable RQLITE/QDRANT/EMBED hosts, valid contract JSON incl. tool-call capture, structured schema validation, stream ttft, rag retrieval). stub.docker and BOTH real cells are 'pending': the real lane cannot be verified (agnes free-tier quota exhausted) and Docker/native-image were not built (no GraalVM installed). wasm is uniformly infeasible (the Spring AI HTTP model client needs host sockets). FASE-3 memory-extension + tenancy wiring added: memory_cross_session uses native ChatMemory keyed by a user-derived conversationId (single-axis, real:pending); memory_semantic_recall + memory_consolidation are infeasible (Spring AI 1.0.0 ships no semantic/consolidation chat-memory primitive — jar-verified); isolation_forgetful REFUSES the omitted conversationId offline (MessageWindowChatMemory throws 'conversationId cannot be null or empty', verified ARENA_STUB) but stays pending until the runner learns that signature. A follow-up with quota + a built image replaces each pending cell. See README.md 'What remains to verify' and 'isolation_forgetful'.",
   "dimensions": {
     "isolation_forgetful": {
       "stub": {
@@ -12,6 +12,43 @@
       "real": {
         "native": "pending",
         "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      },
+      "_verdict_note": "Spring AI is L1 (docs/architecture/arena-tenancy-levels.md). The omitted-scope read routes the blank conversationId through Spring AI's OWN ChatMemory boundary (MessageWindowChatMemory.get), where Assert.hasText throws IllegalArgumentException 'conversationId cannot be null or empty' BEFORE any model call — the model-independent 'refuses' verdict, VERIFIED offline (ARENA_STUB, Modes.isolationForgetful). This EARNS refuses=PASS, but arenas/live/runner/main.go forgetfulEnforcementSignatures does not yet recognize Spring AI's string, so it currently scores run-and-fail. Held at 'pending' (no faked pass) until the runner adds the signature — the exact string is in README 'isolation_forgetful'."
+    },
+    "memory_cross_session": {
+      "stub": {
+        "native": "infeasible:ARENA_STUB backs the ChatMemoryRepository with a PER-JVM static map (RqliteChatMemoryRepository.STUB), so the persist process's user-keyed turns are not visible to a SEPARATE recall process; cross-session recall needs the real cross-process rqlite store + the real model to echo the recalled fact. The native ChatMemory conversationId=user MECHANISM is proven offline (persist+recall both key user:<id>)",
+        "docker": "infeasible:same per-JVM static-map semantics as native — the persist container's user-keyed turns are not visible to a separate recall container without the real rqlite store",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "pending",
+        "docker": "pending",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      }
+    },
+    "memory_semantic_recall": {
+      "stub": {
+        "native": "infeasible:no native semantic-recall chat-memory primitive — Spring AI 1.0.0's chat/memory package ships only ChatMemory / MessageWindowChatMemory / ChatMemoryRepository (conversationId-keyed last-N window; jar-verified spring-ai-model 1.0.0) and NO VectorStore-backed chat-memory advisor (only MessageChatMemoryAdvisor / PromptChatMemoryAdvisor, both last-N). Spring AI's VectorStore + QuestionAnswerAdvisor are DOCUMENT RAG, not conversational memory recall — bolting them onto turns would score adapter-invented code, not a framework memory primitive",
+        "docker": "infeasible:no native semantic-recall chat-memory primitive — see stub.native (jar-verified Spring AI 1.0.0)",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "infeasible:no native semantic-recall chat-memory primitive — Spring AI 1.0.0 has no VectorStore-backed chat memory (jar-verified); exercising this would score adapter-invented QuestionAnswerAdvisor-over-turns, not a framework memory-recall primitive",
+        "docker": "infeasible:no native semantic-recall chat-memory primitive — see real.native",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      }
+    },
+    "memory_consolidation": {
+      "stub": {
+        "native": "infeasible:no native consolidation primitive — Spring AI 1.0.0 ships no fact-extraction / background-consolidation chat-memory component (jar-verified: chat/memory = ChatMemory/MessageWindowChatMemory/ChatMemoryRepository only); a consolidate directive would be a no-op with nothing framework-owned to exercise",
+        "docker": "infeasible:no native consolidation primitive — see stub.native",
+        "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
+      },
+      "real": {
+        "native": "infeasible:no native consolidation primitive — Spring AI 1.0.0 has no fact-extraction/consolidation memory component; the consolidate directive is a no-op with nothing framework-owned to exercise",
+        "docker": "infeasible:no native consolidation primitive — see real.native",
         "wasm": "infeasible:WASI has no sockets — the Spring AI HTTP model client cannot run in a WASI sandbox"
       }
     },

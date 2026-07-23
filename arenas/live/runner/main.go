@@ -871,6 +871,11 @@ var forgetfulEnforcementSignatures = []struct {
 	// omitted (arenas/live/mastra FASE 3) — model-independent enforcement, so it
 	// EARNS the refuses-PASS; without this it would misscore as run-and-fail.
 	{name: "mastra-scope-required", all: []string{"resourceid and a threadid must be provided"}},
+	// Spring AI's MessageWindowChatMemory throws Assert.hasText before any model
+	// call when the conversationId is omitted (arenas/live/spring-ai FASE 3) —
+	// the design predicted spring-ai REFUSES where others silently partition,
+	// confirmed. Without this it would misscore run-and-fail.
+	{name: "spring-conversationid-required", all: []string{"conversationid", "null or empty"}},
 }
 
 // matchForgetfulEnforcementSignature returns the name of the first isolation-
