@@ -16,6 +16,13 @@ revisits: []
 (local OTLP viewer). Product-scoped: everything lands in `internal/` behind the existing
 env-gated seams; nothing changes the public HTTP contract.
 
+**Implementation status (2026-07-24):** Layers 1–2 are implemented and tested
+(`internal/o11y/keys`, `internal/o11y/handler.go`, `internal/api/o11y_bridge.go`).
+Layers 3–4 are implemented: `internal/o11y/roundtripper.go` (HTTP tracing decorator)
+and `internal/o11y/metrics.go` (OTLP-push MeterProvider with RED instruments).
+Layer 4's OTLP logs fan-out and the masking-package unification are the remaining
+follow-ons (ADR-0068 §Masking contract).
+
 ## Context (code-truth: what exists today)
 
 - **Traces**: `internal/llm/otel.go` builds a `TracerProvider` (otlptracehttp, env-gated,
