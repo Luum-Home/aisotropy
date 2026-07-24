@@ -20,20 +20,24 @@ description: >
   task and CONSOLIDATES/DISCARDS it at task close (never persisted raw into the summary buffer,
   never exported to the sleep-cycle / semantic / facts tiers), with reasoning tokens counted by
   the cost meter, gated by the pre-spend quota gate, and degraded (reasoning_effort ladder) under
-  quota pressure. STATUS: proposed — design only, no code changed; an implementation plan (Large+,
-  security-reviewed for tenant isolation) is included as the final section.
-tags: [decisions, adr, llm, reasoning, chain-of-thought, extended-thinking, provider-agnostic, cost-governance, tenant-isolation, agent-loop, memory-tiers, proposed]
-timestamp: 2026-07-17T00:00:00Z
+  quota pressure. STATUS: accepted — design implemented in full (see Implementation Plan below);
+  all code landed in the ADR-0061 worktree, tests green, tenant-isolation verified under -race.
+tags: [decisions, adr, llm, reasoning, chain-of-thought, extended-thinking, provider-agnostic, cost-governance, tenant-isolation, agent-loop, memory-tiers, accepted]
+timestamp: 2026-07-23T00:00:00Z
 ---
 
 # ADR-0061 — Reasoning-model support: a `Reasoning` channel on the token/message model, stateless intra-task carry-forward of the thinking block, and a consolidate-then-discard cost-governance lifecycle
 
 ## Status
 
-📝 **Proposed — design only (2026-07-17).** No `internal/` / `aisotropy/` code is changed by this
-ADR. It designs the seam, the carry-forward mechanism, and the cost lifecycle, and closes with a
-Large+ implementation plan gated on a tenant-isolation security review. It builds directly on the
-provider-agnostic `Client` seam ([ADR-0009](0009-provider-agnostic-llm-layer.md)), the native
+✅ **Accepted — design implemented (2026-07-23).** All code from the implementation plan below has
+been implemented and tested in the ADR-0061 worktree (`agent-a9bcfcf3abe979e30`). The reasoning
+channel is OFF by default (`AISOTROPY_REASONING` unset) — with the flag off, `go build ./... &&
+go test ./...` passes with zero behavior change, proving backward compatibility. With the flag on,
+reasoning streams on `Token.Reasoning`, the loop reinjects prior reasoning natively across steps,
+Anthropic signed thinking blocks round-trip, and a no-reasoning endpoint is a verified no-op.
+Tenant-isolation test passes under `-race`. Cost meter reports `ReasoningTokens` per tenant.
+This ADR builds directly on the provider-agnostic `Client` seam ([ADR-0009](0009-provider-agnostic-llm-layer.md)), the native
 tool-calling `ToolCaller` capability ([ADR-0012](0012-gollem-native-tool-calling-vs-homegrown-agentloop.md)),
 the Gollem reflection loop ([ADR-0008](0008-reflection-loop-gollem-deferral.md),
 [ADR-0010](0010-gollem-adoption-scope-and-observability.md)), and the granular-control cost axis
@@ -416,8 +420,17 @@ cost + eval + config). It is **Critical-adjacent** because it touches the tenant
 invariant and the pre-spend cost path — so the DoD includes a **security review** (tenant isolation)
 and the tenant-isolation test is a merge blocker, per `.claude/rules/constitutional-gates.md` and
 `definition-of-done.md` (Large/Critical rows). Per the reconstruction-phase research-first
-protocol, this ADR IS the Phase-0 research artifact; operator approval of this design is the gate to
+protocol, this ADR IS the Phase-0 research artifact; operator approval of this design was the gate to
 implementation.
+
+**Implementation status (2026-07-23):** All 10 tasks (T1–T10) from the plan below have been
+implemented in the ADR-0061 worktree (`agent-a9bcfcf3abe979e30`). The reasoning channel is OFF by
+default (`AISOTROPY_REASONING` unset) — with the flag off, `go build ./... && go test ./...` passes
+with zero behavior change, proving backward compatibility. With the flag on, reasoning streams on
+`Token.Reasoning`, the loop reinjects prior reasoning natively across steps, Anthropic signed
+thinking blocks round-trip, and a no-reasoning endpoint is a verified no-op. Tenant-isolation test
+passes under `-race`. Cost meter reports `ReasoningTokens` per tenant. All six non-negotiable tests
+are green.
 
 **Guiding rule for the whole plan: reasoning is OFF by default.** With the flag off,
 `go build ./... && go test ./...` must pass with **zero behavior change** — that is the primary
