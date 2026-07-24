@@ -35,7 +35,11 @@ require (
 	modernc.org/sqlite v1.46.1
 )
 
-require github.com/shopspring/decimal v1.3.1 // indirect
+require (
+	github.com/shopspring/decimal v1.3.1 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.44.0 // indirect
+	go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect
+)
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
