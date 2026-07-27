@@ -42,9 +42,19 @@ import (
 // other scorer (.claude/rules/arena-deterministic-judging.md).
 
 // AnchorResult is one anchor item's outcome for one framework under one model.
+//
+// Mode is part of the identity, not decoration. The same task id runs in several
+// modes — qa-01-capital is exercised by `qa`, `structured` AND `stream` — so a
+// key of (framework, task) collapses three independent measurements into
+// whichever arrived last, silently discarding two thirds of the evidence and
+// shrinking the paired-item count toward the refusal floor. Found by running the
+// extractor against a real board and noticing the per-framework counts exceeded
+// the anchor-set size; no unit test would have shown it, because a fixture would
+// have used distinct ids.
 type AnchorResult struct {
 	Model     string
 	Framework string
+	Mode      string
 	TaskID    string
 	Value     float64 // the deterministic scorer's Value for that cell
 }
@@ -54,8 +64,8 @@ type Equating struct {
 	BaselineModel  string
 	CandidateModel string
 
-	// PairedItems is the number of (framework, task) pairs present under BOTH
-	// models. Only paired items can carry information about the shift.
+	// PairedItems is the number of (framework, mode, task) cells present under
+	// BOTH models. Only paired cells can carry information about the shift.
 	PairedItems int
 	// Shift is mean(candidate) - mean(baseline) over paired items. Positive means
 	// the candidate model scored higher on the anchors.
@@ -87,7 +97,7 @@ const maxFrameworkSpread = 0.35
 
 // Equate computes the model effect from anchor results gathered under two models.
 //
-// Deterministic by construction: results are matched on (framework, taskID) and
+// Deterministic by construction: results are matched on (framework, mode, taskID) and
 // every aggregate walks a sorted key list, so the same inputs always produce a
 // byte-identical Equating regardless of input order.
 func Equate(baselineModel, candidateModel string, results []AnchorResult) Equating {
@@ -101,11 +111,11 @@ func Equate(baselineModel, candidateModel string, results []AnchorResult) Equati
 		return eq
 	}
 
-	type key struct{ fw, task string }
+	type key struct{ fw, mode, task string }
 	base := map[key]float64{}
 	cand := map[key]float64{}
 	for _, r := range results {
-		k := key{r.Framework, r.TaskID}
+		k := key{r.Framework, r.Mode, r.TaskID}
 		switch r.Model {
 		case baselineModel:
 			base[k] = r.Value
@@ -125,6 +135,9 @@ func Equate(baselineModel, candidateModel string, results []AnchorResult) Equati
 	sort.Slice(keys, func(i, j int) bool {
 		if keys[i].fw != keys[j].fw {
 			return keys[i].fw < keys[j].fw
+		}
+		if keys[i].mode != keys[j].mode {
+			return keys[i].mode < keys[j].mode
 		}
 		return keys[i].task < keys[j].task
 	})

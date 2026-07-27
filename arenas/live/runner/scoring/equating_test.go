@@ -8,7 +8,7 @@ import (
 func anchors(model, fw string, vals map[string]float64) []AnchorResult {
 	out := make([]AnchorResult, 0, len(vals))
 	for id, v := range vals {
-		out = append(out, AnchorResult{Model: model, Framework: fw, TaskID: id, Value: v})
+		out = append(out, AnchorResult{Model: model, Framework: fw, Mode: "qa", TaskID: id, Value: v})
 	}
 	return out
 }
@@ -17,7 +17,7 @@ func spread(n int, base, delta float64, model, fw string) []AnchorResult {
 	out := make([]AnchorResult, 0, n)
 	for i := 0; i < n; i++ {
 		id := string(rune('a' + i))
-		out = append(out, AnchorResult{Model: model, Framework: fw, TaskID: id, Value: base + delta})
+		out = append(out, AnchorResult{Model: model, Framework: fw, Mode: "qa", TaskID: id, Value: base + delta})
 	}
 	return out
 }
@@ -133,5 +133,31 @@ func TestEquate_SameModelIsNotEquating(t *testing.T) {
 	eq := Equate("m", "m", spread(20, 1.0, 0, "m", "fw"))
 	if eq.Usable {
 		t.Error("equating a model against itself must never be usable")
+	}
+}
+
+// TestEquate_SameTaskDifferentModesAreDistinct pins the defect that a fixture
+// would never have exposed: the arena runs qa-01-capital in `qa`, `structured`
+// AND `stream`, three separate measurements sharing one task id. Keying on
+// (framework, task) collapsed them to one and threw away two thirds of the
+// paired items — pushing a real run toward the "too few anchors" refusal for a
+// reason that had nothing to do with the evidence available.
+func TestEquate_SameTaskDifferentModesAreDistinct(t *testing.T) {
+	var rs []AnchorResult
+	for _, mode := range []string{"qa", "structured", "stream"} {
+		for i := 0; i < 5; i++ {
+			id := string(rune('a' + i))
+			rs = append(rs,
+				AnchorResult{Model: "base", Framework: "fw", Mode: mode, TaskID: id, Value: 1.0},
+				AnchorResult{Model: "cand", Framework: "fw", Mode: mode, TaskID: id, Value: 0.8},
+			)
+		}
+	}
+	eq := Equate("base", "cand", rs)
+	if eq.PairedItems != 15 {
+		t.Fatalf("PairedItems = %d, want 15 (5 ids x 3 modes) — modes are collapsing", eq.PairedItems)
+	}
+	if !eq.Usable {
+		t.Errorf("15 paired items should clear the floor, got: %s", eq.Reason)
 	}
 }

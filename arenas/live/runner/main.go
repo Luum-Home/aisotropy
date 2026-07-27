@@ -206,9 +206,9 @@ func main() {
 		fatal("load matrix.json manifests: %v", err)
 	}
 	logf("matrix manifests: %d found", len(matrixDocs))
-	if cands := candidateFrameworks(matrixDocs); len(cands) > 0 {
-		logf("WARNING: %d WIP candidate adapter(s) excluded from the matrix completeness gate (real lane / build not yet verified — e.g. quota-blocked): %s. Their cells render labeled CANDIDATE, not as passes.",
-			len(cands), strings.Join(cands, ", "))
+	if cands := candidateWarnings(matrixDocs); len(cands) > 0 {
+		logf("WARNING: %d WIP candidate adapter(s) excluded from the matrix completeness gate, each with its OWN declared reason: %s. Their cells render labeled CANDIDATE, never as passes.",
+			len(cands), strings.Join(cands, "; "))
 	}
 	if !*skipMatrixGate {
 		if err := gateMatrices(matrixDocs); err != nil {

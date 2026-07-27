@@ -110,6 +110,19 @@ type matrixDoc struct {
 	// WIP land. Clear the flag once every cell is a real result.
 	Candidate bool `json:"candidate,omitempty"`
 
+	// CandidateReason states WHY this adapter is still a candidate, in its own
+	// words. Required whenever Candidate is true.
+	//
+	// The runner used to print a guessed reason ("real lane / build not yet
+	// verified — e.g. quota-blocked") for every candidate, and the guess was
+	// wrong for the only adapter that carries the flag: spring-ai is a candidate
+	// because its 17 DOCKER cells were never run, which nobody would infer from
+	// a message about quota. A warning that invents its own reason teaches
+	// readers to ignore warnings — and this one is the single line standing
+	// between "these cells are labelled CANDIDATE" and someone reading them as
+	// results.
+	CandidateReason string `json:"candidate_reason,omitempty"`
+
 	sourcePath string // set by loadMatrixDocs, not part of the JSON contract
 }
 
@@ -181,6 +194,32 @@ func candidateFrameworks(docs []matrixDoc) []string {
 		if doc.Candidate {
 			out = append(out, doc.Framework)
 		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// candidateWarnings renders one "framework (declared reason)" line per candidate.
+//
+// Separate from candidateFrameworks on purpose: that one answers "which adapters
+// are exempt" (used by the gate), this one answers "and why, in their own words"
+// (used by the operator-facing warning). Folding the reason into the first would
+// have made a gate's data structure carry presentation — and did, briefly, until
+// its own test caught it.
+func candidateWarnings(docs []matrixDoc) []string {
+	var out []string
+	for _, doc := range docs {
+		if !doc.Candidate {
+			continue
+		}
+		reason := strings.TrimSpace(doc.CandidateReason)
+		if reason == "" {
+			// Never invent one. An unexplained exclusion from the completeness
+			// gate is the no-blank-cells law defeated one level up: the adapter
+			// is exempt and nobody can say from what.
+			reason = "NO candidate_reason DECLARED — add one to " + doc.sourcePath
+		}
+		out = append(out, doc.Framework+" ("+reason+")")
 	}
 	sort.Strings(out)
 	return out

@@ -40,7 +40,7 @@ The last four are RAG questions (`_shared/rag_questions.jsonl`); `h2` and `h4` a
 in on purpose — they are the two every framework failed on the published agnes
 board, so they carry information exactly where the easy items saturate.
 
-**This list is frozen.** `scoring.Equate` pairs results on `(framework, task_id)`
+**This list is frozen.** `scoring.Equate` pairs results on `(framework, mode, task_id)` — mode is part of the identity, since one task id runs in several modes —
 and reports zero paired items if the sets diverge, which is the honest outcome:
 a drifted anchor set measures nothing. Add items only by defining a NEW anchor
 set with its own name; never edit this one in place.
