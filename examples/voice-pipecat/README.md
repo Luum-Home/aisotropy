@@ -64,12 +64,30 @@ export AISOTROPY_TENANT_JWT=$(python3 mint_jwt.py --tenant acme --user alice)
 ### 3. Python environment
 
 ```bash
-# Python <= 3.13 required: the pinned pipecat-ai 0.0.x line depends on numba,
-# which does not build on 3.14 (verified 2026-07-23).
-python3.13 -m venv .venv && . .venv/bin/activate
+# Python >= 3.9, < 3.14: the pinned pipecat-ai 0.0.x line depends on numba,
+# which does not build on 3.14 (verified 2026-07-23). Any interpreter in that
+# range works — 3.11 is what this was last rebuilt with.
+python3.11 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 # macOS: local audio needs portaudio first:  brew install portaudio
 ```
+
+**Check the venv before you use it** — a virtualenv is a machine-local artifact
+that rots silently while the repo stays green:
+
+```bash
+./venv-preflight.sh
+```
+
+On 2026-07-27 this example failed with a bare
+`no such file or directory: .venv/bin/python` because Homebrew had removed
+`python@3.13`, leaving the venv's interpreter a **dangling symlink** — `ls`
+still showed the file. That error names neither the cause nor the fix. The
+preflight does: it distinguishes *missing* / *dangling* / *wrong version* /
+*incomplete install*, prints the exact recreate commands, and treats "skip-lane
+usable but the real lane's packages are absent" as a warning (exit 0) rather
+than a failure, because the offline WER unit tests still run in that state.
+A rotted venv is not a test failure and must not look like one.
 
 ### 4. Kokoro-FastAPI (TTS, separate container)
 
@@ -140,10 +158,12 @@ pytest tests/ -q                            # lane off: 8 passed, 8 skipped
 # The real lane needs: the Kokoro container (step 4 above; image ~several GB,
 # first pull is slow) and the faster-whisper model (base.en, ~74MB,
 # auto-downloads on first run into the HF cache).
-# Canonical invocation — resource-guard + cross-session lock + nice
-# (from the repo root; the lane also self-checks the guard and skips when
-# the machine is saturated, degrading to tiny.en when it is merely tight):
-VOICE_LANE=real scripts/with-heavy-lane.sh pytest examples/voice-pipecat/tests/ -q
+# Canonical invocation — venv preflight, then resource-guard + cross-session
+# lock + nice (from the repo root; the lane also self-checks the guard and skips
+# when the machine is saturated, degrading to tiny.en when it is merely tight):
+examples/voice-pipecat/venv-preflight.sh &&
+  VOICE_LANE=real scripts/with-heavy-lane.sh \
+    examples/voice-pipecat/.venv/bin/python -m pytest examples/voice-pipecat/tests/ -q
 # or directly, from this directory:
 VOICE_LANE=real pytest tests/ -q
 
