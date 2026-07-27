@@ -276,6 +276,11 @@ curl -s localhost:8080/costs           # 503 — default-closed until AISOTROPY_
   child-spans) and Layer 4 (logs over OTLP + metrics) are accepted but **not yet implemented** —
   today a trace shows one or two spans where a request performs a dozen operations, exactly as the
   ADR's own context section says.
+- [ADR-0071](decisions/0071-k8s-deploy-validation-lanes.md) — those same two probes are what the
+  shipped Helm chart and Kustomize manifests wire as liveness/readiness, and
+  `scripts/k8s-chart-guard.sh` asserts it offline in ~1 s across both surfaces (a probe pointing at
+  a path the binary does not serve is a silent outage). Honest boundary in the same ADR: object
+  schemas go unchecked without `kubeconform`, and the real-cluster lane is opt-in and was not run.
 
 ## Stop 11 — The arena: how Aisotropy measures itself against 8 rivals (and where it loses)
 

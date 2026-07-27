@@ -179,6 +179,30 @@ resources:
     cpu: 500m
     memory: 256Mi
 
+# ---------------------------------------------------------------------------
+# Horizontal autoscaling — OFF by default (the minimal path is one pod, and a
+# laptop cluster has nothing to scale onto). When enabled the chart renders an
+# autoscaling/v2 HPA and the Deployment STOPS emitting `replicas`, so the HPA
+# owns the replica count instead of fighting Helm on every upgrade.
+#
+# Requires: (a) resources.requests set — HPA utilisation is a percentage OF THE
+# REQUEST, so the chart hard-fails without one; (b) metrics-server running in
+# the cluster (kind/k3d do NOT ship it by default; k3s does).
+#
+# aisotropyd is stateless in the minimal (in-process, no-persistence) posture,
+# so horizontal scaling is safe there. With persistence.enabled the pods share
+# ONE ReadWriteOnce PVC — do not scale past 1 replica in that shape.
+# ---------------------------------------------------------------------------
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+  # Set to a number to add a memory metric alongside CPU.
+  targetMemoryUtilizationPercentage: null
+  # Optional autoscaling/v2 scaleUp/scaleDown stabilisation policy.
+  behavior: {}
+
 # Pod-level hardening. The Distroless nonroot image already runs as 65532.
 podSecurityContext:
   runAsNonRoot: true

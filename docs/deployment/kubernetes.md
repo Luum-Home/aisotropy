@@ -321,8 +321,79 @@ root filesystem (unlike aisotropyd) because both write working files outside the
 mounted data volume. Combined with tier auth and the NetworkPolicy, the memory
 tiers are reachable only by aisotropyd and only with credentials.
 
+## 6. Validating a change to these manifests
+
+Two lanes, deliberately asymmetric ([ADR-0071](../decisions/0071-k8s-deploy-validation-lanes.md)).
+Almost everything that can be wrong with a Kubernetes manifest is visible in the
+**rendered YAML**, so the lane you run constantly needs no cluster at all.
+
+### The default lane — offline, ~2 seconds
+
+```bash
+scripts/k8s-chart-guard.sh            # add --explain to see every assertion
+```
+
+No cluster, no `docker build`, no network, no image pull. It renders **10 postures**
+— seven `helm template` shapes (minimal, persistence, networked, autoscaling,
+existing-secret, sentinel, prod) and three `kubectl kustomize` shapes (base and both
+overlays) — then runs the **same assertions over both surfaces**, which is what stops
+the hand-maintained chart and Kustomize base from drifting apart:
+
+- liveness → `/healthz`, readiness → `/health`, on a port the container declares
+- no credential-shaped env var carries an inline `value:` (must be `secretKeyRef`)
+- a sentinel secret passed via `auth.jwtSecret` never appears outside a `kind: Secret`
+- `auth.existingSecret` renders **no** Secret of its own; the prod posture templates
+  no Secret and no `CHANGE-ME` placeholder
+- resource requests + memory limits on every container; image tag never `latest`
+- with autoscaling on: exactly one HPA, `scaleTargetRef` matches, Deployment omits
+  `replicas`; with it off: `replicas` set and no HPA
+- pod hardening (`runAsNonRoot`, no privilege escalation, read-only root, `drop: [ALL]`)
+  survives every posture
+- **negative tests**: the chart must *refuse* `allowNoAuth=false` with no JWT verifier,
+  and a sub-32-byte HS256 secret
+
+Exit codes follow the repo guard convention: **0** ok, **1** findings, **2** error.
+
+Anything it cannot evaluate is printed as an explicit `SKIP` and is **never counted as
+a pass** — the guard-family rule that a guard which cannot evaluate must not absolve.
+Object-schema validation is one such skip unless `kubeconform` (or `kubeval`) is
+installed; `brew install kubeconform` activates it with no other change.
+
+### The opt-in lane — a real cluster, off by default
+
+```bash
+AISOTROPY_K8S_CLUSTER_LANE=1 scripts/k8s-cluster-lane.sh          # prints the plan, spends nothing
+AISOTROPY_K8S_CLUSTER_LANE=1 scripts/k8s-cluster-lane.sh --yes    # actually runs
+```
+
+This is the only lane that proves the image **boots**: it creates a throwaway Kind/k3d
+cluster, builds and side-loads the image, installs the chart, curls the real `/healthz`
+and `/health` through a port-forward, and deletes the cluster on exit (`KEEP_CLUSTER=1`
+to keep it). Four gates guard it, each failing safe:
+
+1. `AISOTROPY_K8S_CLUSTER_LANE=1` — unset, it exits 0 immediately, so wiring it into CI
+   or a pre-commit chain costs nothing and starts nothing.
+2. `scripts/resource-guard.sh` — **BLOCKED is a hard refusal with no override**;
+   DEGRADED needs a second explicit opt-in (`AISOTROPY_K8S_CLUSTER_LANE_DEGRADED_OK=1`).
+3. Tool presence (`docker`, `kubectl`, `helm`, `kind`/`k3d`) — each absence is a
+   skip-with-reason, not a failure.
+4. `--yes`. Without it you get the plan and nothing is created. This gate exists because
+   a resource verdict is a *snapshot*: mid-development the guard flipped DEGRADED → OK
+   between two probes and a "this should refuse" test began building a cluster
+   unattended. **Capacity is not permission.**
+
+**Budget before running it.** These are estimates from component defaults, not measured
+by the script: Kind/k3d node ~0.8–1.5 GB resident; `docker build` of the Go binary
+~2–4 GB peak (transient); the aisotropyd pod 256 Mi (chart limit); plus rqlite 256 Mi
+and Qdrant 512 Mi with `TIERS=networked`; plus your container engine's own VM. Rule of
+thumb: don't start it with less than ~4 GB genuinely free. The resulting *image* is
+small (55.7 MB) — it is the build and the node that cost, and the build context is
+currently ~3.5 GB because `.dockerignore` does not exclude the compiled binaries at the
+repo root. The dry-run plan prints the context size before asking for consent.
+
 ### Related docs
 
+- [ADR-0071](../decisions/0071-k8s-deploy-validation-lanes.md) — why the primary lane is offline and deterministic.
 - `docs/deployment/docker-compose.md` — the Docker Compose equivalent.
 - `docs/deployment/distroless.md` — why the image is Distroless + the size/RAM numbers.
 - `.claude/rules/services-config.md` — the full `AISOTROPY_*` env-var contract.

@@ -5,7 +5,11 @@ metadata:
   labels:
     {{- include "aisotropy.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.enabled }}
+  # Omitted when autoscaling.enabled: the HPA owns the replica count, and a
+  # templated `replicas` would reset it to replicaCount on every helm upgrade.
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "aisotropy.selectorLabels" . | nindent 6 }}
