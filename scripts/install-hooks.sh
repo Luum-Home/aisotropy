@@ -8,7 +8,8 @@
 # spending extra paid GitHub Actions minutes on those steps.
 #
 # INSTALLS:
-#   .git/hooks/pre-push   -> scripts/supply-chain-guard.sh    (symlink; runs govulncheck)
+#   .git/hooks/pre-push   -> scripts/pre-push-gate.sh        (symlink; composite:
+#                            govulncheck + the deterministic OWASP LLM/Agentic suite)
 #   .git/hooks/pre-commit -> scripts/license-gate-precommit.sh (symlink; conditional
 #                            license gate — runs license-audit.sh --root-only ONLY when
 #                            the staged changes touch a dependency/image manifest)
@@ -55,8 +56,8 @@ install_hook() {
   echo "               (bypass once with: $bypass)"
 }
 
-install_hook pre-push   "$REPO_ROOT/scripts/supply-chain-guard.sh" \
-  "SKIP_SUPPLY_CHAIN_GUARD=1 git push … or git push --no-verify"
+install_hook pre-push   "$REPO_ROOT/scripts/pre-push-gate.sh" \
+  "SKIP_SUPPLY_CHAIN_GUARD=1 / SKIP_OWASP_SCAN=1 git push … or git push --no-verify"
 install_hook pre-commit "$REPO_ROOT/scripts/license-gate-precommit.sh" \
   "SKIP_LICENSE_AUDIT=1 git commit … or git commit --no-verify"
 exit 0
