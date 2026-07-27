@@ -26,6 +26,33 @@ bench/
 Dockerfile
 .dockerignore
 
+# Locally-built binaries dropped in the repo root by `go build ./cmd/X` without
+# -o. They are gitignored, so they never reach the repo — but `docker build`
+# sends the whole working directory, so without these lines the context carries
+# ~380 MB of stale binaries (measured: aisotropyd 177 MB + bitrate-harness
+# 178 MB + token-economy 26 MB) that the builder re-compiles from source anyway.
+# Mirrors the "Go (producto)" block in .gitignore — keep the two in sync.
+/aisotropyd
+/bitrate-harness
+/skill-import
+/embed-bench
+/token-economy
+/bin/
+*.exe
+*.out
+*.test
+
+# Sibling Go modules and per-language playgrounds. None of them is imported by
+# the aisotropyd binary (each arena adapter and example is its OWN module), yet
+# together they dominate the context: arenas/ ~3.8 GB (node_modules, venvs,
+# per-adapter builds), examples/ ~2.6 GB (each example's own compiled binary),
+# .agent-tooling/ ~8.1 GB (agent checkpoints). Excluding them changes nothing
+# about what the image contains — the builder compiles ./cmd/aisotropyd from
+# the root module only.
+arenas/
+examples/
+test/
+
 # Secrets must never enter the build context — a COPY . . in any builder stage
 # would otherwise bake them into an image layer (recoverable even after a later
 # stage "removes" them). Belt-and-suspenders with the secret-scanning gate in
