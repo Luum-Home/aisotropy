@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
@@ -306,22 +307,81 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 		return "", fmt.Errorf("persona base prompt: %w", err)
 	}
 
+	// PARALLEL MEMORY HYDRATION (ADR-0076). The three memory tiers below are
+	// INDEPENDENT reads of the same (tenant, user, session) — none consumes
+	// another's output — so they run concurrently and hydration costs
+	// max(tier latency) instead of the sum. This is the goroutine-parallel
+	// hydration the aspirational request lifecycle draws
+	// (docs/architecture/request-lifecycle.md); it was sequential until ADR-0076.
+	//
+	// The win is deployment-shaped, not universal — and the honest accounting is
+	// that the in-process case pays a small toll. With the bare-binary defaults
+	// (embedded BadgerDB + SQLite + in-process cosine) every tier is a few
+	// microseconds, so the fan-out costs MORE than it saves
+	// (BenchmarkHydrateSystemPrompt_InProcess: ~3-5us sequential vs ~6-10us
+	// parallel). With the networked tiers the architecture actually targets
+	// (rqlite over HTTP, Qdrant over gRPC) each tier is a round trip and the
+	// saving is the sum of all but the slowest — ~240ms down to ~120ms in
+	// TestHydrateSystemPrompt_TiersRunConcurrently. Single-digit microseconds
+	// against a turn that spends >100ms in the model is not a trade worth
+	// declining, but it is a real cost and ADR-0076 records it rather than
+	// claiming a free win.
+	//
+	// SCHEDULING. Only the tiers actually wired spawn anything, and the LAST
+	// live tier runs INLINE on the caller's goroutine — which would otherwise
+	// just block on Wait. So a lean wiring with a single live tier (ask.go's
+	// semantic-only hydrator, the Bet 6 bpt scorer's working-memory-only one)
+	// spawns ZERO goroutines and costs exactly what it did before ADR-0076;
+	// only a genuinely multi-tier deployment pays for concurrency.
+	//
+	// CONSTITUTIONAL ISOLATION (.claude/rules/constitutional-gates.md). Every
+	// goroutine below inherits the SAME request ctx, which carries exactly ONE
+	// tenant's identity injected at the Huma boundary — no goroutine derives,
+	// widens, or re-scopes it, and none is handed a second tenant's key/scope.
+	// So no code path holds two tenants' data in one goroutine scope; this is
+	// intra-request concurrency over a single tenant, not cross-request fan-in.
+	// Each goroutine writes ONLY its own result slot (disjoint variables, never
+	// a shared map/slice), so the join needs no mutex and the whole block is
+	// race-free by construction rather than by lock discipline.
+	//
+	// DEGRADATION CONTRACT — unchanged, and deliberately so (see
+	// hydration_degradation_test.go, which is the contract): a working-memory
+	// failure stays FATAL and returns the byte-identical wrapped error; a facts
+	// failure stays NON-FATAL (logged, degrades to "no facts"); a semantic
+	// failure degrades inside searchSemanticContext. Error PRECEDENCE is
+	// preserved too — Summary's error still wins over Recent's, because the
+	// working-memory goroutine still runs those two reads in that order and
+	// short-circuits, exactly as the sequential code did. Concurrency changed
+	// WHEN the reads happen, never WHAT a failure means.
+	var (
+		summary   string
+		recent    []memory.Message
+		wmErr     error
+		relevant  []facts.ScoredFact
+		semantics []semantic.ScoredPoint
+	)
+
+	tiers := make([]func(), 0, 3)
+
 	// Working memory (Phase 2): the live session buffer. Optional — a nil wm
 	// yields no summary/recent. The Bet 6 bpt scorer passes nil here on purpose:
 	// it measures CONSOLIDATED memory (facts + semantic) vs the bare base, never
 	// the live buffer, which would still contain the held-out turn being scored
 	// (leakage). Real request handlers always pass a non-nil wm.
-	var summary string
-	var recent []memory.Message
 	if wm != nil {
-		summary, err = wm.Summary(ctx, key)
-		if err != nil {
-			return "", fmt.Errorf("read working-memory summary: %w", err)
-		}
-		recent, err = wm.Recent(ctx, key, recentMessagesWindow)
-		if err != nil {
-			return "", fmt.Errorf("read working-memory recent messages: %w", err)
-		}
+		tiers = append(tiers, func() {
+			s, serr := wm.Summary(ctx, key)
+			if serr != nil {
+				wmErr = fmt.Errorf("read working-memory summary: %w", serr)
+				return
+			}
+			r, rerr := wm.Recent(ctx, key, recentMessagesWindow)
+			if rerr != nil {
+				wmErr = fmt.Errorf("read working-memory recent messages: %w", rerr)
+				return
+			}
+			summary, recent = s, r
+		})
 	}
 
 	// Facts memory (Phase 3): the top engrams for this user whose content
@@ -329,19 +389,52 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 	// Recency). Unlike working memory, a facts retrieval failure is NOT fatal
 	// — facts are an enrichment, not a hard dependency — so it degrades to
 	// "no facts" with a log line rather than failing the request.
-	var relevant []facts.ScoredFact
 	if store != nil {
-		relevant, err = store.Search(ctx, scope, prompt, factsWindow)
-		if err != nil {
-			slog.ErrorContext(ctx, "facts search failed; proceeding without facts", "err", err)
-			relevant = nil
-		}
+		tiers = append(tiers, func() {
+			f, ferr := store.Search(ctx, scope, prompt, factsWindow)
+			if ferr != nil {
+				slog.ErrorContext(ctx, "facts search failed; proceeding without facts", "err", ferr)
+				return
+			}
+			relevant = f
+		})
 	}
 
 	// Semantic memory (Phase 4 + ADR-0019 tenant-shared merge): see
 	// searchSemanticContext's doc for the full rationale (kind filtering,
 	// non-fatal degradation, the tenant-shared merge, optional reranking).
-	semantics := searchSemanticContext(ctx, semStore, embedder, reranker, scope, prompt)
+	// Gated on the same nil check searchSemanticContext makes first, so a
+	// deployment with no vector tier contributes no tier at all.
+	if semStore != nil && embedder != nil {
+		tiers = append(tiers, func() {
+			semantics = searchSemanticContext(ctx, semStore, embedder, reranker, scope, prompt)
+		})
+	}
+
+	// Fan out all but the last live tier; run the last one on THIS goroutine
+	// rather than spawning for it and immediately blocking on Wait. With 0 or 1
+	// live tier that spawns nothing at all — the pre-ADR-0076 cost exactly.
+	if len(tiers) > 0 {
+		var wg sync.WaitGroup
+		for _, tier := range tiers[:len(tiers)-1] {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				tier()
+			}()
+		}
+		tiers[len(tiers)-1]()
+		wg.Wait()
+	}
+
+	// The working-memory failure is raised AFTER the join, not from inside the
+	// tier func: the sibling reads are already in flight and cancelling them
+	// would buy nothing (they are about to return), while joining first keeps
+	// the function free of orphaned goroutines writing into slots whose frame
+	// has returned.
+	if wmErr != nil {
+		return "", wmErr
+	}
 
 	if summary == "" && len(recent) == 0 && len(relevant) == 0 && len(semantics) == 0 {
 		return base, nil

@@ -53,7 +53,7 @@ timestamp: 2026-07-17T00:00:00Z
 > | Memory tiers (sleep-cycle); Telemetry (bitrate) | `sleepcycle-crate-tracked`, `bitrate-crate-tracked`, `rust-workers-not-built-in-ci` |
 > | Memory tiers (networked rqlite/Qdrant lanes) | `manual-tagged-tests-exist`, `no-lane-invokes-manual-tests` |
 > | PDF / HTML ingestion | `ocr-no-ocr-dependency`, `ocr-empty-content-sentinel` |
-> | Request-time behaviour (see `runtime-as-built.md`) | `hydration-sequential`, `reflection-loop-nonstreaming-only` |
+> | Request-time behaviour (see `runtime-as-built.md`) | `hydration-parallel`, `reflection-loop-nonstreaming-only` |
 > | Voice (PoC + test lane) | `pipecat-pinned-pre-1.0` |
 > | OpenAI-compat shim | `shim-never-real-provider` |
 >
@@ -105,14 +105,30 @@ It is a companion to:
 
 ## Known bounded limitations (honest)
 
-- **Graceful-shutdown best-effort window.** `App.Run`'s `server.Shutdown(shutdownCtx)` uses a bounded
-  grace period; the background-worker join (`waitWorkers`) and `WorkingMemory.Close` are correctly
-  ordered after it. But `http.Server` does not cancel in-flight request contexts, so a *pathological*
-  SSE handler still writing to working memory past the grace period could race `BadgerDB.Close()`
-  ("DB Closed"). This is the **same deliberate best-effort posture** documented for workers
-  (`aisotropy/app.go` `waitWorkers` comment), not a latent bug; closing it fully would mean wiring
-  request-context cancellation into shutdown. Verified clean otherwise by the 2026-07-17
-  concurrency/`-race` audit (no other triggerable races beyond the already-fixed worker-join one).
+- **Graceful-shutdown in-flight window — CLOSED ([ADR-0076](../decisions/0076-as-built-deltas-parallel-hydration-shutdown-join.md)).**
+  This row previously read: "`http.Server` does not cancel in-flight request contexts, so a
+  *pathological* SSE handler still writing to working memory past the grace period could race
+  `BadgerDB.Close()`." That was accurate and it is now fixed. `App.Run` gives every request a context
+  it owns (`http.Server.BaseContext`) and counts requests in a `sync.WaitGroup`; after the polite
+  drain expires it **cancels the request contexts and joins the handlers** before `rt.close` touches
+  a store. The join runs on its own `teardownTimeout` budget rather than the drain's leftovers —
+  sharing one deadline meant a drain that used its full grace period left the join with zero time,
+  i.e. the exhausted case that most needs it. Still bounded: a handler that ignores cancellation
+  degrades teardown to best-effort rather than hanging the process, which remains the same posture
+  documented for workers (`aisotropy/app.go` `waitWorkers`). Pinned by
+  `TestRun_ShutdownCancelsAndJoinsInFlightHandlers`, which fails on the pre-fix code. Otherwise
+  verified clean by the 2026-07-17 concurrency/`-race` audit.
+- **Streaming has no fail-closed reflection loop, and will not get one
+  ([ADR-0076](../decisions/0076-as-built-deltas-parallel-hydration-shutdown-join.md)).** Structured
+  output + bounded reflection retries + the 502 fail-closed belong to the non-streaming `chat` route
+  alone. This is a **contract difference, not missing work**: `chat` returns a validated
+  `chatStructuredReply`, `chat/stream` emits raw token deltas, so there is no schema on the streaming
+  route for a reflection loop to enforce and nothing to retry against — and once the first byte ships,
+  the 200 is committed and a retry cannot un-send it. Buffering the whole reply to recover that
+  ability already exists for the *output guardrail*
+  (`AISOTROPY_GUARDRAILS_BLOCK_OUTPUT`, [ADR-0029](../decisions/0029-followons-rs256-streaming-signals-judge.md))
+  at the explicit cost of time-to-first-token — which is the property the streaming route exists to
+  provide. Callers needing schema guarantees should use `chat`.
 
 ## Open decisions (operator's call)
 

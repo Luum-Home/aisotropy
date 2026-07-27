@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,10 +48,24 @@ import (
 // Runtime tuning constants, lifted verbatim from cmd/aisotropyd/main.go so the
 // builder boots a byte-for-byte equivalent runtime. They are internal knobs, not
 // consumer surface.
+// shutdownTimeout bounds how long graceful shutdown waits for in-flight HTTP
+// requests (mainly open SSE streams) to finish on their own before Run cancels
+// their contexts and joins them (ADR-0076). It is a var, not a const, purely so
+// the shutdown tests can shrink the grace period instead of sleeping through it;
+// nothing at runtime writes it. (Same pattern as cmd/bitrate-harness's
+// per-daemon shutdownTimeout field.)
+var shutdownTimeout = 10 * time.Second
+
+// teardownTimeout bounds the SECOND phase of shutdown (ADR-0076): cancelling the
+// in-flight request contexts, joining the handlers, then stopping the workers and
+// closing the stores. It is deliberately a SEPARATE budget from shutdownTimeout,
+// not a remainder of it. Sharing one deadline is what made the window dangerous:
+// a drain that used its whole grace period left the teardown with ZERO time, so
+// the join returned instantly and the stores closed under still-running handlers
+// — the exhausted case is precisely the case that needs the budget most.
+var teardownTimeout = 5 * time.Second
+
 const (
-	// shutdownTimeout bounds how long graceful shutdown waits for in-flight HTTP
-	// requests (mainly open SSE streams) to finish before giving up.
-	shutdownTimeout = 10 * time.Second
 	// outboxPollInterval is how often the consolidation worker checks for pending
 	// outbox events when the queue is empty.
 	outboxPollInterval = 1 * time.Second
@@ -1078,7 +1093,35 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}()
 
+	// GRACEFUL-SHUTDOWN IN-FLIGHT TRACKING (ADR-0076). http.Server.Shutdown waits
+	// for connections to go idle but never cancels an in-flight request's
+	// context, and it gives up at its deadline WITHOUT telling the handler. A
+	// long-lived SSE stream is precisely the handler that outlives that window:
+	// past the deadline Shutdown returned but the handler is still running, so
+	// its next working-memory write could land after rt.close() closed BadgerDB.
+	//
+	// The close is: give every request a context WE own (server.BaseContext
+	// below, so every request ctx descends from inFlightCtx), and after the drain
+	// window cancel it, then JOIN the handlers before closing any store. The join
+	// is the same bounded waitWorkers the background workers already use — a
+	// handler that ignores cancellation degrades teardown to best-effort instead
+	// of hanging it. Cancellation is deliberately NOT wired to Run's ctx: doing
+	// that would kill live requests the instant SIGTERM arrives, which is the
+	// opposite of a graceful drain.
+	var inFlightWG sync.WaitGroup
+	inFlightCtx, cancelInFlight := context.WithCancel(context.Background())
+	defer cancelInFlight()
+
 	router := chi.NewRouter()
+	// Registered FIRST so it is the outermost wrapper: every request, including a
+	// CORS preflight short-circuited below, is counted for the shutdown join.
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			inFlightWG.Add(1)
+			defer inFlightWG.Done()
+			next.ServeHTTP(w, r)
+		})
+	})
 	// Opt-in CORS (AISOTROPY_CORS_ALLOWED_ORIGINS): installed as the OUTERMOST
 	// middleware so a browser preflight (OPTIONS) is answered and short-circuited
 	// here — before the /v1 auth gate and before any route — and so the
@@ -1285,6 +1328,12 @@ func (a *App) Run(ctx context.Context) error {
 	server := &http.Server{
 		Addr:    addr,
 		Handler: router,
+		// Root every request context at a context this process controls, so the
+		// shutdown path can cancel in-flight handlers explicitly (see the
+		// in-flight tracking note above). Without it, net/http roots them at
+		// context.Background() and nothing short of the client hanging up can
+		// cancel a handler that is still streaming.
+		BaseContext: func(net.Listener) context.Context { return inFlightCtx },
 	}
 
 	serverErrCh := make(chan error, 1)
@@ -1318,11 +1367,28 @@ func (a *App) Run(ctx context.Context) error {
 		slog.Error("server shutdown did not complete cleanly", "err", serr)
 	}
 
-	// Stop the workers and close every store/tracer, on the bounded shutdown
-	// deadline. rt.close is the single teardown path (also used by App.Close for a
+	// The polite drain is over: whatever is still running has had the full grace
+	// period. Cancel the request contexts (a handler blocked on the model or
+	// mid-SSE-stream unwinds here) and JOIN the handlers before rt.close touches
+	// a store, so no handler can write to working memory after BadgerDB closed.
+	//
+	// This phase runs on its OWN budget, never the drain's leftovers: a drain that
+	// consumed all of shutdownTimeout would otherwise hand the join an already-
+	// expired context, it would return instantly, and the stores would close under
+	// live handlers — the exact race this closes. Still bounded, so a handler that
+	// ignores cancellation degrades teardown to best-effort rather than hanging
+	// the process.
+	teardownCtx, cancelTeardown := context.WithTimeout(context.Background(), teardownTimeout) //nolint:contextcheck // ctx is already cancelled (shutdown was triggered by ctx.Done()); teardown deliberately gets its own fresh, bounded deadline
+	defer cancelTeardown()
+
+	cancelInFlight()
+	waitWorkers(teardownCtx, &inFlightWG)
+
+	// Stop the workers and close every store/tracer, on the teardown deadline.
+	// rt.close is the single teardown path (also used by App.Close for a
 	// Turn-built runtime); it stops workers before closing the stores they write
 	// to, exactly as before.
-	rt.close(shutdownCtx)
+	rt.close(teardownCtx)
 
 	slog.Info("aisotropyd stopped")
 	return nil

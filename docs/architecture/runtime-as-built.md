@@ -243,8 +243,16 @@ the request 401/403 so the handler is never reached. This is the `chat/stream` h
    persists in any memory tier. A `Suspicious` injection verdict is **annotated + logged** by default
    and only **rejected** (SSE `error`) when `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` is truthy. Logging
    is redaction types/counts + injection signal names only, never raw values.
-4. **System-prompt hydration.** `hydrateSystemPrompt` assembles the system prompt *sequentially* from
-   the **redacted** `forwarded` text:
+4. **System-prompt hydration (PARALLEL since [ADR-0076](../decisions/0076-as-built-deltas-parallel-hydration-shutdown-join.md)).**
+   `hydrateSystemPrompt` assembles the system prompt from the **redacted** `forwarded` text. The
+   persona base prompt is read first (its failure is a hard precondition, so no store is touched when
+   it fails); the three memory tiers below are then read **concurrently** — they are independent
+   reads of one `(tenant, user, session)` and none consumes another's output, so hydration costs
+   max(tier) instead of sum(tier). All but the last live tier are fanned out over goroutines joined
+   by a `sync.WaitGroup`; the last runs inline on the request goroutine, so a wiring with a single
+   live tier spawns nothing. Every goroutine inherits the **same request ctx** (one tenant, injected
+   at the Huma boundary) and writes only its own result slot — race-free by construction, no widened
+   scope. The failure semantics below are unchanged by the concurrency:
    - base prompt from `product_id`;
    - working-memory `Summary(ctx, key)` (condensed buffer) and `Recent(ctx, key, 12)` (last 12
      active messages);
@@ -473,9 +481,13 @@ threaded through the handlers:
   tenant-shared `KindDocument` bucket, and excludes raw `KindTurn` from the primary RAG. Wired on
   **both** chat routes: the streaming path and — since the chat-route parity fix — the non-streaming
   `chat`/`App.Turn` path via `ChatDeps.SemStore/Embedder/Reranker` (historically the non-streaming
-  route passed a nil semantic store and could not semantic-recall). Hydration is still
-  **sequential**, not the goroutine-parallel hydration the aspirational
-  [request lifecycle](request-lifecycle.md) describes. The embedder is BYO: `HashEmbedder` by default
+  route passed a nil semantic store and could not semantic-recall). Hydration is now **goroutine-
+  parallel** across the three tiers ([ADR-0076](../decisions/0076-as-built-deltas-parallel-hydration-shutdown-join.md)),
+  closing the last delta against the aspirational [request lifecycle](request-lifecycle.md) — this
+  bullet previously read "still sequential". The win is deployment-shaped and the ADR records both
+  halves honestly: ~240ms → ~120ms with networked-tier latency, but a few microseconds *slower* with
+  the bare-binary in-process defaults, where the fan-out costs more than the reads.
+  The embedder is BYO: `HashEmbedder` by default
   (wires but does not rank semantically), a real `APIEmbedder` when `AISOTROPY_EMBED_URL` is set.
 - **Both chat routes consolidate; only `chat/agent` does not.** `chat/stream` and `chat` both call
   `AppendWithOutbox` (the non-streaming route since commit `85caf46`), so both feed the outbox →
@@ -521,9 +533,29 @@ threaded through the handlers:
 - **Rate limiting and the cost meter are per-instance.** Both live in-process; there is no
   cross-replica shared quota or accounting. A multi-replica deployment would need to move this state
   to a networked tier.
-- **Reflection/fail-closed applies only to non-streaming chat.** The `chat/stream` path forwards raw
-  tokens with no schema enforcement; the structured-output reflection loop and its 502 fail-closed
-  behavior are the `chat` route's alone.
+- **Graceful shutdown now cancels AND joins in-flight handlers before closing any store
+  ([ADR-0076](../decisions/0076-as-built-deltas-parallel-hydration-shutdown-join.md)).** `App.Run`
+  runs a two-phase teardown: `server.Shutdown(shutdownCtx)` for the polite drain, then — on a
+  **separate** `teardownTimeout` budget, never the drain's leftovers — `cancelInFlight()` +
+  `waitWorkers(teardownCtx, &inFlightWG)` before `rt.close`. Every request context descends from a
+  context the process owns (`http.Server.BaseContext`), because `net/http` itself never cancels an
+  in-flight request on shutdown; a `sync.WaitGroup` middleware registered outermost on the chi router
+  counts requests for the join. This closes the previously documented "pathological SSE handler still
+  writing to working memory past the grace period could race `BadgerDB.Close()`" window. It stays
+  **bounded**: a handler ignoring cancellation degrades teardown to best-effort rather than hanging
+  the process — the same posture the background workers already had.
+- **Reflection/fail-closed applies only to non-streaming chat — deliberately, and permanently
+  ([ADR-0076](../decisions/0076-as-built-deltas-parallel-hydration-shutdown-join.md)).** The
+  `chat/stream` path forwards raw tokens with no schema enforcement; the structured-output reflection
+  loop and its 502 fail-closed behavior are the `chat` route's alone. The **reason**, not just the
+  fact: the two routes have different response *contracts*. `chat` returns a validated
+  `chatStructuredReply`, so `ReflectAuto[T]` has a `T` to enforce and a typing error to retry with;
+  `chat/stream`'s contract IS unstructured token deltas, so there is no schema to violate and nothing
+  to retry against. Even granting a schema, a retry after the first byte cannot un-send a committed
+  200 — and the buffer-then-emit fix for that is already implemented for the *output guardrail*
+  (`AISOTROPY_GUARDRAILS_BLOCK_OUTPUT`, ADR-0029), opt-in precisely because it costs
+  time-to-first-token, the property the streaming route exists for. This asymmetry is registered as a
+  permanent claim (`reflection-loop-nonstreaming-only`), not carried as debt.
 - **Stale wiring note in `working_memory.go`.** Its type doc claims `ChatInput` "currently carries
   only `TenantID`" and that wiring memory into chat needs a contract change first — but the contract
   already carries `tenant_id`/`user_id` path params + `session_id` body, and the streaming path is

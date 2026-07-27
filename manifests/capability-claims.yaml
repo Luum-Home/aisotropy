@@ -219,28 +219,49 @@ claims:
     expect: {op: ge, value: 1}
     evidence: "aisotropy/ingest_file.go"
 
-  - id: hydration-sequential
+  - id: hydration-parallel
     claim: >-
-      System-prompt hydration is SEQUENTIAL, not goroutine-parallel: the body of
-      hydrateSystemPrompt in internal/api/chat_stream.go contains zero `go func`,
-      `errgroup` or `sync.WaitGroup`. The parallel hydration in request-lifecycle.md is
-      still aspirational.
+      CLOSED by ADR-0076 (was `hydration-sequential`). System-prompt hydration IS
+      goroutine-parallel: the body of hydrateSystemPrompt in internal/api/chat_stream.go
+      fans the three independent memory tiers (working memory, facts FTS5, semantic RAG)
+      out over goroutines joined by a sync.WaitGroup, so hydration costs max(tier) rather
+      than sum(tier). The parallel hydration in request-lifecycle.md is no longer
+      aspirational. The last live tier runs inline on the caller's goroutine, so a
+      single-tier wiring still spawns nothing.
     requires: [internal/api/chat_stream.go]
     check: |-
       awk '/func .*hydrateSystemPrompt/,/^}/' internal/api/chat_stream.go | grep -cE 'go func|errgroup|sync\.WaitGroup' || true
-    expect: {op: eq, value: 0}
-    evidence: "internal/api/chat_stream.go:300-425"
+    expect: {op: ge, value: 2}
+    evidence: "internal/api/chat_stream.go hydrateSystemPrompt; TestHydrateSystemPrompt_TiersRunConcurrently (243ms sequential -> 120ms parallel under simulated networked-tier latency)"
+    on_close: >-
+      This claim was INVERTED, not deleted, when ADR-0076 landed: the guard must keep
+      proving the tiers stayed parallel, because a refactor that quietly re-serialises them
+      would otherwise be invisible. If parallel hydration is ever reverted, flip `expect`
+      back to `{op: eq, value: 0}`, restore the `hydration-sequential` id and claim text,
+      and update the corresponding row in the document.
 
   - id: reflection-loop-nonstreaming-only
     claim: >-
       The fail-closed structured-output reflection loop runs on the NON-STREAMING turn
       path only: internal/api/chat_stream.go has zero `Reflect` references. chat/stream
-      and chat/agent have no reflection path.
+      and chat/agent have no reflection path. DELIBERATE, NOT DEBT (ADR-0076): the two
+      routes have different response CONTRACTS — `chat` returns a validated
+      `chatStructuredReply`, `chat/stream` emits raw token deltas, so on the streaming
+      route there is no schema for a reflection loop to enforce and nothing to retry
+      against. This claim is registered as a permanent asymmetry, re-derived from the code
+      so an accidental partial reflection path on the streaming route is still caught.
     requires: [internal/api/chat_stream.go, internal/api/chat.go]
     check: |-
       grep -cE 'Reflect' internal/api/chat_stream.go || true
     expect: {op: eq, value: 0}
-    evidence: "chatReflect declared internal/api/chat.go:314, called once at internal/api/core.go:124"
+    evidence: "chatReflect declared internal/api/chat.go:314, called once at internal/api/core.go:124; rationale in ADR-0076"
+    on_close: >-
+      Do NOT close this by adding reflection to the streaming route without revisiting
+      ADR-0076's rejection rationale: a schema-violation retry after the first byte is
+      un-sendable, and the buffer-then-emit alternative already exists for the output
+      guardrail (AISOTROPY_GUARDRAILS_BLOCK_OUTPUT) at the documented cost of
+      time-to-first-token. If a future ADR does add it, flip `expect` to `{op: ge, value: 1}`
+      and rewrite both this claim and the document row.
 
   - id: pipecat-pinned-pre-1.0
     claim: >-
