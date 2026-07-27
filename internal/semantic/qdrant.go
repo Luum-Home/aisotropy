@@ -111,6 +111,7 @@ const (
 	payloadCitation  = "citation"
 	payloadKind      = "kind"
 	payloadCreatedAt = "created_at"
+	payloadChunkIdx  = "chunk_index"
 )
 
 // scrollLimit bounds how many points a single filtered scroll pass returns,
@@ -150,6 +151,7 @@ func (s *QdrantStore) Upsert(ctx context.Context, sc Scope, points []Point) erro
 				payloadCitation:  qdrant.NewValueString(p.Citation),
 				payloadKind:      qdrant.NewValueString(string(p.Kind)),
 				payloadCreatedAt: qdrant.NewValueInt(createdAt.UnixMilli()),
+				payloadChunkIdx:  qdrant.NewValueInt(int64(p.ChunkIndex)),
 			},
 		})
 	}
@@ -205,14 +207,15 @@ func (s *QdrantStore) Search(ctx context.Context, sc Scope, query []float32, lim
 		payload := r.GetPayload()
 		out = append(out, ScoredPoint{
 			Point: Point{
-				ID:        r.GetId().GetUuid(),
-				TenantID:  payload[payloadTenant].GetStringValue(),
-				UserID:    payload[payloadUser].GetStringValue(),
-				Kind:      Kind(payload[payloadKind].GetStringValue()),
-				Content:   payload[payloadContent].GetStringValue(),
-				Source:    payload[payloadSource].GetStringValue(),
-				Citation:  payload[payloadCitation].GetStringValue(),
-				CreatedAt: time.UnixMilli(payload[payloadCreatedAt].GetIntegerValue()).UTC(),
+				ID:         r.GetId().GetUuid(),
+				TenantID:   payload[payloadTenant].GetStringValue(),
+				UserID:     payload[payloadUser].GetStringValue(),
+				Kind:       Kind(payload[payloadKind].GetStringValue()),
+				Content:    payload[payloadContent].GetStringValue(),
+				Source:     payload[payloadSource].GetStringValue(),
+				Citation:   payload[payloadCitation].GetStringValue(),
+				CreatedAt:  time.UnixMilli(payload[payloadCreatedAt].GetIntegerValue()).UTC(),
+				ChunkIndex: int(payload[payloadChunkIdx].GetIntegerValue()),
 			},
 			Score: r.GetScore(),
 		})

@@ -153,15 +153,16 @@ func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts Chunk
 		}
 		for i, chunk := range chunks {
 			points = append(points, Point{
-				ID:        PointID(sc, KindDocument, fmt.Sprintf("%s#%d", doc.ID, i)),
-				TenantID:  sc.Tenant(),
-				UserID:    sc.User(),
-				Kind:      KindDocument,
-				Content:   chunk,
-				Source:    doc.ID,
-				Citation:  doc.Source,
-				Vector:    vecs[i],
-				CreatedAt: now,
+				ID:         PointID(sc, KindDocument, fmt.Sprintf("%s#%d", doc.ID, i)),
+				TenantID:   sc.Tenant(),
+				UserID:     sc.User(),
+				Kind:       KindDocument,
+				Content:    chunk,
+				ChunkIndex: i,
+				Source:     doc.ID,
+				Citation:   doc.Source,
+				Vector:     vecs[i],
+				CreatedAt:  now,
 			})
 		}
 	}

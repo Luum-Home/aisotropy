@@ -158,6 +158,16 @@ type Point struct {
 	Citation string
 	// Vector is the embedding; its length must equal the store's dimension.
 	Vector []float32
+	// ChunkIndex is this chunk's ZERO-BASED position within its Source document,
+	// set by Ingest when it splits a document. It is what lets a retrieval
+	// window reassemble sibling chunks in READING order instead of score order:
+	// a passage the model can follow, not a bag of fragments (see
+	// internal/api/semantic_window.go). Meaningless — and left 0 — for kinds
+	// that are not chunked from a document (Fact, Turn), and 0 for KindDocument
+	// points written before this field existed, which is safe: index 0 is a
+	// valid position and an all-zero group simply falls back to the previous
+	// tiebreak order.
+	ChunkIndex int
 	// CreatedAt is when this point was written, set by the writer at upsert
 	// time (consolidation for Turn-kind, the engram facade for Fact-kind).
 	// It is the basis of PruneTurns' age-TTL eviction (ADR-0017 phase 3):

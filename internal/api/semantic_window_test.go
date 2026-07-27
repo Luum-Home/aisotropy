@@ -63,11 +63,14 @@ func TestCoalesceSiblings_PullsSameDocumentChunks(t *testing.T) {
 	}
 }
 
-// TestCoalesceSiblings_TopHitUnchanged locks the invariant that makes this safe
-// to enable by default: the best-scoring point stays first, so any metric
-// computed on the top hit (the arena's RAG hit@1) cannot move because of this
-// re-composition.
-func TestCoalesceSiblings_TopHitUnchanged(t *testing.T) {
+// TestCoalesceSiblings_TopDocumentUnchanged locks the invariant that makes this
+// safe to enable by default. Note it is the top DOCUMENT, not the top point:
+// the arena's hit@1 compares topDocID against gold DOC ids (ScoreRAG), and
+// every sibling shares the hit's Source — which is that document id — so
+// reading-order within a document cannot move the metric. Emitting an earlier
+// chunk of the SAME document first is therefore safe; emitting a different
+// document first would not be.
+func TestCoalesceSiblings_TopDocumentUnchanged(t *testing.T) {
 	base := time.Unix(1700000000, 0).UTC()
 	primary := []semantic.ScoredPoint{
 		pt("top", "docA", 0.99, base),
@@ -81,8 +84,8 @@ func TestCoalesceSiblings_TopHitUnchanged(t *testing.T) {
 		if len(got) == 0 {
 			t.Fatalf("limit %d: returned nothing", limit)
 		}
-		if got[0].ID != "top" {
-			t.Errorf("limit %d: top hit moved to %q — hit@1 would change", limit, got[0].ID)
+		if got[0].Source != "docA" {
+			t.Errorf("limit %d: top DOCUMENT moved to %q — hit@1 would change", limit, got[0].Source)
 		}
 	}
 }
@@ -183,5 +186,54 @@ func TestCoalesceSiblings_EmptyAndDegenerate(t *testing.T) {
 	one := []semantic.ScoredPoint{pt("a1", "docA", 0.9, base)}
 	if got := coalesceSiblings(one, one, 0); len(got) != 1 {
 		t.Errorf("limit 0 must return the input untouched rather than an empty window, got %v", ids(got))
+	}
+}
+
+// TestCoalesceSiblings_OrdersByDocumentPosition — siblings must arrive in
+// READING order, not relevance order. A document's own chunks sorted by score
+// produce a shuffled passage: "…and it expires after 60 days." can land before
+// the sentence naming what expires, destroying most of the context the window
+// existed to restore.
+func TestCoalesceSiblings_OrdersByDocumentPosition(t *testing.T) {
+	base := time.Unix(1700000000, 0).UTC()
+	chunk := func(id string, idx int, score float32) semantic.ScoredPoint {
+		p := pt(id, "docA", score, base)
+		p.ChunkIndex = idx
+		return p
+	}
+	// The best-scoring chunk is the LAST one in the document.
+	primary := []semantic.ScoredPoint{chunk("c3", 3, 0.95)}
+	pool := []semantic.ScoredPoint{
+		chunk("c3", 3, 0.95),
+		chunk("c1", 1, 0.70),
+		chunk("c2", 2, 0.80),
+	}
+
+	got := coalesceSiblings(primary, pool, 3)
+	if want := []string{"c1", "c2", "c3"}; !equalIDs(got, want) {
+		t.Errorf("siblings not in document order:\n  got  %v\n  want %v (score order would be c3,c2,c1)", ids(got), want)
+	}
+}
+
+// TestCoalesceSiblings_ZeroChunkIndexFallsBackToStableTiebreak — ChunkIndex is 0
+// for points written before the field existed and for kinds that are not
+// chunked, so a whole group can share index 0. The CreatedAt/ID tiebreak must
+// still make that deterministic.
+func TestCoalesceSiblings_ZeroChunkIndexFallsBackToStableTiebreak(t *testing.T) {
+	base := time.Unix(1700000000, 0).UTC()
+	primary := []semantic.ScoredPoint{pt("a1", "docA", 0.9, base)}
+	pool := []semantic.ScoredPoint{
+		pt("a1", "docA", 0.9, base),
+		pt("a3", "docA", 0.5, base.Add(2*time.Minute)),
+		pt("a2", "docA", 0.5, base.Add(time.Minute)),
+	}
+	first := ids(coalesceSiblings(primary, pool, 3))
+	for i := 0; i < 20; i++ {
+		if got := ids(coalesceSiblings(primary, pool, 3)); len(got) != len(first) || got[0] != first[0] || got[1] != first[1] || got[2] != first[2] {
+			t.Fatalf("legacy zero-index group is non-deterministic: %v then %v", first, got)
+		}
+	}
+	if want := []string{"a1", "a2", "a3"}; !equalIDs(coalesceSiblings(primary, pool, 3), want) {
+		t.Errorf("zero-index tiebreak (CreatedAt asc) not applied: got %v want %v", first, want)
 	}
 }

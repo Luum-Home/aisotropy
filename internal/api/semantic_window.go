@@ -68,15 +68,24 @@ func coalesceSiblings(primary, pool []semantic.ScoredPoint, limit int) []semanti
 		}
 		bySource[p.Source] = append(bySource[p.Source], p)
 	}
-	// Deterministic sibling order: score desc, then CreatedAt, then ID. Without
-	// the tiebreaks, two equally-scoring siblings could swap between runs and
-	// change the assembled prompt — the reproducibility premise the arena's
-	// deterministic scoring depends on.
+	// Sibling order is DOCUMENT order, not score order: chunk 3 then 4 then 5,
+	// the sequence a human would read. Ordering a document's own chunks by
+	// relevance produces a shuffled passage — the model gets "…and it expires
+	// after 60 days." before the sentence naming what expires, which is most of
+	// the context the window was meant to restore. semantic.Point.ChunkIndex is
+	// the zero-based position Ingest stamps when it splits the document.
+	//
+	// Ties fall back to CreatedAt then ID. That path is load-bearing, not
+	// decorative: ChunkIndex is 0 for every point written before the field
+	// existed and for kinds that are not chunked, so a whole group can legitimately
+	// share index 0 — and without a tiebreak, equal keys would let two siblings
+	// swap between runs and change the assembled prompt, breaking the
+	// reproducibility the arena's deterministic scoring rests on.
 	for src := range bySource {
 		sibs := bySource[src]
 		sort.SliceStable(sibs, func(i, j int) bool {
-			if sibs[i].Score != sibs[j].Score {
-				return sibs[i].Score > sibs[j].Score
+			if sibs[i].ChunkIndex != sibs[j].ChunkIndex {
+				return sibs[i].ChunkIndex < sibs[j].ChunkIndex
 			}
 			if !sibs[i].CreatedAt.Equal(sibs[j].CreatedAt) {
 				return sibs[i].CreatedAt.Before(sibs[j].CreatedAt)
@@ -101,23 +110,36 @@ func coalesceSiblings(primary, pool []semantic.ScoredPoint, limit int) []semanti
 		return true
 	}
 
-	// Walk the ranked hits in order. The first emit call is the top hit, so it
-	// stays first — the hit@1 invariant.
+	// Walk the ranked hits in order, emitting each hit's whole DOCUMENT GROUP in
+	// reading order. The group's POSITION is set by its best-ranked member, so
+	// the top-scoring document still comes first; within it, chunks run 1,2,3
+	// even when chunk 3 was the actual hit.
+	//
+	// This moves the top POINT when the best chunk is not the document's first,
+	// and that is safe: the arena's hit@1 is DOCUMENT-level — ScoreRAG compares
+	// topDocID against gold DOC ids (arenas/live/runner/scoring/scoring.go) —
+	// and every sibling shares the hit's Source, which IS that document id. So
+	// the top document is unchanged by construction; only the order of that
+	// document's own chunks changes, from relevance order to reading order.
+	// Emitting the hit first and its context after would hand the model
+	// "…and it expires after 60 days." before the sentence naming what expires.
 	for _, hit := range primary {
 		if len(out) >= limit {
 			break
 		}
-		if !emit(hit) {
-			break
-		}
 		if hit.Source == "" {
+			if !emit(hit) {
+				break
+			}
 			continue
 		}
-		for _, sib := range bySource[hit.Source] {
+		// bySource holds every pool point of this document INCLUDING the hit
+		// (primary is drawn from pool), already sorted into reading order.
+		for _, member := range bySource[hit.Source] {
 			if len(out) >= limit {
 				break
 			}
-			if !emit(sib) {
+			if !emit(member) {
 				break
 			}
 		}
