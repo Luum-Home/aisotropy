@@ -59,9 +59,30 @@ guard decides *whether the machine can do it right now*.
 - **Multi-session convention**: agent sessions wrap full test sweeps, model inference, and
   docker-heavy phases in `with-heavy-lane.sh`. Light commands do not use the wrapper.
 
+## Capacity is not permission (the ADR-0071 incident, and what it changed)
+
+While building the k8s lanes, a test written to prove the gate *refuses* instead sailed through
+and began creating a Kind cluster and a 3.5 GB build: **the guard had flipped DEGRADED → OK
+between two probes minutes apart.** It was stopped and the residue force-cleaned, but the lesson
+is structural, and three things now encode it:
+
+1. **A verdict is a snapshot, so re-take it.** `with-heavy-lane.sh` re-runs the guard **after**
+   acquiring the cross-session lock whenever it waited — the machine handed back by another
+   session is not the machine measured before the wait. (The original script checked only once,
+   before a wait that can last `HEAVY_LANE_WAIT_S`; that was the same latent bug.)
+2. **Declare what you need.** `--need-mb N` makes a lane state its RAM requirement; the guard
+   answers against actually-available memory, not against a mood. "Not saturated" is not
+   "has 4 GB free" — on a small machine a lane can pass a pressure check and still thrash.
+   `with-heavy-lane.sh --need-mb 4000 <cmd>` passes it through.
+3. **Provisioning needs a human, not a metric.** Lanes that create clusters, pull multi-GB
+   images, or build containers require an explicit `--yes` on top of a green guard
+   (`scripts/k8s-cluster-lane.sh`, ADR-0071). No resource verdict, however fresh, authorises
+   them — hence the rule: **capacity is not permission.**
+
 ## Honest boundary
 
-The guard samples at start time; it cannot prevent a run that *becomes* heavy after passing the
-check, and the mkdir mutex only serializes lanes that opt into the wrapper. Thresholds are
-point-in-time calibrations from one machine's incident — tune per host via the
-`RESOURCE_GUARD_*` env overrides if your hardware differs.
+The guard samples at a point in time; it cannot stop a run that *becomes* heavy after passing
+the check (fix #1 narrows the window, it does not close it), and the mkdir mutex only serializes
+lanes that opt into the wrapper. `--need-mb` trusts the caller's estimate — a lane that
+under-declares is not caught. Thresholds are calibrations from one machine's incidents — tune per
+host via the `RESOURCE_GUARD_*` env overrides.

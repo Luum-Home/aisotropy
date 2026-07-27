@@ -32,7 +32,19 @@ LOAD_PER_CORE_DEGRADED="${RESOURCE_GUARD_LOAD_DEGRADED:-1.5}"  # loadavg/core â†
 set -u
 
 explain=false
-[ "${1:-}" = "--explain" ] && explain=true
+need_mb=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --explain) explain=true; shift ;;
+    # --need-mb N: the caller DECLARES how much RAM its lane needs (a docker
+    # build, a kind node, a model load). "Not saturated" is not the same as
+    # "has 4 GB free": on a small machine a lane can pass a pressure check and
+    # still thrash. Declaring the need turns the guard from a mood ring into a
+    # capacity check.
+    --need-mb) need_mb="${2:-0}"; shift 2 || { echo "resource-guard: --need-mb requires a value" >&2; exit 2; } ;;
+    *) echo "resource-guard: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
 
 os="$(uname -s)"
 
@@ -126,6 +138,23 @@ else
     verdict=1; reason="tight"
   fi
   extra="swap ${swap_pct}% (degraded>=${SWAP_PCT_DEGRADED}, blocked>=${SWAP_PCT_BLOCKED})"
+fi
+
+# Declared-need check (independent of the pressure verdict, and stricter).
+# available_mb: what a new process can realistically get. On Darwin the kernel's
+# system-free percentage already folds in reclaimable memory, so use it against
+# physical RAM; elsewhere fall back to the measured free figure.
+if [ "$need_mb" -gt 0 ] 2>/dev/null; then
+  avail_mb="$free_mb"
+  if [ "$os" = "Darwin" ] && [ "${fsp:--1}" -ge 0 ] 2>/dev/null; then
+    phys_mb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 ))
+    [ "$phys_mb" -gt 0 ] && avail_mb=$(( phys_mb * fsp / 100 ))
+  fi
+  if [ "$avail_mb" -lt "$need_mb" ]; then
+    echo "resource-guard: BLOCKED (insufficient) â€” lane declared it needs ${need_mb}MB, ~${avail_mb}MB available" >&2
+    exit 3
+  fi
+  extra="$extra; declared need ${need_mb}MB <= ~${avail_mb}MB available"
 fi
 
 if $explain || [ "$verdict" -ne 0 ]; then

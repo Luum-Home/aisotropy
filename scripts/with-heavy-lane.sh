@@ -23,15 +23,28 @@ LOCK_DIR="${TMPDIR:-/tmp}/aisotropy-heavy-lane.lock"
 WAIT_S="${HEAVY_LANE_WAIT_S:-300}"
 POLL_S=5
 
+NEED_MB=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --need-mb) NEED_MB="${2:-}"; shift 2 || { echo "--need-mb requires a value" >&2; exit 2; } ;;
+    --) shift; break ;;
+    -*) echo "unknown option: $1" >&2; exit 2 ;;
+    *) break ;;
+  esac
+done
+
 if [ $# -eq 0 ]; then
-  echo "usage: $0 <command> [args...]" >&2
+  echo "usage: $0 [--need-mb N] <command> [args...]" >&2
   exit 2
 fi
 
 here="$(cd "$(dirname "$0")" && pwd)"
+guard_args="--explain"
+[ -n "$NEED_MB" ] && guard_args="$guard_args --need-mb $NEED_MB"
 
 # 1) Resource pre-flight (reject before spending).
-"$here/resource-guard.sh" --explain
+# shellcheck disable=SC2086 # guard_args is a controlled, space-separated flag list
+"$here/resource-guard.sh" $guard_args
 guard=$?
 if [ "$guard" -eq 3 ]; then
   echo "with-heavy-lane: BLOCKED by resource-guard — not starting: $*" >&2
@@ -56,6 +69,24 @@ while ! mkdir "$LOCK_DIR" 2>/dev/null; do
 done
 echo "$$" > "$LOCK_DIR/pid"
 trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
+
+# 2b) RE-CHECK after acquiring the lock. The pre-flight verdict above may be
+# minutes old — we may have waited the full HEAVY_LANE_WAIT_S for another
+# session, and the machine it hands back is not the machine we measured. A
+# stale OK is exactly how the ADR-0071 incident happened: the guard flipped
+# between two probes and a lane that should have refused started a Kind
+# cluster and a 3.5 GB build. A resource verdict is a snapshot; re-take it
+# immediately before spending.
+if [ "$waited" -gt 0 ]; then
+  echo "with-heavy-lane: re-checking resources after ${waited}s lock wait (the pre-flight verdict is stale)" >&2
+  # shellcheck disable=SC2086
+  "$here/resource-guard.sh" $guard_args
+  guard=$?
+  if [ "$guard" -eq 3 ]; then
+    echo "with-heavy-lane: BLOCKED on re-check — the machine changed while we waited; not starting: $*" >&2
+    exit 3
+  fi
+fi
 
 # 3) Run degraded-aware: low priority always; capped threads when tight.
 if [ "$guard" -eq 1 ]; then
