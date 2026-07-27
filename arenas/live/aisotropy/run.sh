@@ -28,7 +28,23 @@ fi
 
 # ---- aisotropy REAL backend tiers (all env-configurable; defaults target the
 # local live-arena infra). The Docker runner overrides the hosts with
-# host.docker.internal. Nothing here is a secret. ----
+# host.docker.internal. Nothing here is a secret: the credentials below are the
+# reference stack's local-dev placeholders, identical to the defaults in
+# docker-compose.yml and deploy/rqlite/users.json, and they only ever reach a
+# localhost container. The CHANGE-ME suffix is the contract.
+#
+# The rqlite URL carries BOTH a credential and ?disableClusterDiscovery=true:
+#   - credential — the reference rqlite runs with `-auth`, so an anonymous write
+#     is a 401. This lane defaulted to an anonymous URL long after auth landed,
+#     which made every aisotropy run fail before reaching the model.
+#   - disableClusterDiscovery — gorqlite would otherwise ask the node for peers
+#     and then use the address the node ADVERTISES, which is its container
+#     hostname (compose deliberately omits -http-adv-addr; see the comment
+#     there). That name is DNS-dead on the host where this script runs. A
+#     single-node store has no peers worth discovering.
+# The runner injects the same values (frameworkInfraEnv); these defaults are what
+# make a DIRECT invocation of this script work too — which is how the breakage
+# above was found, one smoke call before a ~1,100-call board. ----
 export AISOTROPY_EMBED_URL="${AISOTROPY_EMBED_URL:-http://127.0.0.1:8899}"
 export AISOTROPY_EMBED_MODEL="${AISOTROPY_EMBED_MODEL:-multilingual-e5-small-query}"
 export AISOTROPY_EMBED_DIM="${AISOTROPY_EMBED_DIM:-384}"
@@ -36,7 +52,8 @@ export QDRANT_HOST="${QDRANT_HOST:-localhost}"
 export QDRANT_PORT="${QDRANT_PORT:-6334}"
 export QDRANT_COLLECTION="${QDRANT_COLLECTION:-aisotropy_arena}"
 export QDRANT_REST_URL="${QDRANT_REST_URL:-http://localhost:6333}"
-export RQLITE_URL="${RQLITE_URL:-http://localhost:4001}"
+export QDRANT_API_KEY="${QDRANT_API_KEY:-local-dev-qdrant-key-CHANGE-ME}"
+export RQLITE_URL="${RQLITE_URL:-http://aisotropy:local-dev-rqlite-pw-CHANGE-ME@localhost:4001/?disableClusterDiscovery=true}"
 # On-disk BadgerDB working memory. STABLE by default so the two `memory`-mode
 # process invocations (same session_id) share the same store and recall works.
 export AISOTROPY_DATA_DIR="${AISOTROPY_DATA_DIR:-${SCRIPT_DIR}/.aisotropy-data}"

@@ -32,8 +32,12 @@ fi
 # overrides QDRANT_COLLECTION/ARENA_COLLECTION per framework; these are only
 # the standalone-run fallbacks.
 export EMBED_URL="${EMBED_URL:-http://127.0.0.1:8899}"
+# The reference stack requires auth on both tiers (rqlite `-auth`, Qdrant
+# QDRANT__SERVICE__API_KEY). These are the same local-dev placeholders the
+# compose file itself defaults to; an anonymous URL here is a guaranteed 401.
 export QDRANT_URL="${QDRANT_URL:-http://localhost:6333}"
-export RQLITE_URL="${RQLITE_URL:-http://localhost:4001}"
+export QDRANT_API_KEY="${QDRANT_API_KEY:-local-dev-qdrant-key-CHANGE-ME}"
+export RQLITE_URL="${RQLITE_URL:-http://aisotropy:local-dev-rqlite-pw-CHANGE-ME@localhost:4001}"
 
 JAR="${SCRIPT_DIR}/target/spring-ai-live-arena.jar"
 

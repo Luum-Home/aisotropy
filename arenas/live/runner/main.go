@@ -550,7 +550,7 @@ func runAdapter(script string, in adapterInput, timeout time.Duration) execResul
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Env = append(os.Environ(), frameworkCollectionEnv(script)...)
+	cmd.Env = adapterEnv(script)
 
 	start := time.Now()
 	runErr := cmd.Run()
@@ -1091,7 +1091,7 @@ func execStdin(script string, stdin []byte, timeout time.Duration) (stdout []byt
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
-	cmd.Env = append(os.Environ(), frameworkCollectionEnv(script)...)
+	cmd.Env = adapterEnv(script)
 
 	err := cmd.Run()
 	exitCode = 0
@@ -1279,6 +1279,71 @@ func frameworkCollectionEnv(script string) []string {
 		"QDRANT_COLLECTION=" + coll,
 		"ARENA_COLLECTION=" + coll,
 	}
+}
+
+// Local-dev credentials for the reference stack, mirroring docker-compose.yml's
+// own defaults (`${QDRANT_API_KEY:-local-dev-qdrant-key-CHANGE-ME}`) and
+// deploy/rqlite/users.json. They are placeholders by construction — the
+// CHANGE-ME suffix is the contract — and they only ever reach a localhost
+// container the operator just started. They are defaults, never overrides: an
+// ambient value always wins (see frameworkInfraEnv).
+const (
+	localDevQdrantAPIKey = "local-dev-qdrant-key-CHANGE-ME"
+	localDevRqliteURL    = "http://aisotropy:local-dev-rqlite-pw-CHANGE-ME@localhost:4001"
+)
+
+// frameworkInfraEnv supplies the credentials every adapter needs to reach the
+// reference stack's rqlite and Qdrant.
+//
+// WHY THIS EXISTS. docker-compose.yml was hardened to require auth on both
+// services (rqlite `-auth`, Qdrant `QDRANT__SERVICE__API_KEY`) AFTER the last
+// board ran. Nothing in the arena lane was updated to match: every run.sh
+// defaulted to a credential-less URL and the runner injected only the
+// collection name. The result was a board that could not have produced a single
+// valid row — rqlite answers 401 to an anonymous write, Qdrant answers
+// Unauthenticated — for aisotropy AND for every competitor using those tiers.
+// Caught pre-flight 2026-07-27 by a one-call smoke test before a ~1,100-call
+// spend; that is the entire argument for smoke-testing before a board.
+//
+// Ambient values WIN. These are appended before os.Environ()'s copy is
+// consulted only in the sense that we skip any key the operator already set:
+// pointing the arena at a different rqlite/Qdrant must never be silently
+// overridden by a localhost default.
+//
+// THE DISCOVERY FLAG (aisotropy only). gorqlite asks the node for its peers and
+// then talks to the address the node ADVERTISES. Our reference rqlite
+// deliberately does not set `-http-adv-addr` (see docker-compose.yml: one
+// advertised address cannot serve both the in-network aisotropyd and host-side
+// clients), so it advertises its container hostname — resolvable inside the
+// compose network, DNS-dead on the host where arena adapters run. A single-node
+// store has no peers worth discovering, so we turn discovery off and let the
+// client use exactly the URL we handed it. Only the aisotropy adapter gets this:
+// it is a gorqlite-specific DSN parameter, and the Java/Node/Python adapters
+// POST to rqlite directly, without discovery or DSN parsing.
+func frameworkInfraEnv(script string) []string {
+	fw := filepath.Base(filepath.Dir(script))
+	var out []string
+
+	if os.Getenv("QDRANT_API_KEY") == "" {
+		out = append(out, "QDRANT_API_KEY="+localDevQdrantAPIKey)
+	}
+	if os.Getenv("RQLITE_URL") == "" {
+		url := localDevRqliteURL
+		if fw == aisotropyFrameworkName {
+			url += "/?disableClusterDiscovery=true"
+		}
+		out = append(out, "RQLITE_URL="+url)
+	}
+	return out
+}
+
+// adapterEnv is the full environment an adapter process is launched with:
+// the parent environment, plus the per-framework Qdrant collection, plus the
+// infra credentials. Both overlays are appended AFTER os.Environ() so they win
+// over inherited values — exec.Cmd uses the LAST value for a duplicated key.
+func adapterEnv(script string) []string {
+	env := append(os.Environ(), frameworkCollectionEnv(script)...)
+	return append(env, frameworkInfraEnv(script)...)
 }
 
 // ---- determinism gate --------------------------------------------------------

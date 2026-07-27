@@ -155,7 +155,7 @@ func coldStart(script string, n int) int64 {
 		var devnull bytes.Buffer
 		cmd.Stdout = &devnull
 		cmd.Stderr = &devnull
-		cmd.Env = append(os.Environ(), frameworkCollectionEnv(script)...)
+		cmd.Env = adapterEnv(script)
 		start := time.Now()
 		_ = cmd.Run() // non-zero exit is expected (parse failure)
 		walls = append(walls, time.Since(start).Milliseconds())
