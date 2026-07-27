@@ -12,6 +12,8 @@
 #   1. supply-chain-guard.sh  — govulncheck reachability (SKIP_SUPPLY_CHAIN_GUARD=1)
 #   2. owasp-llm-scan.sh      — deterministic OWASP LLM+Agentic suite, fully
 #                               offline, zero model calls (SKIP_OWASP_SCAN=1)
+#   3. golden-set gate        — frozen quality baseline, deterministic CodeJudge,
+#                               zero model calls (SKIP_GOLDEN_GATE=1)
 #
 # Enforcement here (local hooks) rather than a CI runner is deliberate: this
 # repo treats local gates as authoritative (the GitHub workflow is .disabled).
@@ -48,6 +50,22 @@ else
     [ "$rc" -eq 0 ] || { echo "pre-push-gate: BLOCKED by owasp-llm-scan (exit $rc)" >&2; exit "$rc"; }
   else
     echo "pre-push-gate: scripts/owasp-llm-scan.sh missing or not executable — skipping stage 2" >&2
+  fi
+fi
+
+# ---- stage 3: frozen golden-set quality baseline ----------------------------
+# Deterministic CodeJudge scoring of a frozen fixture — zero model calls. Catches
+# a silent quality regression (a shifted threshold, a changed normalization)
+# that unit tests on individual primitives would not surface.
+if [ "${SKIP_GOLDEN_GATE:-0}" = "1" ]; then
+  echo "pre-push-gate: stage 3/3 golden-gate SKIPPED (SKIP_GOLDEN_GATE=1)"
+else
+  if command -v go >/dev/null 2>&1; then
+    echo "pre-push-gate: stage 3/3 golden-set quality baseline ..."
+    go test ./internal/eval/ -run 'GoldenGate' -count=1 || rc=$?
+    [ "$rc" -eq 0 ] || { echo "pre-push-gate: BLOCKED by the golden-set gate (exit $rc) — a frozen quality baseline drifted." >&2; exit "$rc"; }
+  else
+    echo "pre-push-gate: 'go' not on PATH — skipping stage 3" >&2
   fi
 fi
 

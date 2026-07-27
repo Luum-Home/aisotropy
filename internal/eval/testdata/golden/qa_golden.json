@@ -1,0 +1,54 @@
+{
+  "name": "qa-golden-v1",
+  "description": "FROZEN QA regression baseline. Each case is scored by an internal/eval deterministic CodeJudge (keyword presence or JSON-validity) on the keyless path — zero model calls, zero network. expected_score is the frozen value the pre-push golden gate asserts; any drift fails the push. Do NOT edit expected_score to make a failing run pass — a change here is a deliberate baseline update.",
+  "cases": [
+    {
+      "name": "keyword-hit",
+      "judge": "keyword",
+      "query": "What is the capital of France?",
+      "response": "The capital of France is Paris.",
+      "required": ["Paris"],
+      "expected_score": 1.0
+    },
+    {
+      "name": "keyword-miss",
+      "judge": "keyword",
+      "query": "What is the capital of France?",
+      "response": "I am not certain about that.",
+      "required": ["Paris"],
+      "expected_score": 0.0
+    },
+    {
+      "name": "keyword-multi-hit",
+      "judge": "keyword",
+      "query": "How does Go handle concurrency?",
+      "response": "Goroutines communicate over channels.",
+      "required": ["goroutines", "channels"],
+      "expected_score": 1.0
+    },
+    {
+      "name": "keyword-multi-partial-miss",
+      "judge": "keyword",
+      "query": "How does Go handle concurrency?",
+      "response": "Goroutines are lightweight threads.",
+      "required": ["goroutines", "channels"],
+      "expected_score": 0.0
+    },
+    {
+      "name": "json-valid",
+      "judge": "json_validity",
+      "query": "Answer strictly as a JSON object.",
+      "response": "{\"answer\":\"Paris\"}",
+      "required": [],
+      "expected_score": 1.0
+    },
+    {
+      "name": "json-invalid",
+      "judge": "json_validity",
+      "query": "Answer strictly as a JSON object.",
+      "response": "answer: Paris",
+      "required": [],
+      "expected_score": 0.0
+    }
+  ]
+}
