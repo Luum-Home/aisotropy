@@ -123,3 +123,9 @@ __pycache__/
 # permanent.
 bench/footprint/*/adk-go-footprint
 bench/footprint/*/*-footprint
+
+# Runner artifacts and local working notes — regenerated or machine-local, and
+# the same "untracked but not ignored" trap as the compiled binaries above: a
+# single `git add -A` before publication would commit them permanently.
+arenas/live/RESULTS.records.jsonl
+CACHE.md
