@@ -51,11 +51,28 @@ buys is now a measured tie at the top of rows 2–4, not a solo win.
 
 ---
 
-## 0.1 Symmetric rigor: aisotropy's OWN reliability on this board (the number we almost did not publish)
+## 0.1 Symmetric rigor: aisotropy's OWN reliability on this board
 
-The board headlines an aggregate — *"765 total runs — 706 scored, 59 errored (7.7%)"*. That figure
-hides the distribution, and the distribution is unflattering to the reference implementation.
-Per framework, computed from the committed board:
+**Read this first, because the number below is easy to misread.** On the `06945bf` board aisotropy
+errored on 24.7% of its runs — and that figure is an artifact of the BENCHMARK HARNESS under
+contention, not a property of the runtime. A targeted diagnostic re-ran aisotropy ALONE across the
+same five modes with `-concurrency 1` and `-retry 0` (so no retry could mask a failure and no other
+adapter competed for the shared stores): **58 runs, ZERO errors** — no 5xx, no structured failure,
+no non-zero exit. If the true per-request failure rate were 24.7%, the odds of 58 consecutive clean
+runs are about **1 in 14 million**.
+
+The mechanism: the board ran nine frameworks concurrently against a SINGLE shared rqlite, Qdrant and
+embedding server, and aisotropy is the only adapter that boots a COMPLETE runtime — every memory
+tier — on each invocation. It is by far the most infrastructure-hungry participant, so it degrades
+first when those stores saturate. The confirmed root of that saturation, a single-worker embedding
+server that serialised every embed across all nine adapters, is fixed (`a9a7261`). Net effect: on
+this axis the board **under-reports** aisotropy relative to its clean-lane behaviour.
+
+**None of which excuses how it was published.** The 24.7% was real and measured, and the board
+surfaced only the aggregate — *"765 total runs — 706 scored, 59 errored (7.7%)"* — which is leniency
+toward ourselves by aggregation, the failure `arena-fairness-protocol.md` §9 exists to prevent,
+applied in the direction that is hardest to notice. The distribution belongs in the open. Per
+framework, computed from the committed board:
 
 | Framework | runs | errored | rate |
 |---|---:|---:|---:|
@@ -81,29 +98,17 @@ benchmark, and the board never said so. That is precisely the asymmetry
 `arena-fairness-protocol.md` §9 exists to prevent, applied in the direction that is easiest to
 miss: being lenient with yourself by aggregating.
 
-### What the errors were, and what a clean-lane re-run showed
+### What the 21 errors actually were
 
-The 21 aisotropy errors were **not** the "shutdown blips" first reported (see the Correction in §1):
-they were **6× HTTP 500** (`/chat/agent`, four on the `(structured)` path) and **3× HTTP 502**
-(`/ask`), plus the memory-mode failures.
+Not the "shutdown blips" first reported (see the Correction in §1): **6× HTTP 500** (`/chat/agent`,
+four of them on the `(structured)` path) and **3× HTTP 502** (`/ask`), plus the memory-mode
+failures. Those are real failures under contention, which is why "make the adapter exit 0" would
+have been the wrong fix — it would have hidden them.
 
-A targeted diagnostic then ran aisotropy ALONE — same modes, `-concurrency 1`, `-retry 0`, so no
-retry could mask a failure and no other adapter competed for the shared stores. Result: **46+ runs,
-ZERO errors of any kind.** If the true per-request failure rate were 24.7%, the chance of 46
-consecutive clean runs is roughly 1 in 600,000.
-
-So the defect is **contention-driven, not intrinsic**: the board ran nine frameworks concurrently
-against a single shared rqlite, Qdrant and embedding server, and aisotropy is the only adapter that
-boots a COMPLETE runtime (all memory tiers) per invocation — it is by far the most
-infrastructure-hungry participant, so it degrades first when those stores saturate. The
-single-worker embed server (since fixed, `a9a7261`) was the confirmed root of that saturation.
-
-**Both halves of this must travel together.** The 24.7% is real and was measured, and publishing
-the aggregate without it was a rigor failure. AND the cause is now identified as an environmental
-one that depressed aisotropy's numbers **below** its own clean-lane behaviour — which means the
-board under-reports aisotropy here, not the reverse. Neither half excuses the other: the honest
-statement is "on that board, under that contention, the reference implementation was the second
-least reliable participant, and here is why."
+**aisotropy and spring-ai account for 48 of the 59 errors (81%), and three competitors ran
+perfectly clean.** Both halves of this section have to travel together: the reference
+implementation was the second least reliable participant on its own benchmark, AND the cause is
+environmental. Neither sentence is publishable without the other.
 
 ---
 
