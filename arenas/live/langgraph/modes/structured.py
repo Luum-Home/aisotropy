@@ -101,10 +101,54 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
                     "parsing_error": "",
                 }
         else:
-            structured_llm = llm.with_structured_output(schema, method="json_schema", include_raw=True)
+            # PROVIDER-ADAPTIVE, deliberately not pinned to one vendor.
+            #
+            # LangChain's method="json_schema" path sends
+            # `response_format.json_schema.strict: false` by default — the value
+            # OpenAI documents as ITS default. poolside's Laguna endpoint
+            # REJECTS exactly that value with HTTP 400 while accepting both
+            # `true` and `null`. Measured 2026-07-27 by capturing the real
+            # outbound body with a forwarding proxy, then bisecting the field:
+            #
+            #     strict: false -> 400     strict: true -> 200     strict: null -> 200
+            #
+            # Nothing else in the payload mattered: every other shape (with and
+            # without `description`, nested schema descriptions,
+            # additionalProperties, streaming, and the /responses endpoint) is
+            # accepted. So this is one boolean, validated backwards by one
+            # provider — and without compensation the arena scores LangChain 0
+            # on `structured` for something LangChain did not do wrong.
+            #
+            # WHY A FALLBACK RATHER THAN strict=True. This repo targets MORE THAN
+            # ONE OpenAI-compatible provider (poolside and Agnes AI today, any
+            # other tomorrow — see docs/architecture/model-provider.md). Hardcoding
+            # the flag would trade a poolside failure for a possible failure
+            # somewhere else, and would silently encode one vendor's quirk as if
+            # it were the protocol. So the framework's OWN default is attempted
+            # first, and only a provider that rejects it gets the second attempt.
+            # On a conformant provider this branch never runs and the behaviour is
+            # byte-identical to before.
+            def _structured(strict: bool | None):
+                kwargs: dict[str, Any] = {"method": "json_schema", "include_raw": True}
+                if strict is not None:
+                    kwargs["strict"] = strict
+                return llm.with_structured_output(schema, **kwargs)
 
             def call_model(_state: StructuredState) -> dict[str, Any]:
-                out = structured_llm.invoke(messages)
+                try:
+                    out = _structured(None).invoke(messages)
+                except Exception as exc:  # noqa: BLE001 - provider shapes vary
+                    text = str(exc)
+                    rejected_by_provider = "response_format" in text and (
+                        "400" in text or "invalid request" in text.lower()
+                    )
+                    if not rejected_by_provider:
+                        raise
+                    common.log(
+                        "structured: provider rejected LangChain's default "
+                        "response_format (strict=false); retrying once with strict=True"
+                    )
+                    out = _structured(True).invoke(messages)
                 raw = out["raw"]
                 parsed = out["parsed"]
                 parsing_error = out["parsing_error"]
