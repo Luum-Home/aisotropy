@@ -242,7 +242,14 @@ func runIsolation(fw adapter, budget *callCounter) isoRecord {
 	if !fileExists(script) {
 		rec.HasScript = false
 		rec.SameScopeHit, rec.CrossTenantMiss, rec.LeakClean = sigUnknown, sigUnknown, sigUnknown
-		rec.Note = "no test-isolation.sh — isolation is enforced by construction in the core runtime, not a hand-rolled arena harness"
+		// This note is rendered for ANY adapter without the script, so it must not
+		// assert a capability on the framework's behalf. It previously read
+		// "isolation is enforced by construction in the core runtime" — text
+		// written for aisotropy that then attached itself to spring-ai, the only
+		// competitor without the script, making an UNEVIDENCED POSITIVE claim
+		// about someone else's product (and one contradicted by our own
+		// docs/architecture/arena-tenancy-levels.md, which grades Spring AI L1).
+		rec.Note = "n/a — this adapter ships no test-isolation.sh, so the compound (tenant,user,product) probe was not run for it. This is a missing measurement, NOT a statement about the framework's isolation; see docs/architecture/arena-tenancy-levels.md for its L0-L3 placement"
 		return rec
 	}
 	rec.HasScript = true

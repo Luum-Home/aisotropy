@@ -1326,12 +1326,21 @@ func writeNotes(b *strings.Builder, rep reportData) {
 	b.WriteString("  memory-mode token spend is the sum across the persist+recall invocations — a real cost,\n")
 	b.WriteString("  and exactly the architectural trade-off this arena exists to surface.\n")
 	if len(rep.IsoRecords) > 0 {
-		b.WriteString("- **Scoped memory: native vs hand-rolled.** aisotropy's tenant isolation is enforced by\n")
-		b.WriteString("  construction in the core runtime (`context.Context`-only `tenant_id` propagation +\n")
-		b.WriteString("  payload-filtered HNSW scan — a constitutional gate), so it ships no arena isolation\n")
-		b.WriteString("  harness; every other framework has no native multi-tenant primitive and hand-rolls a\n")
-		b.WriteString("  compound scope key, which `test-isolation.sh` exercises. A blank aisotropy row is by\n")
-		b.WriteString("  design, not a gap. Each row is the adapter's OWN deterministic script, never faked.\n")
+		// The previous text here made the exact blanket-absence claim
+		// .claude/rules/capability-absence-claims.md exists to prevent ("every
+		// other framework has no native multi-tenant primitive"), refuted by this
+		// repo's own arena-tenancy-levels.md, and additionally claimed a "blank
+		// aisotropy row" that the table right above it does not have.
+		b.WriteString("- **Scoped memory: what each framework actually offers.** Four adapters (ai-sdk,\n")
+		b.WriteString("  pydantic-ai, eino, genkit-go) are **L0** — no framework-owned data plane to scope.\n")
+		b.WriteString("  Four ship an **L1** scoping parameter (langgraph `BaseStore` namespaces, mastra\n")
+		b.WriteString("  resource/thread, llamaindex `MetadataFilters`, spring-ai `conversationId`) that\n")
+		b.WriteString("  partitions correctly only if passed on every call. No surveyed OSS core reaches\n")
+		b.WriteString("  L2/L3. The compound (tenant,user,product) key this table exercises has more axes\n")
+		b.WriteString("  than any native primitive, so every adapter — aisotropy included — drives it\n")
+		b.WriteString("  through its OWN deterministic `test-isolation.sh`, never faked. aisotropy's own\n")
+		b.WriteString("  L0-L3 placement (L3 storage / L2 edge / L1 under NoAuth) is stated at equal\n")
+		b.WriteString("  volume in docs/architecture/arena-tenancy-levels.md.\n")
 	}
 	if len(rep.CrashRecs) > 0 {
 		b.WriteString("- **Crash recovery: no native support anywhere.** No framework here has native\n")

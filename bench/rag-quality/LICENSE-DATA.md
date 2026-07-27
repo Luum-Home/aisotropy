@@ -16,10 +16,17 @@ benchmark, produced by `scripts/fetch_xquad.py`.
 
 The stack's constitutional license gate (`.claude/rules/constitutional-gates.md`,
 `license-policy.md`) **blocks copyleft/source-available _software_ licenses**
-(AGPL, SSPL, BSL). CC-BY-SA-4.0 is **not** one of those: it is a permissive
-Creative Commons *content* license that grants unrestricted use, including
-commercial and SaaS use, provided attribution is preserved and redistributed
-derivatives carry the same license. This file is:
+(AGPL, SSPL, BSL). CC-BY-SA-4.0 is **not** one of those — it is a *content*
+license, not a software license, so the software gate does not reach it.
+
+But it is **NOT permissive**: CC-BY-SA-4.0 is a **share-alike (copyleft) content
+license**. It permits commercial and SaaS use, but it *requires* attribution AND
+that redistributed adaptations carry the same license. An earlier revision of
+this file called it "permissive" and said it "grants unrestricted use" — both
+wrong, and dangerous in a way the compliant handling below masks: a future
+maintainer reading that sentence could treat any other CC-BY-SA dataset as
+drop-in, which it is not. The handling was always correct; only this rationale
+was. This file is:
 
 1. **Attributed** — provenance and authorship are recorded here and inline in
    the JSON (`source`, `license`, `attribution` fields).
