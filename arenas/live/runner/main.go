@@ -271,7 +271,7 @@ func main() {
 	// ---- pass 1: correctness/quality (native) ------------------------------
 	var records []record
 	if !*skipCorrect {
-		records = runCorrectnessPass(frameworks, modes, tasks, rag, *maxTasks, judge, callBudget, *concurrency, *retry, resume.present, durLog, lane)
+		records = runCorrectnessPass(frameworks, modes, tasks, rag, *maxTasks, judge, callBudget, *concurrency, *retry, resume.present, durLog, lane, declaredInfeasible(matrixDocs))
 		// Fold any resumed correctness records back in, then re-sort so the
 		// per-item detail table is stable across resume boundaries. Only taken
 		// under -resume (with no prior file, resume.records is empty and this is
@@ -362,7 +362,10 @@ func main() {
 // particular the per-item detail table, which walks the slice directly) stays
 // deterministic regardless of goroutine completion order. concurrency=1
 // reproduces the exact old sequential loop and ordering.
-func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag []ragQuestion, maxTasks int, judge *judgeClient, budget *callCounter, concurrency int, retries int, resume map[string]bool, durLog *durableLog, lane string) []record {
+func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag []ragQuestion, maxTasks int, judge *judgeClient, budget *callCounter, concurrency int, retries int, resume map[string]bool, durLog *durableLog, lane string,
+	// infeasibleModes: framework -> mode -> reason, from the matrix.json
+	// manifests. A mode listed here is never built for that framework.
+	infeasibleModes map[string]map[string]string) []record {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -383,6 +386,18 @@ func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag 
 
 			var local []record
 			for _, mode := range modes {
+				// Honour the manifest BEFORE spending anything. A dimension the
+				// adapter's matrix.json declares infeasible in every cell is not
+				// built, not dispatched, and not recorded as an error — the
+				// declaration IS the result, which is what the no-blank-cells law
+				// asks for. Without this the adapter dies with `unknown mode` and
+				// the report shows an errored cell for a framework that never
+				// claimed to support the dimension.
+				if reason, ok := infeasibleModes[fw.name][mode]; ok {
+					logf("[correctness] %s/%s SKIPPED — declared infeasible in matrix.json: %s",
+						fw.name, mode, reason)
+					continue
+				}
 				items := buildWork(fw.name, mode, tasks, rag, maxTasks)
 				for _, it := range items {
 					// Resume-skip (ADR-0064 Layer 1): a cell already durable in

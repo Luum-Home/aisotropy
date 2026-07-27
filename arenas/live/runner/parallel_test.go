@@ -91,7 +91,7 @@ func TestRunCorrectnessPass_ConcurrentNoRace(t *testing.T) {
 	modes := []string{"qa", "tools"}
 	budget := &callCounter{}
 
-	records := runCorrectnessPass(frameworks, modes, tasks, nil, 0, judge, budget, concurrency, 0, nil, nil, "real")
+	records := runCorrectnessPass(frameworks, modes, tasks, nil, 0, judge, budget, concurrency, 0, nil, nil, "real", nil)
 
 	// qa: 3 items * (1 runWorkItem call + 1 judge call) = 6 calls, 3 records.
 	// tools: the built-in arithmeticTasks set * 1 runWorkItem call each.
@@ -139,7 +139,7 @@ func TestRunCorrectnessPass_ConcurrencyOneIsSequential(t *testing.T) {
 
 	// judge=nil (skip-judge path) keeps this test focused on ordering/budget,
 	// mirroring a `-skip-judge` sequential run.
-	records := runCorrectnessPass(frameworks, modes, tasks, nil, 0, nil, budget, 1, 0, nil, nil, "real")
+	records := runCorrectnessPass(frameworks, modes, tasks, nil, 0, nil, budget, 1, 0, nil, nil, "real", nil)
 
 	// Built from arithmeticTasks so the hard-tier tools additions extend the
 	// expected order automatically — the property under test is the ORDER

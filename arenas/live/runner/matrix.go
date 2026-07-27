@@ -313,3 +313,73 @@ func writeMatrixSection(b *strings.Builder, rep reportData) {
 		b.WriteString("\n")
 	}
 }
+
+// ---- declared-infeasible lookup ----------------------------------------------
+
+// declaredInfeasible maps framework -> dimension -> reason for every dimension a
+// manifest declares INFEASIBLE in all of its declared cells.
+//
+// WHY THE RUNNER MUST CONSULT THIS BEFORE BUILDING WORK. The correctness pass
+// used to build every mode for every framework and let the adapter sort it out.
+// For a mode an adapter does not implement, the adapter exits non-zero with
+// `unknown mode "isolation_forgetful"`, which the runner records as an ERRORED
+// cell — indistinguishable, in the report, from an adapter that tried and broke.
+// Observed on the 2026-07-27 board: 4 such cells across eino and genkit-go
+// (ai-sdk too, once its manifest is filled), inflating the error rate with
+// something that is not a failure at all.
+//
+// That is precisely the blank the no-blank-cells law exists to prevent, arriving
+// through the back door: the manifests already SAID these cells were infeasible,
+// with a reason, and the runner ignored them and generated an error instead. A
+// declaration nobody reads is not a declaration.
+//
+// The three frameworks in question are infeasible for the same, code-verified
+// reason, not for lack of adapter work: `isolation_forgetful` omits the user
+// scope at the FRAMEWORK's own API boundary to see whether the framework
+// enforces it. Where the scope is hand-rolled adapter glue — eino
+// (mode_scoped_memory.go: "Eino has NO native multi-tenant memory isolation
+// primitive"), genkit-go (rqlite_client.go: "Genkit-Go has NO native
+// multi-tenant memory-isolation primitive"), ai-sdk (index.mjs: "HAND-ROLLED
+// compound scope") — there is no framework boundary to omit anything at, and a
+// blank user id merely misses OUR OWN lookup. Running it would measure the
+// adapter and report it as the framework. Pydantic AI already declared exactly
+// this; the other three simply had not.
+//
+// Conservative by construction: a dimension counts as infeasible only when every
+// declared cell says so. One `pass`/`fail`/`pending` cell anywhere in that
+// dimension means the work still gets built.
+func declaredInfeasible(docs []matrixDoc) map[string]map[string]string {
+	out := make(map[string]map[string]string, len(docs))
+	for _, doc := range docs {
+		for dim, lanes := range doc.Dimensions {
+			reason, all := "", true
+			seen := 0
+			for _, l := range lanes.lanes() {
+				for _, c := range l.forms.cells() {
+					if c.status == "" {
+						continue
+					}
+					seen++
+					r, ok := infeasibleReason(c.status)
+					if !ok {
+						all = false
+						break
+					}
+					if reason == "" {
+						reason = r
+					}
+				}
+				if !all {
+					break
+				}
+			}
+			if all && seen > 0 {
+				if out[doc.Framework] == nil {
+					out[doc.Framework] = map[string]string{}
+				}
+				out[doc.Framework][dim] = reason
+			}
+		}
+	}
+	return out
+}
