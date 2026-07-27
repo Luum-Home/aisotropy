@@ -938,9 +938,21 @@ func isRateLimited(res execResult) bool {
 // because the pass runs frameworks concurrently.
 var quotaTripped atomic.Bool
 
-// quotaExhaustedMarkers match a provider saying the ACCOUNT'S BUDGET IS GONE, as
-// opposed to "you are going too fast". The distinction is everything: a rate
-// limit clears if you wait, a quota does not clear for the rest of the run.
+// quotaExhaustedMarkers match a provider reporting a SPENT BUDGET, as opposed to
+// "you are going too fast".
+//
+// The honest form of the distinction — and it took two providers to get it
+// right. Both answer 429. The observable difference is whether the limit CLEARS:
+// poolside's "usage limit exceeded" did not, across 170 consecutive cells and
+// still an hour later; Agnes's "rate limit for free users" cleared in seconds and
+// a board can simply be paced under it. Whether poolside's was a spent budget or
+// a long-window throttle is not knowable from outside, and does not matter here:
+// a limit that does not clear within the run invalidates the run either way,
+// because the cells that fail are the ones scheduled last.
+//
+// So this list matches the wording providers use for a SPENT allowance, and the
+// abort claims only what was observed — a limit that did not clear — never that
+// the account is permanently out.
 var quotaExhaustedMarkers = []string{
 	"usage limit exceeded", "quota exceeded", "insufficient_quota",
 	"credit balance", "billing hard limit",
@@ -962,10 +974,14 @@ var quotaExhaustedMarkers = []string{
 // framework that happened to run second at 99% and the one that ran last at
 // zero scored cells. A reader — including us — would have read that as capability.
 //
-// A quota kill is therefore a RUN-INVALIDATING event, not a per-cell error, and
-// it is treated like the determinism and matrix gates: stop, loudly, and make the
-// operator decide. Continuing produces a table whose gaps line up with the
-// schedule instead of with the frameworks.
+// It is therefore a RUN-INVALIDATING event, not a per-cell error, and is treated
+// like the determinism and matrix gates: stop, loudly, and make the operator
+// decide. Continuing produces a table whose gaps line up with the schedule
+// instead of with the frameworks.
+//
+// NOT the same as a recoverable throttle: Agnes-style "rate limit" wording stays
+// with isRateLimited, which backs off and retries. Misclassifying that as a spent
+// budget would abort a board that only needed a slower -rps.
 func isQuotaExhausted(res execResult) bool {
 	if res.out.Error != "" && containsAnyFold(res.out.Error, quotaExhaustedMarkers) {
 		return true

@@ -18,7 +18,7 @@
     "Rejects response_format.json_schema.strict=false with HTTP 400 while accepting true and null — strict:false is OpenAI's documented default and LangChain's, so this hits some frameworks and not others (see arenas/live/langgraph/modes/structured.py).",
     "Accepts response_format json_schema with HTTP 200 but does NOT enforce it: replies come back missing required properties. Confirmed independently under strict=true.",
     "GET /models returns HTTP 502 (text/html); only chat/completions and /responses are usable.",
-    "Free developer tier could not sustain one board: exhausted at 1,348 calls / ~567k tokens, mid-run."
+    "Free developer tier returned 429 \"usage limit exceeded\" after 1,348 calls / ~567k tokens mid-board, and had NOT cleared ~1 hour later. Whether that is a spent allowance or a long-window throttle was never established — the key was rotated away before it could be re-tested — so treat it as 'did not clear within the run', which is all that was observed. Contrast Agnes, whose free-tier 429 clears within seconds and only needs a slower -rps."
   ],
   "sources": [
     "https://poolside.ai/blog/introducing-laguna-s-2-1",
