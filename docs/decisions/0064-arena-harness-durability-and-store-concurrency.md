@@ -182,3 +182,60 @@ matrix-fill-from-RESULTS.md path, since it ran on the pre-layer-1 binary and pro
 - Qdrant gRPC client (5s default timeout, pool 3, persistent-client / HTTP/2 multiplexing):
   <https://markaicode.com/errors/qdrant-timeout-error-fix/>,
   <https://medium.com/@fazlehasan110/from-rest-to-grpc-the-one-line-change-that-unlocks-5x-concurrent-users-on-qdrant-f218927e89f0>
+
+---
+
+## Implementation log — layers 2 and 3 (2026-07-27)
+
+### Layer 2 — rqlite: implemented, but NOT as specified
+
+The ADR proposed **Queued Writes** (`/db/execute?queue`) for a ~15× write throughput gain. On
+inspection that is the wrong instrument for the failure we actually observed. The 14
+`ensure table: context deadline exceeded` errors did not come from a high-rate write workload that
+needed batching — they came from **schema migration on process boot**. `RqliteStore.migrate`
+issues each of the 9 canonical schema statements as its own request (deliberately: rqlite runs one
+request in one transaction, and the idempotent `ALTER TABLE ADD COLUMN` must be allowed to fail
+per-statement). Every one of those is a Raft-committed, fsync'd write. A long-lived server pays it
+once; the **live arena boots a fresh aisotropyd per adapter invocation**, so a board paid it
+hundreds of times against a shared node.
+
+Implemented instead: a **sentinel fast path**. One weak-consistency READ (`SELECT 1 FROM
+sqlite_master WHERE type='trigger' AND name='facts_au'`) answers "is the schema already here?".
+The sentinel is the LAST statement's object and `schemaStatements` is applied in order, so its
+presence implies every prior statement succeeded. Boot cost on an already-migrated store drops
+from **9 Raft writes to 1 query**. It **fails open**: any error checking the sentinel falls through
+to the full idempotent migration, so the check can never become a new failure mode.
+
+Queued Writes remains available as a future option for a genuinely write-heavy path (the outbox),
+where its data-loss window would need its own analysis. It is not needed for this defect.
+
+Evidence (`internal/facts/rqlite_migrate_fastpath_test.go`, deterministic, offline):
+already-migrated store → **0 writes**; fresh store → **9 statements** (the fast path cannot skip a
+migration that has not happened); failing sentinel query → **9 statements and a successful boot**.
+
+### Layer 3 — Qdrant: NOT APPLICABLE as written (verified, not implemented)
+
+The ADR prescribed "raise the gRPC client timeout 5s→30s, reuse one persistent gRPC client, raise
+`pool_size` above the default 3". Checked against the client this repo actually uses —
+`github.com/qdrant/go-client` v1.18.3, not the Python client the source material described:
+
+- **"Reuse one persistent client" — already done.** `OpenQdrant` constructs one `*qdrant.Client`
+  and stores it on `QdrantStore{client: ...}` (`internal/semantic/qdrant.go`); every operation
+  reuses it. Nothing to change.
+- **"Timeout 5s→30s" — no such field.** `qdrant.Config` exposes `Host`, `Port`, `APIKey`,
+  `UseTLS`, `TLSConfig`, `GrpcOptions` — and no timeout. The 5-second default is a **Python
+  client** behavior; the Go client takes its deadlines from the caller's `context.Context`, which
+  our call sites already pass.
+- **"`pool_size` above 3" — a Python-client concept.** gRPC-Go multiplexes many in-flight RPCs
+  over one HTTP/2 connection; there is no pool to size.
+
+The observed `error reading server preface: read tcp …: i/o timeout` was therefore not a client
+misconfiguration but a **dial under an overloaded server** — the same saturation the embed-worker
+fix addressed at its root (contention errors went from 30+ to 1 on the following board). No Go-side
+change is warranted; `GrpcOptions` remains the escape hatch if connection-level tuning is ever
+needed.
+
+This entry is recorded rather than silently dropped because the prescription came from a real
+source that described a **different implementation**. Porting a recommendation across languages
+without checking the target's API is the same failure class this repo's other corrections document:
+a claim about code that was never verified against the code.

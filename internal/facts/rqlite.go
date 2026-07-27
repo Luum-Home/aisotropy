@@ -58,13 +58,46 @@ func OpenRqlite(connURL string) (*RqliteStore, error) {
 // guarded ADD COLUMN), so dropping the single-transaction bundling is safe: a
 // crash mid-migration leaves an incomplete-but-valid schema that the next boot
 // completes (self-healing), rather than a corrupt partial state.
+// Fast path (added after the live-arena board saturated a shared rqlite): each
+// statement above is its own rqlite REQUEST, and every rqlite write goes through
+// Raft with an fsync per log entry. So an already-migrated store still paid 9
+// Raft-committed writes on EVERY process boot. That is invisible for a
+// long-lived server and expensive for a process-per-invocation workload — the
+// arena adapter boots a fresh aisotropyd per call, so one board turned into
+// hundreds of pointless schema round-trips and produced 14 observed
+// "ensure table: context deadline exceeded" failures under concurrency.
+//
+// One weak-consistency READ now answers "is the schema already here?" for the
+// common case. The sentinel is the LAST statement's object: schemaStatements is
+// applied in order, so if the final trigger exists, every statement before it
+// succeeded. A read cannot go through Raft (the connection is already
+// ConsistencyLevelWeak), so the boot cost drops from 9 writes to 1 query.
+//
+// Fail-open by design: any error checking the sentinel falls through to the full
+// (idempotent) migration rather than aborting the boot — the check is an
+// optimisation, never a new failure mode.
 func (s *RqliteStore) migrate(ctx context.Context) error {
+	if applied, err := s.schemaApplied(ctx); err == nil && applied {
+		return nil
+	}
 	for _, stmt := range schemaStatements {
 		if err := s.execToleratingDupColumn(ctx, stmt); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// schemaApplied reports whether the canonical schema is already present, using
+// the last-applied object as the sentinel (see migrate). It never mutates.
+func (s *RqliteStore) schemaApplied(ctx context.Context) (bool, error) {
+	qr, err := s.conn.QueryOneParameterizedContext(ctx, gorqlite.ParameterizedStatement{
+		Query: `SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'facts_au' LIMIT 1;`,
+	})
+	if err != nil {
+		return false, err
+	}
+	return qr.Next(), nil
 }
 
 // execToleratingDupColumn runs one schema statement as its own rqlite request
