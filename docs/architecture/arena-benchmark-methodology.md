@@ -308,3 +308,44 @@ prose; it is designed but not yet implemented. The board's own "Native vs hand-r
 - `arenas/live/FULL-MATRIX.md`, `arenas/live/SPEC.md` — the full framework × dimension coverage matrix
   and the arena's overall contract, of which the benchmark pass is one automatic, model-call-bounded
   part.
+
+---
+
+## Labelling rule: a score means the FRAMEWORK ran, not that bytes moved (2026-07-27)
+
+The pre-publication audit found the board and the full-matrix manifests disagreeing on the same
+cells: `matrix.json` said `infeasible:<reason>` while the correctness table published a real score
+against a named competitor. Both labels cannot be true, and the disagreement was not noticed
+because nothing checks for it.
+
+The fix is not to pick whichever label is more convenient per cell. It is to notice that neither
+system was asking the right question. `infeasible` asks "did anything execute?"; a score asks "what
+number came out?" The question that decides a *fair* comparison is **what was exercised**:
+
+> **A cell carries a framework score (pass/fail) only when what executed was the framework's OWN
+> primitive. If the adapter had to supply the capability, the cell is not a measurement of the
+> framework and must not carry a framework verdict — however real the number it produced.**
+
+This is the Q0 discipline (`arena-adapter-artifacts.md`) promoted from a review question to a
+labelling rule. Three outcomes follow, and every cell is exactly one of them:
+
+| Situation | Label | Why |
+|---|---|---|
+| The framework's own primitive ran and failed the dimension | **fail**, score published | A real capability statement about the ecosystem — not a defect in the implementation. `infeasible` here would HIDE a legitimate finding. |
+| The adapter supplied the capability the framework lacks | **not a framework verdict** — score withheld or annotated as adapter-supplied | Publishing it as a pass credits the framework for the adapter's work; publishing it as a fail blames the framework for the adapter's. |
+| Nothing framework-owned could execute at all | **infeasible:`<reason>`** | The original meaning, now reserved for it. |
+
+### It has to cut both ways, or it is a preference
+
+Applied to the 2026-07 board this rule **removed spring-ai from the "three-way tie"** (two of its
+2/2 cells are adapter-invented, jar-verified) — which flatters aisotropy — **and withdrew
+llamaindex's 0/2 isolation failure** (the omitted scope landed in an adapter-invented collection
+name, not a LlamaIndex boundary) — which costs aisotropy a competitor failure it was publishing.
+A labelling rule that only ever moved results in the author's favour would be bias wearing the
+shape of a principle. Check that property first whenever this rule is extended.
+
+### Open follow-up
+
+Nothing currently enforces score-vs-matrix agreement; the contradiction was found by a human audit,
+not by a gate. `arenas/live/runner/matrix.go` should fail the run when a cell carries both a score
+and an `infeasible` declaration — the same way the no-blank-cells gate already fails on `pending`.

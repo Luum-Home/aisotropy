@@ -1,7 +1,7 @@
 ---
 type: Process
 title: "Arena Memory Analysis — is aisotropy's memory better or worse than the competitors, with reason"
-description: The forensically defensible answer to the operator's core question, now grounded in the clean FASE-5 board (commit 06945bf, real agnes lane, deterministic scores). It is not one answer — it is one per axis and workload. On within-session recall, aisotropy is WORSE — it pays the widest token premium on a board where replay is optimal (measured on the post-fix board 8154f63; on the clean board its plain-memory cells errored on a filed runtime defect (HTTP 500/502; NOT the shutdown artifact first reported)). On cross-session / semantic / consolidation recall — the workloads previously only wired — aisotropy now has MEASURED numbers: 2/2, 2/2, 2/2, TYING the top tier with mastra and spring-ai (it is NOT unique). On tenancy-under-a-forgotten-scope, aisotropy is one of only three frameworks that ENFORCE (2/2 refuses, board-rendered), while langgraph and llamaindex fail 0/2 — the by-construction thesis, now measured. On adversarial safeguard, aisotropy is mid-pack (5/7) — a named weakness. mastra is the strongest overall competitor on this board. Every "better" is axis-and-workload-qualified; the "worse" is stated at equal volume.
+description: The forensically defensible answer to the operator's core question, now grounded in the clean FASE-5 board (commit 06945bf, real agnes lane, deterministic scores). It is not one answer — it is one per axis and workload. On within-session recall, aisotropy is WORSE — it pays the widest token premium on a board where replay is optimal (measured on the post-fix board 8154f63; on the clean board its plain-memory cells errored on a filed runtime defect (HTTP 500/502; NOT the shutdown artifact first reported)). On cross-session / semantic / consolidation recall — the workloads previously only wired — aisotropy now has MEASURED numbers: 2/2, 2/2, 2/2, TYING the top tier with mastra (it is NOT unique; spring-ai's 2/2 on two of the three is adapter-supplied, per its own jar-verified matrix note). On tenancy-under-a-forgotten-scope, aisotropy is one of only three frameworks that ENFORCE (2/2 refuses, board-rendered), while langgraph and llamaindex fail 0/2 — the by-construction thesis, now measured. On adversarial safeguard, aisotropy is mid-pack (5/7) — a named weakness. mastra is the strongest overall competitor on this board. Every "better" is axis-and-workload-qualified; the "worse" is stated at equal volume.
 tags: [architecture, process, arena, memory, tenancy, forensics, code-truth, bias-audit]
 timestamp: 2026-07-23T00:00:00Z
 ---
@@ -17,7 +17,7 @@ timestamp: 2026-07-23T00:00:00Z
 > aisotropy is measurably worse and pays for it in tokens on every turn. On the workloads the suite
 > added to test aisotropy's home turf — cross-session, semantic, consolidated recall — the FASE-5
 > clean board (`06945bf`) has now RUN, and the result is that aisotropy **ties the top tier with
-> mastra and spring-ai**: it did not lose, and it did not uniquely win. On a third axis — isolation
+> mastra**: it did not lose, and it did not uniquely win. On a third axis — isolation
 > under a forgotten scope — aisotropy is one of only three frameworks that enforce, and that result
 > is board-rendered, deterministic, and was found by *running the competitors' own code*. This
 > document gives the per-axis, per-workload verdict, each with its reason and its evidence, and it
@@ -39,15 +39,30 @@ contaminated concurrency-3 run) are cited only as history, never as current resu
 |---|---|---|
 | **Within-session recall** (the shipped `memory` dimension) | aisotropy **WORSE** — pays the widest token premium for machinery replay renders free | **MEASURED** on the post-fix board `8154f63` (100,644 memory tokens vs a 16,200–28,075 competitor range). On the clean board `06945bf`, aisotropy's plain-memory cells all errored on a filed RUNTIME defect — 500/502, not the shutdown artifact first reported (§1), so `8154f63` remains the within-session reference |
 | **Cross-session recall** (`memory_cross_session`) | aisotropy **TIES the top** — 2/2, alongside mastra, spring-ai, langgraph, llamaindex, pydantic-ai; the session-keyed frameworks score 1/2 | **MEASURED** — `06945bf` |
-| **Semantic long-term recall** (`memory_semantic_recall`) | aisotropy **TIES the top tier** — 2/2 with mastra and spring-ai only; langgraph/llamaindex 1/2; the rest 0/2. Served via aisotropy's semantic tier — see the caveat in §3 | **MEASURED** — `06945bf` |
-| **Consolidation across a session boundary** (`memory_consolidation`) | aisotropy **TIES the top** — 2/2, alongside mastra, spring-ai, langgraph, llamaindex, pydantic-ai; ai-sdk/eino/genkit-go 0/2 | **MEASURED** — `06945bf` |
+| **Semantic long-term recall** (`memory_semantic_recall`) | aisotropy **TIES the top tier** — 2/2 with mastra (spring-ai's 2/2 is adapter-supplied, see §0); langgraph/llamaindex 1/2; the rest 0/2. Served via aisotropy's semantic tier — see the caveat in §3 | **MEASURED** — `06945bf` |
+| **Consolidation across a session boundary** (`memory_consolidation`) | aisotropy **TIES the top** — 2/2, alongside mastra, langgraph, llamaindex, pydantic-ai; ai-sdk/eino/genkit-go 0/2 | **MEASURED** — `06945bf` |
 | **Tenancy under a forgotten scope** (`isolation_forgetful`) | aisotropy **BETTER** — one of only THREE that ENFORCE (2/2 refuses, with mastra and spring-ai); langgraph and llamaindex fail 0/2 | **MEASURED, board-rendered** — `06945bf`; matrix cells filled `098ef91` |
 | **Adversarial safeguard** (`safeguard`) | aisotropy **MID-PACK** — 5/7, behind mastra (7/7), eino and genkit-go (6/7); a named weakness, not explained away | **MEASURED** — `06945bf` |
 
-Across the three memory-extension dimensions combined, exactly **three frameworks are perfect:
-aisotropy, mastra, and spring-ai (2/2, 2/2, 2/2 each)**. aisotropy's memory is top-tier on the
-measured board — and **not unique**. The token cost of the first row is real and permanent; what it
-buys is now a measured tie at the top of rows 2–4, not a solo win.
+Across the three memory-extension dimensions combined, **two frameworks are perfect on
+framework-owned primitives: aisotropy and mastra (2/2, 2/2, 2/2 each)**. aisotropy's memory is
+top-tier on the measured board — and **not unique**. The token cost of the first row is real and
+permanent; what it buys is a measured tie at the top of rows 2–4, not a solo win.
+
+> **Why spring-ai is no longer counted in that tie — and why that should make you MORE skeptical,
+> not less.** spring-ai also scored 2/2/2. Two of those cells are excluded here because this repo's
+> own `matrix.json`, **verified by unzipping `spring-ai-model-1.0.0.jar`**, records that no
+> framework-owned primitive exists for them: *"no native semantic-recall chat-memory primitive —
+> exercising this would score adapter-invented QuestionAnswerAdvisor-over-turns, not a framework
+> memory-recall primitive"*, and for consolidation *"the consolidate directive is a no-op with
+> nothing framework-owned to exercise."* Those passes measure the ADAPTER we wrote, not Spring AI.
+>
+> **This change moves the headline in aisotropy's favour**, which is exactly why it is stated here
+> with its evidence rather than applied quietly: a reader should weigh it knowing who benefits. The
+> alternative is not neutral either — publishing a competitor as "perfect" on a capability its own
+> jar does not ship is also false, just in the direction that looks generous. The same rule that
+> removes spring-ai's two cells also removes a llamaindex FAILURE we were publishing (§4), which is
+> the test that it is a principle and not a preference.
 
 ---
 
@@ -347,6 +362,21 @@ L1's invisible failure mode).
 
 | langgraph | **0/2 ✗** | one **cross-scope LEAK** (an omitted `('',)` namespace acts as a match-all prefix in `SqliteStore` and returns **another user's memory** — `store_memory.py:356→371`, an **L1 breach**) + one **silent partition** | L1 breach |
 | llamaindex | **0/2 ✗** | **silent partition × 2** — blank `user_id` forwarded RAW (`adapter.py:1164`) selects a different empty per-user collection (`:879` → `:1000`); no error, no data — the mistake is invisible | L1 |
+
+> **llamaindex's row is NOT a framework verdict — it is withdrawn as one.** The omitted scope in
+> that probe lands in `_user_mem_collection()` (`arenas/live/llamaindex/adapter.py:867-879`), a
+> per-user Qdrant collection naming scheme **the adapter invented**, not a LlamaIndex API boundary.
+> The adapter's own docstring concedes it: *"LlamaIndex's Memory/VectorMemoryBlock has no user
+> concept, so the only scope is the collection the adapter chose."* Compare langgraph, where the
+> identical probe reaches a real `SqliteStore.search((user_id,), …)` — that one IS a framework
+> boundary. Publishing both as framework verdicts was asymmetric.
+>
+> Under the labelling rule applied in §0 (a cell carries a framework score only if the framework's
+> OWN primitive executed), this cell does not qualify. LlamaIndex's actual L1 axis is
+> `MetadataFilters`, which this probe never exercised. Re-probing through it is filed; until then
+> the honest reading is **not measured**, not 0/2. **This costs aisotropy a competitor failure it
+> was publishing** — the same rule that removed spring-ai's two passes.
+
 | ai-sdk / eino / genkit-go / pydantic-ai | — (errored) | **infeasible by design** — there is no framework-level user scope to omit; user-keying lives in adapter glue, so the probe would exercise adapter-invented code, not the framework. These are 8 of the board's 59 explained errors; each adapter's `matrix.json` declares the cell `infeasible` with the reason | L0 |
 
 Read plainly: on the mistake that a real multi-tenant integrator actually makes, **aisotropy, mastra,
