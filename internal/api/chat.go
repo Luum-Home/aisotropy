@@ -318,8 +318,22 @@ func chatReflect(ctx context.Context, client llm.Client, system string, in *Chat
 	if err != nil {
 		slog.ErrorContext(ctx, "chat reflection loop failed closed",
 			"tenant_id", in.TenantID, "user_id", in.UserID, "backend", backend, "attempts", attempts, "err", err)
-		return chatStructuredReply{}, llm.Usage{}, huma.Error502BadGateway(
-			fmt.Sprintf("agent failed to produce a valid structured reply after %d attempt(s)", attempts), err)
+		// Say WHICH failure this was. "failed to produce a valid structured reply
+		// after 0 attempt(s)" is accurate and useless: attempts=0 means the loop
+		// never got a reply to validate, so the cause was upstream — a 429, a
+		// 5xx, a dead connection — and the message names the one thing that did
+		// NOT happen. Observed against two different providers: an arena cell
+		// reported a schema failure when the provider had actually rate-limited
+		// us, which would put the wrong cause in a published error column.
+		//
+		// A schema violation is attempts>0: the model answered and the answer
+		// failed validation, repeatedly. Zero attempts is a transport failure
+		// wearing a schema failure's name.
+		msg := fmt.Sprintf("agent failed to produce a valid structured reply after %d attempt(s)", attempts)
+		if attempts == 0 {
+			msg = "upstream model call failed before any reply could be validated (not a schema violation)"
+		}
+		return chatStructuredReply{}, llm.Usage{}, huma.Error502BadGateway(msg, err)
 	}
 
 	slog.InfoContext(ctx, "chat request completed",
