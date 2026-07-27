@@ -172,27 +172,52 @@ Checked before designing (dependency-reuse-first):
 - **No F5-TTS official weights** — CC-BY-NC, BARRED for SaaS (Apache alt exists: OpenF5-TTS-Base).
   Full license table: `docs/research/voice-pipeline-landscape-2026-07-23.md`.
 
-### Dismissed follow-on (operator decision, 2026-07-27)
+### Real-provider verification — dismissed, then REVERSED the same day
 
-- **Verifying the shim against a real provider: DISMISSED, not deferred.** Every test of this
-  shim runs the stub LLM client — 11 Go tests, the adversarial identity suite, the golden wire
-  frames, and the live smoke with the openai Python SDK 2.47.0. What that leaves unexercised is
-  narrow and worth naming exactly: whether a *real* provider's `usage` and `finish_reason`
-  semantics match the shapes the stub emits. The operator dismissed closing it, and the reasoning
-  is sound rather than merely convenient:
-  - the gap is a **credential**, not a capability — nothing about this machine or this code
-    prevents it, so it produces no design pressure and blocks nothing;
-  - the wire contract is already pinned from **both ends** — the golden test round-trips through
-    this repo's own Chat Completions *client* (`internal/llm/openai_compat.go`), which is the
-    same code that talks to real providers in production, so a shape the shim emits that a real
-    provider would reject would have to fool our own client first;
-  - and a single un-repeated paid run would be **weaker evidence than it looks** — it verifies one
-    provider, one model, one day, while the deterministic tests verify every run.
+**First recorded as dismissed (2026-07-27), on a false premise.** The dismissal's leading argument
+was that "the gap is a **credential**, not a capability". That was simply wrong, and the repo
+contained the disproof the whole time: the live arena makes real calls through
+`OPENAI_API_KEY` (`arenas/live/runner/eval.go:241`) and its published board reports **1094 real
+calls** against `agnes-2.0-flash`. The credential exists, works, and is used routinely. Worse, the
+provider it points at is the *most* informative one available for this test —
+`docs/research/openai-compat-boundary-2026-07-17.md` exists precisely because agnes's
+OpenAI-compat gateway surprised us before.
 
-  What would revive it: adopting a provider whose usage/finish semantics are known to diverge (the
-  `openai-compat-boundary` report's "varies by backend" tier), or a report of a real client
-  rejecting our frames. Until then the honest statement is not "verified against a real provider"
-  — it is "verified against the contract, by the client that speaks it."
+The other two arguments still hold and are kept: the wire contract is pinned from **both ends**
+(the golden test round-trips through this repo's own Chat Completions *client*,
+`internal/llm/openai_compat.go` — the same code that talks to real providers in production), and a
+single un-repeated run verifies one provider, one model, one day, while the deterministic tests
+verify every run. But those support "the risk is low", not "the check is impossible" — which is
+what the dismissal actually implied.
+
+**Reversed by operator decision, and the check was run.**
+
+### Real-provider conformance — RUN 2026-07-27, both paths PASS
+
+Provider: `agnes-2.0-flash` via `https://apihub.agnes-ai.com/v1` (the credential already in
+`.env`, the same one the arena uses). The probe asks only what the stub cannot answer: do `usage`
+and `finish_reason` arrive from a REAL provider in the shapes the shim expects?
+
+| Path | Result | Real values observed |
+|---|---|---|
+| **Non-streaming** | **PASS** | `object: "chat.completion"`, `finish_reason: "stop"`, `usage {prompt_tokens: 289, completion_tokens: 1, total_tokens: 290}` |
+| **Streaming** (`stream_options.include_usage: true`) | **PASS** | 4 frames, terminator `[DONE]`, `finish_reason: "stop"`, usage chunk `{423, 2, 425}` |
+
+`Server-Timing: pipeline;dur=591.4` was emitted on the non-streaming response — the header
+adopted from the voicebox spike, confirmed against a real upstream rather than the stub's
+microsecond path.
+
+**No divergence found.** Every shape the stub emits is the shape agnes returns; the usage numbers
+are real token counts, not the stub's canned values. This is the one thing the deterministic
+suite structurally cannot prove, and it is now proven — once, against one provider, on one day.
+That caveat is the honest scope of the result and the reason the deterministic tests remain the
+regression guard.
+
+**Method note (kept because it nearly produced a false negative):** the first probe run reported
+the non-streaming path as failing. The failure was a quoting bug in the probe's own Python, not
+in the shim — escaped quotes inside an f-string in a `-c` heredoc. A probe that fails must be
+proven guilty before the system under test is: rewriting the check to a file made it pass on the
+first attempt with no change to aisotropy.
 
 ## Implementation plan (S, additive — pending operator approval)
 
