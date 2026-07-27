@@ -64,6 +64,22 @@ def is_stub() -> bool:
     return os.environ.get("ARENA_STUB", "").strip().lower() in ("1", "true", "yes")
 
 
+def is_stub_model() -> bool:
+    """True when the MODEL must be a fake, regardless of the stores.
+
+    ``ARENA_STUB`` substitutes the model AND every store at once, which makes it
+    structurally blind to a broken store connection -- exactly where the defects
+    that invalidated the 2026-07-27 board lived (no Qdrant credential, an orphaned
+    rqlite Raft volume, credentials the HTTP client mangles). The integration lane
+    (``ARENA_STUB_MODEL=1``) mocks only the model and keeps the stores REAL, so the
+    infrastructure is verified at zero model cost -- and therefore independently of
+    which model happens to be configured.
+
+    Full stub implies a stubbed model; the reverse is deliberately NOT true.
+    """
+    return is_stub() or os.environ.get("ARENA_STUB_MODEL", "").strip().lower() in ("1", "true", "yes")
+
+
 def log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
@@ -125,7 +141,7 @@ def resolve_chat_env(mode: str) -> tuple[str, str | None, str | None, dict[str, 
     stops gating on credentials that are about to go unused.
     """
     model_name = os.environ.get("OPENAI_MODEL", DEFAULT_MODEL)
-    if is_stub():
+    if is_stub_model():
         # Report the OFFLINE stub model (FakeListChatModel), never the real
         # OPENAI_MODEL — a stub run must be self-evidently offline in its output
         # (the runner's lane-leak guard reads the model field). run.sh sets
@@ -188,7 +204,7 @@ def build_chat_model(
     (and its execution) is always genuine. This is documented, not a
     fabricated real answer.
     """
-    if is_stub():
+    if is_stub_model():
         from langchain_core.language_models.fake_chat_models import FakeListChatModel
         from pydantic import PrivateAttr
 

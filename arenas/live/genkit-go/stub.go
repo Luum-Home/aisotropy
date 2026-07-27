@@ -42,6 +42,22 @@ import (
 // a single invocation) and consulted by every one of the fakes above.
 var stubMode = os.Getenv("ARENA_STUB") == "1"
 
+// stubModelMode: the MODEL is a fake, but the stores may still be real.
+//
+// stubMode substitutes the model AND every store at once, which makes it
+// structurally blind to a broken store connection — precisely where the defects
+// that invalidated the 2026-07-27 board lived (no Qdrant credential, an orphaned
+// rqlite Raft volume, credentials the HTTP client silently drops). The
+// integration lane (ARENA_STUB_MODEL=1) keeps the stores REAL and mocks only the
+// model, so the infrastructure is verified at zero model cost — and therefore
+// independently of which model happens to be configured.
+//
+// Full stub implies a stubbed model; the reverse is deliberately NOT true. Use
+// this for anything model-shaped (the model definition, the reported model id,
+// the credential requirement) and plain stubMode for anything store-shaped (the
+// embedder, rqlite).
+var stubModelMode = stubMode || os.Getenv("ARENA_STUB_MODEL") == "1"
+
 // stubModelSupports mirrors compat_oai.BasicText (Multiturn/Tools/SystemRole,
 // no native Media) — the stub never receives real media, and setting
 // Constrained=false (the zero value) means Genkit falls back to

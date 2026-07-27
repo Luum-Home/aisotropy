@@ -54,6 +54,22 @@ def is_stub() -> bool:
     return os.environ.get("ARENA_STUB", "") == "1"
 
 
+def is_stub_model() -> bool:
+    """True when the MODEL must be a fake, regardless of the stores.
+
+    ``ARENA_STUB`` substitutes the model AND every store at once, which makes it
+    structurally blind to a broken store connection -- exactly where the defects
+    that invalidated the 2026-07-27 board lived (no Qdrant credential, an orphaned
+    rqlite Raft volume, credentials the HTTP client mangles). The integration lane
+    (``ARENA_STUB_MODEL=1``) mocks only the model and keeps the stores REAL, so the
+    infrastructure is verified at zero model cost -- and therefore independently of
+    which model happens to be configured.
+
+    Full stub implies a stubbed model; the reverse is deliberately NOT true.
+    """
+    return is_stub() or os.environ.get("ARENA_STUB_MODEL", "").strip().lower() in ("1", "true", "yes")
+
+
 def chat_env() -> tuple[str, str, str]:
     """Return (model_name, base_url, api_key) for the agnes chat model.
 
@@ -62,6 +78,12 @@ def chat_env() -> tuple[str, str, str]:
     model_name = os.environ.get("OPENAI_MODEL", "")
     base_url = os.environ.get("OPENAI_BASE_URL", "")
     api_key = os.environ.get("OPENAI_API_KEY", "")
+    if is_stub_model():
+        # Nothing is dialed when the model is a fake, so demanding credentials
+        # would block the integration lane for no reason. Report the OFFLINE model
+        # id: the runner's lane-leak guard reads this field, and a lane that
+        # promised zero model calls must never claim the real model.
+        return "TestModel (ARENA_STUB_MODEL)", "http://arena-stub.invalid", "stub-key-not-a-real-credential"
     if not model_name or not base_url or not api_key:
         raise ConfigError(
             "Missing one of OPENAI_MODEL / OPENAI_BASE_URL / OPENAI_API_KEY in environment"
@@ -108,7 +130,7 @@ def build_model(*, custom_output_text: str | None = None):
 
     Returns (model, model_name). Raises ConfigError if env is incomplete (only in non-stub mode).
     """
-    if is_stub():
+    if is_stub_model():
         from pydantic_ai.models.test import TestModel
 
         model_name = "pydantic_ai.models.test.TestModel (ARENA_STUB=1)"

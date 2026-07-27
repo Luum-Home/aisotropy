@@ -51,6 +51,7 @@ import glob
 import json
 import os
 import sys
+import uuid
 import urllib.request
 import urllib.error
 
@@ -77,17 +78,35 @@ _NON_ADAPTER_DIRS = {"runner", "tasks", "_shared"}
 _SELF_INGESTING_ADAPTERS = {"aisotropy"}
 
 
+# The reference Qdrant runs with QDRANT__SERVICE__API_KEY set. This seeder was
+# written before that hardening and never sent a credential, so every request
+# came back 401 — with an HTML body, which then crashed the JSON parse below
+# instead of reporting the auth failure. Two bugs stacked: no credential, and an
+# error path that could not describe the error.
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")
+
+
 def _req(method: str, url: str, body=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     if data is not None:
         req.add_header("content-type", "application/json")
+    # The embed server needs no auth and ignores the header; sending it only to
+    # QDRANT_URL would couple this helper to which host it is talking to.
+    if QDRANT_API_KEY:
+        req.add_header("api-key", QDRANT_API_KEY)
     try:
         with urllib.request.urlopen(req, timeout=120) as r:
             raw = r.read().decode()
             return r.status, (json.loads(raw) if raw else {})
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read().decode() or "{}")
+        raw = e.read().decode()
+        try:
+            return e.code, json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            # A non-JSON error body (an auth page, a proxy's HTML 502) must
+            # surface AS the error, not as a decode traceback that buries it.
+            return e.code, {"error": f"non-JSON {e.code} response: {raw[:200]}"}
 
 
 def embed_passage(text: str) -> list:
@@ -164,6 +183,14 @@ def load_corpus_points() -> list[dict]:
                     "doc_id": os.path.basename(path),
                     "title": title,
                     "text": text,
+                    # Spring AI's QdrantVectorStore reads the document body from
+                    # its OWN default payload key, "doc_content", and refuses a
+                    # point without it ("exactly one of text or media must be
+                    # set"). Every other adapter reads "text". Carrying both costs
+                    # a duplicated string per point and is what lets Spring AI
+                    # participate at all — see the point-id note in
+                    # seed_collection() for the other half of the same story.
+                    "doc_content": text,
                     # Single arena tenant, identical on every point — see ARENA_TENANT.
                     "tenant_id": ARENA_TENANT,
                 },
@@ -189,7 +216,33 @@ def seed_collection(collection: str, base_points: list[dict]) -> tuple[bool, int
         return False, 0
     print(f"PROGRESS: collection {collection} ready (size={DIM}, Cosine)", file=sys.stderr)
 
-    points = [{"id": i, "vector": p["vector"], "payload": p["payload"]} for i, p in enumerate(base_points, start=1)]
+    # POINT IDS ARE UUIDs, NOT INTEGERS — and that is not cosmetic.
+    #
+    # Qdrant accepts both, and every adapter here worked with integer ids except
+    # Spring AI, whose QdrantVectorStore reads the point id as a UUID string and
+    # gets an empty one from a numeric id, then throws "id cannot be null or
+    # empty" on every single retrieval. That is why the published board shows
+    # spring-ai/rag as "— (19 err)": not a Spring AI weakness, a seeding schema
+    # this arena chose. The arena reported its own encoding as the framework's
+    # capability, for as long as the board has existed.
+    #
+    # Found on 2026-07-27 using the integration lane (ARENA_STUB_MODEL=1): mock
+    # model, real stores, so the whole diagnosis — two distinct blockers, found
+    # one after the other because fixing the first CHANGED the error — cost zero
+    # model calls and no quota. It had gone unfixed precisely because reproducing
+    # it used to require spending.
+    #
+    # UUIDv5 over the ordinal keeps the mapping deterministic: the same corpus
+    # always produces the same ids, so a re-seed does not perturb anything that
+    # cached them.
+    points = [
+        {
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{collection}:{i}")),
+            "vector": p["vector"],
+            "payload": p["payload"],
+        }
+        for i, p in enumerate(base_points, start=1)
+    ]
     status, resp = _req(
         "PUT",
         f"{QDRANT_URL}/collections/{collection}/points?wait=true",

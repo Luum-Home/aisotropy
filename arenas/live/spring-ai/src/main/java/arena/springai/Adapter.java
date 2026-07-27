@@ -49,7 +49,19 @@ public final class Adapter {
 
     public static void main(String[] args) {
         ObjectMapper mapper = new ObjectMapper();
-        String model = envOr("OPENAI_MODEL", "agnes-2.0-flash");
+        // NO VENDOR DEFAULT, and the mocked-model lane wins over the env.
+        //
+        // Two bugs lived on this one line. It defaulted to a specific vendor's
+        // model id, so an unconfigured run would have labelled its numbers with a
+        // model it never called — provenance fabricated by a fallback (the same
+        // default removed everywhere else during the multi-provider work; this
+        // one survived). And it read OPENAI_MODEL unconditionally, which run.sh
+        // exports on every lane, so a mocked-model run reported the REAL model id
+        // and would trip the runner's lane-leak guard.
+        String model = "1".equals(System.getenv("ARENA_STUB"))
+                || "1".equals(System.getenv("ARENA_STUB_MODEL"))
+                        ? "spring-ai-stub"
+                        : envOr("OPENAI_MODEL", "unconfigured (set OPENAI_MODEL)");
 
         // The output is ALWAYS a single JSON object on stdout, even on failure
         // (contract rule 5: errors are data, not crashes).

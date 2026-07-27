@@ -67,6 +67,22 @@ func newProviderClient() (aisotropy.LLMClient, error) {
 		clearBackendTierEnv()
 		return nil, nil
 	}
+	// Integration lane: mock the MODEL, keep the TIERS real.
+	//
+	// Only the provider credentials are cleared, never backendTierEnvVars — that
+	// is the whole distinction. With the keys gone, aisotropy.New() resolves the
+	// model through llm.RegistryFromEnv(), which auto-selects the keyless native
+	// StubClient; with the tier vars intact, the e5 embed server, Qdrant and
+	// rqlite are the REAL ones. Clearing the keys is not optional: run.sh sources
+	// the repo-root .env, so a surviving key would make a lane that promised zero
+	// model calls quietly call the provider — the exact leak the runner's guard
+	// watches for.
+	if stubModelMode() {
+		for _, v := range providerEnvVars {
+			_ = os.Unsetenv(v)
+		}
+		return nil, nil
+	}
 	key := os.Getenv("OPENAI_API_KEY")
 	if key == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")

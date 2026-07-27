@@ -22,6 +22,15 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { simulateReadableStream } from 'ai';
 
 export const STUB_ENABLED = process.env.ARENA_STUB === '1';
+// STUB_MODEL_ONLY: mock the MODEL, keep the STORES real (the integration lane).
+//
+// STUB_ENABLED substitutes both halves at once, which makes it structurally
+// blind to a broken store connection — where every defect that invalidated the
+// 2026-07-27 board lived (no Qdrant credential, an orphaned rqlite volume,
+// credentials Node's fetch rejects outright). Mocking only the model verifies the
+// infrastructure at zero model cost, and therefore independently of which model
+// is configured. Full stub implies a stubbed model; the reverse is NOT true.
+export const STUB_MODEL_ONLY = STUB_ENABLED || process.env.ARENA_STUB_MODEL === '1';
 export const STUB_MODEL_ID = 'arena-stub-mock-language-model-v4';
 // A non-http scheme so `lib/rqlite.mjs` can route to the in-process/on-disk
 // stub table engine instead of ever calling `fetch()` against a real rqlite.

@@ -213,14 +213,23 @@ func logf(format string, a ...any) {
 }
 
 func modelName() string {
+	// ORDER IS LOAD-BEARING: the mocked-model check comes FIRST.
+	//
+	// It used to read OPENAI_MODEL first and return it when set — and run.sh
+	// exports OPENAI_MODEL on every lane, so a mocked-model run reported the REAL
+	// model id on the wire. That is precisely the shape the runner's lane-leak
+	// guard hunts for: a lane that promised zero model calls claiming the
+	// provider's model. Caught on the integration lane's first run, by this
+	// adapter, which is ours.
+	if stubModelMode() {
+		// Honest label: a mocked-model lane never reaches the configured
+		// provider at all — the model actually answering is aisotropy's native
+		// internal/llm.StubClient. Reporting the real id here would trip the
+		// runner's lane-leak guard, which is the alarm we want.
+		return "aisotropy-stub"
+	}
 	if m := os.Getenv("OPENAI_MODEL"); m != "" {
 		return m
-	}
-	if stubMode() {
-		// Honest label: ARENA_STUB=1 never reaches the configured provider at
-		// all — the model actually answering is aisotropy's native
-		// internal/llm.StubClient.
-		return "aisotropy-stub"
 	}
 	// No vendor default: a board must record the model it ACTUALLY ran, and
 	// guessing one would mislabel the provenance of every number it produces.

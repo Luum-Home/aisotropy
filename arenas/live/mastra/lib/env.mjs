@@ -62,6 +62,31 @@ export function resolveEnv() {
     };
   }
 
+  // Integration lane (ARENA_STUB_MODEL=1): mock MODEL, REAL stores.
+  //
+  // ARENA_STUB substitutes both halves at once and is therefore blind to a broken
+  // store connection — where every defect that invalidated the 2026-07-27 board
+  // lived (no Qdrant credential, an orphaned rqlite Raft volume, credentials
+  // Node's fetch refuses to put in a URL). Mocking only the model verifies the
+  // infrastructure at zero model cost, and so independently of which model is
+  // configured. `stub` stays FALSE so every store helper takes its real branch;
+  // the store-side helpers (lib/embed.mjs, lib/rqlite.mjs) read ARENA_STUB
+  // directly and are deliberately untouched by this flag. No OPENAI_* is
+  // required, because nothing is dialed.
+  if (process.env.ARENA_STUB_MODEL === '1') {
+    return {
+      modelName: 'arena-stub-mock',
+      chatModel: buildStubChatModel(),
+      embedUrl,
+      qdrantUrl,
+      qdrantCollection,
+      arenaTenant,
+      rqliteUrl,
+      libsqlUrl,
+      stub: false,
+    };
+  }
+
   const apiKey = process.env.OPENAI_API_KEY;
   const baseURL = process.env.OPENAI_BASE_URL;
   const modelName = process.env.OPENAI_MODEL || '';

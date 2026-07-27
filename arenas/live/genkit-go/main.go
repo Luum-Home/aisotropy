@@ -188,7 +188,7 @@ type runCtx struct {
 
 func main() {
 	model := envOr("OPENAI_MODEL", "agnes-2.0-flash")
-	if stubMode {
+	if stubModelMode {
 		// Never report the real model name in a stub run: the offline echo model
 		// (stub.go's stubModelFunc) is what actually answers, so the wire
 		// contract must say so. run.sh sets OPENAI_MODEL even for a stub run, so
@@ -269,7 +269,7 @@ func run(out *arenaOutput, model string) error {
 	//    runs offline against a locally DefineModel'd echo model instead, see
 	//    step 3 below.
 	var apiKey, baseURL string
-	if !stubMode {
+	if !stubModelMode {
 		apiKey = os.Getenv("OPENAI_API_KEY")
 		if apiKey == "" {
 			return fmt.Errorf("OPENAI_API_KEY is not set (set ARENA_STUB=1 to run fully offline against a fake model instead)")
@@ -279,7 +279,7 @@ func run(out *arenaOutput, model string) error {
 			return fmt.Errorf("OPENAI_BASE_URL is not set (set ARENA_STUB=1 to run fully offline against a fake model instead)")
 		}
 	}
-	fmt.Fprintf(os.Stderr, "PROGRESS: model=%s base_url=%s mode=%s stub=%v\n", model, baseURL, mode, stubMode)
+	fmt.Fprintf(os.Stderr, "PROGRESS: model=%s base_url=%s mode=%s stub=%v stub_model=%v\n", model, baseURL, mode, stubMode, stubModelMode)
 
 	ctx := context.Background()
 
@@ -301,7 +301,7 @@ func run(out *arenaOutput, model string) error {
 	//    endpoint, unchanged from the original single-shot adapter.
 	var g *genkit.Genkit
 	var m ai.Model
-	if stubMode {
+	if stubModelMode {
 		g = genkit.Init(ctx)
 		m = genkit.DefineModel(g, model, &ai.ModelOptions{
 			Label:    "stub/" + model,

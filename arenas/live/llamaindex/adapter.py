@@ -235,6 +235,19 @@ MEMORY_DIR = Path(os.environ.get("LLAMAINDEX_MEMORY_DIR", str(SCRIPT_DIR / ".mem
 # local-only.
 ARENA_STUB = os.environ.get("ARENA_STUB", "").strip().lower() in ("1", "true", "yes")
 
+# ARENA_STUB_MODEL: mock the MODEL, keep the STORES real (the integration lane).
+#
+# ARENA_STUB substitutes the model AND every backend at once, which makes it
+# structurally blind to a broken store connection -- exactly where the defects
+# that invalidated the 2026-07-27 board lived (no Qdrant credential, an orphaned
+# rqlite Raft volume, credentials the HTTP client mishandles). Mocking only the
+# model verifies the infrastructure at zero model cost, and therefore
+# independently of which model happens to be configured.
+#
+# Full stub implies a stubbed model; the reverse is deliberately NOT true, so
+# every store-side `if ARENA_STUB` below stays exactly as it was.
+ARENA_STUB_MODEL = ARENA_STUB or os.environ.get("ARENA_STUB_MODEL", "").strip().lower() in ("1", "true", "yes")
+
 # Sentinel appended to the outbound system prompt by `middleware` mode's INBOUND LLM wrapper —
 # see run_middleware()'s docstring for the mechanism.
 MIDDLEWARE_INBOUND_SENTINEL = "\n[ARENA_MW]"
@@ -2188,7 +2201,9 @@ def main() -> None:
     api_key = os.environ.get("OPENAI_API_KEY", "")
     base_url = os.environ.get("OPENAI_BASE_URL", "")
 
-    if not ARENA_STUB:
+    # Keyed on ARENA_STUB_MODEL: when the model is a fake nothing is dialed, so
+    # demanding OPENAI_* would block the integration lane for no reason.
+    if not ARENA_STUB_MODEL:
         missing = [
             name
             for name, val in (
@@ -2212,7 +2227,11 @@ def main() -> None:
     try:
         from llama_index.core import Settings
 
-        if ARENA_STUB:
+        # Keyed on ARENA_STUB_MODEL, matching the LLM-construction branch below.
+        # These are LAZY imports, so gating them on the wrong flag leaves the name
+        # unbound at the point of use — which is exactly what happened when only
+        # the construction branch was widened to the integration lane.
+        if ARENA_STUB_MODEL:
             from llama_index.core.llms import MockLLM
         else:
             from llama_index.llms.openai_like import OpenAILike
@@ -2226,7 +2245,7 @@ def main() -> None:
     # _UsageCapture.build_callback_manager docstring) — e.g. RetrieverQueryEngine.from_args.
     Settings.callback_manager = cb_manager
 
-    if ARENA_STUB:
+    if ARENA_STUB_MODEL:
         if mode in ("tools", "structured"):
             # See "ARENA_STUB function-calling LLM" module comment above _stub_fabricate_from_schema:
             # a plain MockLLM cannot satisfy FunctionAgent's FunctionCallingLLM requirement

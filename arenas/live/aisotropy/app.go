@@ -80,7 +80,7 @@ func newApp(agnes aisotropy.LLMClient, persona string, extra ...aisotropy.Option
 //     same mapping the deleted decorator's sawUsage flag implemented.
 //   - app is nil (defensive; no mode currently calls setUsage without an App).
 func setUsage(out *result, app *aisotropy.App) {
-	if stubMode() || app == nil {
+	if stubModelMode() || app == nil {
 		out.InputTokens, out.OutputTokens = -1, -1
 		return
 	}
@@ -102,6 +102,23 @@ func setUsage(out *result, app *aisotropy.App) {
 // var within one process observe the change.
 func stubMode() bool {
 	return os.Getenv("ARENA_STUB") == "1"
+}
+
+// stubModelMode reports whether the MODEL must be aisotropy's keyless native
+// stub client while the memory tiers stay REAL (the integration lane,
+// ARENA_STUB_MODEL=1).
+//
+// stubMode() substitutes the model AND swaps every networked tier for its
+// in-process default, which makes it structurally blind to a broken store
+// connection — exactly where the defects that invalidated the 2026-07-27 board
+// lived (no Qdrant credential, an orphaned rqlite Raft volume, credentials the
+// client mishandles). Mocking only the model exercises the real e5/Qdrant/rqlite
+// path at zero model cost, and so independently of which model is configured.
+//
+// Full stub implies a stubbed model; the reverse is deliberately NOT true, so
+// clearBackendTierEnv stays keyed on stubMode() and the tiers stay real here.
+func stubModelMode() bool {
+	return stubMode() || os.Getenv("ARENA_STUB_MODEL") == "1"
 }
 
 // backendTierEnvVars are every env var run.sh (and the Docker runner) export

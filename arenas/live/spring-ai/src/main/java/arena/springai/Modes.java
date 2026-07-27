@@ -377,7 +377,11 @@ final class Modes {
     static void stream(Ctx ctx, Map<String, Object> out) {
         ChatModel model = Models.chatModel(ctx);
         Prompt prompt;
-        if (ctx.stub) {
+        // stubModel: OpenAiChatOptions are meaningful only to the real
+        // OpenAiChatModel; the StubChatModel that any mocked-model lane returns
+        // cannot consume them. The RAG branch above stays on ctx.stub because the
+        // corpus is store-shaped, not model-shaped.
+        if (ctx.stubModel) {
             prompt = new Prompt(promptMessages(ctx));
         } else {
             OpenAiChatOptions opts = OpenAiChatOptions.builder()

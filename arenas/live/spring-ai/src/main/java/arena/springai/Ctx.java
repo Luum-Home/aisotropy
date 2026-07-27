@@ -17,6 +17,8 @@ final class Ctx {
     final String modelName;
     final String mode;
     final boolean stub;
+    /** Model is mocked; the STORES may still be real (integration lane). */
+    final boolean stubModel;
 
     // Real-infra endpoints (identical env-var names + defaults as the sibling
     // adapters: EMBED_URL / QDRANT_URL / RQLITE_URL, plus the runner-injected
@@ -29,7 +31,7 @@ final class Ctx {
     final String collection;
     final String rqliteUrl;
 
-    private Ctx(ObjectMapper mapper, Map<String, Object> in, String modelName, String mode, boolean stub,
+    private Ctx(ObjectMapper mapper, Map<String, Object> in, String modelName, String mode, boolean stub, boolean stubModel,
                 String apiKey, String chatBaseUrl, String embedBaseUrl, String qdrantHost, int qdrantGrpcPort,
                 String collection, String rqliteUrl) {
         this.mapper = mapper;
@@ -37,6 +39,7 @@ final class Ctx {
         this.modelName = modelName;
         this.mode = mode;
         this.stub = stub;
+        this.stubModel = stubModel;
         this.apiKey = apiKey;
         this.chatBaseUrl = chatBaseUrl;
         this.embedBaseUrl = embedBaseUrl;
@@ -48,10 +51,24 @@ final class Ctx {
 
     static Ctx fromEnv(ObjectMapper mapper, Map<String, Object> in, String modelName, String mode) {
         boolean stub = "1".equals(System.getenv("ARENA_STUB"));
+        // stubModel: mock the MODEL, keep the STORES real (the integration lane,
+        // ARENA_STUB_MODEL=1).
+        //
+        // ARENA_STUB substitutes the model AND every store at once, which makes it
+        // structurally blind to a broken store connection — exactly where the
+        // defects that invalidated the 2026-07-27 board lived (no Qdrant
+        // credential, an orphaned rqlite Raft volume, credentials Java's HttpClient
+        // silently drops from a URL). Mocking only the model verifies the
+        // infrastructure at zero model cost, and therefore independently of which
+        // model is configured. Full stub implies a stubbed model; the reverse is
+        // deliberately NOT true, so every store-side branch stays on `stub`.
+        boolean stubModel = stub || "1".equals(System.getenv("ARENA_STUB_MODEL"));
 
         String apiKey = "";
         String chatBaseUrl = "";
-        if (!stub) {
+        // Keyed on stubModel: nothing is dialed when the model is a fake, so
+        // demanding credentials would block the integration lane for no reason.
+        if (!stubModel) {
             apiKey = System.getenv("OPENAI_API_KEY");
             if (apiKey == null || apiKey.isEmpty()) {
                 throw new IllegalStateException(
@@ -95,7 +112,7 @@ final class Ctx {
 
         String rqliteUrl = Adapter.envOr("RQLITE_URL", "http://localhost:4001");
 
-        return new Ctx(mapper, in, modelName, mode, stub, apiKey, chatBaseUrl, embedBaseUrl,
+        return new Ctx(mapper, in, modelName, mode, stub, stubModel, apiKey, chatBaseUrl, embedBaseUrl,
                 qdrantHost, grpcPort, collection, rqliteUrl);
     }
 

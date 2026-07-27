@@ -41,11 +41,25 @@ type arenaEnv struct {
 	// network-free fake chat model (stub.go) instead of the real agnes
 	// endpoint, and memory-backed modes default to an in-memory SQLite store
 	// instead of an on-disk file. See README.md#stub-mode.
+	// stub: the FULL offline substitution (ARENA_STUB=1) — fake model AND
+	// in-memory stores. Unchanged.
 	stub bool
+	// stubModel: fake model, REAL stores (ARENA_STUB=1 or ARENA_STUB_MODEL=1).
+	//
+	// The integration lane exists because `stub` substitutes both halves at once
+	// and is therefore blind to a broken store connection — which is where every
+	// defect that invalidated the 2026-07-27 board lived (missing Qdrant
+	// credential, orphaned rqlite volume, credentials the HTTP client rejects).
+	// Splitting the flag lets a run exercise the REAL stores with a mock model:
+	// infrastructure verified at zero model cost, and therefore independent of
+	// which model is configured.
+	stubModel bool
 }
 
 func loadEnv() (*arenaEnv, error) {
 	stub := os.Getenv("ARENA_STUB") == "1"
+	// Full stub implies a stubbed model; the reverse is deliberately NOT true.
+	stubModel := stub || os.Getenv("ARENA_STUB_MODEL") == "1"
 
 	defaultMemoryDBPath := ".data/memory.db"
 	if stub {
@@ -57,10 +71,11 @@ func loadEnv() (*arenaEnv, error) {
 	}
 
 	env := &arenaEnv{
-		apiKey:  os.Getenv("OPENAI_API_KEY"),
-		baseURL: os.Getenv("OPENAI_BASE_URL"),
-		model:   os.Getenv("OPENAI_MODEL"),
-		stub:    stub,
+		stubModel: stubModel,
+		apiKey:    os.Getenv("OPENAI_API_KEY"),
+		baseURL:   os.Getenv("OPENAI_BASE_URL"),
+		model:     os.Getenv("OPENAI_MODEL"),
+		stub:      stub,
 
 		embedURL:   getenvDefault("EMBED_URL", "http://127.0.0.1:8899"),
 		embedModel: getenvDefault("EMBED_MODEL", "multilingual-e5-small-query"),
@@ -71,12 +86,18 @@ func loadEnv() (*arenaEnv, error) {
 		memoryDBPath: getenvDefault("EINO_ARENA_MEMORY_DB", defaultMemoryDBPath),
 	}
 
-	if stub {
-		// Offline: no real agnes endpoint is ever dialed, so OPENAI_* is not
+	// Keyed on stubModel, not stub: whenever the MODEL is mocked no provider is
+	// dialed, so OPENAI_* is not required and the wire contract must report the
+	// offline model id — including on the integration lane, where the stores are
+	// real but the model is not. Reporting the real id there would trip the
+	// runner's lane-leak guard, which is exactly the alarm we want if a mocked
+	// lane ever reaches the provider.
+	if env.stubModel {
+		// Offline model: no provider endpoint is ever dialed, so OPENAI_* is not
 		// required. ALWAYS report the offline stub model on the wire contract,
 		// never the real OPENAI_MODEL: run.sh sets OPENAI_MODEL even for a stub
-		// run, so overriding only-when-empty left the real "agnes-2.0-flash" on
-		// the wire (the runner's lane-leak guard reads this field).
+		// run, so overriding only-when-empty left the real model id on the wire
+		// (the runner's lane-leak guard reads this field).
 		env.model = "arena-stub-echo"
 	} else {
 		if env.apiKey == "" {
@@ -124,7 +145,7 @@ func getenvDefault(key, fallback string) string {
 // interface, so this single choke point is where ARENA_STUB fans out to
 // every mode without a single mode-specific code change.
 func newChatModel(ctx context.Context, env *arenaEnv, cfg *einochatopenai.ChatModelConfig) (model.ToolCallingChatModel, error) {
-	if env.stub {
+	if env.stubModel {
 		return newStubChatModel(), nil
 	}
 	if cfg == nil {

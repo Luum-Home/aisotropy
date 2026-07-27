@@ -27,7 +27,10 @@ final class Models {
 
     /** agnes-2.0-flash over its OpenAI-compatible endpoint, or the offline stub. */
     static ChatModel chatModel(Ctx ctx) {
-        if (ctx.stub) {
+        // stubModel, not stub: on the integration lane the model is mocked while
+        // the Qdrant/rqlite clients below stay real. Everything store-shaped in
+        // this file keeps using ctx.stub.
+        if (ctx.stubModel) {
             return new StubChatModel(ctx.modelName);
         }
         // apiKey(String) wraps into a SimpleApiKey; the key is never logged.

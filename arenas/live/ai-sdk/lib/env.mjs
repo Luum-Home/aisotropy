@@ -6,7 +6,7 @@
 // (via host.docker.internal) or natively on the host.
 
 import { createOpenAI } from '@ai-sdk/openai';
-import { STUB_ENABLED, STUB_MODEL_ID, STUB_RQLITE_URL, createStubChatModel } from './stub.mjs';
+import { STUB_ENABLED, STUB_MODEL_ONLY, STUB_MODEL_ID, STUB_RQLITE_URL, createStubChatModel } from './stub.mjs';
 
 const DEFAULT_EMBED_URL = 'http://127.0.0.1:8899';
 const DEFAULT_QDRANT_URL = 'http://localhost:6333';
@@ -39,6 +39,27 @@ export function resolveEnv() {
       qdrantCollection: '',
       rqliteUrl: STUB_RQLITE_URL,
       stub: true,
+    };
+  }
+
+  // Integration lane: mock model, REAL stores. No OPENAI_* is required (nothing
+  // is dialed), the store config is resolved exactly as on the real lane, and
+  // `stub` stays FALSE so every store path takes its real branch. The reported
+  // model id is the stub's, which is what the runner's lane-leak guard checks —
+  // a lane that promised no model call must never report the real model.
+  if (STUB_MODEL_ONLY) {
+    return {
+      modelName: STUB_MODEL_ID,
+      chatModel: createStubChatModel(),
+      embedProvider: createOpenAI({
+        baseURL: process.env.EMBED_URL || DEFAULT_EMBED_URL,
+        apiKey: 'local-embed-server-no-auth-required',
+      }),
+      embedUrl: process.env.EMBED_URL || DEFAULT_EMBED_URL,
+      qdrantUrl: process.env.QDRANT_URL || DEFAULT_QDRANT_URL,
+      qdrantCollection: process.env.QDRANT_COLLECTION || DEFAULT_QDRANT_COLLECTION,
+      rqliteUrl: process.env.RQLITE_URL || DEFAULT_RQLITE_URL,
+      stub: false,
     };
   }
 

@@ -1,0 +1,24 @@
+<!--
+  Every log line goes to STDERR, never stdout.
+
+  The adapter wire contract is "exactly one JSON object on stdout". A dependency
+  logging to stdout silently violates it: io.qdrant's client emits a
+  compatibility WARN there, which lands in front of the JSON and makes the
+  runner's parse fail on a cell that otherwise worked. Nothing in the adapter's
+  own code did this, and 2>/dev/null does not help — the line was never on
+  stderr to begin with.
+
+  Pinning the appender to System.err makes the contract structural rather than a
+  property of which libraries happen to be on the classpath today.
+-->
+<configuration>
+  <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+    <target>System.err</target>
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} -- %msg%n</pattern>
+    </encoder>
+  </appender>
+  <root level="WARN">
+    <appender-ref ref="STDERR" />
+  </root>
+</configuration>
