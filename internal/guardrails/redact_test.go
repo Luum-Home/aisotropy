@@ -237,7 +237,7 @@ func TestNewCustomPatternValidation(t *testing.T) {
 
 func TestRedactorMultipleTypesReported(t *testing.T) {
 	r := NewRedactor()
-	in := "email bob@corp.io card 4111111111111111 ip 10.0.0.1 key sk-abcdefghijklmnop0123456789"
+	in := "email bob@example.com card 4111111111111111 ip 10.0.0.1 key sk-abcdefghijklmnop0123456789"
 	_, rep := r.Redact(in)
 	for _, want := range []RedactionType{RedactEmail, RedactCreditCard, RedactIP, RedactAPIKey} {
 		if rep.Counts[want] < 1 {

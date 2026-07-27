@@ -11,7 +11,7 @@ timestamp: 2026-07-08T00:00:00Z
 Two lines of thinking govern this project — and, deliberately, also govern *how this
 knowledge base is written*.
 
-## Andrew Karpathy
+## Andrej Karpathy
 
 ### 1. The "LLM OS" model
 Karpathy describes the LLM as the **CPU of a new kind of operating system**, where the
