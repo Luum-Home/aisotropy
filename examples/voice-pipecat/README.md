@@ -14,22 +14,42 @@ constitutional gate).
 |---|---|---|---|
 | Orchestration | [Pipecat](https://github.com/pipecat-ai/pipecat) | BSD-2 | this process |
 | VAD | Silero (via `pipecat-ai[silero]`) | MIT | this process |
-| STT | faster-whisper (via `pipecat-ai[whisper]`) | MIT | this process (local model) |
 | LLM | **aisotropy shim** (`/v1/chat/completions`) | — | `aisotropyd` |
-| TTS | [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) | Apache-2.0 | separate container |
+| **STT + TTS** | [voicebox](https://github.com/agjs/voicebox) `v0.2.12` | MIT source, **GPL-3.0 engine deps** | separate container |
 
-License notes: everything above is MIT/Apache-2.0/BSD, consistent with the
-repo's license gate. F5-TTS official weights (CC-BY-NC) are deliberately NOT
-used — see `docs/research/voice-pipeline-landscape-2026-07-23.md`.
+Both audio legs come from **one** voicebox container (`docker-compose.voicebox.yml`).
+The previous stack — Kokoro-FastAPI (Apache-2.0) for TTS plus an in-process
+faster-whisper (MIT) for STT — is still one variable away:
+`VOICE_AUDIO_BACKEND=kokoro-fastapi`.
+
+> **License note — read before changing the audio wiring.** voicebox's own source
+> is MIT, but **both** of its TTS engines pull **GPL-3.0** code: `phonemizer-fork`
+> (a hard, import-time dependency of `kokoro-onnx`), `piper-tts`, and system
+> espeak-ng. Upstream's documented "purely permissive image" recipe does **not**
+> remove that — verified by building it. voicebox is adopted under
+> `license-policy.md` §Exceptions as a **separate, unmodified, HTTP-only**
+> service, formalized condition-by-condition in
+> [ADR-0077](../../docs/decisions/0077-voicebox-gpl-exception-audio-backend.md).
+> **Nothing GPL is pip-installed** — the container boundary is the whole point.
+> Vendoring voicebox's source, shipping its image in an aisotropy artifact,
+> patching it in place, or adding `kokoro-onnx`/`pipecat-ai[kokoro]` to
+> `requirements*.txt` **voids the exception**.
+
+F5-TTS official weights (CC-BY-NC) are deliberately NOT used — see
+`docs/research/voice-pipeline-landscape-2026-07-23.md`.
 
 ## Files
 
 | File | What it is |
 |---|---|
-| `bot.py` | The voice sandwich: mic → VAD → whisper STT → shim LLM → Kokoro TTS → speaker |
+| `bot.py` | The voice sandwich: mic → VAD → STT → shim LLM → TTS → speaker |
+| `audio_backend.py` | **The backend switch** (`VOICE_AUDIO_BACKEND`) + the pipecat STT/TTS constructors `bot.py`, the metric scripts and the test lane all share |
+| `voicebox_tts.py` | pipecat TTS service for voicebox's `/v1/audio/speech` — and the file:line reasons pipecat's stock `OpenAITTSService` cannot drive it |
+| `docker-compose.voicebox.yml` | The voicebox container: pinned to upstream tag `v0.2.12`, built from the unmodified clone, loopback-only, no volumes |
 | `mint_jwt.py` | Dev HS256 tenant-JWT minting (stdlib only; matches `internal/auth/jwt.go`) |
 | `measure_ttfab.py` | **Metric #1**: time-to-first-audio-byte (LLM TTFT + TTS first byte); `--assert-ttfab-ms N` = threshold mode, exit 1 on breach (ADR-0069) |
 | `measure_bargein.py` | **Metric #2**: barge-in-to-silence (cancel → stream torn down); `--assert-bargein-ms N` = threshold mode, exit 1 on breach (ADR-0069) |
+| `measure_wer.py` | **Metric #3**: per-case WER for the round-trip sentences and the pinned fixtures — prints the numbers the lane only asserts a bound on (ADR-0077) |
 | `requirements.txt` | Python deps (own venv; this dir is never part of the Go module) |
 | `requirements-test.txt` | Test-lane extras (pytest, websockets — licenses noted inline) |
 | `tests/` | The voice testing lane (ADR-0069): WER round-trip, pinned fixtures, file-based pipeline test |
@@ -89,11 +109,45 @@ usable but the real lane's packages are absent" as a warning (exit 0) rather
 than a failure, because the offline WER unit tests still run in that state.
 A rotted venv is not a test failure and must not look like one.
 
-### 4. Kokoro-FastAPI (TTS, separate container)
+### 4. The audio backend (STT + TTS, separate container)
+
+**Default — voicebox.** It is built from the **unmodified** upstream clone, so
+you need that clone once (it lands in the gitignored `external/`, i.e. it is
+never repo content — that is part of what keeps the license exception valid,
+[ADR-0077](../../docs/decisions/0077-voicebox-gpl-exception-audio-backend.md)):
 
 ```bash
+# once, from the repo root — pinned to the exact tag this was verified against
+git clone https://github.com/agjs/voicebox external/voicebox
+git -C external/voicebox checkout v0.2.12          # commit 539325c
+
+# from this directory. First build downloads + BAKES the models: ~3.2 GB image,
+# a few minutes. Run it through the machine guard on a shared/loaded box:
+#   scripts/with-heavy-lane.sh --need-mb 2048 docker build -t voicebox:0.2.12 external/voicebox
+docker compose -f docker-compose.voicebox.yml up -d --build
+curl -fsS localhost:8790/health        # {"status":"ok","models_loaded":true} in ~3s
+```
+
+Teardown leaves nothing behind (no volumes):
+`docker compose -f docker-compose.voicebox.yml down`.
+
+> Upstream's README suggests pulling `ghcr.io/agjs/voicebox:0.2.12` instead.
+> That package is **not publicly pullable** (checked 2026-07-27: anonymous token
+> refused, manifest 403, package page 404), which is why the build path above is
+> the documented one and why the pin is the *source* tag rather than an image
+> digest.
+
+**Fallback — the previous stack**, if voicebox is unavailable or you want to
+compare:
+
+```bash
+export VOICE_AUDIO_BACKEND=kokoro-fastapi
 docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest   # or -gpu
 ```
+
+That backend also downloads the faster-whisper model on first run
+(`WHISPER_MODEL`, default `distil-medium.en`). The voicebox backend downloads
+nothing at runtime — its models are baked into the image.
 
 ### 5. Talk
 
@@ -102,46 +156,58 @@ python3 bot.py
 # speak; interrupt the bot mid-reply to feel barge-in. Ctrl-C to quit.
 ```
 
-First run downloads the faster-whisper model (`WHISPER_MODEL`, default
-`distil-medium.en`).
+## The three executable metrics (evidencia ejecutable)
 
-## The two executable metrics (evidencia ejecutable)
-
-No latency claims without a command. Each script prints per-run numbers and a
-median; run them, paste the output:
+No latency or quality claims without a command. Each script prints per-run
+numbers and a median; run them, paste the output:
 
 ```bash
-# Time-to-first-audio-byte: shim TTFT + Kokoro first audio byte (serial floor
+# Time-to-first-audio-byte: shim TTFT + backend first audio byte (serial floor
 # of the sandwich). --skip-tts measures the LLM leg alone.
 python3 measure_ttfab.py --runs 5
 
 # Barge-in-to-silence: start a reply, cancel on the first token (what Pipecat
 # does when VAD detects user speech), measure cancel -> stream torn down.
 python3 measure_bargein.py --runs 5
+
+# Per-case WER for the round-trip sentences and the pinned fixtures. The lane
+# ASSERTS a bound; this prints the number, so a threshold can be re-derived
+# from measurement instead of inherited. voicebox backend only.
+python3 measure_wer.py
 ```
 
-Both scripts talk to the shim through the SAME client stack Pipecat uses
+The first two talk to the shim through the SAME client stack Pipecat uses
 (`AsyncOpenAI`, `stream:true` + `stream_options.include_usage`), so their
-numbers transfer to the bot.
+numbers transfer to the bot. `measure_wer.py` imports the lane's own sentences,
+fixtures and scorer, so it can never drift from what the tests assert.
 
-Threshold mode (ADR-0069) turns either script into a CI-usable gate — the
-measurement is unchanged; a breached median exits 1 (exit 2 stays reserved for
-configuration/connectivity errors). Recommended thresholds, **calibrated
-against the measured 2026-07-23 runs** (stub LLM + Kokoro **CPU** image:
-median TTFAB 3543 ms, worst 3766 ms; barge-in median 0.1 ms — the
-passQAThreshold pattern, ~2× headroom over the measured floor):
+Threshold mode (ADR-0069) turns either latency script into a CI-usable gate —
+the measurement is unchanged; a breached median exits 1 (exit 2 stays reserved
+for configuration/connectivity errors):
 
 ```bash
-# CPU-image lane (the only calibrated lane so far):
 python3 measure_ttfab.py --runs 5 --assert-ttfab-ms 7000
 python3 measure_bargein.py --runs 5 --assert-bargein-ms 250
 ```
 
-A sub-second TTFAB assert is only meaningful once a faster TTS path exists
-(Kokoro GPU image, streaming TTS, or sentence-chunked synthesis) — calibrate
-against measured runs on that stack before committing a threshold for it; an
-aspirational threshold (e.g. 800 ms vs the CPU image) fails always and gates
-nothing.
+**Measured 2026-07-27 on the voicebox backend** (stub LLM, 5 runs, machine at
+~95% swap under concurrent sessions — absolute values are machine-dependent):
+median `llm_ttft` **6.0 ms**, median `tts_ttfab` **3441.4 ms**, median TTFAB
+**3447.4 ms**; barge-in-to-silence median **0.1 ms**. That is
+*indistinguishable* from the 2026-07-23 Kokoro-FastAPI record (median TTFAB
+3543 ms), so the 7000 ms threshold still holds with ~2× headroom and is left
+unchanged.
+
+**Why the backend swap did not move TTFAB, measured rather than guessed:** the
+stub LLM's first sentence echoes the system prompt and is **105 characters**,
+and voicebox's advantage is concentrated in short sentences. Bracketed directly
+against the same running container, 5 runs each: **38-char sentence → 902 ms**
+median, **105-char stub sentence → 2211 ms** median. The 2026-07-27 spike
+measured ~1.2–4× on the TTS leg depending on sentence length (an earlier "8.6×"
+in that report is **retracted** — it compared against a stale baseline record).
+A sub-second TTFAB assert only becomes meaningful with a short first sentence,
+a GPU path, or sentence-chunked synthesis; calibrate against measured runs on
+that stack first — an aspirational threshold fails always and gates nothing.
 
 ## The voice testing lane (ADR-0069) — no audio hardware needed
 
@@ -155,9 +221,10 @@ WER unit tests run (safe for any CI, zero downloads):
 pip install -r requirements-test.txt        # pytest + websockets
 pytest tests/ -q                            # lane off: 8 passed, 8 skipped
 
-# The real lane needs: the Kokoro container (step 4 above; image ~several GB,
-# first pull is slow) and the faster-whisper model (base.en, ~74MB,
-# auto-downloads on first run into the HF cache).
+# The real lane needs the audio backend from step 4 (voicebox: ~3.2 GB image,
+# first build is slow, models baked in — nothing downloads at test time).
+# On VOICE_AUDIO_BACKEND=kokoro-fastapi it also needs the faster-whisper model
+# (base.en, ~74MB, auto-downloads on first run into the HF cache).
 # Canonical invocation — venv preflight, then resource-guard + cross-session
 # lock + nice (from the repo root; the lane also self-checks the guard and skips
 # when the machine is saturated, degrading to tiny.en when it is merely tight):
@@ -172,10 +239,12 @@ VOICE_LANE=real AISOTROPY_TENANT_JWT=$(python3 mint_jwt.py --tenant acme --user 
   pytest tests/test_pipeline_file.py -q
 ```
 
-Knobs for constrained machines: `VOICE_STT_MODEL=tiny.en` (~40MB; slightly
-higher WER than the base.en the thresholds were calibrated on) and
-`VOICE_STT_THREADS=2`. WER thresholds and their measured grounding live in
-ADR-0069 and in the test files' comments.
+Knobs for constrained machines (**`kokoro-fastapi` backend only** — with
+voicebox the STT model is fixed server-side by `VOICEBOX_STT_MODEL`):
+`VOICE_STT_MODEL=tiny.en` (~40MB; slightly higher WER than the base.en the
+thresholds were calibrated on) and `VOICE_STT_THREADS=2`. WER thresholds and
+their measured grounding live in ADR-0069, ADR-0077 and the test files'
+comments — re-derive them with `measure_wer.py`, never loosen them silently.
 
 ## Configuration
 
@@ -183,9 +252,13 @@ ADR-0069 and in the test files' comments.
 |---|---|---|
 | `AISOTROPY_OPENAI_BASE_URL` | `http://localhost:8080/v1` | shim base URL (SDK appends `/chat/completions`) |
 | `AISOTROPY_TENANT_JWT` | — (required) | tenant JWT, passed as the OpenAI api_key |
-| `KOKORO_BASE_URL` | `http://localhost:8880/v1` | Kokoro-FastAPI base URL |
+| `VOICE_AUDIO_BACKEND` | `voicebox` | `voicebox` \| `kokoro-fastapi` — selects **both** audio legs. A typo fails at boot; it never silently falls back |
+| `VOICEBOX_BASE_URL` | `http://localhost:8790/v1` | voicebox base URL |
+| `VOICEBOX_VOICE` | `af_heart` | a **Kokoro** voice id. Not an OpenAI name: voicebox does no name mapping (`alloy` → HTTP 500) |
+| `VOICEBOX_API_KEY` | — (unset) | when voicebox runs with a key, clients send it as a bearer token |
+| `KOKORO_BASE_URL` | `http://localhost:8880/v1` | Kokoro-FastAPI base URL (fallback backend) |
 | `KOKORO_VOICE` | `alloy` | TTS voice id — OpenAI-style, mapped server-side by Kokoro-FastAPI (see ADR-0069 §3) |
-| `WHISPER_MODEL` | `distil-medium.en` | faster-whisper model name |
+| `WHISPER_MODEL` | `distil-medium.en` | faster-whisper model name (fallback backend only) |
 
 ## Honest status (what has actually been executed)
 
@@ -196,30 +269,41 @@ ADR-0069 and in the test files' comments.
 - The **LLM leg of this PoC** (openai-SDK-shaped streaming against a live
   `aisotropyd` running the stub LLM client, JWT as api_key) was smoke-tested at
   implementation time — transcript in the ADR-0066 apply report.
-- The **STT/TTS legs and the full sandwich** are now covered by the ADR-0069
-  test lane and HAVE been executed end-to-end (2026-07-23): the WER round-trip
-  and fixture tests passed against the real Kokoro container + faster-whisper
-  base.en, and the file-based pipeline test (WAV → whisper STT → shim LLM →
-  Kokoro TTS frames, via `pipecat.tests.utils.run_test`) passed against a live
-  stub-backed aisotropyd — no audio hardware involved. Re-run later the same
-  day against the real `cmd/aisotropyd` binary (post boot-deadlock fix):
-  **16/16 passed in 64s** via the canonical `with-heavy-lane.sh` invocation.
-- **Real-TTS latency measured** (2026-07-23, stub LLM + Kokoro **CPU** image,
-  5 runs): median `llm_ttft` **3.1 ms**, median `tts_ttfab` **3540 ms**, median
-  TTFAB **3543 ms**; barge-in-to-silence median **0.1 ms**. The sandwich's
-  latency bottleneck is Kokoro-CPU's first audio byte (2.3–3.7 s observed) —
-  production voice needs the GPU image, a streaming-TTS mode, or
-  sentence-chunked synthesis; the runtime side (shim) contributes ~3 ms. No
-  calibrated TTFAB threshold is committed yet: the `--assert-ttfab-ms 2000`
-  probe run correctly FAILED (exit 1) against the CPU image — that was the
-  breach path being exercised, not a regression.
+- The **STT/TTS legs and the full sandwich** are covered by the ADR-0069 test
+  lane and HAVE been executed end-to-end. On the **kokoro-fastapi** backend
+  (2026-07-23): 16/16 passed in 64s. On the **voicebox** backend (2026-07-27,
+  after the ADR-0077 swap): **16 passed in 103.54s** via the canonical
+  `with-heavy-lane.sh` invocation against a live `cmd/aisotropyd` — including
+  the file-based pipeline test (WAV → voicebox STT → shim LLM → voicebox TTS
+  frames, via `pipecat.tests.utils.run_test`), no audio hardware involved. The
+  103.54s vs 64s difference is not a comparable measurement: the machine was at
+  ~95% swap under concurrent sessions and the lane ran at `nice 19` with
+  `OMP_NUM_THREADS=2`.
+- **WER re-derived across the backend swap, not inherited** (2026-07-27,
+  `measure_wer.py`): the STT model changed (`faster-distil-whisper-small.en`
+  server-side, vs the previous in-process `base.en`) and the distribution came
+  out identical — round-trip 0.000 / 0.000 / 0.000 / **0.083**, pinned fixtures
+  0.000 × 3, worst case the same `"Doctor"` → `"Dr."` formatting artefact.
+  Thresholds unchanged (0.20 / 0.15) because measurement says so, not because
+  they were carried over.
+- **Latency measured on the voicebox backend** (2026-07-27, stub LLM, 5 runs):
+  median `llm_ttft` **6.0 ms**, median `tts_ttfab` **3441.4 ms**, median TTFAB
+  **3447.4 ms**; barge-in-to-silence median **0.1 ms**. Honest reading: that is
+  *the same* as the 2026-07-23 Kokoro-FastAPI record (3543 ms) — **the backend
+  swap did not speed up this PoC's TTFAB**, because the stub's first sentence is
+  105 characters and voicebox's advantage lives in short sentences (38 ch →
+  902 ms vs 105 ch → 2211 ms, measured on the same container). The swap's case
+  is one-container simplicity and the license question being settled explicitly
+  (ADR-0077), not a TTFAB win.
+- **NOT verified**: whether voicebox stops synthesizing when the client
+  disconnects mid-PCM-stream (the TTS half of barge-in). The 0.1 ms figure above
+  is the *shim* leg — the constitutional ctx-cancellation property — and the TTS
+  half is untested on both backends.
 - `bot.py` itself (mic/speaker via `LocalAudioTransport`) still requires real
-  audio hardware and has NOT been run here. The latent voice-id issue found
-  while building the lane — pipecat 0.0.x's `OpenAITTSService` rejects
-  non-OpenAI voice ids (`VALID_VOICES` lookup), so a Kokoro id like `af_heart`
-  produced a silent error at the TTS leg — was fixed 2026-07-23: `bot.py` now
-  defaults `KOKORO_VOICE` to `alloy` (an OpenAI-style id, mapped server-side by
-  Kokoro-FastAPI — the same voice the ADR-0069 test lane uses). Setting
-  `KOKORO_VOICE` to a raw Kokoro id still triggers the pipecat rejection.
-  Run steps 1–5 above to produce real numbers; do not quote any until
-  you have.
+  audio hardware and has NOT been run here. Its services are now built by the
+  same `audio_backend.py` factories the lane exercises, so the untested surface
+  is the audio *transport*, not the STT/LLM/TTS chain. The pipecat voice-id trap
+  that bit the Kokoro path (`OpenAITTSService`'s `VALID_VOICES` lookup rejects
+  non-OpenAI ids) is why the voicebox TTS leg is explicit HTTP instead — see
+  `voicebox_tts.py`. Run steps 1–5 above to produce real numbers; do not quote
+  any until you have.

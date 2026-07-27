@@ -7,9 +7,11 @@
 #
 # DELIBERATELY ABSENT: kokoro-onnx. Its hard deps include phonemizer-fork
 # (GPL-3.0) and a bundled espeak-ng (GPL-3.0) — blocked by the repo license
-# gate for pip-installed code. TTS in the tests goes over HTTP to the
-# Kokoro-FastAPI container instead (Apache-2.0, the separate-service license
-# boundary the PoC already uses). Full rationale: ADR-0069.
+# gate for pip-installed code. TTS in the tests goes over HTTP to the audio
+# backend container instead. Still true after the 2026-07-27 backend swap
+# (ADR-0077): voicebox runs that same kokoro-onnx stack, but INSIDE its own
+# container, under the license-policy §Exceptions separate-service boundary —
+# the pip line is exactly what must not exist. Full rationale: ADR-0069, ADR-0077.
 pytest>=8
 # pipecat 0.0.x's stt_service imports `websockets` at module import time but
 # the [whisper] extra does not pull it — needed by test_pipeline_file.py.

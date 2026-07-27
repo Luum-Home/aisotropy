@@ -273,6 +273,30 @@ claims:
     expect: {op: eq, value: 1}
     evidence: "examples/voice-pipecat/requirements.txt"
 
+  - id: voice-audio-gpl-stays-in-the-container
+    claim: >-
+      The ADR-0077 license exception holds because voicebox's GPL-3.0 engine dependencies
+      never leave its container: no kokoro-onnx, no piper-tts and no pipecat-ai[kokoro]
+      appears in the voice PoC's requirements files. Adding any of them would move GPL
+      code into our virtualenv and void the license-policy §Exceptions separate-service
+      boundary.
+    requires:
+      [
+        examples/voice-pipecat/requirements.txt,
+        examples/voice-pipecat/requirements-test.txt,
+      ]
+    check: |-
+      grep -chE '^[^#]*(kokoro-onnx|piper-tts|pipecat-ai\[[^]]*kokoro)' examples/voice-pipecat/requirements.txt examples/voice-pipecat/requirements-test.txt | paste -sd+ - | bc
+    expect: {op: eq, value: 0}
+    evidence: >-
+      ADR-0077 §Residual risk, tripwire 4; the GPL deps run inside the container defined by
+      examples/voice-pipecat/docker-compose.voicebox.yml
+    on_close: >-
+      This claim must NOT be closed by relaxing it. A non-zero count means the GPL code was
+      pip-installed into the PoC's venv, which is one of the four actions ADR-0077 lists as
+      VOIDING the exception. The fix is to remove the dependency and reach the engine over
+      HTTP, not to edit this expectation.
+
   - id: shim-never-real-provider
     claim: >-
       The OpenAI-compat shim has NEVER been exercised against a real model provider — its

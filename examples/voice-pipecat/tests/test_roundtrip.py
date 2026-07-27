@@ -23,15 +23,25 @@ pytestmark = laneconf.require_voice_lane
 
 # Empirical threshold — the `passQAThreshold` pattern from arena scoring
 # (arenas/live/runner/scoring/scoring.go): a documented constant grounded in
-# real measured fixtures, not a guess. Measured 2026-07-23 with Kokoro
-# (af_heart, via Kokoro-FastAPI cpu:latest) -> faster-whisper base.en int8:
+# real measured fixtures, not a guess.
+#
+# Calibrated 2026-07-23 with Kokoro (af_heart, via Kokoro-FastAPI cpu:latest)
+# -> faster-whisper base.en int8:
 #   "Hello there."                              WER 0.000
 #   "The quick brown fox ... lazy dog."         WER 0.000
 #   "In 1969, Neil Armstrong ... Buzz Aldrin."  WER 0.000
 #   "Doctor Rivera scheduled 42 ... deadline."  WER 0.083  ("Doctor" -> "Dr.")
-# Worst observed error was FORMATTING (abbreviation/digit choices), not
-# intelligibility. 0.20 = ~2x headroom over the worst measured case; a real
-# regression (dropped clause, garbled number, noise) lands far above it.
+#
+# RE-DERIVED 2026-07-27 after the backend swap to voicebox 0.2.12 (ADR-0077) —
+# different TTS wiring (Kokoro-ONNX in-process to the container) AND a different
+# STT model (Systran/faster-distil-whisper-small.en, not base.en), so the
+# constant could not simply be inherited. `python3 measure_wer.py` printed the
+# SAME distribution: 0.000 / 0.000 / 0.000 / 0.083, worst 0.083 — again the
+# "Doctor" -> "Dr." formatting case, not an intelligibility loss.
+#
+# 0.20 therefore keeps ~2.4x headroom over the worst measured case on BOTH
+# backends and is left unchanged; a real regression (dropped clause, garbled
+# number, noise) lands far above it. Re-run `measure_wer.py` before touching it.
 WER_THRESHOLD = 0.20
 
 # Varied length; numbers and proper nouns included deliberately — they are the

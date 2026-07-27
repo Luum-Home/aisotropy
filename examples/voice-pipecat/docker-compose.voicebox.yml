@@ -1,0 +1,90 @@
+# voicebox — the audio backend of this PoC (STT + TTS in one process).
+#
+# LICENSE POSTURE (read before changing anything here): voicebox itself is MIT,
+# but BOTH of its TTS engines drag in GPL-3.0 — `piper-tts` (code) on the piper
+# engine, `phonemizer-fork` (via `kokoro-onnx`) plus system espeak-ng on the
+# kokoro engine. It is adopted under the license-policy §Exceptions
+# separate-service boundary, formalized in ADR-0077. That exception holds ONLY
+# while all of these stay true:
+#
+#   * this file runs the container as a SEPARATE service;
+#   * the image is built from the UNMODIFIED upstream clone (no patched source,
+#     no dropped dependency, no vendored file in this repo — `external/` is
+#     gitignored);
+#   * this repo talks to it exclusively over its documented HTTP API
+#     (`/v1/audio/speech`, `/v1/audio/transcriptions`, `/v1/models`, `/health`);
+#   * no aisotropy artifact ships this image or its code.
+#
+# Vendoring voicebox's source, patching it in place, or publishing this image as
+# part of an aisotropy artifact VOIDS the exception. See ADR-0077 §Consequences.
+#
+# IMAGE PIN. Upstream's README recommends `ghcr.io/agjs/voicebox:0.2.12`, but
+# that package is NOT publicly pullable (verified 2026-07-27: the GHCR token
+# endpoint refuses an anonymous pull scope, the manifest returns 403, and
+# github.com/agjs/voicebox/pkgs/container/voicebox returns 404). So the pin here
+# is the SOURCE pin — upstream git tag `v0.2.12`, commit `539325c` in
+# `external/voicebox` — built locally with upstream's own unmodified Dockerfile
+# and tagged `voicebox:0.2.12`. Never `latest`: this is a v0.2.x dependency with
+# no API-stability promise.
+#
+# Bring-up (from examples/voice-pipecat/):
+#   docker compose -f docker-compose.voicebox.yml up -d --build   # first build bakes models, multi-GB
+#   curl -fsS localhost:8790/health        # {"status":"ok","models_loaded":true}
+#   docker compose -f docker-compose.voicebox.yml down            # leaves no volume behind
+
+name: aisotropy-voice-pipecat
+
+services:
+  voicebox:
+    build:
+      # The unmodified upstream clone. Not vendored: `external/` is gitignored,
+      # so this build context is an operator-provided checkout, not repo content.
+      #   git clone https://github.com/agjs/voicebox external/voicebox
+      #   git -C external/voicebox checkout v0.2.12
+      context: ${VOICEBOX_SRC:-../../external/voicebox}
+    image: voicebox:0.2.12
+    # Publish to loopback only. voicebox refuses a non-loopback listen without
+    # VOICEBOX_API_KEY unless explicitly opted out (config.py:24-39); the
+    # container listens on 0.0.0.0 internally, and THIS line is what bounds
+    # exposure to the host.
+    ports:
+      - "127.0.0.1:${VOICEBOX_PORT:-8790}:8790"
+    environment:
+      # kokoro, not upstream's `piper` default: the ADR-0069 fixtures and every
+      # number in the 2026-07-27 spike were produced by the Kokoro engine with
+      # voice af_heart. Both engines are GPL-exposed and both are covered by the
+      # ADR-0077 exception — switching is one variable, not a license decision.
+      VOICEBOX_TTS_ENGINE: "${VOICEBOX_TTS_ENGINE:-kokoro}"
+      VOICEBOX_DEFAULT_VOICE: "${VOICEBOX_DEFAULT_VOICE:-af_heart}"
+      # Model revisions pinned to commit SHAs (upstream's own defaults, restated
+      # here so a silent upstream default change cannot move our audio).
+      VOICEBOX_STT_MODEL: "${VOICEBOX_STT_MODEL:-Systran/faster-distil-whisper-small.en}"
+      VOICEBOX_STT_MODEL_REVISION: "${VOICEBOX_STT_MODEL_REVISION:-ef77d90526ccd62cde3808ee70626a01e5cf83e4}"
+      VOICEBOX_TTS_MODEL: "${VOICEBOX_TTS_MODEL:-speaches-ai/Kokoro-82M-v1.0-ONNX}"
+      VOICEBOX_TTS_MODEL_REVISION: "${VOICEBOX_TTS_MODEL_REVISION:-dc196c76d64fed9203906231372bcb98135815df}"
+      VOICEBOX_BIND_ADDRESS: "0.0.0.0"
+      VOICEBOX_ALLOW_INSECURE_BIND: "true"
+      # Local dev: no credential. Set VOICEBOX_API_KEY in the environment to
+      # require one (clients then send it as an OpenAI-style bearer token —
+      # VOICEBOX_API_KEY is read from the host shell, never committed).
+      VOICEBOX_API_KEY: "${VOICEBOX_API_KEY:-}"
+      VOICEBOX_CPU_THREADS: "${VOICEBOX_CPU_THREADS:-4}"
+      OMP_NUM_THREADS: "${VOICEBOX_CPU_THREADS:-4}"
+      MKL_NUM_THREADS: "${VOICEBOX_CPU_THREADS:-4}"
+    # A lane container that dies should fail the lane, not respawn silently
+    # (same posture as deploy/dormant-lane/docker-compose.yml).
+    restart: "no"
+    mem_limit: 4g
+    cpus: "${VOICEBOX_CPUS:-4.0}"
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # /health is deliberately unauthenticated upstream (app.py:54) so the
+      # probe works even when VOICEBOX_API_KEY is set.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8790/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    # No volumes: models are baked into the image at build time
+    # (Dockerfile:20-26, HF_HUB_OFFLINE=1). Teardown leaves nothing behind.

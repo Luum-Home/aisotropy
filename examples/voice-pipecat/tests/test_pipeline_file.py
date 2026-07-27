@@ -1,7 +1,8 @@
 """File-based Pipecat pipeline test: WAV in -> captured TTS frames out (ADR-0069).
 
-Runs the SAME processor chain as bot.py (whisper STT -> user context aggregator
--> aisotropy shim LLM -> Kokoro TTS) with **no audio device**: instead of
+Runs the SAME processor chain as bot.py — literally the same constructors, from
+`audio_backend.make_stt()` / `make_tts()` (STT -> user context aggregator ->
+aisotropy shim LLM -> TTS) — with **no audio device**: instead of
 `LocalAudioTransport`, the utterance is injected as `InputAudioRawFrame`s
 bracketed by the VAD frames a real transport's VAD would emit, and the TTS
 output is captured from the pipeline as `TTSAudioRawFrame`s.
@@ -25,6 +26,7 @@ import os
 
 import pytest
 
+import audio_backend
 import laneconf
 from conftest import read_wav_pcm
 
@@ -71,7 +73,7 @@ def _resample_to_16k(pcm: bytes, rate: int, channels: int) -> bytes:
     return resampled.astype(np.int16).tobytes()
 
 
-def test_pipeline_wav_in_tts_frames_out(kokoro_api, synth, whisper):
+def test_pipeline_wav_in_tts_frames_out(audio_api, synth):
     """The full voice sandwich, headless: fixture WAV -> STT -> LLM -> TTS frames."""
     _require_shim()
 
@@ -85,10 +87,10 @@ def test_pipeline_wav_in_tts_frames_out(kokoro_api, synth, whisper):
             "pipecat-ai>=0.0.60,<0.1 line (see requirements.txt)"
         )
 
-    asyncio.run(_run_pipeline(kokoro_api, synth))
+    asyncio.run(_run_pipeline(synth))
 
 
-async def _run_pipeline(kokoro_api, synth):
+async def _run_pipeline(synth):
 
     try:
         from pipecat.frames.frames import (
@@ -103,8 +105,6 @@ async def _run_pipeline(kokoro_api, synth):
         from pipecat.pipeline.task import PipelineParams
         from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
         from pipecat.services.openai.llm import OpenAILLMService
-        from pipecat.services.openai.tts import OpenAITTSService
-        from pipecat.services.whisper.stt import WhisperSTTService
         from pipecat.tests.utils import SleepFrame, run_test
     except ImportError as e:  # partial install (e.g. missing transitive dep)
         pytest.skip(f"pipecat import incomplete: {e} — pip install -r requirements-test.txt")
@@ -115,18 +115,11 @@ async def _run_pipeline(kokoro_api, synth):
     pcm, rate, channels = read_wav_pcm(wav_path)
     pcm16k = _resample_to_16k(pcm, rate, channels)
 
-    stt = WhisperSTTService(model=laneconf.WHISPER_MODEL)
+    # The SAME constructors bot.py uses — a lane that builds a different chain
+    # than the bot proves nothing about the bot.
+    stt = audio_backend.make_stt(laneconf.BACKEND, whisper_model=laneconf.WHISPER_MODEL)
     llm = OpenAILLMService(api_key=TENANT_JWT, base_url=SHIM_BASE_URL, model="aisotropy")
-    # pipecat 0.0.x's OpenAITTSService validates the voice against OpenAI's own
-    # voice ids (VALID_VOICES[...] — a Kokoro id like "af_heart" KeyErrors into
-    # a silent ErrorFrame). Kokoro-FastAPI maps OpenAI voice names to Kokoro
-    # voices server-side, so "alloy" works against the same container.
-    tts = OpenAITTSService(
-        api_key="not-needed",
-        base_url=kokoro_api,
-        model="kokoro",
-        voice="alloy",
-    )
+    tts = audio_backend.make_tts(laneconf.BACKEND)
     context_aggregator = llm.create_context_aggregator(OpenAILLMContext())
 
     pipeline = Pipeline([stt, context_aggregator.user(), llm, tts])

@@ -261,6 +261,15 @@ ALLOWLIST_IMAGE_PREFIXES=(
   "caddy:"                                       # Apache-2.0
   "nginx:"                                       # BSD-2-Clause
   "mcr.microsoft.com/dotnet/aspire-dashboard:"   # MIT -- ADR-0065 (local OTel viewer)
+  # voicebox: MIT source, but its TTS engines pull GPL-3.0 (phonemizer-fork via
+  # kokoro-onnx at module import, piper-tts on the other engine, espeak-ng on
+  # both). Allowlisted DELIBERATELY under license-policy §Exceptions as a
+  # separate, unmodified, HTTP-only service in examples/ — never vendored, never
+  # shipped inside an aisotropy artifact. Conditions answered one by one, and
+  # the four actions that VOID the exception, in ADR-0077. Built from source
+  # (upstream tag v0.2.12 / 539325c) because the published image is not
+  # publicly pullable — so this is a source pin, not a digest pin.
+  "voicebox:"                                    # GPL-3.0 engine deps -- ADR-0077 exception, allowlisted deliberately
 )
 
 is_allowlisted_image() {

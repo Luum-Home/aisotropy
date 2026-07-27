@@ -25,6 +25,13 @@ pytestmark = laneconf.require_voice_lane
 # three fixtures below measured WER 0.000 on 2026-07-23 (Kokoro af_heart ->
 # faster-whisper base.en int8); 0.15 absorbs STT formatting drift (digit vs
 # word, abbreviations) while still failing on any real mistranscription.
+#
+# This is exactly the case the fixtures exist for, and it paid off: on
+# 2026-07-27 the STT model changed under them (backend swap to voicebox, whose
+# server-side model is Systran/faster-distil-whisper-small.en — ADR-0077), and
+# the SAME pinned WAVs still transcribed at WER 0.000 / 0.000 / 0.000
+# (`python3 measure_wer.py`). A pinned input is what makes that comparable at
+# all; threshold unchanged.
 FIXTURE_WER_THRESHOLD = 0.15
 
 FIXTURES: dict[str, str] = {

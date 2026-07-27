@@ -8,8 +8,9 @@ claim IS this command's output, reproducible by anyone):
   1. LLM leg  — time-to-first-token from aisotropy's OpenAI-compat shim,
      measured through the SAME client stack Pipecat uses (AsyncOpenAI with
      ``stream=True`` + ``stream_options.include_usage``, api_key = tenant JWT).
-  2. TTS leg  — time-to-first-audio-byte from Kokoro-FastAPI's streaming
-     ``/v1/audio/speech`` for the first sentence of the reply.
+  2. TTS leg  — time-to-first-audio-byte from the audio backend's streaming
+     ``/v1/audio/speech`` for the first sentence of the reply. Which backend is
+     `VOICE_AUDIO_BACKEND` (default voicebox — see audio_backend.py, ADR-0077).
 
 STT is deliberately out of scope here: it overlaps the user's speech (streamed
 locally by faster-whisper) rather than adding serial latency after the turn
@@ -18,13 +19,14 @@ ends; the serial voice-sandwich floor is LLM-TTFT + TTS-TTFAB.
 Usage:
     export AISOTROPY_TENANT_JWT=$(python3 mint_jwt.py --tenant acme --user alice)
     python3 measure_ttfab.py                       # both legs
-    python3 measure_ttfab.py --skip-tts            # LLM leg only (no Kokoro up)
+    python3 measure_ttfab.py --skip-tts            # LLM leg only (no audio backend up)
     python3 measure_ttfab.py --runs 5              # median over 5 runs
     python3 measure_ttfab.py --assert-ttfab-ms 800 # threshold mode (ADR-0069):
                                                    # exit 1 if median TTFAB > 800ms
 
-Environment: AISOTROPY_OPENAI_BASE_URL, AISOTROPY_TENANT_JWT, KOKORO_BASE_URL,
-KOKORO_VOICE (same defaults as bot.py).
+Environment: AISOTROPY_OPENAI_BASE_URL, AISOTROPY_TENANT_JWT,
+VOICE_AUDIO_BACKEND, VOICEBOX_BASE_URL/VOICEBOX_VOICE or
+KOKORO_BASE_URL/KOKORO_VOICE (same defaults as bot.py).
 
 Exit codes: 0 = measured (and under threshold when asserting),
 1 = --assert-ttfab-ms threshold breached, 2 = configuration/connectivity error.
@@ -42,10 +44,14 @@ import time
 import httpx
 from openai import AsyncOpenAI
 
+import audio_backend
+
 SHIM_BASE_URL = os.environ.get("AISOTROPY_OPENAI_BASE_URL", "http://localhost:8080/v1")
 TENANT_JWT = os.environ.get("AISOTROPY_TENANT_JWT", "")
-KOKORO_BASE_URL = os.environ.get("KOKORO_BASE_URL", "http://localhost:8880/v1")
-KOKORO_VOICE = os.environ.get("KOKORO_VOICE", "af_heart")
+BACKEND = audio_backend.resolve_backend()
+TTS_BASE_URL = audio_backend.tts_base_url(BACKEND)
+TTS_VOICE = audio_backend.tts_voice(BACKEND)
+TTS_MODEL = "kokoro" if BACKEND == audio_backend.KOKORO_FASTAPI else "tts"
 
 PROMPT = "In one short sentence, say hello."
 
@@ -83,15 +89,22 @@ async def llm_first_token_and_sentence(client: AsyncOpenAI) -> tuple[float, str]
 
 
 async def tts_first_audio_byte(text: str) -> float:
-    """Streams Kokoro-FastAPI /v1/audio/speech; returns seconds to first audio byte."""
+    """Streams the backend's /v1/audio/speech; returns seconds to first audio byte.
+
+    NOTE on method: this stopwatch stops at the first *audio* byte of the
+    streamed body, NOT at the first HTTP byte. `curl -w %{time_starttransfer}`
+    measures the latter and reports ~3 ms on a chunked TTS response — a number
+    three orders of magnitude off, and a measurement bug rather than a result
+    (found and documented in the 2026-07-27 voicebox spike, §3).
+    """
     start = time.perf_counter()
     async with httpx.AsyncClient(timeout=30.0) as client:
         async with client.stream(
             "POST",
-            f"{KOKORO_BASE_URL}/audio/speech",
+            f"{TTS_BASE_URL}/audio/speech",
             json={
-                "model": "kokoro",
-                "voice": KOKORO_VOICE,
+                "model": TTS_MODEL,
+                "voice": TTS_VOICE,
                 "input": text,
                 "response_format": "pcm",
                 "stream": True,
@@ -116,7 +129,7 @@ async def run_once(client: AsyncOpenAI, skip_tts: bool) -> tuple[float, float]:
 async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", type=int, default=3, help="measurement runs (median reported; default 3)")
-    ap.add_argument("--skip-tts", action="store_true", help="measure the LLM leg only (Kokoro not running)")
+    ap.add_argument("--skip-tts", action="store_true", help="measure the LLM leg only (audio backend not running)")
     ap.add_argument(
         "--assert-ttfab-ms",
         type=float,
@@ -150,7 +163,7 @@ async def main() -> int:
     print("---")
     print(f"median llm_ttft   = {llm_med * 1000:.1f} ms   (shim {SHIM_BASE_URL})")
     if not args.skip_tts:
-        print(f"median tts_ttfab  = {tts_med * 1000:.1f} ms   (kokoro {KOKORO_BASE_URL})")
+        print(f"median tts_ttfab  = {tts_med * 1000:.1f} ms   ({BACKEND} {TTS_BASE_URL})")
     print(f"median TTFAB      = {total_med_ms:.1f} ms")
 
     if args.assert_ttfab_ms is not None:

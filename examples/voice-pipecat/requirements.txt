@@ -1,14 +1,30 @@
-# Voice PoC dependencies (ADR-0066 §4). Licenses verified against the voice
-# landscape research (docs/research/voice-pipeline-landscape-2026-07-23.md):
+# Voice PoC dependencies (ADR-0066 §4, ADR-0077). Licenses verified against the
+# voice landscape research (docs/research/voice-pipeline-landscape-2026-07-23.md):
 # Pipecat BSD-2, faster-whisper MIT, openai SDK Apache-2.0, httpx BSD-3.
-# Kokoro-FastAPI (Apache-2.0) is a separate service (Docker), not a pip dep.
+#
+# NOTHING GPL IS PIP-INSTALLED HERE. The audio backend (voicebox by default,
+# Kokoro-FastAPI on the fallback switch) is a separate Docker service reached
+# only over HTTP — that container boundary is what keeps voicebox's GPL-3.0
+# transitive deps (`phonemizer-fork` via `kokoro-onnx`, `piper-tts`, espeak-ng)
+# out of this virtualenv and out of aisotropy's dependency graph. See ADR-0077.
+# Adding `kokoro-onnx` or `pipecat-ai[kokoro]` here would pull that GPL code
+# INTO the venv and void the license-policy §Exceptions boundary.
 #
 # The pipecat extras pull the pieces the pipeline uses:
 #   silero  -> Silero VAD (voice activity detection / barge-in trigger)
-#   whisper -> WhisperSTTService backed by faster-whisper (local STT)
+#   whisper -> WhisperSTTService backed by faster-whisper (local STT; used only
+#              by the VOICE_AUDIO_BACKEND=kokoro-fastapi fallback)
 #   local   -> LocalAudioTransport (mic/speaker via PyAudio; needs portaudio:
 #              `brew install portaudio` on macOS, libportaudio2 on Debian)
-pipecat-ai[silero,whisper,local]>=0.0.60,<0.1
+#
+# Floor raised from 0.0.60 to 0.0.108 (2026-07-27, ADR-0077): the voicebox
+# wiring depends on two things verified in the 0.0.108 source and not present
+# across the whole older line — `OpenAISTTService(base_url=...)`
+# (pipecat/services/openai/stt.py:80) and the
+# `TTSService.run_tts(self, text, context_id)` signature that voicebox_tts.py
+# implements (pipecat/services/tts_service.py:491). Still <1.0: pipecat 1.x
+# removed `openai_llm_context`, which bot.py and the lane both use.
+pipecat-ai[silero,whisper,local]>=0.0.108,<0.1
 
 # The metric scripts talk to the shim/TTS directly (no Pipecat needed there).
 openai>=1.50

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Voice sandwich over aisotropy (ADR-0066 §4): STT -> LLM -> TTS.
 
-    mic -> Silero VAD -> faster-whisper STT -> aisotropy OpenAI-compat shim
-        -> Kokoro-FastAPI TTS -> speaker
+    mic -> Silero VAD -> voicebox STT -> aisotropy OpenAI-compat shim
+        -> voicebox TTS -> speaker
 
 The LLM leg is the whole point: Pipecat's stock ``OpenAILLMService`` pointed at
 aisotropy's ``POST /v1/chat/completions`` shim with the tenant JWT passed AS
@@ -14,18 +14,27 @@ tenant-isolated memory hydration, quota-before-spend, guardrails, cost
 accounting — and interrupting the bot (barge-in) cancels the request, which
 aisotropy's StreamCore turns into an immediate upstream LLM stop.
 
+Both AUDIO legs come from one service, selected by ``VOICE_AUDIO_BACKEND``
+(default ``voicebox``; ``kokoro-fastapi`` restores the previous stack — see
+audio_backend.py and ADR-0077). The aisotropy core still contains zero audio
+code either way.
+
 Environment:
     AISOTROPY_OPENAI_BASE_URL  shim base URL         (default http://localhost:8080/v1)
     AISOTROPY_TENANT_JWT       tenant JWT = api_key  (required; mint with mint_jwt.py)
+    VOICE_AUDIO_BACKEND        voicebox | kokoro-fastapi   (default voicebox)
+    VOICEBOX_BASE_URL          voicebox URL          (default http://localhost:8790/v1)
+    VOICEBOX_VOICE             Kokoro voice id       (default af_heart)
     KOKORO_BASE_URL            Kokoro-FastAPI URL    (default http://localhost:8880/v1)
-    KOKORO_VOICE               Kokoro voice          (default alloy; see ADR-0069 §3)
-    WHISPER_MODEL              faster-whisper model  (default distil-medium.en)
+    KOKORO_VOICE               OpenAI voice id       (default alloy; see ADR-0069 §3)
+    WHISPER_MODEL              faster-whisper model  (default distil-medium.en;
+                               kokoro-fastapi backend only)
 
 Run:
     python3 bot.py
 
-Requires local audio (portaudio) plus the STT/TTS models — see README.md for
-the full bring-up, including the Kokoro-FastAPI container.
+Requires local audio (portaudio) plus a running audio backend — see README.md
+for the full bring-up.
 """
 
 from __future__ import annotations
@@ -40,21 +49,15 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.services.openai.tts import OpenAITTSService
-from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.transports.local.audio import (
     LocalAudioTransport,
     LocalAudioTransportParams,
 )
 
+import audio_backend
+
 SHIM_BASE_URL = os.environ.get("AISOTROPY_OPENAI_BASE_URL", "http://localhost:8080/v1")
 TENANT_JWT = os.environ.get("AISOTROPY_TENANT_JWT", "")
-KOKORO_BASE_URL = os.environ.get("KOKORO_BASE_URL", "http://localhost:8880/v1")
-# "alloy" (an OpenAI voice id, mapped server-side by Kokoro-FastAPI) — pipecat
-# 0.0.x's OpenAITTSService rejects Kokoro ids like "af_heart" via its
-# VALID_VOICES lookup, degrading into silent no-audio (ADR-0069 §3).
-KOKORO_VOICE = os.environ.get("KOKORO_VOICE", "alloy")
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "distil-medium.en")
 
 
 async def main() -> None:
@@ -79,8 +82,12 @@ async def main() -> None:
         )
     )
 
-    # STT: faster-whisper (MIT), fully local. First run downloads the model.
-    stt = WhisperSTTService(model=WHISPER_MODEL)
+    # STT + TTS: both legs from the selected backend (audio_backend.py). Default
+    # is the voicebox container — one process for both, faster-distil-whisper
+    # for STT and Kokoro for TTS; `VOICE_AUDIO_BACKEND=kokoro-fastapi` restores
+    # the in-process faster-whisper + Kokoro-FastAPI pair.
+    backend = audio_backend.resolve_backend()
+    stt = audio_backend.make_stt(backend)
 
     # LLM: aisotropy's OpenAI-compat shim. The tenant JWT IS the api_key.
     # NOTE: aisotropy owns the system prompt server-side (persona + tenant
@@ -88,15 +95,7 @@ async def main() -> None:
     # floor), so no system message is configured here.
     llm = OpenAILLMService(api_key=TENANT_JWT, base_url=SHIM_BASE_URL, model="aisotropy")
 
-    # TTS: Kokoro-FastAPI (Apache-2.0) exposes an OpenAI-compatible
-    # /v1/audio/speech, so Pipecat's stock OpenAITTSService drives it too —
-    # the same base_url+api_key trick, twice.
-    tts = OpenAITTSService(
-        api_key="not-needed",
-        base_url=KOKORO_BASE_URL,
-        model="kokoro",
-        voice=KOKORO_VOICE,
-    )
+    tts = audio_backend.make_tts(backend)
 
     # Conversation context: Pipecat aggregates STT transcriptions into user
     # turns and assistant replies back into context. aisotropy re-hydrates the
@@ -126,7 +125,10 @@ async def main() -> None:
     )
 
     runner = PipelineRunner()
-    print(f"voice bot up: shim={SHIM_BASE_URL} tts={KOKORO_BASE_URL} stt=whisper:{WHISPER_MODEL}")
+    print(
+        f"voice bot up: shim={SHIM_BASE_URL} audio_backend={backend} "
+        f"audio={audio_backend.tts_base_url(backend)} voice={audio_backend.tts_voice(backend)}"
+    )
     print("speak into the mic; interrupt the bot mid-reply to exercise barge-in. Ctrl-C to quit.")
     await runner.run(task)
 
