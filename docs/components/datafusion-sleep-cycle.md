@@ -111,6 +111,16 @@ The rejected alternatives (CGO/FFI, WASM) and the full trade-off table live in
 
 The DataFusion dedup path is **dormant by default** and gated on two things being true:
 
+> **One command does both of the steps below, and proves them.**
+> `scripts/dormant-lanes.sh --stage workers --yes` builds the worker, exports
+> `AISOTROPY_SLEEPCYCLE_BIN` at the built path, and runs the Go-side contract tests plus the
+> `-tags manual` live tests against the real binary — under the resource guard, with a declared RAM
+> budget. Run it with no arguments first for a status/dry-run that spends nothing. See
+> [Dormant lanes](../deployment/dormant-lanes.md) and
+> [ADR-0075](../decisions/0075-dormant-lanes-operator-runnable.md). Measured on 2026-07-27:
+> cold build 3m08s, peak 1924 MB, and `TestWorkerLive` / `TestWorkerLiveNoisePrune` /
+> `TestWorkerLiveNoiseFloorDisabledIsDedupOnly` all PASS against the real DataFusion engine.
+
 1. **The Rust worker is built.** `cargo build --release --manifest-path crates/sleep-cycle/Cargo.toml`
    produces `crates/sleep-cycle/target/release/sleep-cycle`. This is a **~67 MB binary** and the
    first build compiles the full DataFusion 43 dependency tree (~2 min cold on an M-series Mac;

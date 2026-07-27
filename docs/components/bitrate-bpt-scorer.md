@@ -71,6 +71,15 @@ Phase 1 scorer: [`spikes/compression/bitrate_scorer.py`](../../spikes/compressio
 validated `surprisal.py` (default model **distilgpt2**, Apache-2.0). Enabled only when
 `AISOTROPY_BITRATE_BIN` is set (dormant by default, like `AISOTROPY_SLEEPCYCLE_BIN`).
 
+> **Building and exercising the Phase-2 Rust scorer:**
+> `scripts/dormant-lanes.sh --stage workers --yes` builds `crates/bitrate-scorer` (measured
+> 2026-07-27: 41s cold, 6 MB binary), exports `AISOTROPY_BITRATE_BIN` at the built path, and runs
+> the Go-side contract tests. The `-tags manual` **live** test (`TestScorerLive`) additionally needs
+> `AISOTROPY_BITRATE_MODEL_DIR` pointing at converted GPT-2 weights
+> ([ADR-0015](../decisions/0015-bpt-eval-model-and-python-batch-runtime.md)); without them the lane
+> reports an explicit SKIP, never a pass. See [Dormant lanes](../deployment/dormant-lanes.md) and
+> [ADR-0075](../decisions/0075-dormant-lanes-operator-runnable.md).
+
 ## Durable, tenant-scoped store
 
 The **trend over weeks** is the whole point, so history must survive restarts — *not*

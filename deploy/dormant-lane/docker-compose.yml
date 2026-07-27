@@ -1,0 +1,82 @@
+# Dormant-lanes test stack — the memory tiers ONLY, isolated from the reference
+# deployment, for `scripts/dormant-lanes.sh --stage services`.
+#
+# WHY THIS FILE EXISTS instead of reusing the root `docker-compose.yml`
+# (three concrete reasons, each found by trying the root file first):
+#
+#  1. **rqlite advertises a container-internal address.** The root compose runs
+#     rqlite without `-http-adv-addr`, so the node advertises its container
+#     hostname (`424f8f2f3d74:4001`). That is correct for the in-network
+#     `aisotropyd` service, but `gorqlite` does cluster discovery and FOLLOWS the
+#     advertised HTTP address — a host-side client (which is what
+#     `internal/facts/rqlite_manual_test.go` is) cannot resolve it. The manual
+#     test's own doc comment says exactly this. This file pins
+#     `-http-adv-addr localhost:<host port>`.
+#
+#  2. **A recreated container loses its Raft leader.** rqlite derives its node ID
+#     from the container hostname by default, and the root compose keeps a named
+#     volume. Recreate the container and the persisted Raft configuration names a
+#     node ID that no longer exists: `not part of stable configuration, aborting
+#     election` — `/readyz` returns 503 forever and the compose healthcheck stays
+#     `unhealthy`. Observed on this machine, 2026-07-27. Here the node ID is
+#     PINNED and storage is EPHEMERAL (no named volumes at all), so every lane run
+#     starts from a clean, leader-electable state and teardown leaves nothing.
+#
+#  3. **Port ownership.** An operator (or a concurrent agent session) may already
+#     be running the reference stack on 4001/6333/6334. The lane binds its OWN
+#     host ports (defaults 14001/16333/16334) under its OWN compose project, so it
+#     can never collide with, adopt, or tear down someone else's stack.
+#
+# Images are pinned to the SAME tags as the reference `docker-compose.yml` — this
+# file changes the wiring, never the versions under test.
+#
+# Not intended for direct use; `scripts/dormant-lanes.sh` owns its lifecycle.
+
+name: aisotropy-dormant-lane
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    restart: "no" # a lane container that dies should fail the lane, not respawn
+    ports:
+      - "${LANE_QDRANT_HTTP_PORT:-16333}:6333" # REST (readiness probe)
+      - "${LANE_QDRANT_GRPC_PORT:-16334}:6334" # gRPC (the port the Go client uses)
+    environment:
+      # Same posture as the reference stack: the tier is not an open port.
+      # LOCAL-ONLY dev placeholder; the lane generates/overrides it per run.
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-local-dev-qdrant-key-CHANGE-ME}
+    # No volume: storage is ephemeral by design (see reason 2 above).
+
+  rqlite:
+    image: rqlite/rqlite:8.36.3
+    restart: "no"
+    # -http-adv-addr: what the node tells clients to talk to. MUST be the
+    #   host-visible address, or gorqlite follows the container hostname (reason 1).
+    # -node-id: pinned so Raft state is never orphaned by a container recreate
+    #   (reason 2). Harmless here because storage is ephemeral anyway.
+    # -auth: same authz posture as the reference stack; the "*" user in
+    #   users.json keeps /readyz reachable unauthenticated for the probe.
+    command:
+      [
+        "-http-addr",
+        "0.0.0.0:4001",
+        "-raft-addr",
+        "0.0.0.0:4002",
+        "-http-adv-addr",
+        "localhost:${LANE_RQLITE_PORT:-14001}",
+        "-node-id",
+        "aisotropy-dormant-lane",
+        "-auth",
+        "/rqlite/auth/users.json",
+      ]
+    ports:
+      - "${LANE_RQLITE_PORT:-14001}:4001"
+    volumes:
+      # LOCAL-ONLY auth/authz file, shared with the reference stack.
+      - ../rqlite/users.json:/rqlite/auth/users.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4001/readyz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 3s

@@ -343,7 +343,15 @@ measured runs. Docs that state volatile facts cite the command that produced the
 scripts/prune-guard.sh internal/routing     # exits 3 BLOCKED: importers + coverage + wired + exported
 scripts/resource-guard.sh                   # is this machine fit for a heavy lane right now?
 bash scripts/arena-determinism-guard.sh     # purity + reproducibility of the arena's primary score
+scripts/dormant-lanes.sh                    # status of the dormant paths — spends nothing
 ```
+
+The last one is the same discipline pointed at *dormancy*: the Rust workers and the networked
+memory tiers had code and had tests, but nothing invoked them. `scripts/dormant-lanes.sh --stage
+all --yes` builds both Rust workers, runs the `-tags manual` live tests against the real binaries,
+stands up an isolated rqlite + Qdrant, runs the real-service tests, and tears it all down —
+each heavy step under a **declared, measured** RAM budget. See
+[Dormant lanes](deployment/dormant-lanes.md).
 
 **The evidence.**
 - [`prune-evidence-gate.md`](architecture/prune-evidence-gate.md) — including the origin story:

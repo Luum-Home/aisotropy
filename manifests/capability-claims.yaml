@@ -186,21 +186,16 @@ claims:
 
   - id: no-lane-invokes-manual-tests
     claim: >-
-      REAL GAP (still open): NO script and NO workflow invokes the manual-tagged tests —
-      zero files under scripts/ or .github/ pass `-tags manual`. ci.yml runs plain
-      `go test ./... -race`, which excludes them. The tests exist; the LANE does not.
+      CLOSED (2026-07-27, ADR-0075): a lane now invokes the manual-tagged tests.
+      `scripts/dormant-lanes.sh` builds both Rust workers and runs `go test -tags manual`
+      against the real binaries (`--stage workers`) and against a real rqlite + Qdrant stack
+      it stands up and tears down (`--stage services`). Executed green on landing. Still NOT
+      in CI by decision — see the sibling claim `rust-workers-not-built-in-ci`.
     requires: [scripts, .github]
     check: |-
       git grep -lE 'tags[= ]manual' -- scripts/ .github/ | wc -l | tr -d ' '
-    expect: {op: eq, value: 0}
-    evidence: "gap-claims-verification-2026-07-27.md claim 5"
-    on_close: >-
-      KNOWN IN FLIGHT (2026-07-27): a concurrent session is building `scripts/dormant-lanes.sh`,
-      which carries 17 `-tags manual` invocations but is still UNTRACKED, so this claim is true at
-      HEAD. The moment that script is committed this claim goes RED — that is the designed
-      behaviour, not a guard defect: closing a registered gap MUST force the document to be
-      updated. Fix: flip `expect` to `{op: ge, value: 1}`, rewrite `claim` to state that a lane
-      exists and name it, and update the corresponding row in the document.
+    expect: {op: ge, value: 1}
+    evidence: "ADR-0075; scripts/dormant-lanes.sh; docs/deployment/dormant-lanes.md"
 
   # ---- Bounded capabilities that are still true --------------------------------------
   - id: ocr-no-ocr-dependency
