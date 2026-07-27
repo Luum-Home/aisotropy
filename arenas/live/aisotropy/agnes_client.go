@@ -71,15 +71,19 @@ func newAgnesClient() (aisotropy.LLMClient, error) {
 	if key == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
 	}
-	// baseURL "" lets the façade default to the OpenAI base URL; OPENAI_MODEL ""
-	// lets it fall through to our explicit agnes default below.
+	// NO VENDOR DEFAULT. This used to fall back to a specific model id, which is
+	// convenient locally and wrong in a public repo: anyone running the arena
+	// without configuring it silently sent prompts to one company's endpoint,
+	// and a board could be measured against a model nobody chose. Both supported
+	// providers (and any other OpenAI-compatible endpoint) are configured the
+	// same way — see docs/architecture/model-provider.md.
 	base := strings.TrimRight(os.Getenv("OPENAI_BASE_URL"), "/")
 	model := os.Getenv("OPENAI_MODEL")
 	if model == "" {
-		model = "agnes-2.0-flash"
+		return nil, fmt.Errorf("OPENAI_MODEL is unset: set it (e.g. poolside/laguna-s-2.1 or agnes-2.0-flash) — this adapter refuses to pick a vendor for you; see docs/architecture/model-provider.md")
 	}
 
-	client := aisotropy.NewOpenAICompatLLM(key, model, base, "agnes")
+	client := aisotropy.NewOpenAICompatLLM(key, model, base, "openai-compat")
 	if _, ok := client.(aisotropy.ToolCaller); !ok {
 		// The façade constructor documents that its client implements ToolCaller;
 		// this can only fail if that contract regresses. Fail loudly rather than

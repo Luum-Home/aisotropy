@@ -217,11 +217,14 @@ func modelName() string {
 		return m
 	}
 	if stubMode() {
-		// Honest label: ARENA_STUB=1 never calls agnes-2.0-flash at all — the
-		// model actually answering is aisotropy's native internal/llm.StubClient.
+		// Honest label: ARENA_STUB=1 never reaches the configured provider at
+		// all — the model actually answering is aisotropy's native
+		// internal/llm.StubClient.
 		return "aisotropy-stub"
 	}
-	return "agnes-2.0-flash"
+	// No vendor default: a board must record the model it ACTUALLY ran, and
+	// guessing one would mislabel the provenance of every number it produces.
+	return "unconfigured (set OPENAI_MODEL)"
 }
 
 // emit writes exactly one JSON object to stdout, normalizing nil slices to [] so

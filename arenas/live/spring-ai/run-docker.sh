@@ -41,7 +41,7 @@ docker build -q -t "${IMAGE}" "${SCRIPT_DIR}" 1>&2
 exec docker run --rm -i \
   --add-host=host.docker.internal:host-gateway \
   -e OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
-  -e OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://apihub.agnes-ai.com/v1}" \
+  -e OPENAI_BASE_URL="${OPENAI_BASE_URL:?set OPENAI_BASE_URL — no vendor default: a hardcoded fallback silently sends prompts to one provider (see docs/architecture/model-provider.md)}" \
   -e OPENAI_MODEL="${OPENAI_MODEL:-agnes-2.0-flash}" \
   -e EMBED_URL="${EMBED_URL:-http://host.docker.internal:8899}" \
   -e QDRANT_URL="${QDRANT_URL:-http://host.docker.internal:6333}" \

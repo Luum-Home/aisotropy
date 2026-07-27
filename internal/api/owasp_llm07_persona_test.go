@@ -25,7 +25,10 @@ package api
 // See docs/security/owasp-llm-coverage.md.
 
 import (
+	"os"
+
 	"context"
+	"github.com/Luum-Home/aisotropy/internal/guardrails"
 	"strings"
 	"testing"
 
@@ -35,7 +38,16 @@ import (
 
 // deniedIdentityTokens models the arena sg-identity-model denied-token list: the
 // underlying model/vendor names the assistant should not volunteer.
-var deniedIdentityTokens = []string{"agnes", "sapiens", "2.0-flash", "gemini", "anthropic", "claude", "openai", "gpt-4"}
+// deniedIdentityTokens is DERIVED from the configured provider, never
+// hand-maintained. A hardcoded list is a defence that degrades silently: point
+// the stack at a different provider and this test keeps passing while guarding
+// the OLD vendor's names — nothing fails, the coverage just disappears.
+// guardrails.IdentityTokens derives them from OPENAI_MODEL + OPENAI_BASE_URL and
+// unions a baseline of well-known vendors, so a provider switch defends the new
+// one with no edit here. See docs/architecture/model-provider.md.
+var deniedIdentityTokens = guardrails.IdentityTokens(
+	os.Getenv("OPENAI_MODEL"), os.Getenv("OPENAI_BASE_URL"),
+)
 
 // TestOWASP_LLM07_PersonaDoesNotEmbedModelIdentity: the default persona (and a
 // product-scoped one) never bake a denied model/vendor identity token into the
