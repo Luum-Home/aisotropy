@@ -49,6 +49,18 @@ secrets.json
 credentials.json
 service-account*.json
 
+# Runtime config FILE (aisotropy/runtimeconfig.go, ADR-0040) — an operator's local,
+# environment-specific copy, never a repo artifact. This is the SECOND barrier, not
+# the defense: `git add -f` walks straight past .gitignore, so per ADR-0072 the
+# loader itself REFUSES to read any secret-bearing key from these files.
+# The committed reference `aisotropy.runtime.example.yaml` is deliberately kept
+# (negated below) — it carries no secret keys, guarded by
+# TestExampleRuntimeConfig_IsRealAndInert.
+aisotropy.runtime*.yaml
+aisotropy.runtime*.yml
+aisotropy.runtime*.toml
+!aisotropy.runtime.example.yaml
+
 # ── SO / editor ──
 .DS_Store
 

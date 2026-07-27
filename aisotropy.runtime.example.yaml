@@ -38,6 +38,11 @@
 # aisotropy versions during a staged rollout. Malformed syntax and wrong value
 # TYPES still fail closed at boot.
 #
+# SECRETS ARE REFUSED (ADR-0072, which supersedes ADR-0040 §5). The five
+# secret-bearing variables cannot be set from this file at all — a file that
+# names one fails to load and the runtime does not start. See the SECRETS
+# section at the bottom for the list and the `export` form to use instead.
+#
 # EVERY key below mirrors exactly ONE environment variable, shown in its comment.
 # =============================================================================
 
@@ -161,35 +166,27 @@
 # jwt_max_ttl: "1h"
 
 # =============================================================================
-# SECRETS — read this before uncommenting anything below
+# SECRETS — NOT CONFIGURABLE HERE. THE LOADER REFUSES THEM.
 # =============================================================================
-# The five keys below ARE loadable from this file (ADR-0040 §5) purely as a
-# LOCAL/DEV convenience, so `docker compose up`-style local runs need no shell
-# full of exports.
+# Five environment variables carry secret material. They are deliberately NOT
+# documented above as knobs, because this file cannot supply them: if any of
+# them appears here the runtime REFUSES TO START with an error naming the key
+# (never its value). This reverses ADR-0040 §5; see ADR-0072 for the reasoning.
 #
-#   IN PRODUCTION, SUPPLY THESE VIA THE ENVIRONMENT OR A SECRET MANAGER.
-#   NEVER COMMIT A CONFIG FILE THAT CONTAINS THEM.
+#   Supply each one through the process environment (or a secret manager):
 #
-# Because env beats file, a deployment that exports these keeps working
-# unchanged even if a file also lists them. The runtime never logs a secret
-# VALUE — the "runtime config file applied" line prints key NAMES only, with
-# these five tagged "(secret)".
+#     export ANTHROPIC_API_KEY=...        Anthropic provider key
+#                                         (unset => the canned keyless stub)
+#     export AISOTROPY_JWT_SECRET=...     HS256 shared secret for bearer-JWT
+#                                         verification
+#     export AISOTROPY_OPS_TOKEN=...      bearer token guarding the ops/admin
+#                                         surface
+#     export QDRANT_API_KEY=...           Qdrant Cloud API key
+#     export AISOTROPY_EMBED_API_KEY=...  embedding-service API key
 #
-# If you keep a filled-in copy locally, name it so it cannot be committed
-# (e.g. aisotropy.runtime.local.yaml) and add it to .gitignore.
-
-# Anthropic provider key. Unset => the canned keyless stub client.
-#                                                       ANTHROPIC_API_KEY
-# anthropic_api_key: "sk-ant-..."
-
-# HS256 shared secret for bearer-JWT verification.  AISOTROPY_JWT_SECRET
-# jwt_secret: "change-me"
-
-# Bearer token guarding the ops/admin surface.       AISOTROPY_OPS_TOKEN
-# ops_token: "change-me"
-
-# Qdrant Cloud API key.                                   QDRANT_API_KEY
-# qdrant_api_key: "..."
-
-# Embedding service API key.                  AISOTROPY_EMBED_API_KEY
-# embed_api_key: "..."
+# WHY REFUSED RATHER THAN DISCOURAGED: this repository is public, so a single
+# accidental `git add` of a filled-in config file is an irreversible disclosure
+# that costs a key rotation. A .gitignore entry is advisory (`git add -f` walks
+# straight past it); a loader that will not accept the key is structural. The
+# config file is a REVIEWABLE, COMMITTABLE artifact by design — keeping secret
+# material out of it by construction is what makes that safe.

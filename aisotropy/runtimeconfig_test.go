@@ -1,8 +1,10 @@
 package aisotropy
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -45,7 +47,7 @@ guardrails_block_output: true
 qdrant_host: "qdrant.local"
 qdrant_port: 6334
 qdrant_use_tls: false
-jwt_secret: "file-secret"
+jwt_issuer: "https://issuer.example"
 `
 
 const sampleRuntimeTOML = `
@@ -61,7 +63,7 @@ guardrails_block_output = true
 qdrant_host = "qdrant.local"
 qdrant_port = 6334
 qdrant_use_tls = false
-jwt_secret = "file-secret"
+jwt_issuer = "https://issuer.example"
 `
 
 func writeTemp(t *testing.T, name, body string) string {
@@ -110,8 +112,10 @@ func TestLoadRuntimeConfigFile_YAMLAndTOML(t *testing.T) {
 			if len(c.DedicatedTenants) != 2 || c.DedicatedTenants[0] != "acme" {
 				t.Errorf("DedicatedTenants = %v, want [acme globex]", c.DedicatedTenants)
 			}
-			if c.JWTSecret != "file-secret" {
-				t.Errorf("JWTSecret = %q, want file-secret", c.JWTSecret)
+			// A NON-secret auth knob still loads normally: the ADR-0072 refusal
+			// is scoped to secretEnvKeys, it does not quarantine the JWT family.
+			if c.JWTIssuer != "https://issuer.example" {
+				t.Errorf("JWTIssuer = %q, want https://issuer.example", c.JWTIssuer)
 			}
 		})
 	}
@@ -467,8 +471,16 @@ func TestExampleRuntimeConfig_IsRealAndInert(t *testing.T) {
 		})
 	}
 
-	// And the reverse direction: every real field should be documented, so the
-	// example stays a complete reference as the schema grows.
+	// And the reverse direction: every real NON-SECRET field should be documented,
+	// so the example stays a complete reference as the schema grows — while every
+	// SECRET field must be ABSENT as a knob (ADR-0072). The example is a file
+	// operators copy; a commented-out `anthropic_api_key: "<a real key>"` line is an
+	// invitation to paste a real key into a committable artifact, and it would not
+	// even work now that the loader refuses it.
+	secretTags := map[string]bool{}
+	for _, tag := range secretYAMLKeys {
+		secretTags[tag] = true
+	}
 	tagRe := regexp.MustCompile(`yaml:"([a-z0-9_]+)"`)
 	src, err := os.ReadFile("runtimeconfig.go")
 	if err != nil {
@@ -479,8 +491,22 @@ func TestExampleRuntimeConfig_IsRealAndInert(t *testing.T) {
 		documentedSet[k] = true
 	}
 	for _, m := range tagRe.FindAllStringSubmatch(string(src), -1) {
-		if !documentedSet[m[1]] {
+		switch {
+		case secretTags[m[1]] && documentedSet[m[1]]:
+			t.Errorf("secret key %q is documented as a knob in %s — secrets are refused "+
+				"from config files (ADR-0072) and must not be shown as a settable key",
+				m[1], examplePath)
+		case !secretTags[m[1]] && !documentedSet[m[1]]:
 			t.Errorf("RuntimeConfig field %q is not documented in %s", m[1], examplePath)
+		}
+	}
+
+	// Belt to the braces above: no secret key may appear ANYWHERE in the example
+	// in settable YAML form (`key:` at the start of a line, commented or not).
+	for _, tag := range secretYAMLKeys {
+		settable := regexp.MustCompile(`(?m)^\s*#?\s*` + regexp.QuoteMeta(tag) + `\s*:`)
+		if settable.MatchString(string(raw)) {
+			t.Errorf("%s contains a settable line for the secret key %q", examplePath, tag)
 		}
 	}
 }
@@ -586,68 +612,385 @@ func TestLoadAndMaterialize_AbsentFileMutatesNothing(t *testing.T) {
 	}
 }
 
-// TestSecretEnvKeys_CoversEverySecretField guards the secrets posture against
-// DRIFT. Per ADR-0040 §5 secret-bearing fields ARE loadable from the file for
-// local/dev convenience, and the safety property that makes that acceptable is
-// that their VALUES are never logged — materialize logs key NAMES only, with
-// secrets tagged "(secret)" by redactSecretKeys.
-//
-// That property silently breaks the day someone adds a new secret field to
-// RuntimeConfig and forgets to register it in secretEnvKeys: it would then be
-// materialized and its name logged UNTAGGED. This test populates every
-// secret-bearing field, materializes it, and asserts (a) each secret's env key
-// is registered in secretEnvKeys, and (b) no secret VALUE appears anywhere in
-// the redacted log payload.
-func TestSecretEnvKeys_CoversEverySecretField(t *testing.T) {
-	// Every secret-bearing field in RuntimeConfig, with a distinctive value.
-	secretFields := map[string]string{
-		"ANTHROPIC_API_KEY":       "sk-ant-CANARY-anthropic",
-		"AISOTROPY_JWT_SECRET":    "CANARY-jwt-secret",
-		"AISOTROPY_OPS_TOKEN":     "CANARY-ops-token",
-		"QDRANT_API_KEY":          "CANARY-qdrant-key",
-		"AISOTROPY_EMBED_API_KEY": "CANARY-embed-key",
-	}
-	keys := make([]string, 0, len(secretFields))
-	for k := range secretFields {
+// secretCanaries is every secret-bearing field in RuntimeConfig, keyed by the env
+// var it mirrors, with a distinctive value that can be grepped for in errors and
+// logs. Adding a secret field without adding it here is caught by
+// TestSecretishEnvKeys_AreClassified (which derives the key list from the struct).
+var secretCanaries = map[string]string{
+	"ANTHROPIC_API_KEY":       "CANARY-anthropic-provider-key",
+	"AISOTROPY_JWT_SECRET":    "CANARY-jwt-secret",
+	"AISOTROPY_OPS_TOKEN":     "CANARY-ops-token",
+	"QDRANT_API_KEY":          "CANARY-qdrant-key",
+	"AISOTROPY_EMBED_API_KEY": "CANARY-embed-key",
+}
+
+// secretYAMLKeys maps each secret env var to the YAML/TOML key an operator would
+// (wrongly) write in a config file.
+var secretYAMLKeys = map[string]string{
+	"ANTHROPIC_API_KEY":       "anthropic_api_key",
+	"AISOTROPY_JWT_SECRET":    "jwt_secret",
+	"AISOTROPY_OPS_TOKEN":     "ops_token",
+	"QDRANT_API_KEY":          "qdrant_api_key",
+	"AISOTROPY_EMBED_API_KEY": "embed_api_key",
+}
+
+func secretCanaryKeys() []string {
+	keys := make([]string, 0, len(secretCanaries))
+	for k := range secretCanaries {
 		keys = append(keys, k)
 	}
-	isolateEnv(t, keys...)
+	sort.Strings(keys)
+	return keys
+}
 
-	c := RuntimeConfig{
-		AnthropicAPIKey: secretFields["ANTHROPIC_API_KEY"],
-		JWTSecret:       secretFields["AISOTROPY_JWT_SECRET"],
-		OpsToken:        secretFields["AISOTROPY_OPS_TOKEN"],
-		QdrantAPIKey:    secretFields["QDRANT_API_KEY"],
-		EmbedAPIKey:     secretFields["AISOTROPY_EMBED_API_KEY"],
+// TestLoadRuntimeConfigFile_RefusesSecrets is the ADR-0072 gate: a runtime config
+// file that supplies ANY secret-bearing key fails to load, in BOTH formats, one
+// key at a time. It asserts the four properties the decision rests on:
+//
+//  1. FAIL CLOSED — the load returns an error (the server does not start), not a
+//     warning-and-continue.
+//  2. ACTIONABLE — the message names the offending key and says to use the
+//     environment instead.
+//  3. NEVER ECHOES THE VALUE — the secret does not appear in the error text.
+//  4. NOT MATERIALIZED — the process environment is untouched, so a refused
+//     secret cannot leak into a downstream *FromEnv resolver either.
+func TestLoadRuntimeConfigFile_RefusesSecrets(t *testing.T) {
+	for _, envKey := range secretCanaryKeys() {
+		val := secretCanaries[envKey]
+		yamlKey := secretYAMLKeys[envKey]
+		for _, f := range []struct{ name, file, body string }{
+			{"yaml", "aisotropy.runtime.yaml", "addr: \":9191\"\n" + yamlKey + ": \"" + val + "\"\n"},
+			{"toml", "aisotropy.runtime.toml", "addr = \":9191\"\n" + yamlKey + " = \"" + val + "\"\n"},
+		} {
+			t.Run(envKey+"/"+f.name, func(t *testing.T) {
+				isolateEnv(t, envKey, "AISOTROPY_ADDR")
+
+				c, err := LoadRuntimeConfigFile(writeTemp(t, f.file, f.body))
+				if err == nil {
+					t.Fatalf("LoadRuntimeConfigFile(%s in file) = nil, want a refusal", envKey)
+				}
+				if !errors.Is(err, ErrSecretInConfigFile) {
+					t.Errorf("error %v does not wrap ErrSecretInConfigFile", err)
+				}
+				msg := err.Error()
+				if strings.Contains(msg, val) {
+					t.Errorf("SECRET LEAK: the error echoes the value: %q", msg)
+				}
+				if !strings.Contains(msg, envKey) {
+					t.Errorf("error %q does not name the offending key %q", msg, envKey)
+				}
+				if !strings.Contains(msg, "environment variable") {
+					t.Errorf("error %q does not tell the operator to use the environment", msg)
+				}
+				// The returned config must be the ZERO value: no secret survives the call.
+				if len(c.envMap()) != 0 {
+					t.Errorf("refused load returned a populated config %v, want the zero value", c.envMap())
+				}
+				// And nothing was written to the process environment.
+				if got, ok := os.LookupEnv(envKey); ok {
+					t.Errorf("%s was materialized (%q) despite the refusal", envKey, got)
+				}
+				if got, ok := os.LookupEnv("AISOTROPY_ADDR"); ok {
+					t.Errorf("AISOTROPY_ADDR was materialized (%q); a refused file must apply NOTHING", got)
+				}
+			})
+		}
+	}
+}
+
+// TestLoadRuntimeConfigFile_ParseErrorNeverEchoesSecrets closes the leak path the
+// refusal alone cannot reach. A MALFORMED file never gets far enough to be refused
+// — it dies in the parser — and github.com/goccy/go-yaml annotates its errors with
+// a SOURCE SNIPPET of the offending file. So a broken YAML file that also carries a
+// real `anthropic_api_key:` line echoed that key verbatim into the boot error, and
+// from there into whatever logs it. Each case below leaked before sanitizeParseError
+// existed (yaml-syntax, yaml-type-elsewhere, yaml-secret-type-mismatch); the TOML
+// cases did not, and are pinned anyway so a parser upgrade cannot open the hole.
+func TestLoadRuntimeConfigFile_ParseErrorNeverEchoesSecrets(t *testing.T) {
+	const canary = "CANARY-provider-key-must-never-appear"
+	cases := []struct{ name, file, body string }{
+		{"yaml-syntax-error-elsewhere", "c.yaml",
+			"anthropic_api_key: \"" + canary + "\"\naddr: [1, 2\nbroken: : :\n"},
+		{"yaml-type-error-elsewhere", "c.yaml",
+			"anthropic_api_key: \"" + canary + "\"\nrate_per_sec: \"nan-nan\"\n"},
+		{"yaml-secret-type-mismatch", "c.yaml",
+			"anthropic_api_key: [\"" + canary + "\"]\n"},
+		{"toml-syntax-error-elsewhere", "c.toml",
+			"anthropic_api_key = \"" + canary + "\"\naddr = \nnot = = valid\n"},
+		{"toml-type-error-elsewhere", "c.toml",
+			"anthropic_api_key = \"" + canary + "\"\nburst = \"nope\"\n"},
+		{"jwt-secret-yaml", "c.yaml",
+			"jwt_secret: \"" + canary + "\"\naddr: [1, 2\nbroken: : :\n"},
+		{"ops-token-yaml", "c.yaml",
+			"ops_token: \"" + canary + "\"\naddr: [1, 2\nbroken: : :\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadRuntimeConfigFile(writeTemp(t, tc.file, tc.body))
+			if err == nil {
+				t.Fatal("want a parse error")
+			}
+			if strings.Contains(err.Error(), canary) {
+				t.Errorf("SECRET LEAK via the parser error: %q", err.Error())
+			}
+			if !strings.Contains(err.Error(), "aisotropy:") {
+				t.Errorf("error %q lost the wrapped aisotropy: prefix", err)
+			}
+		})
+	}
+}
+
+// TestSecretFileKeys_MatchSecretEnvKeys pins the reflection-derived FILE-key list
+// that sanitizeParseError's regexp is built from: it must name exactly the
+// secret-bearing knobs, or a secret would sail through the redaction unmatched.
+func TestSecretFileKeys_MatchSecretEnvKeys(t *testing.T) {
+	got := append([]string(nil), secretFileKeys...)
+	sort.Strings(got)
+	want := make([]string, 0, len(secretYAMLKeys))
+	for _, tag := range secretYAMLKeys {
+		want = append(want, tag)
+	}
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("secretFileKeys = %v, want %v", got, want)
+	}
+}
+
+// TestSanitizeParseError_PassesThroughCleanErrors proves the sanitizer is a no-op
+// when nothing needs redacting — errors.Is/As on parser errors must keep working
+// for the overwhelmingly common (no-secret) case.
+func TestSanitizeParseError_PassesThroughCleanErrors(t *testing.T) {
+	orig := errors.New("[2:15] cannot unmarshal string into float64")
+	if got := sanitizeParseError(orig); got != orig {
+		t.Errorf("sanitizeParseError returned a NEW error %v for clean input; want the original", got)
+	}
+	if sanitizeParseError(nil) != nil {
+		t.Error("sanitizeParseError(nil) must be nil")
+	}
+}
+
+// TestLoadAndMaterialize_RefusesSecrets_ThroughTheAppSeam proves the refusal is
+// wired all the way to boot: an App pointed at a file carrying a secret fails
+// applyConfigFile (so Run/Turn return the error) instead of starting with the
+// secret applied.
+func TestLoadAndMaterialize_RefusesSecrets_ThroughTheAppSeam(t *testing.T) {
+	isolateEnv(t, "ANTHROPIC_API_KEY", "AISOTROPY_ADDR")
+
+	path := writeTemp(t, "aisotropy.runtime.yaml",
+		"addr: \":9393\"\nanthropic_api_key: \""+secretCanaries["ANTHROPIC_API_KEY"]+"\"\n")
+
+	if _, err := LoadAndMaterializeRuntimeConfig(path); err == nil {
+		t.Fatal("LoadAndMaterializeRuntimeConfig(file with a secret) = nil, want a refusal")
+	} else if !errors.Is(err, ErrSecretInConfigFile) {
+		t.Errorf("error %v does not wrap ErrSecretInConfigFile", err)
 	}
 
-	// Every secret field must actually reach the environment under its documented
-	// key — this also catches a field renamed in envMap without updating the list.
+	app := New(WithConfigFile(path))
+	err := app.applyConfigFile()
+	if err == nil {
+		t.Fatal("applyConfigFile(file with a secret) = nil, want the boot to fail closed")
+	}
+	if strings.Contains(err.Error(), secretCanaries["ANTHROPIC_API_KEY"]) {
+		t.Errorf("SECRET LEAK: the boot error echoes the value: %q", err)
+	}
+	if _, ok := os.LookupEnv("ANTHROPIC_API_KEY"); ok {
+		t.Error("ANTHROPIC_API_KEY was materialized despite the refusal")
+	}
+}
+
+// TestMaterialize_RefusesSecrets covers the SECOND barrier: even a RuntimeConfig
+// constructed directly in Go (bypassing the file loader) cannot push secret
+// material into the process environment.
+func TestMaterialize_RefusesSecrets(t *testing.T) {
+	isolateEnv(t, append(secretCanaryKeys(), "AISOTROPY_ADDR")...)
+
+	c := RuntimeConfig{
+		Addr:            ":9191",
+		AnthropicAPIKey: secretCanaries["ANTHROPIC_API_KEY"],
+		JWTSecret:       secretCanaries["AISOTROPY_JWT_SECRET"],
+		OpsToken:        secretCanaries["AISOTROPY_OPS_TOKEN"],
+		QdrantAPIKey:    secretCanaries["QDRANT_API_KEY"],
+		EmbedAPIKey:     secretCanaries["AISOTROPY_EMBED_API_KEY"],
+	}
+
+	applied, err := c.materialize()
+	if err == nil {
+		t.Fatal("materialize(config with secrets) = nil, want a refusal")
+	}
+	if !errors.Is(err, ErrSecretInConfigFile) {
+		t.Errorf("error %v does not wrap ErrSecretInConfigFile", err)
+	}
+	if applied != nil {
+		t.Errorf("applied = %v, want nil (an all-or-nothing refusal)", applied)
+	}
+	// Every secret key must be named, and no value may appear.
+	msg := err.Error()
+	for envKey, val := range secretCanaries {
+		if !strings.Contains(msg, envKey) {
+			t.Errorf("error %q does not name %q", msg, envKey)
+		}
+		if strings.Contains(msg, val) {
+			t.Errorf("SECRET LEAK: the error echoes the value of %q: %q", envKey, msg)
+		}
+		if _, ok := os.LookupEnv(envKey); ok {
+			t.Errorf("%s reached the environment despite the refusal", envKey)
+		}
+	}
+	// Not even the non-secret keys of a poisoned config are applied.
+	if _, ok := os.LookupEnv("AISOTROPY_ADDR"); ok {
+		t.Error("AISOTROPY_ADDR was applied from a config that also carried secrets")
+	}
+}
+
+// TestSecretEnvKeys_CoversEverySecretField keeps secretEnvKeys and the struct in
+// sync in the OTHER direction from the drift guard: every canary key this test
+// file knows about must still be a real, registered secret key that envMap emits.
+// It also re-asserts the residual logging backstop (names only, tagged "(secret)").
+func TestSecretEnvKeys_CoversEverySecretField(t *testing.T) {
+	c := RuntimeConfig{
+		AnthropicAPIKey: secretCanaries["ANTHROPIC_API_KEY"],
+		JWTSecret:       secretCanaries["AISOTROPY_JWT_SECRET"],
+		OpsToken:        secretCanaries["AISOTROPY_OPS_TOKEN"],
+		QdrantAPIKey:    secretCanaries["QDRANT_API_KEY"],
+		EmbedAPIKey:     secretCanaries["AISOTROPY_EMBED_API_KEY"],
+	}
 	em := c.envMap()
-	for key, val := range secretFields {
+	for key, val := range secretCanaries {
 		if got, ok := em[key]; !ok {
-			t.Errorf("envMap() is missing secret key %q", key)
+			t.Errorf("envMap() is missing secret key %q — the refusal could not detect it", key)
 		} else if got != val {
 			t.Errorf("envMap()[%q] = %q, want %q", key, got, val)
 		}
 		if !secretEnvKeys[key] {
-			t.Errorf("secretEnvKeys is missing %q — its value would be logged untagged", key)
+			t.Errorf("secretEnvKeys is missing %q — a file could supply it", key)
 		}
 	}
-
-	applied, err := c.materialize()
-	if err != nil {
-		t.Fatalf("materialize: %v", err)
+	// secretKeysSet must name every one of them, and nothing else.
+	if got := c.secretKeysSet(); len(got) != len(secretCanaries) {
+		t.Errorf("secretKeysSet() = %v, want %d keys", got, len(secretCanaries))
 	}
-
-	// The log payload must carry NAMES only — never a secret VALUE.
-	logged := strings.Join(redactSecretKeys(applied), " ")
-	for key, val := range secretFields {
+	// Residual logging backstop: names only, secrets tagged, values never present.
+	logged := strings.Join(redactSecretKeys(secretCanaryKeys()), " ")
+	for key, val := range secretCanaries {
 		if strings.Contains(logged, val) {
 			t.Errorf("redacted log payload leaks the value of %q: %q", key, logged)
 		}
 		if !strings.Contains(logged, key+" (secret)") {
 			t.Errorf("redacted log payload does not tag %q as (secret): %q", key, logged)
+		}
+	}
+}
+
+// nonSecretSecretishEnvKeys is the explicit allowlist for env keys whose NAME
+// trips the secret-ish regexp but which carry no secret material. Every entry
+// needs a written reason; an unexplained entry is how the drift guard rots.
+var nonSecretSecretishEnvKeys = map[string]string{
+	"AISOTROPY_JWT_PUBLIC_KEY": "an RSA/EC PUBLIC key in PEM form — published by design " +
+		"(it is what token holders verify against); disclosing it grants nothing",
+	"AISOTROPY_JWT_PUBLIC_KEY_FILE": "a filesystem PATH to the public key above, not key " +
+		"material of any kind",
+}
+
+// secretishEnvKeyRe matches env-var names that LOOK like they carry credentials.
+// Anything matching it must be deliberately classified: registered in
+// secretEnvKeys (refused from the file) or allowlisted above with a reason.
+var secretishEnvKeyRe = regexp.MustCompile(`(?i)(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)`)
+
+// allEnvKeysOfRuntimeConfig derives, BY REFLECTION over RuntimeConfig, every
+// environment variable the type can materialize. It populates each field in turn
+// with a type-appropriate value and reads the key back out of envMap, so the list
+// is generated from the CODE and cannot go stale as the schema grows — which is
+// the whole point of the drift guard built on top of it.
+func allEnvKeysOfRuntimeConfig(t *testing.T) []string {
+	t.Helper()
+	rt := reflect.TypeOf(RuntimeConfig{})
+	var keys []string
+	for i := 0; i < rt.NumField(); i++ {
+		v := reflect.New(rt).Elem()
+		f := v.Field(i)
+		switch f.Kind() {
+		case reflect.String:
+			f.SetString("x")
+		case reflect.Slice:
+			f.Set(reflect.ValueOf([]string{"x"}))
+		case reflect.Pointer:
+			p := reflect.New(f.Type().Elem())
+			switch p.Elem().Kind() {
+			case reflect.Bool:
+				p.Elem().SetBool(true)
+			case reflect.Int:
+				p.Elem().SetInt(1)
+			case reflect.Float64:
+				p.Elem().SetFloat(1)
+			default:
+				t.Fatalf("field %s: unhandled pointer element kind %s — extend this helper",
+					rt.Field(i).Name, p.Elem().Kind())
+			}
+			f.Set(p)
+		default:
+			t.Fatalf("field %s: unhandled kind %s — extend this helper",
+				rt.Field(i).Name, f.Kind())
+		}
+		em := v.Interface().(RuntimeConfig).envMap()
+		if len(em) == 0 {
+			t.Errorf("field %s materializes no env var — it is dead config surface",
+				rt.Field(i).Name)
+		}
+		for k := range em {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// TestSecretishEnvKeys_AreClassified is the DRIFT GUARD, and it is deliberately
+// broader than secretEnvKeys itself. The listed five keys are safe today because
+// someone thought about them; the risk this test addresses is the SIXTH — a knob
+// added later (say `webhook_signing_key` or `admin_password`) that is secret-ish
+// in substance but never gets registered, and so silently becomes file-loadable
+// and log-printable again.
+//
+// It enumerates every env var RuntimeConfig can materialize (by reflection over
+// the struct, so nothing can hide from it) and requires each name matching
+// (?i)(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL) to be EXPLICITLY classified: either
+// registered in secretEnvKeys — hence refused from config files — or listed in
+// nonSecretSecretishEnvKeys with a written reason. Silence is not an option.
+func TestSecretishEnvKeys_AreClassified(t *testing.T) {
+	for _, k := range allEnvKeysOfRuntimeConfig(t) {
+		if !secretishEnvKeyRe.MatchString(k) {
+			continue
+		}
+		if secretEnvKeys[k] {
+			continue // classified as secret: refused from config files
+		}
+		if reason, ok := nonSecretSecretishEnvKeys[k]; ok {
+			if strings.TrimSpace(reason) == "" {
+				t.Errorf("%q is allowlisted as non-secret with an EMPTY reason", k)
+			}
+			continue
+		}
+		t.Errorf("env key %q looks secret-bearing but is not classified: add it to "+
+			"secretEnvKeys (so config files refuse it) or to nonSecretSecretishEnvKeys "+
+			"with a written reason why it carries no secret material", k)
+	}
+
+	// The allowlist itself must not rot: an entry for a key the struct no longer
+	// materializes is stale and hides nothing, so it must be removed.
+	all := map[string]bool{}
+	for _, k := range allEnvKeysOfRuntimeConfig(t) {
+		all[k] = true
+	}
+	for k := range nonSecretSecretishEnvKeys {
+		if !all[k] {
+			t.Errorf("nonSecretSecretishEnvKeys lists %q, which RuntimeConfig no longer "+
+				"materializes — remove the stale entry", k)
+		}
+	}
+	for k := range secretEnvKeys {
+		if !all[k] {
+			t.Errorf("secretEnvKeys lists %q, which RuntimeConfig no longer materializes "+
+				"— remove the stale entry", k)
 		}
 	}
 }

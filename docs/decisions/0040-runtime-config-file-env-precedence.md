@@ -5,7 +5,8 @@ description: >
   Until now the runtime was configured by ENV VARS only (AISOTROPY_* plus the service vars RQLITE_URL /
   QDRANT_* / ANTHROPIC_API_KEY), read via scattered os.Getenv calls in aisotropy/app.go and
   aisotropy/authenv.go. There was no runtime config FILE. This ADR adds one, additively and 100%
-  backward-compatibly: a RuntimeConfig struct (aisotropy/runtimeconfig.go) whose fields mirror the existing
+  backward-compatibly (NOTE: §5's secrets posture was later SUPERSEDED by ADR-0072 — secret-bearing
+  keys are now REFUSED from the file, fail-closed at load; the rest of this ADR stands): a RuntimeConfig struct (aisotropy/runtimeconfig.go) whose fields mirror the existing
   env knobs ONE-FOR-ONE — it invents no new schema — loadable from YAML (goccy/go-yaml, already a
   dependency) or TOML (github.com/BurntSushi/toml v1.6.0, MIT). The file is resolved from the new
   AISOTROPY_CONFIG_FILE env var, an explicit WithConfigFile(path) option, or the default search paths
@@ -23,6 +24,16 @@ timestamp: 2026-07-17T00:00:00Z
 # ADR-0040 — Runtime config FILE mirroring the `AISOTROPY_*` env surface, under `env > file > default` precedence
 
 ## Status
+
+⚠️ **§5 (Secrets) SUPERSEDED IN PART by [ADR-0072](0072-runtime-config-refuses-secrets.md)
+(2026-07-27).** The operator ruling left open in the addendum below has been made: secret-bearing
+keys are **refused** from the runtime config file (fail-closed at load, `ErrSecretInConfigFile`), not
+"loadable but not preferred". The decisive argument is that this repository is **public**, so an
+accidental `git add` of a filled-in config file is an irreversible disclosure requiring key rotation,
+and a `.gitignore` is advisory while a loader that refuses the key is structural. **§5's text below is
+preserved as the historical record and is no longer the operative rule.** Everything else in this
+ADR — the mirrored schema, YAML+TOML, `env > file > default`, lenient unknown keys, the inert
+reference file — stands unchanged.
 
 ✅ **Accepted — shipped 2026-07-17** (`aisotropy/runtimeconfig.go` + `aisotropy/runtimeconfig_test.go`;
 wired into `aisotropy/app.go` via `WithConfigFile` and the top of `startRuntime`). Additive over
@@ -65,11 +76,14 @@ against drift: `TestSecretEnvKeys_CoversEverySecretField` fails if a new secret 
 `RuntimeConfig` without registering it in `secretEnvKeys` — the exact way "values are never logged"
 would otherwise rot silently.
 
-> **Open for operator decision:** should secret-bearing fields be *refused* (hard error) or *warned
+> ~~**Open for operator decision:** should secret-bearing fields be *refused* (hard error) or *warned
 > and ignored* when present in a config file, instead of today's "loadable, preferred-elsewhere,
-> never-logged"? Refusing is stricter and matches the constitutional "secrets via env only" gate more
-> literally; it also breaks any local/dev setup relying on §5 and is a public behavior change. Not
-> decided here.
+> never-logged"?~~ **RESOLVED 2026-07-27 → REFUSED (fail-closed), by
+> [ADR-0072](0072-runtime-config-refuses-secrets.md).** The operator ruled for the strict option; the
+> decisive argument is that this repository is **public**, so an accidental `git add` of a filled-in
+> config file is an irreversible disclosure requiring key rotation. The break to local/dev setups
+> relying on §5 was accepted deliberately — migration is one `export` per key, and the error names
+> the key.
 
 ## Context
 
@@ -152,7 +166,13 @@ Materialization runs at the **top of `startRuntime`** — the single dependency-
 by a `sync.Once` on the `App`, so repeated boots neither re-read the file nor race on the process environment,
 and a malformed file fails the boot (`Run`/`Turn` return the error) rather than panicking.
 
-### 5. Secrets: loadable, but not preferred
+### 5. Secrets: loadable, but not preferred — ⚠️ SUPERSEDED by [ADR-0072](0072-runtime-config-refuses-secrets.md)
+
+> **This subsection is historical.** As of 2026-07-27 secret-bearing keys are **refused** from the
+> config file (the load fails, the runtime does not start, the value is never applied or logged).
+> The paragraph below records what was decided on 2026-07-17 and why it was later reversed; do not
+> implement against it. See [ADR-0072](0072-runtime-config-refuses-secrets.md).
+
 
 The secret-bearing fields (`anthropic_api_key`, `jwt_secret`, `ops_token`, `qdrant_api_key`, `embed_api_key`)
 are loadable from the file for local/dev convenience, but the doc comment states plainly that the environment
