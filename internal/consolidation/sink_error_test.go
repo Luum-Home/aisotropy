@@ -45,6 +45,10 @@ func (e *errSemantic) Delete(context.Context, semantic.Scope, []string) error { 
 func (e *errSemantic) DeleteBySource(context.Context, semantic.Scope, semantic.Kind, string) (int, error) {
 	return 0, nil
 }
+
+func (e *errSemantic) ListBySource(context.Context, semantic.Scope, semantic.Kind, string) ([]semantic.Point, error) {
+	return nil, nil
+}
 func (e *errSemantic) PruneTurns(context.Context, semantic.Scope, time.Duration, int) (int, error) {
 	return 0, nil
 }

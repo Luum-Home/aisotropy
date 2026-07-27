@@ -263,6 +263,45 @@ func (s *QdrantStore) Delete(ctx context.Context, sc Scope, ids []string) error 
 // Best-effort at scale: a single document's chunk count is expected to stay
 // well under scrollLimit; a source with more matching points than that
 // ceiling has only the first scrollLimit removed by one call.
+// ListBySource implements Store. The tenant/user/kind/source predicate is a
+// Qdrant payload filter evaluated during the scan — the same in-scan isolation
+// Search relies on, never a post-filter over a wider read.
+func (s *QdrantStore) ListBySource(ctx context.Context, sc Scope, kind Kind, source string) ([]Point, error) {
+	must := []*qdrant.Condition{
+		qdrant.NewMatch(payloadTenant, sc.Tenant()),
+		qdrant.NewMatch(payloadUser, sc.User()),
+		qdrant.NewMatchKeyword(payloadKind, string(kind)),
+		qdrant.NewMatch(payloadSource, source),
+	}
+	lim := uint32(scrollLimit)
+	res, err := s.client.Scroll(ctx, &qdrant.ScrollPoints{
+		CollectionName: s.collection,
+		Filter:         &qdrant.Filter{Must: must},
+		Limit:          &lim,
+		WithPayload:    qdrant.NewWithPayload(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("semantic: qdrant list by source: %w", err)
+	}
+	out := make([]Point, 0, len(res))
+	for _, r := range res {
+		payload := r.GetPayload()
+		out = append(out, Point{
+			ID:         r.GetId().GetUuid(),
+			TenantID:   payload[payloadTenant].GetStringValue(),
+			UserID:     payload[payloadUser].GetStringValue(),
+			Kind:       Kind(payload[payloadKind].GetStringValue()),
+			Content:    payload[payloadContent].GetStringValue(),
+			Source:     payload[payloadSource].GetStringValue(),
+			Citation:   payload[payloadCitation].GetStringValue(),
+			CreatedAt:  time.UnixMilli(payload[payloadCreatedAt].GetIntegerValue()).UTC(),
+			ChunkIndex: int(payload[payloadChunkIdx].GetIntegerValue()),
+		})
+	}
+	sortByChunkIndex(out)
+	return out, nil
+}
+
 func (s *QdrantStore) DeleteBySource(ctx context.Context, sc Scope, kind Kind, source string) (int, error) {
 	must := []*qdrant.Condition{
 		qdrant.NewMatch(payloadTenant, sc.Tenant()),

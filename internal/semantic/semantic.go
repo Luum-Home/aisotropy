@@ -217,6 +217,24 @@ type Store interface {
 	// not an error (returns 0, nil).
 	DeleteBySource(ctx context.Context, sc Scope, kind Kind, source string) (int, error)
 
+	// ListBySource returns every point of `kind` belonging to `source` within
+	// sc, in ascending ChunkIndex order — a POSITIONAL read, not a similarity
+	// search, so it takes no query vector and returns no scores.
+	//
+	// It exists so retrieval can reach a chunk the ANN search never returned.
+	// A vector search surfaces the best-matching fragment; the chunks that give
+	// that fragment its meaning may score far below the cutoff and simply not
+	// come back. Coalescing can only reorder what the search already found —
+	// this can fetch what it missed.
+	//
+	// Isolation is identical to Search: the scope filter is applied DURING the
+	// scan (a payload filter for Qdrant, a scan-time predicate in-process),
+	// never as a post-filter over a wider read.
+	//
+	// Vectors are NOT populated: callers want the text and its position, and
+	// carrying embeddings would multiply the response size for nothing.
+	ListBySource(ctx context.Context, sc Scope, kind Kind, source string) ([]Point, error)
+
 	// PruneTurns evicts KindTurn points within sc per ADR-0017 phase 3
 	// ("Turn-kind bounding"): every KindTurn point older than maxAge is
 	// deleted (when maxAge > 0), and, independently, only the maxCount

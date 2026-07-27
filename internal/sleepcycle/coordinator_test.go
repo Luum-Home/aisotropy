@@ -203,6 +203,10 @@ func (f *fakeSemanticPruner) DeleteBySource(context.Context, semantic.Scope, sem
 	panic("DeleteBySource not expected in this test")
 }
 
+func (f *fakeSemanticPruner) ListBySource(context.Context, semantic.Scope, semantic.Kind, string) ([]semantic.Point, error) {
+	return nil, nil
+}
+
 func (f *fakeSemanticPruner) PruneTurns(_ context.Context, sc semantic.Scope, maxAge time.Duration, maxCount int) (int, error) {
 	f.calls = append(f.calls, prunecall{tenant: sc.Tenant(), user: sc.User(), maxAge: maxAge, maxCount: maxCount})
 	return 0, nil

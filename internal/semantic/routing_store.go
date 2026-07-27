@@ -223,6 +223,16 @@ func (rs *RoutingStore) Delete(ctx context.Context, sc Scope, ids []string) erro
 // Store.DeleteBySource. The mutex is only held long enough to
 // resolve/provision that Store inside storeFor; it is never held across the
 // underlying DeleteBySource call.
+// ListBySource dispatches to the physical Store for sc's tenant. See
+// Store.ListBySource.
+func (rs *RoutingStore) ListBySource(ctx context.Context, sc Scope, kind Kind, source string) ([]Point, error) {
+	st, err := rs.storeFor(sc.Tenant())
+	if err != nil {
+		return nil, err
+	}
+	return st.ListBySource(ctx, sc, kind, source)
+}
+
 func (rs *RoutingStore) DeleteBySource(ctx context.Context, sc Scope, kind Kind, source string) (int, error) {
 	st, err := rs.storeFor(sc.Tenant())
 	if err != nil {

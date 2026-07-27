@@ -259,6 +259,10 @@ func (s erroringStore) Delete(context.Context, semantic.Scope, []string) error {
 func (s erroringStore) DeleteBySource(context.Context, semantic.Scope, semantic.Kind, string) (int, error) {
 	return 0, nil
 }
+
+func (s erroringStore) ListBySource(context.Context, semantic.Scope, semantic.Kind, string) ([]semantic.Point, error) {
+	return nil, nil
+}
 func (s erroringStore) PruneTurns(context.Context, semantic.Scope, time.Duration, int) (int, error) {
 	return 0, nil
 }

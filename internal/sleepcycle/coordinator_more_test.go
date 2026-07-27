@@ -44,6 +44,10 @@ func (e *errSemanticPruner) Delete(context.Context, semantic.Scope, []string) er
 func (e *errSemanticPruner) DeleteBySource(context.Context, semantic.Scope, semantic.Kind, string) (int, error) {
 	panic("DeleteBySource not expected")
 }
+
+func (e *errSemanticPruner) ListBySource(context.Context, semantic.Scope, semantic.Kind, string) ([]semantic.Point, error) {
+	return nil, nil
+}
 func (e *errSemanticPruner) PruneTurns(context.Context, semantic.Scope, time.Duration, int) (int, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

@@ -86,6 +86,7 @@ const (
 	pkSource    = "aisotropy.source"
 	pkCitation  = "aisotropy.citation"
 	pkCreatedAt = "aisotropy.created_at_ms"
+	pkChunkIdx  = "aisotropy.chunk_index"
 )
 
 // backendKindPoolFactor over-fetches candidates from a backend Search before
@@ -221,6 +222,40 @@ func (s *scopedVectorStore) Delete(ctx context.Context, sc Scope, ids []string) 
 // DeleteBySource removes every point within sc whose Kind and Source match, by
 // scanning sc's namespace (never another's) and deleting the matches as a unit.
 // Returns the number removed; no match is not an error.
+// ListBySource implements Store. The backend namespace is already the caller's
+// scope (namespaceFor), so the scan can never see another tenant's items; the
+// kind/source predicate runs inside the loop, never as a post-filter over a
+// wider read.
+func (s *scopedVectorStore) ListBySource(ctx context.Context, sc Scope, kind Kind, source string) ([]Point, error) {
+	all, err := s.backend.Scan(ctx, namespaceFor(sc))
+	if err != nil {
+		return nil, err
+	}
+	var out []Point
+	for _, bv := range all {
+		if Kind(bv.Payload[pkKind]) != kind || bv.Payload[pkSource] != source {
+			continue
+		}
+		p := pointFromBackend(sc, bv)
+		p.Vector = nil // positional read: the text and its index, not the embedding
+		out = append(out, p)
+	}
+	sortByChunkIndex(out)
+	return out, nil
+}
+
+// atoiOrZero parses a payload integer, treating anything unparseable (including
+// the empty string left by points written before the field existed) as 0 — a
+// valid chunk position, so a legacy point sorts first rather than breaking the
+// read.
+func atoiOrZero(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 func (s *scopedVectorStore) DeleteBySource(ctx context.Context, sc Scope, kind Kind, source string) (int, error) {
 	ns := namespaceFor(sc)
 	all, err := s.backend.Scan(ctx, ns)
@@ -341,6 +376,7 @@ func payloadFromPoint(p Point) map[string]string {
 		pkSource:    p.Source,
 		pkCitation:  p.Citation,
 		pkCreatedAt: strconv.FormatInt(p.CreatedAt.UnixMilli(), 10),
+		pkChunkIdx:  strconv.Itoa(p.ChunkIndex),
 	}
 }
 
@@ -352,15 +388,16 @@ func payloadFromPoint(p Point) map[string]string {
 // construction.
 func pointFromBackend(sc Scope, bv BackendVector) Point {
 	return Point{
-		ID:        bv.ID,
-		TenantID:  sc.tenant,
-		UserID:    sc.user,
-		Kind:      Kind(bv.Payload[pkKind]),
-		Content:   bv.Payload[pkContent],
-		Source:    bv.Payload[pkSource],
-		Citation:  bv.Payload[pkCitation],
-		Vector:    bv.Vector,
-		CreatedAt: millisToTime(bv.Payload[pkCreatedAt]),
+		ID:         bv.ID,
+		TenantID:   sc.tenant,
+		UserID:     sc.user,
+		Kind:       Kind(bv.Payload[pkKind]),
+		Content:    bv.Payload[pkContent],
+		Source:     bv.Payload[pkSource],
+		Citation:   bv.Payload[pkCitation],
+		Vector:     bv.Vector,
+		CreatedAt:  millisToTime(bv.Payload[pkCreatedAt]),
+		ChunkIndex: atoiOrZero(bv.Payload[pkChunkIdx]),
 	}
 }
 

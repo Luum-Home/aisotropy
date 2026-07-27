@@ -238,6 +238,10 @@ type deleteErrStore struct {
 	err error
 }
 
+func (d deleteErrStore) ListBySource(context.Context, semantic.Scope, semantic.Kind, string) ([]semantic.Point, error) {
+	return nil, nil
+}
+
 func (d deleteErrStore) DeleteBySource(context.Context, semantic.Scope, semantic.Kind, string) (int, error) {
 	return 0, d.err
 }

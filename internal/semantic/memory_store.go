@@ -104,6 +104,27 @@ func (s *InMemoryStore) Delete(_ context.Context, sc Scope, ids []string) error 
 // checked before every delete exactly like Delete, so a colliding
 // (kind,source) belonging to a different tenant/user is left untouched. See
 // Store.DeleteBySource.
+// ListBySource implements Store. The isolation predicate runs inside the scan,
+// mirroring DeleteBySource below.
+func (s *InMemoryStore) ListBySource(_ context.Context, sc Scope, kind Kind, source string) ([]Point, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []Point
+	for _, p := range s.points {
+		if p.TenantID != sc.Tenant() || p.UserID != sc.User() {
+			continue // isolation filter during the scan, not after
+		}
+		if p.Kind != kind || p.Source != source {
+			continue
+		}
+		cp := p
+		cp.Vector = nil // positional read: the text and its index, not the embedding
+		out = append(out, cp)
+	}
+	sortByChunkIndex(out)
+	return out, nil
+}
+
 func (s *InMemoryStore) DeleteBySource(_ context.Context, sc Scope, kind Kind, source string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -207,4 +228,20 @@ func cosine(a, b []float32) float32 {
 		return 0
 	}
 	return float32(dot / (math.Sqrt(na) * math.Sqrt(nb)))
+}
+
+// sortByChunkIndex puts a document's chunks back in reading order. Ties fall
+// back to CreatedAt then ID so the result is deterministic even for points
+// written before ChunkIndex existed (all index 0) — a positional read that
+// reshuffled between calls would defeat its own purpose.
+func sortByChunkIndex(pts []Point) {
+	sort.SliceStable(pts, func(i, j int) bool {
+		if pts[i].ChunkIndex != pts[j].ChunkIndex {
+			return pts[i].ChunkIndex < pts[j].ChunkIndex
+		}
+		if !pts[i].CreatedAt.Equal(pts[j].CreatedAt) {
+			return pts[i].CreatedAt.Before(pts[j].CreatedAt)
+		}
+		return pts[i].ID < pts[j].ID
+	})
 }
