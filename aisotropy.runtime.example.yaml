@@ -1,0 +1,195 @@
+# aisotropy — runtime config file (EXAMPLE)
+# =============================================================================
+# Reference for the optional runtime config FILE introduced by ADR-0040
+# (docs/decisions/0040-runtime-config-file-env-precedence.md).
+#
+# HOW TO USE
+#   cp aisotropy.runtime.example.yaml aisotropy.runtime.yaml   # auto-discovered
+#   AISOTROPY_CONFIG_FILE=/etc/aisotropy/runtime.yaml ./aisotropyd
+#   aisotropy.New(aisotropy.WithConfigFile("/etc/aisotropy/runtime.yaml"))
+#
+# THIS FILE IS INERT. Every key below is commented out on purpose, so copying it
+# to a discovered path changes NOTHING until you uncomment something. Its own
+# name (`aisotropy.runtime.example.yaml`) is deliberately NOT one of the
+# auto-discovered paths — see DISCOVERY below.
+#
+# -----------------------------------------------------------------------------
+# PRECEDENCE:  explicit ENV VAR  >  this file  >  built-in default
+# -----------------------------------------------------------------------------
+# A value here is applied ONLY if that environment variable is not already set.
+# Precedence is by PRESENCE, so even an empty env var (FOO=) beats the file.
+# A knob set by neither keeps its built-in default. No file => nothing applied
+# => byte-for-byte the behavior aisotropy had before this feature existed.
+#
+# DISCOVERY (first match wins):
+#   1. aisotropy.WithConfigFile("<path>")   — explicit, preferred for libraries
+#   2. AISOTROPY_CONFIG_FILE=<path>         — explicit, preferred for daemons
+#   3. ./aisotropy.runtime.yaml | .yml | .toml   — relative to the process CWD
+# An explicitly named file that does not exist is a hard error (a typo must fail
+# loudly); the CWD search finding nothing is a clean no-op.
+#
+# NOTE: this is NOT `aisotropy.yaml`. That name belongs to the separate ADR-0016
+# WIRING config (Go builder options). Two different schemas, two different names.
+#
+# FORMAT: TOML works too — rename to `.toml` and use TOML syntax. The schema is
+# identical; the parser is chosen by file extension.
+#
+# UNKNOWN KEYS are ignored (lenient), so one file can be shared across mixed
+# aisotropy versions during a staged rollout. Malformed syntax and wrong value
+# TYPES still fail closed at boot.
+#
+# EVERY key below mirrors exactly ONE environment variable, shown in its comment.
+# =============================================================================
+
+# --- Server / listener -------------------------------------------------------
+
+# HTTP listen address.                                          AISOTROPY_ADDR
+# addr: ":8080"
+
+# Reject non-TLS requests (behind a terminating proxy, keep false).
+#                                                        AISOTROPY_REQUIRE_TLS
+# require_tls: false
+
+# On-disk dir for BadgerDB working memory + embedded SQLite facts.
+# Unset => in-memory (nothing survives a restart).            AISOTROPY_DATA_DIR
+# data_dir: "/var/lib/aisotropy"
+
+# Directory scanned for plugin manifests.                   AISOTROPY_PLUGIN_DIR
+# plugin_dir: "/etc/aisotropy/plugins"
+
+# Tenants pinned to dedicated resources (YAML list -> CSV env var).
+#                                                   AISOTROPY_DEDICATED_TENANTS
+# dedicated_tenants: ["acme", "globex"]
+
+# Rust DataFusion sleep-cycle worker binary. Unset => consolidation stays
+# dormant.                                              AISOTROPY_SLEEPCYCLE_BIN
+# sleepcycle_bin: "/usr/local/bin/aisotropy-sleepcycle"
+
+# Bits-per-token reference scorer binary.                 AISOTROPY_BITRATE_BIN
+# bitrate_bin: "/usr/local/bin/aisotropy-bitrate"
+
+# --- Rate limiting / cost shaping --------------------------------------------
+
+# Token-bucket refill rate, requests/sec per tenant.    AISOTROPY_RATE_PER_SEC
+# rate_per_sec: 10.0
+
+# Token-bucket burst capacity.                                 AISOTROPY_BURST
+# burst: 20
+
+# Cost ceiling in USD; the meter degrades/rejects before spending past it.
+#                                                    AISOTROPY_COST_BUDGET_USD
+# cost_budget_usd: 25.0
+
+# --- Memory tiers / model preferences ----------------------------------------
+
+# TTL for a conversational turn in the semantic tier (Go duration string).
+#                                                AISOTROPY_SEMANTIC_TURN_TTL
+# semantic_turn_ttl: "720h"
+
+# Max turns retained per user in the semantic tier. AISOTROPY_SEMANTIC_TURN_MAX
+# semantic_turn_max: 500
+
+# Minimum importance (0.0-1.0) for a fact to be persisted.
+#                                              AISOTROPY_FACT_MIN_IMPORTANCE
+# fact_min_importance: 0.3
+
+# Model used for image/vision turns.                    AISOTROPY_VISION_MODEL
+# vision_model: "claude-sonnet-4-5"
+
+# Embedding service endpoint. Unset => in-process sovereign embedder.
+#                                                        AISOTROPY_EMBED_URL
+# embed_url: "http://localhost:8081/embed"
+
+# --- Guardrails --------------------------------------------------------------
+
+# Block responses failing the output guardrail.
+#                                        AISOTROPY_GUARDRAILS_BLOCK_OUTPUT
+# guardrails_block_output: true
+
+# Block prompts flagged as injection attempts (ADR-0057).
+#                                     AISOTROPY_GUARDRAILS_BLOCK_INJECTION
+# guardrails_block_injection: true
+
+# Use the LLM-as-judge guardrail tier (costs an extra model call per turn).
+#                                          AISOTROPY_GUARDRAILS_LLM_JUDGE
+# guardrails_llm_judge: false
+
+# --- Facts tier (rqlite) -----------------------------------------------------
+
+# Networked rqlite URL. Unset => in-process SQLite + FTS5.        RQLITE_URL
+# rqlite_url: "http://localhost:4001"
+
+# --- Semantic tier (Qdrant) --------------------------------------------------
+
+# Qdrant host. Unset => in-process cosine index.                 QDRANT_HOST
+# qdrant_host: "localhost"
+
+# Qdrant gRPC port.                                              QDRANT_PORT
+# qdrant_port: 6334
+
+# Collection name for this deployment's vectors.           QDRANT_COLLECTION
+# qdrant_collection: "aisotropy"
+
+# Use TLS for the Qdrant connection.                          QDRANT_USE_TLS
+# qdrant_use_tls: false
+
+# --- Auth / JWT verification (ADR-0024) --------------------------------------
+# With no verification key configured the daemon boots in NoAuth mode (path
+# identity trusted, no credential check) and logs a loud warning. Set one of
+# these for any non-local deployment.
+
+# RS256 public key, PEM inline.                    AISOTROPY_JWT_PUBLIC_KEY
+# jwt_public_key: |
+#   -----BEGIN PUBLIC KEY-----
+#   ...
+#   -----END PUBLIC KEY-----
+
+# RS256 public key read from a file (preferred over inline).
+#                                            AISOTROPY_JWT_PUBLIC_KEY_FILE
+# jwt_public_key_file: "/etc/aisotropy/jwt-public.pem"
+
+# JWKS endpoint for rotating keys (ADR-0030).       AISOTROPY_JWT_JWKS_URL
+# jwt_jwks_url: "https://issuer.example.com/.well-known/jwks.json"
+
+# Required `aud` claim.                             AISOTROPY_JWT_AUDIENCE
+# jwt_audience: "aisotropy"
+
+# Required `iss` claim.                               AISOTROPY_JWT_ISSUER
+# jwt_issuer: "https://issuer.example.com"
+
+# Max accepted token lifetime (Go duration).         AISOTROPY_JWT_MAX_TTL
+# jwt_max_ttl: "1h"
+
+# =============================================================================
+# SECRETS — read this before uncommenting anything below
+# =============================================================================
+# The five keys below ARE loadable from this file (ADR-0040 §5) purely as a
+# LOCAL/DEV convenience, so `docker compose up`-style local runs need no shell
+# full of exports.
+#
+#   IN PRODUCTION, SUPPLY THESE VIA THE ENVIRONMENT OR A SECRET MANAGER.
+#   NEVER COMMIT A CONFIG FILE THAT CONTAINS THEM.
+#
+# Because env beats file, a deployment that exports these keeps working
+# unchanged even if a file also lists them. The runtime never logs a secret
+# VALUE — the "runtime config file applied" line prints key NAMES only, with
+# these five tagged "(secret)".
+#
+# If you keep a filled-in copy locally, name it so it cannot be committed
+# (e.g. aisotropy.runtime.local.yaml) and add it to .gitignore.
+
+# Anthropic provider key. Unset => the canned keyless stub client.
+#                                                       ANTHROPIC_API_KEY
+# anthropic_api_key: "sk-ant-..."
+
+# HS256 shared secret for bearer-JWT verification.  AISOTROPY_JWT_SECRET
+# jwt_secret: "change-me"
+
+# Bearer token guarding the ops/admin surface.       AISOTROPY_OPS_TOKEN
+# ops_token: "change-me"
+
+# Qdrant Cloud API key.                                   QDRANT_API_KEY
+# qdrant_api_key: "..."
+
+# Embedding service API key.                  AISOTROPY_EMBED_API_KEY
+# embed_api_key: "..."

@@ -3,6 +3,8 @@ package aisotropy
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -397,5 +399,255 @@ func TestRedactSecretKeys(t *testing.T) {
 	want := []string{"AISOTROPY_JWT_SECRET (secret)", "AISOTROPY_ADDR"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("redactSecretKeys(...) = %v, want %v", got, want)
+	}
+}
+
+// TestExampleRuntimeConfig_IsRealAndInert guards the shipped reference file
+// aisotropy.runtime.example.yaml against the two ways a documented example rots:
+//
+//  1. INVENTED KEYS — it documents a knob the code does not have (or keeps
+//     documenting one that was renamed). Every commented key in the example is
+//     uncommented in-memory and must round-trip through the real parser into a
+//     field that materializes to a real environment variable.
+//  2. NOT INERT — the file ships with every key commented out on purpose, so
+//     copying it to a discovered path is a no-op until the operator opts in.
+//     Parsed as-is it must produce a zero config that materializes nothing.
+func TestExampleRuntimeConfig_IsRealAndInert(t *testing.T) {
+	const examplePath = "../aisotropy.runtime.example.yaml"
+
+	raw, err := os.ReadFile(examplePath)
+	if err != nil {
+		t.Fatalf("read %s: %v — the documented example file must exist", examplePath, err)
+	}
+
+	// (2) Shipped as-is, the example must be completely inert.
+	asShipped, err := LoadRuntimeConfigFile(examplePath)
+	if err != nil {
+		t.Fatalf("LoadRuntimeConfigFile(example) = %v, want nil (it must parse)", err)
+	}
+	if applied := asShipped.envMap(); len(applied) != 0 {
+		t.Errorf("the shipped example materializes %v, want nothing — every key must be commented out", applied)
+	}
+
+	// (1) Collect the keys the example documents. A documented key looks like
+	// "# key: value" or "# key:" at the start of a line (after "# " only), which
+	// distinguishes real knobs from the prose comments around them.
+	docKey := regexp.MustCompile(`^# ([a-z][a-z0-9_]*):`)
+	var documented []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if m := docKey.FindStringSubmatch(strings.TrimRight(line, " \t")); m != nil {
+			documented = append(documented, m[1])
+		}
+	}
+	if len(documented) == 0 {
+		t.Fatal("found no documented keys in the example — the extraction regexp is wrong")
+	}
+
+	// Every documented key must be a REAL field: uncommenting it alone must parse
+	// and must materialize at least one environment variable.
+	for _, key := range documented {
+		t.Run(key, func(t *testing.T) {
+			// A value that is valid for every field type in the schema is not
+			// possible, so try the plausible ones and require that one works.
+			candidates := []string{`"x"`, `1`, `1.0`, `true`, `["x"]`}
+			var lastErr error
+			for _, v := range candidates {
+				c, err := loadYAMLString(t, key+": "+v)
+				if err != nil {
+					lastErr = err
+					continue
+				}
+				if len(c.envMap()) > 0 {
+					return // real key, maps to a real env var
+				}
+				lastErr = nil
+			}
+			t.Errorf("documented key %q does not map to any RuntimeConfig field "+
+				"(last parse error: %v) — the example documents a knob that does not exist", key, lastErr)
+		})
+	}
+
+	// And the reverse direction: every real field should be documented, so the
+	// example stays a complete reference as the schema grows.
+	tagRe := regexp.MustCompile(`yaml:"([a-z0-9_]+)"`)
+	src, err := os.ReadFile("runtimeconfig.go")
+	if err != nil {
+		t.Fatalf("read runtimeconfig.go: %v", err)
+	}
+	documentedSet := map[string]bool{}
+	for _, k := range documented {
+		documentedSet[k] = true
+	}
+	for _, m := range tagRe.FindAllStringSubmatch(string(src), -1) {
+		if !documentedSet[m[1]] {
+			t.Errorf("RuntimeConfig field %q is not documented in %s", m[1], examplePath)
+		}
+	}
+}
+
+// loadYAMLString parses a one-line YAML config body through the real loader.
+func loadYAMLString(t *testing.T, body string) (RuntimeConfig, error) {
+	t.Helper()
+	return LoadRuntimeConfigFile(writeTemp(t, "probe.yaml", body+"\n"))
+}
+
+// TestLoadRuntimeConfigFile_UnknownKeysAreIgnored PINS the deliberate decision
+// on unknown keys: the loader is LENIENT — an unrecognized key is silently
+// ignored and the recognized keys around it still load. This is not an accident
+// of the parsers; it is the chosen behavior, and this test exists so a future
+// change to strict decoding (goccy's yaml.Strict / BurntSushi's
+// MetaData.Undecoded) is a deliberate, visible break rather than a silent one.
+//
+// Rationale for lenient over strict: RuntimeConfig MIRRORS the env surface, and
+// the env surface is open — an operator's file may legitimately carry keys for a
+// NEWER or OLDER aisotropy than the binary reading it (rollback, staged upgrade,
+// one file shared across a fleet mid-roll). Strict decoding would turn that into
+// a hard boot failure, which is a worse outcome than ignoring a knob the binary
+// does not know. It also matches how the process environment itself behaves:
+// an unknown AISOTROPY_* env var is ignored, never fatal. Malformed SYNTAX and
+// TYPE mismatches still fail closed (TestLoadRuntimeConfigFile_MalformedErrors)
+// — the leniency is about unknown NAMES, not invalid VALUES.
+func TestLoadRuntimeConfigFile_UnknownKeysAreIgnored(t *testing.T) {
+	cases := []struct {
+		name string
+		file string
+		body string
+		want string
+	}{
+		{
+			name: "yaml",
+			file: "unknown.yaml",
+			body: "addr: \":9191\"\ntotally_unknown_key: 5\nanother_unknown: \"x\"\n",
+			want: ":9191",
+		},
+		{
+			name: "toml",
+			file: "unknown.toml",
+			body: "addr = \":9292\"\ntotally_unknown_key = 5\nanother_unknown = \"x\"\n",
+			want: ":9292",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := LoadRuntimeConfigFile(writeTemp(t, tc.file, tc.body))
+			if err != nil {
+				t.Fatalf("LoadRuntimeConfigFile(unknown keys) = %v, want nil (lenient)", err)
+			}
+			if c.Addr != tc.want {
+				t.Errorf("Addr = %q, want %q (known keys must still load)", c.Addr, tc.want)
+			}
+		})
+	}
+}
+
+// TestLoadAndMaterialize_AbsentFileMutatesNothing is the BACKWARD-COMPATIBILITY
+// gate, proven rather than asserted. TestLoadAndMaterialize_MissingFileIsNoOp
+// checks the return value; this checks the actual blast radius — that with no
+// config file configured, the ENTIRE process environment is byte-identical
+// before and after. That is the real guarantee "no file => behaves exactly as
+// before this feature existed" rests on, since every downstream knob resolves
+// through os.Getenv.
+func TestLoadAndMaterialize_AbsentFileMutatesNothing(t *testing.T) {
+	isolateEnv(t, configFileEnv)
+
+	// Run from a temp cwd so no stray aisotropy.runtime.* in the repo (or in the
+	// package dir) is discovered by the relative default search paths.
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	before := os.Environ()
+	sort.Strings(before)
+
+	applied, err := LoadAndMaterializeRuntimeConfig("")
+	if err != nil {
+		t.Fatalf("LoadAndMaterializeRuntimeConfig = %v, want nil", err)
+	}
+	if applied != nil {
+		t.Errorf("applied = %v, want nil", applied)
+	}
+
+	after := os.Environ()
+	sort.Strings(after)
+
+	if len(before) != len(after) {
+		t.Fatalf("environment size changed: %d -> %d (want no mutation)", len(before), len(after))
+	}
+	for i := range before {
+		if before[i] != after[i] {
+			t.Errorf("environment mutated at %d: %q -> %q", i, before[i], after[i])
+		}
+	}
+}
+
+// TestSecretEnvKeys_CoversEverySecretField guards the secrets posture against
+// DRIFT. Per ADR-0040 §5 secret-bearing fields ARE loadable from the file for
+// local/dev convenience, and the safety property that makes that acceptable is
+// that their VALUES are never logged — materialize logs key NAMES only, with
+// secrets tagged "(secret)" by redactSecretKeys.
+//
+// That property silently breaks the day someone adds a new secret field to
+// RuntimeConfig and forgets to register it in secretEnvKeys: it would then be
+// materialized and its name logged UNTAGGED. This test populates every
+// secret-bearing field, materializes it, and asserts (a) each secret's env key
+// is registered in secretEnvKeys, and (b) no secret VALUE appears anywhere in
+// the redacted log payload.
+func TestSecretEnvKeys_CoversEverySecretField(t *testing.T) {
+	// Every secret-bearing field in RuntimeConfig, with a distinctive value.
+	secretFields := map[string]string{
+		"ANTHROPIC_API_KEY":       "sk-ant-CANARY-anthropic",
+		"AISOTROPY_JWT_SECRET":    "CANARY-jwt-secret",
+		"AISOTROPY_OPS_TOKEN":     "CANARY-ops-token",
+		"QDRANT_API_KEY":          "CANARY-qdrant-key",
+		"AISOTROPY_EMBED_API_KEY": "CANARY-embed-key",
+	}
+	keys := make([]string, 0, len(secretFields))
+	for k := range secretFields {
+		keys = append(keys, k)
+	}
+	isolateEnv(t, keys...)
+
+	c := RuntimeConfig{
+		AnthropicAPIKey: secretFields["ANTHROPIC_API_KEY"],
+		JWTSecret:       secretFields["AISOTROPY_JWT_SECRET"],
+		OpsToken:        secretFields["AISOTROPY_OPS_TOKEN"],
+		QdrantAPIKey:    secretFields["QDRANT_API_KEY"],
+		EmbedAPIKey:     secretFields["AISOTROPY_EMBED_API_KEY"],
+	}
+
+	// Every secret field must actually reach the environment under its documented
+	// key — this also catches a field renamed in envMap without updating the list.
+	em := c.envMap()
+	for key, val := range secretFields {
+		if got, ok := em[key]; !ok {
+			t.Errorf("envMap() is missing secret key %q", key)
+		} else if got != val {
+			t.Errorf("envMap()[%q] = %q, want %q", key, got, val)
+		}
+		if !secretEnvKeys[key] {
+			t.Errorf("secretEnvKeys is missing %q — its value would be logged untagged", key)
+		}
+	}
+
+	applied, err := c.materialize()
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+
+	// The log payload must carry NAMES only — never a secret VALUE.
+	logged := strings.Join(redactSecretKeys(applied), " ")
+	for key, val := range secretFields {
+		if strings.Contains(logged, val) {
+			t.Errorf("redacted log payload leaks the value of %q: %q", key, logged)
+		}
+		if !strings.Contains(logged, key+" (secret)") {
+			t.Errorf("redacted log payload does not tag %q as (secret): %q", key, logged)
+		}
 	}
 }

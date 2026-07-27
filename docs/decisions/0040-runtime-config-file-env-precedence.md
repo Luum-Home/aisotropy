@@ -30,6 +30,47 @@ wired into `aisotropy/app.go` via `WithConfigFile` and the top of `startRuntime`
 [ADR-0024](0024-authenticated-identity-seam.md)'s env-driven auth: this ADR closes the "no runtime config file" gap without
 changing any existing default.
 
+## Addendum — 2026-07-27: unknown-key policy pinned, reference file shipped
+
+A later task was dispatched to "close the no-runtime-config-file gap", on the strength of a **stale
+`GAP` row** in `docs/architecture/capabilities-and-gaps.md` that still read *"no TOML; no single
+runtime config file — env-only"* a week after this ADR shipped (`bfeca15`, 2026-07-17 10:49). The
+feature was found already built, wired, and tested; the gap row has been corrected. Nothing in the
+decision above changed. Two previously-undocumented behaviors were pinned by tests in that pass:
+
+1. **Unknown keys are LENIENT (ignored), by decision — not by accident.** Both parsers already
+   ignored unrecognized keys; that is now the *documented and tested* contract
+   (`TestLoadRuntimeConfigFile_UnknownKeysAreIgnored`, YAML + TOML). Rationale: `RuntimeConfig`
+   mirrors the **env surface**, and the env surface is open — an unknown `AISOTROPY_*` variable is
+   ignored, never fatal. A file may legitimately carry keys for a newer or older binary than the one
+   reading it (rollback, staged upgrade, one file shared across a fleet mid-roll); strict decoding
+   would convert that into a hard boot failure, a worse outcome than skipping an unknown knob. The
+   leniency covers unknown **names** only — malformed **syntax** and wrong value **types** still fail
+   closed, as before. A future move to strict decoding must now break this test deliberately rather
+   than silently.
+
+2. **A reference file ships: `aisotropy.runtime.example.yaml` (repo root).** It documents all 34
+   knobs against their mirrored env vars, with **every key commented out**, and its filename is
+   deliberately **not** one of `defaultConfigSearchPaths` — so its presence at the repo root cannot
+   auto-apply to anything (verified: `resolveConfigPath("")` from the repo root returns
+   `("", false)`). `TestExampleRuntimeConfig_IsRealAndInert` fails if the example ever documents a
+   knob `RuntimeConfig` does not have, omits one it does, or ships a key uncommented.
+
+**Unchanged and re-affirmed: §5's secrets posture.** The dispatching task specified the *opposite*
+rule — that secrets be refused from the file outright. That would be a **breaking change to an
+accepted, shipped decision and a public API**, requested on the same stale premise that the feature
+did not exist, so it was **not** applied unilaterally. It is a live question worth an operator ruling
+(see below), not an agent's call. Meanwhile the property that makes §5 defensible is now guarded
+against drift: `TestSecretEnvKeys_CoversEverySecretField` fails if a new secret field is added to
+`RuntimeConfig` without registering it in `secretEnvKeys` — the exact way "values are never logged"
+would otherwise rot silently.
+
+> **Open for operator decision:** should secret-bearing fields be *refused* (hard error) or *warned
+> and ignored* when present in a config file, instead of today's "loadable, preferred-elsewhere,
+> never-logged"? Refusing is stricter and matches the constitutional "secrets via env only" gate more
+> literally; it also breaks any local/dev setup relying on §5 and is a public behavior change. Not
+> decided here.
+
 ## Context
 
 The runtime was configured by **environment variables only**. `aisotropy/app.go` and
