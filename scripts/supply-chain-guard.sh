@@ -31,8 +31,11 @@
 #      aisotropy/ façade that a copied example would hit — the root `go test ./...`
 #      never descends into the separate example modules, so nothing else catches it.
 #
-# NOTE ON MODULES: only the ROOT module is vuln-scanned (internal/…, aisotropy, cmd/…);
-# arenas/* stay out of scope. examples/* are separate modules but ARE build-gated
+# NOTE ON MODULES: only the ROOT module is vuln-scanned (internal/…, aisotropy, cmd/…).
+# BUILD gating is wider than vuln gating: examples/* (stage 4) AND arenas/*, bench/*
+# (stage 5) are separate modules that ARE build-gated, because `go build ./...` at the
+# root does not descend into nested modules — the root can be green while an adapter
+# is broken. examples/* are additionally build-gated
 # (check 4), so a public-surface break that would hit a copied demo fails the push.
 #
 # USAGE:   scripts/supply-chain-guard.sh        # run all checks from anywhere in the repo
@@ -118,6 +121,41 @@ if [ -n "$ex_fail" ]; then
   BLOCKED=1
 else
   echo "   all example modules build + vet clean."
+fi
+
+echo
+echo "5) arena modules build  (arenas/*, bench/* — catch the SAME rot in the benchmark adapters)"
+# WHY THIS STAGE EXISTS. Stage 4 has always covered examples/*, and the note at
+# the top of this file used to say "arenas/* stay out of scope". That exclusion
+# cost a full diagnostic run: an interface change in the root module
+# (semantic.Store gaining a method) left arenas/live/aisotropy/go.mod stale.
+# `go build ./...` from the repo root does NOT descend into nested modules, so
+# the root stayed green, every gate passed, the push went through — and the
+# breakage only surfaced when a real board run spent its startup discovering
+# that the adapter binary could not compile ("go: updates to go.mod needed").
+# Every one of its 58 runs errored on a build failure, measuring nothing.
+#
+# An arena adapter is not a demo: it is the thing that produces the published
+# benchmark. A broken one wastes a multi-hour, billable run and, worse, can
+# render as a framework RESULT rather than as our own build error.
+arena_fail=""
+for gm in arenas/*/go.mod arenas/live/*/go.mod bench/*/go.mod bench/*/*/go.mod; do
+  [ -f "$gm" ] || continue
+  ar_dir="$(dirname "$gm")"
+  # Vendored upstreams (external/) are excluded: they are not ours to fix.
+  case "$ar_dir" in external/*) continue ;; esac
+  if ! ( cd "$ar_dir" && go build ./... ) >/dev/null 2>&1; then
+    arena_fail="$arena_fail ${ar_dir}"
+  fi
+done
+if [ -n "$arena_fail" ]; then
+  echo "   BUILD FAILED for arena/bench module(s):$arena_fail"
+  echo "   A nested module drifted from the root. This is exactly the failure that"
+  echo "   makes a board run burn hours and report nothing — fix it before pushing."
+  echo "   Usually: 'go mod tidy' in the module, or update it for a root API change."
+  BLOCKED=1
+else
+  echo "   all arena/bench modules build."
 fi
 
 # --- VERDICT ---
