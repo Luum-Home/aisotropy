@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -390,6 +391,19 @@ func runCorrectnessPass(frameworks []adapter, modes []string, tasks []task, rag 
 					if resume[cellKey(fw.name, mode, lane, "native", it.ID)] {
 						logf("[correctness] %s/%s %s (resumed — skipped)", fw.name, mode, it.ID)
 						continue
+					}
+					// Stop the moment the provider budget is gone. Every cell dispatched
+					// past this point fails for a reason unrelated to the framework under
+					// test, and because the schedule is ORDERED those failures land entirely
+					// on whoever runs last — turning a billing event into what reads as a
+					// capability ranking. A visibly SHORT board beats a complete-looking
+					// wrong one; the durable record stream plus -resume make continuation
+					// cheap once quota returns.
+					if quotaTripped.Load() {
+						logf("[correctness] ABORT: provider quota exhausted — stopping before %s/%s %s. "+
+							"Recorded cells stay valid; re-run with -resume once quota returns.",
+							fw.name, mode, it.ID)
+						return
 					}
 					logf("[correctness] %s/%s %s ...", fw.name, mode, it.ID)
 					rec := runWorkItem(fw, it, budget, retries)
@@ -848,6 +862,47 @@ func isRateLimited(res execResult) bool {
 	return res.runErr != "" && containsAnyFold(res.runErr, rateLimitMarkers)
 }
 
+// quotaTripped is set the first time any adapter reports an exhausted provider
+// budget, and read at the top of every subsequent cell so the correctness pass
+// stops instead of grinding through a board it can no longer measure. An atomic
+// because the pass runs frameworks concurrently.
+var quotaTripped atomic.Bool
+
+// quotaExhaustedMarkers match a provider saying the ACCOUNT'S BUDGET IS GONE, as
+// opposed to "you are going too fast". The distinction is everything: a rate
+// limit clears if you wait, a quota does not clear for the rest of the run.
+var quotaExhaustedMarkers = []string{
+	"usage limit exceeded", "quota exceeded", "insufficient_quota",
+	"credit balance", "billing hard limit",
+}
+
+// isQuotaExhausted reports whether a failure means the provider budget is spent.
+//
+// WHY THIS IS SEPARATE FROM isRateLimited, and why it must ABORT the board.
+// On 2026-07-27 a full board ran until the free tier's total quota died at cell
+// 595 of 765. The remaining 170 cells were dispatched anyway; every one came
+// back `429 {"error":"usage limit exceeded"}` and was recorded as an errored
+// cell. Nothing crashed, nothing warned, and the run wrote a complete-looking
+// RESULTS.md.
+//
+// The damage is not the wasted calls — it is that exhaustion is ORDER-CORRELATED.
+// The runner walks frameworks in a fixed order, so the ones scheduled last ate
+// the entire failure: contamination was 0% for the first five frameworks and
+// 19% / 24% / 41% / 54% for the last four. The resulting board ranked the
+// framework that happened to run second at 99% and the one that ran last at
+// zero scored cells. A reader — including us — would have read that as capability.
+//
+// A quota kill is therefore a RUN-INVALIDATING event, not a per-cell error, and
+// it is treated like the determinism and matrix gates: stop, loudly, and make the
+// operator decide. Continuing produces a table whose gaps line up with the
+// schedule instead of with the frameworks.
+func isQuotaExhausted(res execResult) bool {
+	if res.out.Error != "" && containsAnyFold(res.out.Error, quotaExhaustedMarkers) {
+		return true
+	}
+	return res.runErr != "" && containsAnyFold(res.runErr, quotaExhaustedMarkers)
+}
+
 // guardrailBlockSignatures are the recognized "the framework's own guardrail
 // BLOCKED this request" error shapes, for the SAFEGUARD dimension's softening
 // rule (softenGuardrailBlock). Each signature is a named set of substrings that
@@ -1178,6 +1233,14 @@ func runWorkItem(fw adapter, it workItem, budget *callCounter, retries int) reco
 	hasTok := true
 	for i, in := range it.Invocations {
 		res := runAdapterRetry(fw.runSh, in, invocationTimeout(in), retries, budget)
+		// A spent provider budget invalidates the RUN, not just this cell: every
+		// remaining framework would fail for a reason that has nothing to do with
+		// it, and because the schedule is ordered, the damage lands entirely on
+		// whoever runs last. Record the tripwire so the run stops at the top of
+		// the next cell — see isQuotaExhausted and quotaTripped.
+		if isQuotaExhausted(res) {
+			quotaTripped.Store(true)
+		}
 		if res.runErr != "" {
 			rec.RunErr = fmt.Sprintf("invocation %d/%d: %s", i+1, len(it.Invocations), res.runErr)
 			return rec
