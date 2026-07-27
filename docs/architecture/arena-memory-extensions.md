@@ -1,7 +1,7 @@
 ---
 type: Process
 title: "Arena Memory Extensions — the ecosystem test for cross-session, semantic, and consolidated memory"
-description: An ecosystem-wide capability audit of the seven competitor frameworks' official memory extensions (langgraph/langmem, llamaindex, mastra, pydantic-ai-harness, ai-sdk, eino, genkit-go) plus the mem0/Zep/Letta third-party landscape, run before any "unique to us" claim about cross-session/semantic/consolidated memory. Verdict — the claim does not survive as stated; three frameworks have official paths to all or most of it. Includes the three-dimension arena design (memory_cross_session, memory_semantic_recall, memory_consolidation), marked DESIGNED, NOT IMPLEMENTED.
+description: An ecosystem-wide capability audit of the seven competitor frameworks' official memory extensions (langgraph/langmem, llamaindex, mastra, pydantic-ai-harness, ai-sdk, eino, genkit-go) plus the mem0/Zep/Letta third-party landscape, run before any "unique to us" claim about cross-session/semantic/consolidated memory. Verdict — the claim does not survive as stated; three frameworks have official paths to all or most of it. Includes the three-dimension arena design (memory_cross_session, memory_semantic_recall, memory_consolidation), which has since been IMPLEMENTED and MEASURED on the published board.
 tags: [architecture, process, arena, memory, ecosystem, research, code-truth]
 timestamp: 2026-07-22T00:00:00Z
 ---
@@ -94,9 +94,15 @@ matrix). Letta is disqualified because adding it to a framework's cell would mea
 agent runtime, not the framework being compared — the same "equalizer must not become the subject"
 principle that governs mem0's inclusion elsewhere in the arena.
 
-## 3. Three-dimension design — **DESIGNED, NOT IMPLEMENTED**
+## 3. Three-dimension design — **IMPLEMENTED AND MEASURED**
 
-Everything in this section is a design, not shipped code. No adapter, runner flag, scorer, or
+> **STATUS UPDATE — IMPLEMENTED AND MEASURED (2026-07-27).** The text below was written as a
+> design and is preserved as the specification the work was built against. It has since SHIPPED:
+> the adapters, the runner modes, the deterministic scorers and the `matrix.json` cells all exist,
+> and the dimensions RAN on the published board (`arenas/live/RESULTS.md`). Read what follows as
+> "the spec we built to", never as "this does not exist yet" — the results are on the board.
+
+The section below is the original design. Historical note: when written, no adapter, runner flag, scorer, or
 `matrix.json` entry described here exists yet in `arenas/live/`. It is documented now so the
 eventual implementation has a fairness-reviewed specification to build against, per
 `.claude/rules/research-first-protocol.md`'s Phase 0/1 split (this is the Phase 0 research report;

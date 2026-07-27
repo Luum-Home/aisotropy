@@ -359,6 +359,24 @@ difference" that is actually an adapter bug misdirects a benchmark reader (§8).
 
 ## 6. What the seven competitors actually do — none of them do semantic retrieval here
 
+> ### ⚠ SUPERSEDED IN PART — read `arena-memory-extensions.md` §1 first (2026-07-27)
+>
+> This section was written on 2026-07-21, **before** the ecosystem sweep. Its per-adapter
+> observations about what each ADAPTER did in the `memory` dimension remain accurate and
+> code-cited. Its conclusions about what each FRAMEWORK *has* do not: the 2026-07 sweep found
+> official primitives this section says do not exist — langgraph `BaseStore` with a semantic index
+> plus langmem, llamaindex `VectorMemoryBlock` + `FactExtractionMemoryBlock` (NATIVE), mastra
+> `semanticRecall` with an LLM-maintained working-memory profile (NATIVE), and an official
+> session-keyed `MemoryStore` example for eino. Genkit's Agents API (preview, 2026-07) adds
+> persistent sessions with a `SessionStore`.
+>
+> So: "framework X has no memory system" is **not** supported. What the `memory` dimension showed
+> is narrower and still true — in THAT dimension, as configured, none of the adapters performed
+> semantic retrieval, some because the framework ships none, some because the native primitive was
+> off by default or never fired. That is a statement about this dimension's configuration, not
+> about the frameworks' ecosystems. Every absence sentence below should be read with that scope.
+
+
 **None of the seven frameworks that ran perform any semantic retrieval, importance scoring, or
 recency-weighted ranking in the arena's `memory` mode.** Every one of them does ordered transcript
 replay — the entire prior conversation, or a bounded tail of it, sent back to the model verbatim on
@@ -394,7 +412,8 @@ every turn:
   compiled artifact instead.
 - **ai-sdk** ships **no memory package at all** in this arena and scored `8/8` anyway — its adapter
   necessarily does its own ordered-history replay, with no library-level memory primitive to fail.
-- **eino** has no memory component; its adapter's `runMemory`
+- **eino**: no memory component was driven here (the 2026-07 sweep later found an OFFICIAL-EXAMPLE
+  session-keyed `MemoryStore`, so this is "not used in this dimension", not "does not exist"); its adapter's `runMemory`
   (`arenas/live/eino/mode_memory.go:24-75`) hand-rolls a SQLite-backed history store keyed by
   session_id (comment at `mode_memory.go:22-23`: "Eino has no built-in persisted-memory component to
   drive natively") and replays `priorTurns` plus the current invocation's messages verbatim
@@ -404,8 +423,11 @@ every turn:
   surface; the adapter does its own history handling rather than driving a genkit-go-native memory
   primitive.
 
-Stated plainly: **a benchmark where six of seven frameworks pass by not having a memory system to
-fail is measuring transcript replay, not memory.** aisotropy is the only framework in this arena that
+Stated plainly, **and scoped to this dimension only**: a benchmark where the other adapters pass by
+replaying the transcript is measuring transcript replay, not memory — which is why the
+memory-extension dimensions were built. It is NOT evidence that those frameworks lack memory
+systems; see the banner above and `arena-memory-extensions.md` §1. Within the `memory` dimension as
+configured here, aisotropy is the only adapter that
 attempts recency-aware retrieval, importance scoring, and bounded-buffer condensation instead of
 "send everything back" — and every one of those extra moving parts is a place this run's failures
 came from. That is a real trade-off this board makes visible, not an excuse for the 6/8: a system

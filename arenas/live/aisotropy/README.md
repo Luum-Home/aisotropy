@@ -1,11 +1,19 @@
 # aisotropy — live-arena adapter (EXHAUSTIVE, multi-mode)
 
 The **reference** adapter for the live arena, upgraded from the original single-shot
-`qa` adapter into an exhaustive **multi-mode** adapter that competes with the six
+`qa` adapter into an exhaustive **multi-mode** adapter that competes with the eight
 framework adapters on equal footing — using aisotropy's **real** backend tiers (not
-the in-process stub defaults) and its **native** capabilities, including the one
-capability no other framework here has: **executing a tool inside a WebAssembly
-sandbox**.
+the in-process stub defaults) and its **native** capabilities, including one this
+arena does not measure in any competitor cell: **executing a tool inside a
+WebAssembly sandbox** (wazero).
+
+> **Scope of that last claim.** No ecosystem sweep of the other eight frameworks'
+> WASM story has been run — not core, not official extensions, not platform tiers,
+> not third-party integrations, not vendor docs. So this is a statement about what
+> THIS adapter exercises, **not** a claim that the capability is unobtainable
+> elsewhere. Per `.claude/rules/capability-absence-claims.md`, asserting that a
+> named competitor LACKS something requires that 5-point sweep with a URL per
+> finding; until one exists, the honest form is the one above.
 
 Every mode drives a distinct, real capability of aisotropy's public façade
 (`github.com/Luum-Home/aisotropy/aisotropy`) against the real `agnes-2.0-flash`
@@ -82,7 +90,10 @@ holds.
 
 ### Isolation BY CONSTRUCTION, not a hand-rolled key (`memory_scoped`, `isolation_leak`)
 
-The six framework adapters have **no native multi-tenant memory-isolation
+The eight framework adapters each hand-roll the compound (tenant,user,product,session)
+key, because no surveyed OSS core ships a primitive with that many axes — four are
+L0 and four are L1 (`docs/architecture/arena-tenancy-levels.md`). What they lack is
+a **native multi-tenant memory-isolation
 primitive**, so each HAND-ROLLS a compound scope key (`tenant_id ⋄ user_id ⋄
 product_id ⋄ session_id`) over a shared store and trusts every future dev to
 compute it correctly — a field forgotten or an argument transposed is silent at

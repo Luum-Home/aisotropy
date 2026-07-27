@@ -123,9 +123,18 @@ the entire point of writing the document.
   (`7743d51`), so the gradation is visible on every regenerated board going forward, not only in this
   standing document.
 
-## The measurable design: "forgetful integrator" — **DESIGNED, NOT IMPLEMENTED**
+## The measurable design: "forgetful integrator" — **IMPLEMENTED AND MEASURED**
 
-Nothing in this section exists yet. No adapter code, runner flag, scorer, or `matrix.json` entry
+> **STATUS UPDATE — IMPLEMENTED AND MEASURED (2026-07-27).** The text below was written as a
+> design and is preserved as the specification the work was built against. It has since SHIPPED:
+> the adapters, the runner modes, the deterministic scorers and the `matrix.json` cells all exist,
+> and the dimensions RAN on the published board (`arenas/live/RESULTS.md`). Read what follows as
+> "the spec we built to", never as "this does not exist yet" — the results are on the board.
+
+
+
+Historical note (superseded by the status update above): at the time of writing, nothing in this
+section existed yet — no adapter code, runner flag, scorer, or `matrix.json` entry
 described below has landed in `arenas/live/`.
 
 The L0–L3 ladder above is prose and a table — accurate, but not a measured result. This design turns

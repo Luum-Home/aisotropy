@@ -228,7 +228,7 @@ explained away.
 **Where PARTIAL.** Symmetric disclosure requires reporting BOTH turfs. aisotropy's OWN home turf —
 cross-session recall, semantic long-term recall, async consolidation — is **designed but not
 implemented**: the three-dimension design (`memory_cross_session`, `memory_semantic_recall`,
-`memory_consolidation`) is explicitly marked **DESIGNED, NOT IMPLEMENTED**
+`memory_consolidation`) was marked DESIGNED-NOT-IMPLEMENTED when this was written and has since **SHIPPED AND RUN** on the published board
 (`docs/architecture/arena-memory-extensions.md` §3). Critically, the same document runs the
 capability-absence sweep FIRST and concludes the naive "cross-session/semantic/consolidation is unique
 to aisotropy" claim **does not survive** — langgraph, llamaindex, and mastra each have an official path
@@ -424,7 +424,9 @@ limitations, stated so a reviewer does not have to find them:
    shipped (`memory`, within-session recall) is the one aisotropy LOSES on token cost. The modes aisotropy
    would win — `memory_cross_session`, `memory_semantic_recall`, `memory_consolidation`, and the
    `isolation_forgetful` negative dimension that would turn the L0–L3 tenancy prose into a measured result
-   — are DESIGNED, NOT IMPLEMENTED (`docs/architecture/arena-memory-extensions.md` §3,
+   — were DESIGNED, NOT IMPLEMENTED when this debt was filed; they have since SHIPPED and RUN,
+   so this debt is CLOSED and the board no longer under-reports the home-turf axes
+   (`docs/architecture/arena-memory-extensions.md` §3,
    `docs/architecture/arena-tenancy-levels.md`, "forgetful integrator"). Until they land, the board
    under-reports aisotropy's memory/isolation story — an asymmetry that currently runs AGAINST aisotropy,
    and is disclosed rather than fixed by silence.
