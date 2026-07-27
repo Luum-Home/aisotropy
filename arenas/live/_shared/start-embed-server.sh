@@ -18,7 +18,11 @@ VENV="$SRV/.venv"
 HOST="127.0.0.1"
 PORT="8899"
 
-# Python 3.13 has stable torch/sentence-transformers wheels; 3.14 may not yet.
+# Interpreter preference. This used to say "3.14 may not yet have wheels" — that
+# is no longer true: a rebuild under Python 3.14.6 on 2026-07-27 installed torch
+# and sentence-transformers cleanly and served real 384-dim e5 vectors. The
+# preference order is kept anyway (older, longest-tested runtimes first) and the
+# install now FAILS LOUDLY with a remedy rather than assuming a version is fine.
 PY="${ARENA_EMBED_PYTHON:-}"
 if [ -z "$PY" ]; then
   if command -v python3.13 >/dev/null 2>&1; then PY="python3.13"
@@ -28,14 +32,31 @@ if [ -z "$PY" ]; then
 fi
 echo "PROGRESS: using interpreter $($PY --version 2>&1) ($PY)" >&2
 
-if [ ! -d "$VENV" ]; then
+# Test the INTERPRETER, not the directory. A venv's bin/python is a symlink to
+# the exact interpreter that created it, so upgrading or removing that Python
+# leaves a directory that still exists and no longer works: every command in it
+# dies with "bad interpreter: No such file or directory". The old `[ ! -d ]`
+# check saw the directory, took the reuse branch, and the server failed to boot
+# — silently breaking every RAG and semantic run that depends on this embedder.
+# Observed exactly that on 2026-07-27 after the host's python3.13 went away.
+if [ ! -x "$VENV/bin/python" ]; then
+  if [ -d "$VENV" ]; then
+    echo "PROGRESS: venv at $VENV is stale (its interpreter is gone) — rebuilding" >&2
+    rm -rf "$VENV"
+  fi
   echo "PROGRESS: creating venv at $VENV" >&2
   "$PY" -m venv "$VENV"
   # shellcheck disable=SC1091
   source "$VENV/bin/activate"
   python -m pip install --quiet --upgrade pip
   echo "PROGRESS: installing deps (first run pulls torch, a few minutes)" >&2
-  python -m pip install --quiet -r "$SRV/requirements.txt"
+  if ! python -m pip install --quiet -r "$SRV/requirements.txt"; then
+    echo "ERROR: dependency install failed under $($PY --version 2>&1)." >&2
+    echo "       torch/sentence-transformers may not publish wheels for this Python yet." >&2
+    echo "       Install a supported interpreter (3.11-3.13) and re-run, or pin one:" >&2
+    echo "         ARENA_EMBED_PYTHON=python3.13 $0" >&2
+    exit 2
+  fi
 else
   # shellcheck disable=SC1091
   source "$VENV/bin/activate"
