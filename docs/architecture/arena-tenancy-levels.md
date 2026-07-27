@@ -204,3 +204,45 @@ signal is always deterministic.
 - `docs/architecture/arena-adapter-artifacts.md` — the Q0 discipline (core vs. adapter vs. doc) that
   applies equally here: an isolation-dimension result is about the *framework*, never about the
   *arena adapter* written to exercise it, unless proven otherwise.
+
+---
+
+## Appendix — why aisotropy does NOT adopt mastra's session-ownership check (2026-07-27)
+
+A deep read of mastra (`@mastra/core` 1.51.0, Apache-2.0 — the framework that also scores 2/2 on
+`isolation_forgetful`) surfaced a validation aisotropy has no equivalent of:
+`validateThreadIsOwnedByResource` — *"Thread with id X is for resource with id Y but resource Z was
+queried."* It was queued as an adoption candidate: turn a silently-empty cross-scope read into a
+loud, typed error (better DX, better auditability).
+
+**On inspection it is not applicable here, and adopting it would WEAKEN the property it protects.**
+The difference is structural, and it is exactly the L2-vs-L3 distinction this document defines:
+
+- **mastra keys threads globally.** A `thread_id` identifies a row that exists independently of any
+  resource; `resource_id` is a *column* on it. So a caller CAN legitimately name another resource's
+  thread, and the framework must actively check ownership and refuse. That check is what earns its
+  **L2** — enforced at a boundary.
+- **aisotropy has no global session namespace.** The working-memory key is *compound* —
+  `internal/memory/key.go` `Key{Tenant, User, Session}` renders the prefix
+  `tenant:{t}:user:{u}:session:{s}`, and every read is an iterator bounded by that prefix. Session
+  `abc` under tenant A and session `abc` under tenant B are simply **different key spaces**. There
+  is no object "session abc" to have an owner, so there is nothing to validate: naming another
+  scope's session is **unrepresentable**, which is the **L3** definition.
+
+Implementing the check anyway would require introducing a global `session_id → (tenant, user)`
+index so the runtime could discover that a session "belongs to" someone else. That index would be a
+**new cross-tenant lookup surface** — precisely the kind of structure the compound key exists to
+avoid — traded for a nicer error message. Rejected on those grounds.
+
+**What the comparison does legitimately expose** is a DX gap, not an isolation gap: aisotropy
+answers a wrong-scope read with an empty result where mastra answers with an explanation. A caller
+that fat-fingers a `session_id` sees "no history" and cannot tell a genuinely new session from a
+mistyped one. The honest, isolation-preserving version of the adoption is therefore **not** an
+ownership lookup but a *scope-local* signal — e.g. distinguishing "this (tenant,user,session)
+prefix has never been written" from "it exists and is empty" — which requires no cross-tenant
+visibility whatsoever. Filed as the follow-up; the ownership check itself is closed as
+**not-applicable-by-construction**.
+
+This is also a reminder for the comparison docs: mastra needing this check is not a mastra
+weakness, and aisotropy not needing it is not merely a convenience — it is the measurable
+difference between enforcing isolation at a boundary and making its violation unrepresentable.
