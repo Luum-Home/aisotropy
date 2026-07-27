@@ -16,6 +16,8 @@ Two next steps once you finish this page:
 
 1. [Concepts](concepts.md) — the one-page mental model (how to *think* about Aisotropy before you learn the API).
 2. [The Tutorial](tutorial/index.md) — a 10-step ladder, each rung a short lesson with a runnable example.
+3. [The Capability Tour](tour.md) — if you would rather see the whole surface first: 12 stops, each
+   one a command you can run plus the evidence behind it (test, arena cell, measured number, ADR).
 
 ## What Aisotropy is, in 30 seconds
 

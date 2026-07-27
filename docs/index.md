@@ -15,6 +15,9 @@ timestamp: 2026-07-08T00:00:00Z
 > contract enforced on the LLM, all at once. See the [thesis](vision/thesis.md).
 
 > **New here?** Start with [Getting Started](getting-started.md) → the [Tutorial](tutorial/index.md).
+> Want to see what the framework actually does before committing to a tutorial? Take
+> [the Capability Tour](tour.md) — 12 stops, each with a command you can run and the test,
+> arena result, measured number, or ADR that proves it (including where Aisotropy loses).
 > This knowledge base below is the architecture-first reference the tutorial links into for depth.
 
 ## How to read this knowledge base
