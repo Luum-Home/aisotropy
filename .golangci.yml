@@ -11,10 +11,8 @@
 # surfaces; a follow-up track consumes `golangci-lint run ./...` output to
 # clean up package-by-package.
 #
-# Every linter deliberately left disabled is documented below (discipline
-# borrowed from the reference config at
-# an internal reference config) so a reviewer never has to
-# wonder "why isn't X on".
+# Every linter deliberately left disabled is documented below, so a reviewer
+# never has to wonder "why isn't X on".
 version: "2"
 
 run:
