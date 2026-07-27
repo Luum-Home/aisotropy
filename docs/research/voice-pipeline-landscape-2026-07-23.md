@@ -22,6 +22,11 @@ timestamp: 2026-07-23T00:00:00Z
 >   idle-machine run.
 > - Still true as written: the CORE has no audio code (by design — that was the
 >   recommendation), telephony/Asterisk remains deferred, F5-TTS official weights remain barred.
+> - **Audio-backend spike (2026-07-27)**: [voicebox](../06-Daily/reports/voicebox-spike-2026-07-27.md)
+>   evaluated as a single-process replacement for the STT+TTS legs — measured TTS first-audio-byte
+>   **410.7 ms** warm vs this stack's 3540 ms and STT WER 0.000 on the ADR-0069 fixtures, but its
+>   README's "purely permissive" recipe is incomplete (the Kokoro path pulls GPL-3.0
+>   `phonemizer-fork`); recommendation is cherry-pick the patterns, not adopt.
 > The body below is the original analysis, unmodified.
 
 > **Purpose.** Answer, code-grounded: does aisotropy support voice (speech in, speech out,
