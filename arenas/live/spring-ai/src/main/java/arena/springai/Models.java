@@ -71,9 +71,26 @@ final class Models {
      * _shared/populate-qdrant.py, this adapter only searches it. Real lane only
      * — the stub lane never constructs a VectorStore (see {@link Modes#rag}).
      */
+    /**
+     * Builds the gRPC channel, applying QDRANT_API_KEY when the environment
+     * supplies one. The arena's Qdrant runs with QDRANT__SERVICE__API_KEY set;
+     * without the key every search fails Unauthenticated, which the runner
+     * scores as a retrieval miss — i.e. it would read as a Spring AI weakness
+     * when it is purely an omission in this adapter. Empty/unset key keeps the
+     * previous anonymous behaviour, so a keyless local Qdrant still works.
+     */
+    private static QdrantGrpcClient qdrantGrpc(Ctx ctx) {
+        var builder = QdrantGrpcClient.newBuilder(ctx.qdrantHost, ctx.qdrantGrpcPort, false);
+        String apiKey = System.getenv("QDRANT_API_KEY");
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder = builder.withApiKey(apiKey);
+        }
+        return builder.build();
+    }
+
     static VectorStore vectorStore(Ctx ctx, EmbeddingModel embed) {
         QdrantClient client = new QdrantClient(
-                QdrantGrpcClient.newBuilder(ctx.qdrantHost, ctx.qdrantGrpcPort, false).build());
+                qdrantGrpc(ctx));
         return QdrantVectorStore.builder(client, embed)
                 .collectionName(ctx.collection)
                 .initializeSchema(false)

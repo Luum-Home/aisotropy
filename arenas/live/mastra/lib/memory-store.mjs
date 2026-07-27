@@ -116,7 +116,7 @@ export function buildResourceScopedMemory(env) {
     vector = new LibSQLVector({ id: 'arena-mastra-mem-vec', url: env.libsqlUrl });
     embedder = buildStubEmbedder();
   } else {
-    vector = new QdrantVector({ id: 'arena-mastra-mem-vec', url: env.qdrantUrl });
+    vector = new QdrantVector({ id: 'arena-mastra-mem-vec', url: env.qdrantUrl, apiKey: process.env.QDRANT_API_KEY || undefined });
     embedder = buildRealEmbedder(env.embedUrl);
   }
 

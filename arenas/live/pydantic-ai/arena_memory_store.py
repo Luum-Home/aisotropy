@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import datetime
 import json
+import base64
+import urllib.parse
 import urllib.request
 
 from arena_common import is_stub, log, rqlite_base_url
@@ -56,12 +58,38 @@ _stub_history: dict[str, bytes] = {}
 _stub_scoped: dict[str, str] = {}
 
 
+def _split_credentials(url: str) -> tuple[str, str | None]:
+    """Return (url without userinfo, Basic auth header value or None).
+
+    The arena's rqlite runs with ``-auth``, so requests must authenticate. The
+    obvious mechanism -- userinfo in the URL, ``http://user:pass@host:4001`` --
+    is a trap that fails differently in every runtime: Node's ``fetch`` rejects
+    such a URL outright, Java silently drops the credentials and gets a 401, and
+    ``urllib`` here mangles it into a DNS lookup for the *username* ("nodename
+    nor servname provided"). So the credentials are lifted out and sent as an
+    ``Authorization: Basic`` header, which every client honours. A URL with no
+    userinfo is returned unchanged, so a keyless local rqlite still works.
+    """
+    parsed = urllib.parse.urlsplit(url)
+    if not parsed.username:
+        return url, None
+    host = parsed.hostname or ""
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    clean = urllib.parse.urlunsplit((parsed.scheme, host, parsed.path, parsed.query, parsed.fragment))
+    raw = f"{urllib.parse.unquote(parsed.username)}:{urllib.parse.unquote(parsed.password or '')}"
+    return clean.rstrip("/"), "Basic " + base64.b64encode(raw.encode()).decode()
+
+
 def _request(method: str, path: str, body=None, timeout: float = 15.0) -> dict:
-    url = f"{rqlite_base_url()}{path}"
+    base, auth = _split_credentials(rqlite_base_url())
+    url = f"{base}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     if data is not None:
         req.add_header("content-type", "application/json")
+    if auth:
+        req.add_header("authorization", auth)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode()
         return json.loads(raw) if raw else {}

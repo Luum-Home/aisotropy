@@ -19,6 +19,36 @@ import { stubExecute, stubQuery } from './rqlite-stub.mjs';
 const STUB_URL = 'stub:local';
 
 /**
+ * Split credentials out of an rqlite URL into a clean URL + auth headers.
+ *
+ * WHY: the arena's rqlite runs with `-auth`, so requests must authenticate. The
+ * obvious mechanism — userinfo in the URL, `http://user:pass@host:4001` — is a
+ * trap across runtimes: Node's `fetch` REJECTS such a URL outright ("Request
+ * cannot be constructed from a URL that includes credentials"), Python's
+ * urllib misreads it, and Java silently drops the credentials and gets a 401.
+ * Three different failures for one URL. So every client here strips the
+ * userinfo and sends `Authorization: Basic` instead, which all of them honour.
+ * A URL without credentials passes through untouched, so a keyless local rqlite
+ * still works.
+ */
+function rqliteTarget(rqliteUrl) {
+  const headers = { 'content-type': 'application/json' };
+  try {
+    const u = new URL(rqliteUrl);
+    if (u.username || u.password) {
+      const basic = Buffer.from(`${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`).toString('base64');
+      headers.authorization = `Basic ${basic}`;
+      u.username = '';
+      u.password = '';
+      return { base: u.toString().replace(/\/$/, ''), headers };
+    }
+  } catch {
+    // Not a parseable URL (e.g. the stub sentinel) — leave it alone.
+  }
+  return { base: rqliteUrl, headers };
+}
+
+/**
  * Run one or more write statements. Each statement is either a bare SQL string
  * (no params) or an array `[sql, ...params]` for a parameterized statement, per
  * rqlite's request body shape. Throws on any transport or per-statement error.
@@ -27,9 +57,10 @@ export async function rqliteExecute(rqliteUrl, statements) {
   if (rqliteUrl === STUB_URL) {
     return stubExecute(statements);
   }
-  const res = await fetch(`${rqliteUrl}/db/execute`, {
+  const target = rqliteTarget(rqliteUrl);
+  const res = await fetch(`${target.base}/db/execute`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: target.headers,
     body: JSON.stringify(statements),
   });
   const data = await res.json().catch(() => ({}));
@@ -54,9 +85,10 @@ export async function rqliteQuery(rqliteUrl, statement) {
   if (rqliteUrl === STUB_URL) {
     return stubQuery(statement);
   }
-  const res = await fetch(`${rqliteUrl}/db/query?level=strong`, {
+  const target = rqliteTarget(rqliteUrl);
+  const res = await fetch(`${target.base}/db/query?level=strong`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: target.headers,
     body: JSON.stringify([statement]),
   });
   const data = await res.json().catch(() => ({}));

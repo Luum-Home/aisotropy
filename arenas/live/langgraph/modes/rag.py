@@ -92,7 +92,7 @@ def _build_vector_store(embed_url: str, qdrant_url: str, collection: str, api_ke
     # minor behind the qdrant-client wheel; both speak the same REST
     # contract this adapter uses, so the version-skew warning is silenced
     # rather than left to print an unactionable UserWarning per request.
-    client = QdrantClient(url=qdrant_url, check_compatibility=False)
+    client = QdrantClient(url=qdrant_url, api_key=os.environ.get("QDRANT_API_KEY") or None, check_compatibility=False)
     return QdrantVectorStore(
         client=client,
         collection_name=collection,

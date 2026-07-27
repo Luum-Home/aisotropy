@@ -23,12 +23,19 @@ else
   echo "PROGRESS: warning: no .env found at $ENV_FILE — relying on already-exported environment" >&2
 fi
 
-if [[ ! -d "$SCRIPT_DIR/.venv" ]]; then
-  echo "PROGRESS: error: venv not found at $SCRIPT_DIR/.venv — run: python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt" >&2
+# Test the INTERPRETER, not the directory. A venv's bin/python is a symlink to
+# the exact minor version that created it; a Homebrew upgrade (3.13 -> 3.14)
+# leaves the directory perfectly intact with a dangling symlink, so `-d .venv`
+# is true for a venv that cannot run. The failure then surfaced two lines later
+# as `python: command not found` (exit 127) — a message that says nothing about
+# venvs, on a framework that consequently scored 0/7. Same defect and same fix
+# as llamaindex/run.sh (which had the strong test) and the embed server.
+if [[ ! -x "$SCRIPT_DIR/.venv/bin/python3" ]]; then
+  echo "PROGRESS: error: no usable interpreter at $SCRIPT_DIR/.venv/bin/python3 (missing venv, or its base Python was upgraded away) — run: rm -rf .venv && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" >&2
   exit 1
 fi
 
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/.venv/bin/activate"
-
-exec python "$SCRIPT_DIR/adapter.py"
+# exec the venv interpreter DIRECTLY rather than `source activate && exec python`:
+# activate only prepends to PATH, so a broken venv silently falls through to
+# whatever `python` the ambient PATH happens to offer — or to nothing at all.
+exec "$SCRIPT_DIR/.venv/bin/python3" "$SCRIPT_DIR/adapter.py"

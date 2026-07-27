@@ -41,9 +41,25 @@ export RQLITE_URL="${RQLITE_URL:-http://aisotropy:local-dev-rqlite-pw-CHANGE-ME@
 
 JAR="${SCRIPT_DIR}/target/spring-ai-live-arena.jar"
 
-# Build once. Prefer the Maven wrapper if present; else system mvn. Output goes
-# to stderr so stdout stays JSON-only.
+# Build when the jar is MISSING **or STALE**. Prefer the Maven wrapper if
+# present; else system mvn. Output goes to stderr so stdout stays JSON-only.
+#
+# The condition used to be `[[ ! -f "$JAR" ]]` — existence only. That is not a
+# freshness check: once built, the jar was never rebuilt again, so every edit to
+# src/ was silently ignored and the adapter kept running whatever was compiled
+# the first time. Observed 2026-07-27: a Qdrant-auth fix edited at 14:08 never
+# reached a jar built four days earlier, and spring-ai went on failing RAG for a
+# reason that had already been fixed in the source. Same defect shape as testing
+# `-d .venv` instead of `-x .venv/bin/python3`: asking "does an artifact exist?"
+# when the question is "does it match its inputs?".
+needs_build=0
 if [[ ! -f "${JAR}" ]]; then
+  needs_build=1
+elif [[ -n "$(find "${SCRIPT_DIR}/src" "${SCRIPT_DIR}/pom.xml" -newer "${JAR}" -print -quit 2>/dev/null)" ]]; then
+  echo "[spring-ai/run.sh] sources newer than ${JAR##*/} — rebuilding" >&2
+  needs_build=1
+fi
+if [[ "${needs_build}" -eq 1 ]]; then
   if [[ -x "${SCRIPT_DIR}/mvnw" ]]; then
     ( cd "${SCRIPT_DIR}" && ./mvnw -q -DskipTests package ) 1>&2
   elif command -v mvn >/dev/null 2>&1; then

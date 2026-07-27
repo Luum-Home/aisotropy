@@ -177,6 +177,10 @@ func newQdrantClient(env *arenaEnv) (*qdrant.Client, error) {
 	client, err := qdrant.NewClient(&qdrant.Config{
 		Host: host,
 		Port: env.qdrantGRPCPort,
+		// The arena's Qdrant runs with QDRANT__SERVICE__API_KEY. Omitting this
+		// makes every retrieval fail Unauthenticated, which scores as a RAG miss
+		// and reads as a framework weakness rather than an adapter omission.
+		APIKey: os.Getenv("QDRANT_API_KEY"),
 		// The local reference Qdrant may run an older server than the
 		// pinned go-client's expected version skew; this doesn't affect the
 		// search/query wire calls this adapter uses.

@@ -41,7 +41,7 @@ export async function runRag(input, env) {
     // checkCompatibility: false -- the local Qdrant server may run an older minor
     // version than the installed client; that mismatch is cosmetic for the plain
     // REST `search` call this adapter makes, so skip the noisy startup warning.
-    const qdrant = new QdrantClient({ url: env.qdrantUrl, checkCompatibility: false });
+    const qdrant = new QdrantClient({ url: env.qdrantUrl, apiKey: process.env.QDRANT_API_KEY || undefined, checkCompatibility: false });
     // In-scan tenant payload filter -- the SAME work aisotropy's semantic tier pays.
     // Qdrant applies `filter` DURING the HNSW scan (not a post-filter) on the flat
     // `tenant_id` payload key populate-qdrant.py seeds, matching aisotropy's own flat

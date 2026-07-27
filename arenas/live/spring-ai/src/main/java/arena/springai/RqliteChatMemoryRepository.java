@@ -153,13 +153,59 @@ final class RqliteChatMemoryRepository implements ChatMemoryRepository {
         post("/db/execute?transaction", body);
     }
 
+    /**
+     * The arena's rqlite runs with {@code -auth}, so requests must
+     * authenticate. Userinfo in the URL ({@code http://user:pass@host:4001})
+     * looks like the obvious mechanism and is a cross-runtime trap: Java's
+     * {@link HttpClient} silently DROPS it and the server answers 401 — a
+     * failure with no hint of a credential anywhere in it. (Node's fetch
+     * rejects such a URL outright and Python's urllib misreads it as a
+     * hostname; three runtimes, three different failures, one URL.) So the
+     * credentials are lifted out here and sent as an {@code Authorization:
+     * Basic} header. A URL with no userinfo yields null and the request goes
+     * out anonymously, so a keyless local rqlite still works.
+     */
+    private static String basicAuthHeader(String url) {
+        try {
+            String userInfo = URI.create(url).getUserInfo();
+            if (userInfo == null || userInfo.isBlank()) {
+                return null;
+            }
+            return "Basic " + java.util.Base64.getEncoder()
+                    .encodeToString(java.net.URLDecoder.decode(userInfo, java.nio.charset.StandardCharsets.UTF_8)
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** baseUrl with any userinfo removed — see {@link #basicAuthHeader}. */
+    private static String stripUserInfo(String url) {
+        try {
+            URI u = URI.create(url);
+            if (u.getUserInfo() == null) {
+                return url;
+            }
+            String hostPort = u.getHost() + (u.getPort() > 0 ? ":" + u.getPort() : "");
+            String path = u.getRawPath() == null ? "" : u.getRawPath();
+            return (u.getScheme() + "://" + hostPort + path).replaceAll("/+$", "");
+        } catch (RuntimeException e) {
+            return url;
+        }
+    }
+
     private JsonNode post(String path, Object body) {
         try {
             String json = mapper.writeValueAsString(body);
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + path))
+            String auth = basicAuthHeader(baseUrl);
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(URI.create(stripUserInfo(baseUrl) + path))
                     .timeout(Duration.ofSeconds(15))
-                    .header("Content-Type", "application/json")
+                    .header("Content-Type", "application/json");
+            if (auth != null) {
+                builder = builder.header("Authorization", auth);
+            }
+            HttpRequest req = builder
                     .POST(HttpRequest.BodyPublishers.ofString(json))
                     .build();
             HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());

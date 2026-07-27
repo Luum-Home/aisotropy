@@ -672,7 +672,7 @@ def corpus_lookup(query: str) -> str:
     from llama_index.vector_stores.qdrant import QdrantVectorStore
 
     emb = OpenAILikeEmbedding(model_name=EMBED_QUERY_MODEL, api_base=EMBED_URL, api_key="none", timeout=30.0)
-    client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
+    client = QdrantClient(url=QDRANT_URL, api_key=os.environ.get("QDRANT_API_KEY") or None, check_compatibility=False)
     vs = QdrantVectorStore(client=client, collection_name=ARENA_COLLECTION)
     vector = emb.get_query_embedding(query)
     result = vs.query(VectorStoreQuery(query_embedding=vector, similarity_top_k=1))
@@ -753,7 +753,7 @@ def run_rag(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
         embed_model = OpenAILikeEmbedding(model_name=EMBED_QUERY_MODEL, api_base=EMBED_URL, api_key="none", timeout=30.0)
 
         _progress(f"[rag] connecting to Qdrant at {QDRANT_URL} collection={ARENA_COLLECTION!r}")
-        client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
+        client = QdrantClient(url=QDRANT_URL, api_key=os.environ.get("QDRANT_API_KEY") or None, check_compatibility=False)
         vector_store = QdrantVectorStore(client=client, collection_name=ARENA_COLLECTION)
         index = VectorStoreIndex.from_vector_store(vector_store=vector_store, embed_model=embed_model)
 
@@ -921,8 +921,8 @@ def _build_user_memory_blocks(user_id: str, llm: Any) -> tuple[Any, Any, str, Ca
         embed_model = OpenAILikeEmbedding(
             model_name=EMBED_QUERY_MODEL, api_base=EMBED_URL, api_key="none", timeout=30.0
         )
-        client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
-        aclient = AsyncQdrantClient(url=QDRANT_URL, check_compatibility=False)
+        client = QdrantClient(url=QDRANT_URL, api_key=os.environ.get("QDRANT_API_KEY") or None, check_compatibility=False)
+        aclient = AsyncQdrantClient(url=QDRANT_URL, api_key=os.environ.get("QDRANT_API_KEY") or None, check_compatibility=False)
 
     vector_store = QdrantVectorStore(client=client, aclient=aclient, collection_name=collection)
     # similarity_top_k comfortably above the arena's needle count so a MockEmbedding
@@ -1807,7 +1807,7 @@ def run_observability(payload: dict[str, Any], llm: Any) -> dict[str, Any]:
     else:
         _progress(f"[observability] embed+retrieve+synthesize via real e5/Qdrant/agnes: {question!r}")
         embed_model = OpenAILikeEmbedding(model_name=EMBED_QUERY_MODEL, api_base=EMBED_URL, api_key="none", timeout=30.0)
-        client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
+        client = QdrantClient(url=QDRANT_URL, api_key=os.environ.get("QDRANT_API_KEY") or None, check_compatibility=False)
         vector_store = QdrantVectorStore(client=client, collection_name=ARENA_COLLECTION)
         index = VectorStoreIndex.from_vector_store(vector_store=vector_store, embed_model=embed_model)
     retriever = index.as_retriever(similarity_top_k=3)

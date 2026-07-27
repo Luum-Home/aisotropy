@@ -109,10 +109,40 @@ bootstrap_local() {  # $1 = adapter name
   local a="$1" dir="$LIVE/$1"
   case "$a" in
     langgraph|llamaindex|pydantic-ai)
-      if [ ! -d "$dir/.venv" ]; then
-        local py; py="$(command -v python3.13 || command -v python3)"
+      # Test the INTERPRETER, not the directory. A venv's bin/python is a symlink
+      # to the exact minor version that created it (python3.13); a Homebrew
+      # upgrade to 3.14 leaves the directory fully intact with a dangling
+      # symlink. `[ -d .venv ]` is true for that corpse, so the weak test made
+      # this bootstrap a no-op and the adapter then died at exec time — as
+      # `python: command not found` (127), a message that names nothing about
+      # venvs. Observed 2026-07-27 on pydantic-ai and llamaindex, both venvs
+      # created 2026-07-17 against a python3.13 that no longer exists.
+      #
+      # This is the same defect the embed server's launcher had, and it is worse
+      # here: preflight EXISTS to catch this, so the weak test made the check
+      # certify a dead venv as healthy. A guard that cannot fail is not a guard.
+      if [ ! -x "$dir/.venv/bin/python3" ]; then
         echo "PROGRESS: [$a] creating venv + installing requirements.txt" >&2
-        "$py" -m venv "$dir/.venv" && "$dir/.venv/bin/pip" install -q -r "$dir/requirements.txt" 1>&2 \
+        rm -rf "$dir/.venv"
+        # Interpreter choice is NOT free: llamaindex pins
+        # llama-index-vector-stores-qdrant, which declares Requires-Python
+        # >=3.10,<3.14. Falling back to "whatever python3 is" picks the newest
+        # Homebrew Python (3.14 today) and the install fails with a wall of
+        # "Ignored the following versions" — a failure whose message never
+        # mentions the interpreter. Prefer a real 3.13, then uv's managed 3.13
+        # (uv downloads it, so this works even when no 3.13 is on PATH), then
+        # the ambient python3 as a last resort.
+        local py
+        if py="$(command -v python3.13)"; then
+          "$py" -m venv "$dir/.venv"
+        elif command -v uv >/dev/null 2>&1; then
+          uv venv --python 3.13 "$dir/.venv" 1>&2
+        else
+          py="$(command -v python3)"
+          echo "WARN: [$a] no python3.13 and no uv; using $("$py" -V 2>&1) — llamaindex requires <3.14" >&2
+          "$py" -m venv "$dir/.venv"
+        fi
+        "$dir/.venv/bin/pip" install -q -r "$dir/requirements.txt" 1>&2 \
           || { echo "ERROR: [$a] venv/pip bootstrap failed" >&2; return 1; }
       fi ;;
     ai-sdk|mastra)

@@ -196,7 +196,7 @@ def qdrant_search(
 
     from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=qdrant_base_url())
+    client = QdrantClient(url=qdrant_base_url(), api_key=os.environ.get("QDRANT_API_KEY") or None)
     hits = client.query_points(
         collection_name=collection, query=vector, limit=top_k, with_payload=True
     ).points

@@ -45,7 +45,7 @@ func searchQdrant(ctx context.Context, qdrantURL, collection string, vector []fl
 		grpcPort = v
 	}
 
-	client, err := qdrant.NewClient(&qdrant.Config{Host: host, Port: grpcPort})
+	client, err := qdrant.NewClient(&qdrant.Config{Host: host, Port: grpcPort, APIKey: os.Getenv("QDRANT_API_KEY")})
 	if err != nil {
 		return nil, fmt.Errorf("qdrant: connect %s:%d: %w", host, grpcPort, err)
 	}

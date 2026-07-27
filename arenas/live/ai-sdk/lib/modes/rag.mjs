@@ -43,7 +43,7 @@ export async function runRag(input, env) {
     // checkCompatibility: false -- the local Qdrant server may run an older minor
     // version than the installed client; that mismatch is cosmetic for the plain
     // REST `search` call this adapter makes, so skip the noisy startup warning.
-    const qdrant = new QdrantClient({ url: env.qdrantUrl, checkCompatibility: false });
+    const qdrant = new QdrantClient({ url: env.qdrantUrl, apiKey: process.env.QDRANT_API_KEY || undefined, checkCompatibility: false });
     const searchResult = await qdrant.search(env.qdrantCollection, {
       vector,
       limit: RETRIEVAL_LIMIT,
