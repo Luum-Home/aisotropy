@@ -182,6 +182,9 @@ func NewRedactor(custom ...CustomPattern) *Redactor {
 			RedactPhone:         "[REDACTED_PHONE]",
 			RedactPostalCode:    "[REDACTED_POSTAL_CODE]",
 			RedactStreetAddress: "[REDACTED_ADDRESS]",
+			RedactPersonName:    "[REDACTED_PERSON_NAME]",
+			RedactNationalID:    "[REDACTED_NATIONAL_ID]",
+			RedactHealthInfo:    "[REDACTED_HEALTH_INFO]",
 		},
 	}
 }
@@ -258,6 +261,12 @@ func (r *Redactor) Redact(text string) (string, RedactionReport) {
 		report.add(RedactCustom, n)
 		text = c.re.ReplaceAllString(text, c.Placeholder)
 	}
+
+	// Identity tier (names / national IDs / health) — opt-in, anchored, and a
+	// no-op when disabled, so the tiers above keep byte-identical behavior by
+	// default. Runs LAST so the structural detectors above (which need their
+	// raw shapes) see untouched text. See pii_identity.go.
+	text = r.redactIdentityPII(text, &report)
 
 	return text, report
 }
