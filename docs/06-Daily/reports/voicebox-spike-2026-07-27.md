@@ -23,8 +23,10 @@ step:** `scripts/with-heavy-lane.sh --need-mb N` (verdict DEGRADED throughout; n
 stack WITHOUT costing latency vs today's Kokoro-FastAPI baseline (median TTFAB 3543 ms,
 `examples/voice-pipecat/README.md`)?
 
-**The short answer.** Latency: it does not cost, it *saves* — ~8.6× faster on the TTS leg warm,
-and STT accuracy is at parity (WER 0.000). Simplification: real (two containers → one, plus a
+**The short answer.** Latency: it does not cost, it *saves* — **~1.2–4× faster on the TTS leg**
+depending on sentence length (see the correction in §3: an earlier "8.6×" compared a measurement
+against a stale record; the baseline has since been re-measured native and the gap is smaller,
+and nearly vanishes on long text), and STT accuracy is at parity (WER 0.000). Simplification: real (two containers → one, plus a
 protocol-level latency header we do not have). **But the recommendation is still not "adopt as
 the audio backend", because the spike found a license defect that the project's own README does
 not know about:** the documented "purely permissive" escape hatch does not actually produce a
@@ -124,7 +126,39 @@ a container. Machine guard DEGRADED at measurement time.
 
 ### TTS — time to first audio byte
 
-| Case | voicebox 0.2.12 (Kokoro-ONNX) | Baseline: Kokoro-FastAPI CPU (2026-07-23) |
+> **⚠ CORRECTION (2026-07-27, same day) — the baseline was re-measured and the ratio below is
+> WRONG.** This section's comparison put a measurement against a four-day-old *record*; §6 flagged
+> that as the report's largest caveat. The baseline has now been re-run. Both of the caveat's
+> questions are answered, and one of them the other way:
+>
+> - **Emulation: ruled out.** `ghcr.io/remsky/kokoro-fastapi-cpu:latest` publishes `linux/arm64`
+>   and `linux/amd64`; the pulled image reports `Architecture: arm64` on this arm64 host. The
+>   baseline ran **native**, not emulated.
+> - **But the 3540 ms record does not reproduce.** Re-measured today with the baseline's OWN
+>   function (`measure_ttfab.py:tts_first_audio_byte` — `response_format:pcm`, `stream:true`,
+>   stopwatch to the first streamed chunk), unique text per run, warm-up excluded, on the same
+>   two brackets voicebox was measured against:
+>
+> | Case | voicebox 0.2.12 | Kokoro-FastAPI, **re-measured** | ratio |
+> |---|---|---|---|
+> | Short bracket (~40 ch) | 410.7 ms | **1647.4 ms** (996.8–2119.0) | **~4.0×** |
+> | Long bracket (~146 ch) | 1767.1 ms | **2134.7 ms** (1895.7–2667.0) | **~1.2×** |
+>
+> So voicebox is still faster, but by **~1.2–4×, not 8.6×** — and on the long bracket the
+> advantage nearly disappears. The 3540 ms record was most likely inflated by the machine state of
+> 2026-07-23 (that run happened at ~90% swap under several concurrent agent sessions) and by the
+> stub echo's longer, variable text. **Do not quote 8.6× anywhere.**
+>
+> *Methodology note worth keeping.* The first re-measurement attempt used `curl -w
+> %{time_starttransfer}` and produced **2.8 ms** — an impossible number for TTS synthesis, and the
+> reason is instructive: on a chunked response that field reports the first **HTTP** byte, which
+> the server flushes long before the first **audio** byte. Only reusing the baseline's own
+> streaming function produced a comparable figure. A number that beats expectation by three orders
+> of magnitude is a bug report about the measurement, not a result.
+>
+> The recommendation (§7) is unchanged — it never rested on latency, it rests on the GPL finding.
+
+| Case | voicebox 0.2.12 (Kokoro-ONNX) | Baseline: Kokoro-FastAPI CPU (2026-07-23, superseded above) |
 |---|---|---|
 | **Warm, short sentence (38 ch)** | **410.7 ms** median (374.1–451.9) | 3540 ms median (2.3–3.7 s) |
 | Cold, first 5 runs after boot | 1108.7 ms median (651.1–1756.9) | — |
@@ -142,7 +176,8 @@ Sandwich floor = LLM TTFT + TTS TTFAB:
 | shim + voicebox, warm, short first sentence | **~414 ms** (3.1 + 410.7) |
 | shim + voicebox, long first sentence | ~1770 ms |
 
-**~8.6× faster warm; ~2× faster even in the worst comparable case.** The most likely explanation is
+**~8.6× faster warm; ~2× faster even in the worst comparable case.** ⚠ SUPERSEDED — see the
+correction box above: re-measurement puts the real range at ~1.2–4×. The most likely explanation is
 ONNX-runtime Kokoro vs Kokoro-FastAPI's PyTorch path, but I did not profile the baseline to prove
 that — see §6.
 
@@ -305,7 +340,8 @@ Stated plainly, because a partial spike honestly reported is the deliverable.
   present on this machine** (`docker images` — it has been pruned), and re-pulling it is a
   multi-GB download I judged out of budget on a DEGRADED machine. So this is
   **measured-vs-recorded**, not measured-vs-measured, on the same machine ~4 days apart under
-  different load. The ratio is large enough (~8.6×) that load noise is unlikely to explain it, but
+  different load. ⚠ SUPERSEDED — the re-measurement in §3 shows load noise DID explain much of it
+  (1647 ms today vs the 3540 ms record on the same native image), but
   I cannot rule out a contribution.
 - **The input text differs from the baseline's.** The baseline synthesized the first sentence of
   the stub LLM's echo, which inlines the whole system prompt — long and variable. I could not
@@ -349,7 +385,7 @@ for before it ships.
 
 | Option | What it means | Trade-off |
 |---|---|---|
-| **A. Adopt as the audio backend** | Replace Kokoro-FastAPI + in-process faster-whisper with one voicebox container in `examples/voice-pipecat` | **Upside, measured:** ~8.6× faster TTS leg warm (3543 → ~414 ms projected TTFAB), STT WER unchanged at 0.000, two moving parts → one, 3 s cold start, `Server-Timing` for free. **Cost:** requires an **ADR for GPL-3.0** (`phonemizer-fork` + espeak-ng) even in the "permissive" config — defensible only under the license-policy §Exceptions service boundary (separate, unmodified, HTTP-only). Adds a dependency on a v0.2.x, ~17-star, single-author project. One inference at a time per instance. Barge-in unverified. |
+| **A. Adopt as the audio backend** | Replace Kokoro-FastAPI + in-process faster-whisper with one voicebox container in `examples/voice-pipecat` | **Upside, measured (corrected):** ~1.2–4× faster TTS leg depending on sentence length (re-measured baseline 1647 ms short / 2135 ms long vs voicebox 411 / 1767), STT WER unchanged at 0.000, two moving parts → one, 3 s cold start, `Server-Timing` for free. **Cost:** requires an **ADR for GPL-3.0** (`phonemizer-fork` + espeak-ng) even in the "permissive" config — defensible only under the license-policy §Exceptions service boundary (separate, unmodified, HTTP-only). Adds a dependency on a v0.2.x, ~17-star, single-author project. One inference at a time per instance. Barge-in unverified. |
 | **B. Cherry-pick the patterns only** ← **recommended** | Take the ideas into our own code; leave voicebox as a reference clone | **Upside:** the two highest-value items — **bounded inputs on the shim** (the 20k-`messages[]` hole; a constitutional-gate concern) and **`Server-Timing` on the shim** — are ours to implement in Go, cost days not weeks, carry **zero** license or supply-chain exposure, and are independently valuable whatever we do about audio. Plus: model-revision pinning, fail-closed bind auth, and independent confirmation of our WAV contract. **Cost:** we keep the 3543 ms TTFAB and the two-container topology. The latency win is real and we would be leaving it on the table. |
 | **C. Neither** | Close the spike, change nothing | **Upside:** zero cost, zero risk. **Cost:** wastes a measured result, and leaves the shim's unbounded `messages[]` — which this spike sharpened into a concrete, exploitable contrast — unaddressed. **Not recommended.** |
 
