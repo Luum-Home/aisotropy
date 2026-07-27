@@ -459,12 +459,13 @@ func searchSemanticContext(ctx context.Context, semStore semantic.Store, embedde
 	}
 	query := vecs[0]
 
-	// Over-fetch only when a reranker will trim the pool back down; otherwise
-	// fetch exactly the injection window (unchanged legacy behavior).
-	fetch := semanticWindow
-	if reranker != nil {
-		fetch = semanticWindow * semanticCandidatePoolFactor
-	}
+	// Always over-fetch a candidate pool. A reranker needs it to have something
+	// to reorder, and sibling coalescing (semantic_window.go) needs it to have
+	// somewhere to find a hit's same-document chunks — a pool the size of the
+	// injection window can only ever return the window itself, so the
+	// coalescing step would be a no-op. The extra cost is one slightly wider
+	// ANN fetch; the injected budget is unchanged either way.
+	fetch := semanticWindow * semanticCandidatePoolFactor
 
 	var userPts, tenantPts []semantic.ScoredPoint
 
@@ -489,14 +490,19 @@ func searchSemanticContext(ctx context.Context, semStore semantic.Store, embedde
 	}
 
 	merged := mergeScoredPoints(fetch, userPts, tenantPts)
+
+	primary := merged
 	if reranker != nil {
 		// Rerank the isolation-clean candidate pool down to the injection window.
-		return reranker.Rerank(ctx, prompt, merged, semanticWindow)
+		primary = reranker.Rerank(ctx, prompt, merged, semanticWindow)
+	} else if len(primary) > semanticWindow {
+		primary = primary[:semanticWindow]
 	}
-	if len(merged) > semanticWindow {
-		merged = merged[:semanticWindow]
-	}
-	return merged
+
+	// Re-compose the window document-first: each hit followed by its
+	// same-Source siblings from the pool, same budget, top hit unchanged.
+	// A fragment injected alone has lost its referents; see semantic_window.go.
+	return coalesceSiblings(primary, merged, semanticWindow)
 }
 
 // mergeScoredPoints merges already-scoped semantic search result sets (a
