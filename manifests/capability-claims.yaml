@@ -1,0 +1,269 @@
+# capability-claims.yaml — the machine-checkable subset of docs/architecture/capabilities-and-gaps.md
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# On 2026-07-27 `docs/architecture/capabilities-and-gaps.md` was used to dispatch build
+# work. TWO dispatches were burned building things that ALREADY EXISTED: the runtime
+# config file (shipped 10 days earlier, ADR-0040 / bfeca15) and the Kubernetes Helm chart
+# (shipped as 3d39c44 — 10 days before the doc that called it a gap). A read-only
+# re-verification of 12 dispatched claims found 5 wrong or materially overstated:
+#   docs/06-Daily/reports/gap-claims-verification-2026-07-27.md
+#
+# A capabilities doc that under-claims a shipped feature is the same defect class as one
+# that over-claims an unshipped one: both are read as truth by the next reader, and both
+# silently rot because nothing re-derives them. This registry is that "something".
+#
+# Each entry declares ONE volatile, mechanically re-derivable fact, the command that
+# re-derives it from the CODE, and the value the document currently asserts. The doc row
+# no longer holds the fact — it holds a REFERENCE to a claim id, and the guard proves the
+# fact still matches reality.
+#
+# RUN:   bash scripts/gap-claims-guard.sh            (read-only, offline, ~1s)
+#        bash scripts/gap-claims-guard.sh --explain  (+ per-claim command and value)
+# EXIT:  0 clean / 1 findings (a claim drifted) / 2 cannot evaluate (fail-closed)
+#
+# ADDING A CLAIM
+# --------------
+#   1. It must be VOLATILE (it can change without anyone touching the doc) and
+#      MECHANICALLY re-derivable (one read-only, offline, sub-second command that
+#      prints exactly one value). If it needs judgment, prose reading, a network call,
+#      docker, a model call, or a benchmark re-run — it does NOT belong here. See
+#      `out_of_scope` below for what is deliberately excluded and why.
+#   2. `requires:` lists every path the check reads. If one is gone, the guard reports
+#      BLOCKED (exit 2), never a pass. A guard that cannot look must never absolve.
+#   3. Reference the new id from the doc's "Machine-checked claims" section — the guard
+#      asserts every registry id appears there (registry <-> doc linkage check).
+#
+# EXPECTATION OPERATORS: eq | ne | ge | le | contains | not_contains | matches
+
+version: 1
+
+document: docs/architecture/capabilities-and-gaps.md
+verification_report: docs/06-Daily/reports/gap-claims-verification-2026-07-27.md
+
+# Deliberately NOT machine-checked here. Recorded so the exclusion is a decision with a
+# reason, not an omission — the guard's silence on these rows is not a claim about them.
+out_of_scope:
+  - id: framing-and-positioning
+    reason: >-
+      Rows that state a POSITION rather than a state of the code — the Karpathy LLM-OS
+      lineage, "agents.md is dev-time context not a runtime format", openspec.dev
+      NOT-SUPPORTED-deliberately (ADR-0039), SDD-as-dev-process-only (ADR-0041). These
+      change by decision (an ADR), not by code drift, so an ADR supersession is the
+      correct gate, not a grep.
+  - id: semantic-code-properties
+    reason: >-
+      Properties a grep cannot distinguish from their opposite: "the tenant filter is
+      applied DURING the HNSW/cosine scan, not as a post-filter", "the redacted text is
+      what all downstream tiers see, a raw secret never reaches memory", "the quarantine
+      seam structurally cannot emit a tool invocation". These are proven by tests and by
+      the constitutional gates (.claude/rules/constitutional-gates.md), which is where
+      they belong; a textual probe would give false confidence.
+  - id: measured-numbers-from-paid-or-slow-runs
+    reason: >-
+      Numbers whose re-derivation costs money or minutes: WER 0.000-0.100 (voice lane),
+      guardrail-daemon p50 ~124 ms warm, recall@1=0.92 / nDCG@10=0.97 (bench/rag-quality),
+      arena p50/p95 wall-clock values. This guard is read-only, offline and sub-second by
+      construction, so it checks that the RUN EXISTS AND IS RECORDED (see
+      crossframework-benchmark-executed) and never re-derives the values themselves.
+  - id: upstream-runtime-behavior
+    reason: >-
+      The graceful-shutdown best-effort window rests on "net/http does not cancel
+      in-flight request contexts" — a property of the standard library, not of this repo.
+      It changes with a Go release, not with a commit here.
+  - id: open-decisions
+    reason: >-
+      The doc's "Open decisions (operator's call)" section is by definition not
+      code-derived. It is stale-able in a different way (a decision gets made and the
+      section is not updated), which the ADR log and docs/decisions/index.md track.
+
+claims:
+
+  # ---- The two that burned a dispatch ------------------------------------------------
+  - id: k8s-manifests-shipped
+    claim: >-
+      The Kubernetes deploy surface SHIPS: >=30 tracked files under deploy/helm and
+      deploy/k8s (Helm chart + Kustomize base/overlays). It is NOT a gap.
+    incident: >-
+      The doc listed "k8s manifests + Helm chart" as a worthwhile gap to close and a
+      dispatch was burned on it. The chart had landed in 3d39c44 on 2026-07-17, the same
+      day as the doc's own timestamp.
+    requires: [deploy/helm/aisotropy/Chart.yaml, deploy/k8s]
+    check: |-
+      git ls-tree -r HEAD --name-only | grep -cE '^deploy/(helm|k8s)/' || true
+    expect: {op: ge, value: 30}
+    evidence: "commit 3d39c44; ADR-0071 (validation lanes)"
+
+  - id: runtime-config-file-shipped
+    claim: >-
+      The optional YAML/TOML runtime config file exists and is covered: all three of
+      aisotropy/runtimeconfig.go, aisotropy/runtimeconfig_test.go and the inert reference
+      aisotropy.runtime.example.yaml are tracked. Config is NOT env-only.
+    incident: >-
+      The doc's Configuration row read "GAPS: no TOML; no single runtime config file —
+      env-only" while the feature had already landed the SAME DAY (bfeca15, ADR-0040).
+      An agent was dispatched to "close the config gap" and would have rebuilt it.
+    requires: [aisotropy/runtimeconfig.go]
+    check: |-
+      git ls-files aisotropy/runtimeconfig.go aisotropy/runtimeconfig_test.go aisotropy.runtime.example.yaml | wc -l | tr -d ' '
+    expect: {op: eq, value: 3}
+    evidence: "commit bfeca15; ADR-0040; ADR-0072 (secrets refused)"
+
+  # ---- Benchmarks: executed, not merely documented -----------------------------------
+  - id: crossframework-benchmark-executed
+    claim: >-
+      The cross-framework wall-clock benchmark HAS RUN: the Latency p50/p95 table in
+      arenas/live/RESULTS.md carries >=18 real data rows (9 frameworks x {native,docker}).
+      "Documented method, NOT executed" is true only of the separate stub-model overhead
+      isolation variant (arenas/BENCHMARKS.md).
+    incident: >-
+      An `arena-benchmark-execution` change was dispatched on the premise that the
+      benchmark had never run. It ran 2026-07-23 in the REAL lane.
+    requires: [arenas/live/RESULTS.md]
+    check: |-
+      awk '/^### Latency/{f=1;next} f&&/^### /{f=0} f&&/^\| [a-z]/{c++} END{print c+0}' arenas/live/RESULTS.md
+    expect: {op: ge, value: 18}
+    evidence: "arenas/live/RESULTS.md '### Latency'; producer arenas/live/runner/bench.go runBenchmarks"
+
+  - id: docker-footprint-benchmark-executed
+    claim: >-
+      The Docker footprint/image-size benchmark HAS RUN — arenas/live/RESULTS.md carries a
+      '### Docker footprint' section. The doc's open-decision asking for "the number the
+      arenas lack" is stale.
+    requires: [arenas/live/RESULTS.md]
+    check: |-
+      grep -cE '^### Docker footprint' arenas/live/RESULTS.md || true
+    expect: {op: eq, value: 1}
+    evidence: "arenas/live/RESULTS.md '### Docker footprint'"
+
+  # ---- Rust workers: in-repo, but no automated build/invoke lane ----------------------
+  - id: bitrate-crate-tracked
+    claim: >-
+      The bits-per-token scorer is NOT code-only-with-no-worker: the Rust crate source
+      crates/bitrate-scorer/src/main.rs is tracked in-repo (since d5307d1, 2026-07-10).
+    requires: [crates/bitrate-scorer]
+    check: |-
+      git ls-files crates/bitrate-scorer/src/main.rs | wc -l | tr -d ' '
+    expect: {op: eq, value: 1}
+    evidence: "commit d5307d1; go test ./internal/bitrate/ drives the subprocess contract"
+
+  - id: sleepcycle-crate-tracked
+    claim: >-
+      The DataFusion sleep-cycle worker source crates/sleep-cycle/src/main.rs is tracked
+      in-repo (since 75ff726, 2026-07-09). "Dormant at runtime" is correct; "no worker" is
+      not.
+    requires: [crates/sleep-cycle]
+    check: |-
+      git ls-files crates/sleep-cycle/src/main.rs | wc -l | tr -d ' '
+    expect: {op: eq, value: 1}
+    evidence: "commit 75ff726; go test ./internal/sleepcycle/ drives the argv/NDJSON contract"
+
+  - id: rust-workers-not-built-in-ci
+    claim: >-
+      REAL GAP (still open): no CI stage compiles either Rust worker — .github/workflows/ci.yml
+      contains zero cargo/rust references. This is the genuine residual behind the
+      "dormant lanes" framing.
+    requires: [.github/workflows/ci.yml]
+    check: |-
+      grep -ciE 'cargo|rustup|rust-toolchain' .github/workflows/ci.yml || true
+    expect: {op: eq, value: 0}
+    evidence: "gap-claims-verification-2026-07-27.md claims 3,4"
+    on_close: >-
+      When a cargo stage lands in ci.yml this claim goes RED — that is the designed behaviour,
+      not a guard defect. Fix: flip `expect` to `{op: ge, value: 1}`, rewrite `claim` to state
+      that CI builds the Rust workers, and update the corresponding row in the document.
+
+  # ---- Manual-tagged real-service tests: they exist, nothing invokes them -------------
+  - id: manual-tagged-tests-exist
+    claim: >-
+      Real-service tests against live rqlite/Qdrant/sleep-cycle/bitrate DO exist, behind
+      `//go:build manual` — >=10 tracked *_test.go files carry the tag.
+    requires: [internal/facts, internal/semantic]
+    check: |-
+      git grep -l 'go:build manual' -- '*_test.go' | wc -l | tr -d ' '
+    expect: {op: ge, value: 10}
+    evidence: "internal/facts/rqlite_manual_test.go, internal/semantic/qdrant_manual_test.go, et al."
+
+  - id: no-lane-invokes-manual-tests
+    claim: >-
+      REAL GAP (still open): NO script and NO workflow invokes the manual-tagged tests —
+      zero files under scripts/ or .github/ pass `-tags manual`. ci.yml runs plain
+      `go test ./... -race`, which excludes them. The tests exist; the LANE does not.
+    requires: [scripts, .github]
+    check: |-
+      git grep -lE 'tags[= ]manual' -- scripts/ .github/ | wc -l | tr -d ' '
+    expect: {op: eq, value: 0}
+    evidence: "gap-claims-verification-2026-07-27.md claim 5"
+    on_close: >-
+      KNOWN IN FLIGHT (2026-07-27): a concurrent session is building `scripts/dormant-lanes.sh`,
+      which carries 17 `-tags manual` invocations but is still UNTRACKED, so this claim is true at
+      HEAD. The moment that script is committed this claim goes RED — that is the designed
+      behaviour, not a guard defect: closing a registered gap MUST force the document to be
+      updated. Fix: flip `expect` to `{op: ge, value: 1}`, rewrite `claim` to state that a lane
+      exists and name it, and update the corresponding row in the document.
+
+  # ---- Bounded capabilities that are still true --------------------------------------
+  - id: ocr-no-ocr-dependency
+    claim: >-
+      Built-in file extraction is TEXT-LAYER ONLY: go.mod declares no OCR dependency
+      (tesseract/gosseract/ocr). A scanned/image PDF needs a BYO Extractor.
+    requires: [go.mod, aisotropy/ingest_file.go]
+    check: |-
+      grep -ciE 'tesseract|gosseract|ocr' go.mod || true
+    expect: {op: eq, value: 0}
+    evidence: "aisotropy/ingest_file.go WithExtractor seam"
+
+  - id: ocr-empty-content-sentinel
+    claim: >-
+      The text-layer bound is explicit in code, not implicit: aisotropy/ingest_file.go
+      carries the ErrEmptyContent sentinel that routes a no-text document to a BYO OCR
+      Extractor.
+    requires: [aisotropy/ingest_file.go]
+    check: |-
+      grep -cE 'ErrEmptyContent' aisotropy/ingest_file.go || true
+    expect: {op: ge, value: 1}
+    evidence: "aisotropy/ingest_file.go"
+
+  - id: hydration-sequential
+    claim: >-
+      System-prompt hydration is SEQUENTIAL, not goroutine-parallel: the body of
+      hydrateSystemPrompt in internal/api/chat_stream.go contains zero `go func`,
+      `errgroup` or `sync.WaitGroup`. The parallel hydration in request-lifecycle.md is
+      still aspirational.
+    requires: [internal/api/chat_stream.go]
+    check: |-
+      awk '/func .*hydrateSystemPrompt/,/^}/' internal/api/chat_stream.go | grep -cE 'go func|errgroup|sync\.WaitGroup' || true
+    expect: {op: eq, value: 0}
+    evidence: "internal/api/chat_stream.go:300-425"
+
+  - id: reflection-loop-nonstreaming-only
+    claim: >-
+      The fail-closed structured-output reflection loop runs on the NON-STREAMING turn
+      path only: internal/api/chat_stream.go has zero `Reflect` references. chat/stream
+      and chat/agent have no reflection path.
+    requires: [internal/api/chat_stream.go, internal/api/chat.go]
+    check: |-
+      grep -cE 'Reflect' internal/api/chat_stream.go || true
+    expect: {op: eq, value: 0}
+    evidence: "chatReflect declared internal/api/chat.go:314, called once at internal/api/core.go:124"
+
+  - id: pipecat-pinned-pre-1.0
+    claim: >-
+      The voice PoC pins pipecat below 1.0 — examples/voice-pipecat/requirements.txt
+      carries an explicit `>=0.0.NN,<0.1` ceiling.
+    requires: [examples/voice-pipecat/requirements.txt]
+    check: |-
+      grep -cE 'pipecat-ai.*>=0\.0\.[0-9]+,<0\.1' examples/voice-pipecat/requirements.txt || true
+    expect: {op: eq, value: 1}
+    evidence: "examples/voice-pipecat/requirements.txt"
+
+  - id: shim-never-real-provider
+    claim: >-
+      The OpenAI-compat shim has NEVER been exercised against a real model provider — its
+      test suite constructs zero real provider clients (llm.NewAnthropicClient /
+      llm.NewOpenRouterClient). Every test uses the stub or an in-repo httptest server.
+    requires: [internal/api/openai_compat_test.go]
+    check: |-
+      grep -cE 'llm\.New(AnthropicClient|OpenRouterClient)' internal/api/openai_compat_test.go || true
+    expect: {op: eq, value: 0}
+    evidence: "internal/api/openai_compat_test.go — llm.NewStubClient / scriptedAGUIStub only"

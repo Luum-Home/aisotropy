@@ -26,6 +26,43 @@ timestamp: 2026-07-17T00:00:00Z
 > and allocated a duplicate ADR). Verified this pass: the config file exists, is wired into
 > `startRuntime`, and is covered by 20 tests.
 
+> **Machine-checked since 2026-07-27 — run the guard before dispatching work off this doc.**
+> The stale-config row above was not an isolated slip. A read-only re-verification of the 12
+> claims this document was used to dispatch build work from
+> ([`gap-claims-verification-2026-07-27.md`](../06-Daily/reports/gap-claims-verification-2026-07-27.md))
+> found **5 of 12 wrong or materially overstated**, two of them describing work that landed
+> *before* this document's own timestamp — and **two agent dispatches were burned rebuilding
+> features that already existed** (the runtime config file, `bfeca15`/ADR-0040; the Helm chart,
+> `3d39c44`). The volatile rows below are therefore **re-derived from the code** by a guard:
+>
+> ```sh
+> bash scripts/gap-claims-guard.sh            # 0 clean / 1 a claim drifted / 2 cannot evaluate
+> bash scripts/gap-claims-guard.sh --explain  # + the exact command that re-derives each claim
+> ```
+>
+> The claims registry is [`manifests/capability-claims.yaml`](../../manifests/capability-claims.yaml)
+> ([ADR-0074](../decisions/0074-gap-claims-guard.md)); the guard is read-only, offline and runs in
+> about a second. **Editing a volatile row below without updating its registry entry makes the guard
+> go red** — that is the point. Rows are checked by these claim ids:
+>
+> | Row / topic | Claim ids re-derived from code |
+> |---|---|
+> | Deployment — Kubernetes / Helm | `k8s-manifests-shipped` |
+> | Configuration | `runtime-config-file-shipped` |
+> | Benchmarks; Open decisions #2 | `crossframework-benchmark-executed`, `docker-footprint-benchmark-executed` |
+> | Memory tiers (sleep-cycle); Telemetry (bitrate) | `sleepcycle-crate-tracked`, `bitrate-crate-tracked`, `rust-workers-not-built-in-ci` |
+> | Memory tiers (networked rqlite/Qdrant lanes) | `manual-tagged-tests-exist`, `no-lane-invokes-manual-tests` |
+> | PDF / HTML ingestion | `ocr-no-ocr-dependency`, `ocr-empty-content-sentinel` |
+> | Request-time behaviour (see `runtime-as-built.md`) | `hydration-sequential`, `reflection-loop-nonstreaming-only` |
+> | Voice (PoC + test lane) | `pipecat-pinned-pre-1.0` |
+> | OpenAI-compat shim | `shim-never-real-provider` |
+>
+> **Not everything here is machine-checkable, and the guard's silence is not a claim.** Positioning
+> rows (Karpathy lineage, agents.md, openspec.dev, SDD), semantic code properties (in-scan tenant
+> filtering, redaction-before-memory), measured numbers whose re-derivation costs money or minutes
+> (WER, recall@k, p50/p95 values), upstream `net/http` behaviour, and the "Open decisions" section are
+> **deliberately excluded** — each with its reason in the registry's `out_of_scope` block.
+
 This document answers, in one place and honestly, "how does aisotropy handle X, and does it
 support Y?" for the dimensions operators actually ask about. Each row was **verified against the
 code/repo** during the 2026-07-17 audit — not taken from marketing. It separates **REAL** (built +
