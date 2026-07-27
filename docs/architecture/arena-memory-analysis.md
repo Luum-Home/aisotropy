@@ -51,6 +51,62 @@ buys is now a measured tie at the top of rows 2–4, not a solo win.
 
 ---
 
+## 0.1 Symmetric rigor: aisotropy's OWN reliability on this board (the number we almost did not publish)
+
+The board headlines an aggregate — *"765 total runs — 706 scored, 59 errored (7.7%)"*. That figure
+hides the distribution, and the distribution is unflattering to the reference implementation.
+Per framework, computed from the committed board:
+
+| Framework | runs | errored | rate |
+|---|---:|---:|---:|
+| spring-ai | 85 | 27 | **31.8%** |
+| **aisotropy** | **85** | **21** | **24.7%** |
+| ai-sdk | 85 | 4 | 4.7% |
+| eino | 85 | 3 | 3.5% |
+| genkit-go | 85 | 2 | 2.4% |
+| pydantic-ai | 85 | 2 | 2.4% |
+| langgraph | 85 | 0 | **0.0%** |
+| llamaindex | 85 | 0 | **0.0%** |
+| mastra | 85 | 0 | **0.0%** |
+
+```bash
+sed -n '349,447p' arenas/live/RESULTS.md | awk -F'|' '{gsub(/ /,"",$2);gsub(/ /,"",$8);gsub(/ /,"",$9);
+  if($2!=""){runs[$2]+=$8;errs[$2]+=$9}} END{for(f in runs)printf "%-12s runs=%3d err=%3d %5.1f%%\n",
+  f,runs[f],errs[f],100*errs[f]/runs[f]}' | sort
+```
+
+**aisotropy and spring-ai account for 48 of the 59 errors (81%), and three competitors ran
+perfectly clean.** The reference implementation had the second-worst reliability on its own
+benchmark, and the board never said so. That is precisely the asymmetry
+`arena-fairness-protocol.md` §9 exists to prevent, applied in the direction that is easiest to
+miss: being lenient with yourself by aggregating.
+
+### What the errors were, and what a clean-lane re-run showed
+
+The 21 aisotropy errors were **not** the "shutdown blips" first reported (see the Correction in §1):
+they were **6× HTTP 500** (`/chat/agent`, four on the `(structured)` path) and **3× HTTP 502**
+(`/ask`), plus the memory-mode failures.
+
+A targeted diagnostic then ran aisotropy ALONE — same modes, `-concurrency 1`, `-retry 0`, so no
+retry could mask a failure and no other adapter competed for the shared stores. Result: **46+ runs,
+ZERO errors of any kind.** If the true per-request failure rate were 24.7%, the chance of 46
+consecutive clean runs is roughly 1 in 600,000.
+
+So the defect is **contention-driven, not intrinsic**: the board ran nine frameworks concurrently
+against a single shared rqlite, Qdrant and embedding server, and aisotropy is the only adapter that
+boots a COMPLETE runtime (all memory tiers) per invocation — it is by far the most
+infrastructure-hungry participant, so it degrades first when those stores saturate. The
+single-worker embed server (since fixed, `a9a7261`) was the confirmed root of that saturation.
+
+**Both halves of this must travel together.** The 24.7% is real and was measured, and publishing
+the aggregate without it was a rigor failure. AND the cause is now identified as an environmental
+one that depressed aisotropy's numbers **below** its own clean-lane behaviour — which means the
+board under-reports aisotropy here, not the reverse. Neither half excuses the other: the honest
+statement is "on that board, under that contention, the reference implementation was the second
+least reliable participant, and here is why."
+
+---
+
 ## 1. Why the within-session memory score is an empty tie — and why replay is not just adequate but OPTIMAL here
 
 The shipped `memory` dimension grades **within-session last-N recall**: state some facts across a
@@ -271,6 +327,19 @@ L1's invisible failure mode).
 | **aisotropy** | **2/2 ✓** | **refuses × 2** — `App.Turn` on a blank user returns `huma.Error422UnprocessableEntity` wrapping `memory: user requires a non-empty value` **before any model call** (`internal/api/core.go:55-58` → `chat.go:193-196` → `internal/memory/key.go` `Validate()`); recognized by the runner's `forgetfulEnforcementSignatures` (`arenas/live/runner/main.go:863-887`). Omission is *unrepresentable* over HTTP (Huma 404/422 on a missing path param) | **L3** |
 | **mastra** | **2/2 ✓** | **refuses × 2** — throws `"A resourceId and a threadId must be provided when using Memory…"` before any model call; omitted `resourceId` forwarded RAW at Mastra's own API boundary | L2 |
 | **spring-ai** | **2/2 ✓** | **refuses × 2** — `MessageWindowChatMemory.get` with omitted `conversationId` → `Assert.hasText` THROWS before any model call | L1 (single-axis) |
+> **Responsible-disclosure status (read before citing this row).** The langgraph
+> result below is a **cross-user data-exposure finding about a named OSS project**,
+> and it is **backend-specific**: it reproduces in `langgraph.store.sqlite.SqliteStore`,
+> where an omitted `('',)` namespace acts as a match-all prefix; the same probe against
+> `InMemoryStore` returns empty (silent partition) instead. Any public statement must
+> carry that qualifier — "langgraph leaks" without it overstates the scope of a security
+> finding about someone else's product.
+>
+> **This finding has NOT been reported upstream to the LangChain maintainers.** Until it
+> has, this row should be treated as an internal measurement, not as a published security
+> claim. Reporting it upstream first — and recording the date and reference here — is a
+> precondition for publishing this table externally.
+
 | langgraph | **0/2 ✗** | one **cross-scope LEAK** (an omitted `('',)` namespace acts as a match-all prefix in `SqliteStore` and returns **another user's memory** — `store_memory.py:356→371`, an **L1 breach**) + one **silent partition** | L1 breach |
 | llamaindex | **0/2 ✗** | **silent partition × 2** — blank `user_id` forwarded RAW (`adapter.py:1164`) selects a different empty per-user collection (`:879` → `:1000`); no error, no data — the mistake is invisible | L1 |
 | ai-sdk / eino / genkit-go / pydantic-ai | — (errored) | **infeasible by design** — there is no framework-level user scope to omit; user-keying lives in adapter glue, so the probe would exercise adapter-invented code, not the framework. These are 8 of the board's 59 explained errors; each adapter's `matrix.json` declares the cell `infeasible` with the reason | L0 |
@@ -286,7 +355,7 @@ unrepresentability over HTTP).
 **Why this "better" is not bias** (the three reasons, each independently checkable):
 
 1. **Measured, not asserted.** Every verdict was produced by *running the competitor's own store
-   code* — langgraph's leak came from executing `SqliteStore.search` with a blank namespace during
+   code* — langgraph's `SqliteStore` leak came from executing `SqliteStore.search` with a blank namespace during
    FASE 3 (`0bdd3ff`) and is now reproduced as a rendered board cell (`06945bf`), not read from docs.
 2. **It CONTRADICTED our own prediction.** `arena-tenancy-levels.md` §"forgetful integrator"
    predicted langgraph would `silent_partition`. The executed result was **sharper and worse — a
@@ -326,7 +395,7 @@ Pulling §1–§4 together into the load-bearing synthesis:
   with mastra and spring-ai** (§3). The capability is real and paid for; it is **not unique**.
 - On **tenancy under a forgotten scope**, aisotropy is one of only **three frameworks that enforce**
   (2/2 refuses, board-rendered), and the only one where omission is unrepresentable at the HTTP
-  boundary (L3); langgraph and llamaindex fail 0/2, langgraph with a genuine cross-user leak (§4).
+  boundary (L3); langgraph and llamaindex fail 0/2 — langgraph with a genuine cross-user leak **in its `SqliteStore` backend specifically** (its `InMemoryStore` silently partitions instead), llamaindex by silent partition (§4).
   This is the by-construction thesis, now measured.
 - On **adversarial safeguard**, aisotropy is **mid-pack**: 5/7 (decline 2/3, no-leak 3/4), level
   with llamaindex (5/7), behind mastra (7/7), eino (6/7), and genkit-go (6/7); ai-sdk and spring-ai
@@ -360,7 +429,7 @@ safeguard.**
 | pydantic-ai 2/2, 0/2, 2/2; ai-sdk/eino/genkit-go 1/2, 0/2, 0/2 | **MEASURED** | `06945bf`; the weak four's ecosystem labels: extensions §1.1 |
 | aisotropy's memory-ext cells served via the semantic tier (apples-to-apples), with a disclosed chat-route product gap | **MEASURED + DISCLOSED** | `39017e9`; §3 caveat |
 | aisotropy refuses on a forgotten scope (2/2, L3) | **MEASURED, board-rendered** | `06945bf`; the former `pending`-cell debt resolved by `098ef91` |
-| langgraph fails forgetful 0/2 (one cross-user LEAK + one silent partition) | **MEASURED** | `06945bf` per-item detail; mechanism `store_memory.py:356→371` (`0bdd3ff`) |
+| langgraph fails forgetful 0/2 in its `SqliteStore` backend (one cross-user LEAK + one silent partition; `InMemoryStore` partitions silently instead) | **MEASURED** | `06945bf` per-item detail; mechanism `store_memory.py:356→371` (`0bdd3ff`) |
 | llamaindex fails forgetful 0/2 (silent partition × 2) | **MEASURED** | `06945bf` per-item detail; mechanism `adapter.py:1164/879/1000` (`55ee6b1`) |
 | ai-sdk / eino / genkit-go / pydantic-ai are infeasible-by-design for forgetful (no framework-level scope to omit) | **MEASURED (classification)** | 8 explained errors at `06945bf`; reasons in each `matrix.json` |
 | aisotropy safeguard is mid-pack (5/7; mastra 7/7) | **MEASURED** | `06945bf` |
@@ -378,7 +447,7 @@ safeguard.**
 | Cross-session recall | **aisotropy TIES the top (2/2)** | User-scoped tiers recall where session-keyed replay returns empty — but five competitors also score 2/2; the separator is the session-keyed bottom tier at 1/2 | MEASURED (`06945bf`) |
 | Semantic long-term recall | **aisotropy TIES the top tier (2/2, with mastra and spring-ai only)** | A paraphrase defeats lexical replay; only genuine user-scoped semantic retrieval matches — served via aisotropy's semantic tier (§3 caveat) | MEASURED (`06945bf`) |
 | Consolidation across sessions | **aisotropy TIES the top (2/2)** | Outcome-scored recall across the boundary; six frameworks pass, the session-keyed three score 0/2 | MEASURED (`06945bf`) |
-| Tenancy under a forgotten scope | **aisotropy BETTER — one of three that ENFORCE, and the only L3** | Refuses by construction (422 pre-model) where langgraph leaks another user's memory and llamaindex silently partitions; mastra and spring-ai also refuse | MEASURED, board-rendered (`06945bf`) |
+| Tenancy under a forgotten scope | **aisotropy BETTER — one of three that ENFORCE, and the only L3** | Refuses by construction (422 pre-model) where langgraph's `SqliteStore` backend returns another user's memory (its `InMemoryStore` does not) and llamaindex silently partitions; mastra and spring-ai also refuse | MEASURED, board-rendered (`06945bf`) |
 | Adversarial safeguard | **aisotropy MID-PACK (5/7)** | Behind mastra 7/7, eino/genkit-go 6/7; a named weakness of the current product, not an arena artifact | MEASURED (`06945bf`) |
 
 ---
