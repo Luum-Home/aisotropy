@@ -42,7 +42,7 @@ import (
 	aisotropy "github.com/Luum-Home/aisotropy/aisotropy"
 )
 
-// newAgnesClient resolves the provider client from OPENAI_* env and returns the
+// newProviderClient resolves the provider client from OPENAI_* env and returns the
 // façade client DIRECTLY (no decorator — see the file doc comment). The key is
 // read from the environment and never logged or embedded in error strings.
 //
@@ -50,7 +50,7 @@ import (
 // real-backend-tier env vars this process may have inherited from run.sh
 // (clearBackendTierEnv) and returns (nil, nil) instead of erroring on a
 // missing OPENAI_API_KEY. Every mode's call site already does
-// `agnes, err := newAgnesClient(); if err != nil { return err }` followed by
+// `agnes, err := newProviderClient(); if err != nil { return err }` followed by
 // `newApp(agnes, ...)` / `setUsage(out, ...)` — newApp is nil-safe (app.go) —
 // so a nil, nil-error return here is a normal, successful "run offline" signal
 // that needs no change at any call site: newApp then omits WithLLM entirely,
@@ -62,7 +62,7 @@ import (
 // the deleted *agnesClient to the façade interface the client always was.
 // max_tokens (AISOTROPY_MAX_TOKENS, default 1024) and stream usage options are
 // owned by the façade client's own request shaping, unchanged.
-func newAgnesClient() (aisotropy.LLMClient, error) {
+func newProviderClient() (aisotropy.LLMClient, error) {
 	if stubMode() {
 		clearBackendTierEnv()
 		return nil, nil

@@ -21,7 +21,7 @@ func runQA(req *request, out *result) error {
 		return fmt.Errorf("no user message in request")
 	}
 
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		return err
 	}

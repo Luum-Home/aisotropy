@@ -57,7 +57,7 @@ func TestWithEstablishedContext_NoFacts(t *testing.T) {
 //
 // aisotropy's native internal/llm.StubClient (selected automatically when
 // ARENA_STUB=1 clears every provider key, see agnes_client.go's
-// newAgnesClient) echoes the exact prompt string it receives back in its
+// newProviderClient) echoes the exact prompt string it receives back in its
 // reply (internal/llm/stub.go's buildStubWords: `received your message
 // "<prompt>"`). So if the canned assistant line for the FIRST turn now
 // reaches the SECOND turn's Prompt (via withEstablishedContext), the stub's

@@ -98,7 +98,7 @@ func runTools(req *request, out *result) error {
 		return err
 	}
 
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		return err
 	}

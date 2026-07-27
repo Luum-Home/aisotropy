@@ -26,12 +26,12 @@ const productID = "arena"
 // stack is used whenever those vars are set.
 //
 // agnes may be nil — the ARENA_STUB=1 offline path (resolved by
-// newAgnesClient, see agnes_client.go): when nil, no WithLLM option is added
+// newProviderClient, see agnes_client.go): when nil, no WithLLM option is added
 // at all, so aisotropy.New's own resolver falls back to llm.FromEnv(), which
 // (with every provider key unset, as clearBackendTierEnv's sibling
 // stub-mode check guarantees for a stub run) resolves to aisotropy's NATIVE
 // keyless internal/llm.StubClient — not a hand-rolled fake this adapter
-// invents. Every mode's `agnes, err := newAgnesClient()` call site is
+// invents. Every mode's `agnes, err := newProviderClient()` call site is
 // unchanged; nil-safety here is the single choke point that makes the
 // ARENA_STUB toggle apply uniformly to all of them.
 func newApp(agnes aisotropy.LLMClient, persona string, extra ...aisotropy.Option) *aisotropy.App {
@@ -139,7 +139,7 @@ var providerEnvVars = []string{
 // cosine + SQLite+FTS5 + in-memory BadgerDB, AND llm.RegistryFromEnv() to the
 // keyless in-process StubClient — regardless of what the calling shell (run.sh,
 // which sources .env) exported into this process. Called once from
-// newAgnesClient's stub-mode branch, so it runs before ANY mode builds its App.
+// newProviderClient's stub-mode branch, so it runs before ANY mode builds its App.
 // The provider-key clear is the load-bearing half: without it a stub run calls
 // the real model (see providerEnvVars).
 func clearBackendTierEnv() {

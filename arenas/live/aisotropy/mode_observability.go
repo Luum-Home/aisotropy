@@ -287,7 +287,7 @@ func runObservability(req *request, out *result) error {
 	// envelope.
 	out.Structured = res
 
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		res.Error = err.Error()
 		return err

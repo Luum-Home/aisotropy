@@ -101,7 +101,7 @@ func runMemory(req *request, out *result) error {
 		return runMemoryExt(req, out)
 	}
 
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		return err
 	}

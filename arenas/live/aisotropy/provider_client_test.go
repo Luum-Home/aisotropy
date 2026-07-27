@@ -7,7 +7,7 @@ import (
 	aisotropy "github.com/Luum-Home/aisotropy/aisotropy"
 )
 
-// realLaneEnv points newAgnesClient at a syntactically valid but unreachable
+// realLaneEnv points newProviderClient at a syntactically valid but unreachable
 // provider (no network call is ever made — only construction is under test)
 // and forces the real lane (ARENA_STUB unset).
 func realLaneEnv(t *testing.T) {
@@ -33,12 +33,12 @@ func realLaneEnv(t *testing.T) {
 func TestNewAgnesClient_ToolCapabilities(t *testing.T) {
 	realLaneEnv(t)
 
-	client, err := newAgnesClient()
+	client, err := newProviderClient()
 	if err != nil {
-		t.Fatalf("newAgnesClient: %v", err)
+		t.Fatalf("newProviderClient: %v", err)
 	}
 	if client == nil {
-		t.Fatal("newAgnesClient returned nil client in the real lane")
+		t.Fatal("newProviderClient returned nil client in the real lane")
 	}
 
 	// The load-bearing assertions run on the interface value exactly as
@@ -52,16 +52,19 @@ func TestNewAgnesClient_ToolCapabilities(t *testing.T) {
 	}
 }
 
-// TestNewAgnesClient_NameComposition proves the injected façade client
-// composes the "agnes:<model>" identity string the arena has always reported.
-func TestNewAgnesClient_NameComposition(t *testing.T) {
+// TestNewProviderClient_NameComposition proves the injected façade client
+// composes the "<provider-label>:<model>" identity string the arena reports. The
+// label is the PROVIDER-NEUTRAL "openai-compat", not a vendor name: this client
+// speaks the OpenAI-compatible protocol and does not know which company is on
+// the other end (see docs/architecture/model-provider.md).
+func TestNewProviderClient_NameComposition(t *testing.T) {
 	realLaneEnv(t)
 
-	client, err := newAgnesClient()
+	client, err := newProviderClient()
 	if err != nil {
-		t.Fatalf("newAgnesClient: %v", err)
+		t.Fatalf("newProviderClient: %v", err)
 	}
-	if got, want := client.Name(), "agnes:agnes-2.0-flash"; got != want {
+	if got, want := client.Name(), "openai-compat:agnes-2.0-flash"; got != want {
 		t.Fatalf("Name() = %q, want %q", got, want)
 	}
 }
@@ -70,17 +73,17 @@ func TestNewAgnesClient_NameComposition(t *testing.T) {
 // mode's call site relies on: (nil, nil) — a normal, successful "run offline"
 // signal, never an error on the missing OPENAI_API_KEY — with the provider and
 // backend-tier env vars cleared so aisotropy.New() falls through to its native
-// keyless stub and in-process stores (see newAgnesClient's doc comment).
+// keyless stub and in-process stores (see newProviderClient's doc comment).
 func TestNewAgnesClient_StubModeReturnsNil(t *testing.T) {
 	t.Setenv("ARENA_STUB", "1")
 	t.Setenv("OPENAI_API_KEY", "leftover-from-run-sh") // must be cleared, not used
 
-	client, err := newAgnesClient()
+	client, err := newProviderClient()
 	if err != nil {
-		t.Fatalf("newAgnesClient in stub mode returned error: %v", err)
+		t.Fatalf("newProviderClient in stub mode returned error: %v", err)
 	}
 	if client != nil {
-		t.Fatalf("newAgnesClient in stub mode returned a non-nil client (%T) — stub runs must not build a provider client", client)
+		t.Fatalf("newProviderClient in stub mode returned a non-nil client (%T) — stub runs must not build a provider client", client)
 	}
 	if got := os.Getenv("OPENAI_API_KEY"); got != "" {
 		t.Fatalf("stub mode left OPENAI_API_KEY set (%q) — a surviving provider key makes a \"stub\" run silently call the real model (see providerEnvVars in app.go)", got)

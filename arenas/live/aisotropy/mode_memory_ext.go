@@ -107,7 +107,7 @@ func runMemoryExt(req *request, out *result) error {
 	// tokens).
 	user := boundedUser(req.UserID)
 
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		return err
 	}

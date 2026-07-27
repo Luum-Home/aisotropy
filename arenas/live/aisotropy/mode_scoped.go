@@ -77,7 +77,7 @@ func validateScope(req *request) error {
 func scopedTurn(req *request, out *result, prompt string) (string, error) {
 	tenant, user, product := scopeIdentity(req)
 
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		return "", err
 	}

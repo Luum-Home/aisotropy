@@ -45,7 +45,7 @@ func runRAG(req *request, out *result) error {
 		topK = defaultRAGTopK
 	}
 
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		return err
 	}

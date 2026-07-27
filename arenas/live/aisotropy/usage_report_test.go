@@ -27,9 +27,9 @@ func TestSetUsage_StubLanePinsMinusOne(t *testing.T) {
 	t.Setenv("ARENA_STUB", "1")
 	t.Setenv("AISOTROPY_DATA_DIR", "") // in-memory working memory for this test
 
-	agnes, err := newAgnesClient() // (nil, nil) + clears provider/backend env
+	agnes, err := newProviderClient() // (nil, nil) + clears provider/backend env
 	if err != nil {
-		t.Fatalf("newAgnesClient in stub mode: %v", err)
+		t.Fatalf("newProviderClient in stub mode: %v", err)
 	}
 	app := newApp(agnes, "You are a helpful test assistant.")
 	defer func() { _ = app.Close() }()

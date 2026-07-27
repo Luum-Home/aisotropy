@@ -63,7 +63,7 @@ func runCrashRecovery(req *request, out *result) error {
 func runCrashProducer(req *request, out *result) error {
 	tenant, user, product := scopeIdentity(req)
 
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func runCrashResumer(req *request, out *result) error {
 	}
 	tenant, user, product := scopeIdentity(req)
 
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		return err
 	}

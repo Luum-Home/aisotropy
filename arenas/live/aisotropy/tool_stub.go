@@ -4,7 +4,7 @@
 // WHY THIS EXISTS: aisotropy's own internal/llm.StubClient — the fallback
 // llm.FromEnv() resolves to when every provider key is unset, which is the
 // ARENA_STUB=1 offline path every other mode in this adapter already relies on
-// (see newAgnesClient/app.go's nil-agnes fallback) — does NOT implement the
+// (see newProviderClient/app.go's nil-agnes fallback) — does NOT implement the
 // optional llm.ToolCaller capability (internal/llm/tools.go). The
 // POST /chat/agent route (internal/api/chat_agent.go's RegisterAgent) therefore
 // falls back, for a plain StreamChat-only client, to the homegrown
@@ -67,7 +67,7 @@ var (
 )
 
 // toolStub is the ARENA_STUB=1 tool-capable client for the `tools` and
-// `structured` modes only (see the newAgnesClient call sites in
+// `structured` modes only (see the newProviderClient call sites in
 // mode_tools.go / mode_structured.go). It never makes a network call — every
 // decision is a pure function of its input.
 type toolStub struct{}

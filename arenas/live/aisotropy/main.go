@@ -55,7 +55,7 @@
 // keyless internal/llm.StubClient (no OPENAI_API_KEY needed) and clears the
 // real-backend-tier env vars run.sh exports, so EVERY mode above runs fully
 // offline against aisotropy's bare-binary in-process defaults (see
-// newAgnesClient in agnes_client.go and stubMode/clearBackendTierEnv in
+// newProviderClient in agnes_client.go and stubMode/clearBackendTierEnv in
 // app.go).
 //
 // The API key is read from OPENAI_API_KEY and never printed, logged, or embedded.

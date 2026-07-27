@@ -144,7 +144,7 @@ func runMiddleware(req *request, out *result) error {
 		return err
 	}
 
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		res.Error = err.Error()
 		return err

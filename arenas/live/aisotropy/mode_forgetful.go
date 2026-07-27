@@ -52,7 +52,7 @@ func runForgetful(req *request, out *result) error {
 		return fmt.Errorf("isolation_forgetful recall requires a user message to ask: %w", err)
 	}
 
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		return err
 	}

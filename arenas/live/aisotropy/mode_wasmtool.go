@@ -72,7 +72,7 @@ func runWASMTool(req *request, out *result) error {
 	}}
 
 	// Fold the sandbox result into a real agnes turn.
-	agnes, err := newAgnesClient()
+	agnes, err := newProviderClient()
 	if err != nil {
 		return err
 	}

@@ -68,7 +68,7 @@ const dataDirTTL = 30 * time.Minute
 //
 //   - AISOTROPY_DATA_DIR unset -> no-op; working memory is in-memory
 //     (newWorkingMemory in aisotropy/app.go), nothing on disk to isolate.
-//   - ARENA_STUB=1 -> no-op; the stub path (newAgnesClient in
+//   - ARENA_STUB=1 -> no-op; the stub path (newProviderClient in
 //     agnes_client.go) unsets AISOTROPY_DATA_DIR itself before any App is
 //     built (clearBackendTierEnv, app.go), so a stub run never touches this
 //     directory regardless — isolating it here would be pure wasted disk I/O.
