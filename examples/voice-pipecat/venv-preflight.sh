@@ -13,6 +13,18 @@
 # A missing interpreter is not a test failure and must not look like one: this
 # exits non-zero with a remediation before pytest is ever invoked.
 #
+# All four branches were exercised on 2026-07-27, each by reconstructing the
+# state rather than by reading the code:
+#   missing        — venv moved aside              -> exit 1, recreate commands
+#   dangling       — today's exact bug, rebuilt     -> exit 1, names the target
+#   healthy        — the real venv                  -> exit 0
+#   partial        — a venv with ONLY pytest        -> exit 0 + warning, AND the
+#                    premise behind that exit code was verified rather than
+#                    assumed: in that state `pytest tests/` really does run
+#                    (8 passed, 8 skipped). Calling it broken would be a lie in
+#                    the noisier direction, and a guard that shouts too often is
+#                    a guard people learn to ignore.
+#
 # Usage:
 #   examples/voice-pipecat/venv-preflight.sh            # check only
 #   examples/voice-pipecat/venv-preflight.sh --quiet    # exit code only
