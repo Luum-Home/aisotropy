@@ -240,9 +240,55 @@ func main() {
 	// records log (ADR-0064 Layer 1) keys every cell by framework|mode|lane|form|
 	// task-id, and resume-skip must know the lane before the pass runs. The
 	// stub-lane leak guard (which needs the scored records) stays after pass 1.
+	// Three lanes, distinguished by WHAT is substituted — not just "offline or
+	// not". The middle one exists because its absence cost a full board:
+	//
+	//   real         real model, real stores  — the framework comparison
+	//   integration  FAKE model, REAL stores  — infrastructure, at zero model cost
+	//   stub         fake model, fake stores  — wiring only
+	//
+	// `stub` fakes the model AND the stores, so it cannot see a broken store
+	// connection. Every one of the four defects that invalidated the 2026-07-27
+	// board — an orphaned rqlite Raft volume, eight adapters with no Qdrant
+	// credential, credentials-in-URL that three HTTP clients reject, a jar and two
+	// venvs stale enough to run old code — lived exactly there, and the free lane
+	// was structurally blind to all of them. They surfaced only when a real board
+	// was already spending.
+	//
+	// The integration lane closes that: real stores, real credentials, real
+	// network, and a mock model. It answers "does the infrastructure work?" with
+	// ZERO model calls, which also means zero dependence on WHICH model is
+	// configured — so an infra regression is provable without re-introducing the
+	// model as a variable (the reason two boards on different providers cannot be
+	// compared).
 	lane := "real"
-	if os.Getenv("ARENA_STUB") == "1" {
+	switch {
+	case os.Getenv("ARENA_STUB") == "1":
 		lane = "stub"
+	case os.Getenv("ARENA_STUB_MODEL") == "1":
+		lane = "integration"
+	}
+
+	// ---- model-profile gate (before the first billable call) ---------------
+	// A board must be able to state what it measured WITH, and whether that model
+	// fits the workload. Naming the model is provenance; naming its FIT is what
+	// stops a coding-specialised model's low general-assistant scores from being
+	// read as framework weakness — the misreading that nearly shipped on
+	// 2026-07-27. Gated here, alongside the determinism and matrix gates, so the
+	// operator writes the profile BEFORE spending, not after.
+	//
+	// Skipped on a lane that makes no model call: there is no model to
+	// characterise when every reply comes from a mock.
+	var profile *modelProfile
+	if lane == "real" {
+		profile, err = loadModelProfile(*liveDir, modelName())
+		if err != nil {
+			fatal("model-profile gate: %v", err)
+		}
+		logf("model profile: %s (%s) — workload fit: %s", profile.Model, profile.Vendor, profile.WorkloadFit)
+		for _, c := range profile.readingCaveats() {
+			logf("  CAVEAT: %s", c)
+		}
 	}
 
 	// ---- durable record stream + resume (ADR-0064 Layer 1) ------------------
@@ -288,13 +334,16 @@ func main() {
 	// burning billable free-tier quota (see docs/architecture/arena-
 	// infrastructure-parity.md). Deterministic: a pure scan of reported models.
 	var laneLeaks []string
-	if lane == "stub" {
+	// The integration lane mocks the MODEL too, so the same invariant holds: if a
+	// framework reports the real model id, its stub path leaked and the run spent
+	// quota it promised not to. Only the stores are real there.
+	if lane == "stub" || lane == "integration" {
 		laneLeaks = laneLeakFrameworks(records, modelName())
 		if len(laneLeaks) > 0 {
-			logf("WARNING: LANE LEAK — %d framework(s) reported the REAL model %q during a STUB run (called the real provider, billable/quota-burning): %s. A stub run must be fully offline — fix the adapter's stub path.",
-				len(laneLeaks), modelName(), strings.Join(laneLeaks, ", "))
+			logf("WARNING: LANE LEAK — %d framework(s) reported the REAL model %q during a %s run (called the real provider, billable/quota-burning): %s. This lane must make NO model call — fix the adapter's stub path.",
+				len(laneLeaks), modelName(), lane, strings.Join(laneLeaks, ", "))
 		} else {
-			logf("lane=stub: verified offline — no framework reported the real model")
+			logf("lane=%s: verified — no framework reported the real model (zero model spend)", lane)
 		}
 	} else {
 		logf("lane=real: scoring against the real model %q", modelName())
@@ -338,7 +387,13 @@ func main() {
 		CrashRecs:   crashRecs,
 		ObsRecords:  obsRecs,
 		MatrixDocs:  matrixDocs,
-		ModelCalls:  callBudget.total(),
+		ModelCaveats: func() []string {
+			if profile == nil {
+				return nil
+			}
+			return profile.readingCaveats()
+		}(),
+		ModelCalls: callBudget.total(),
 	}
 	resultsPath := filepath.Join(*liveDir, "RESULTS.md")
 	if err := writeResults(resultsPath, rep); err != nil {

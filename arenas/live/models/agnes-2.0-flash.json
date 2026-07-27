@@ -1,0 +1,20 @@
+{
+  "model": "agnes-2.0-flash",
+  "vendor": "Agnes AI",
+  "specialisation": "fast, cost-effective general language generation with agent task execution, tool orchestration and image understanding",
+  "workload_fit": "aligned",
+  "fit_note": "Vendor-stated strengths (agent task execution, tool orchestration) are the workload this arena measures, so a weak cell is more readily attributable to the framework than to model mismatch. Every board published in this repository before 2026-07-27 ran on this model.",
+  "reasoning_mode": {
+    "supported": false,
+    "enabled_by_arena": false,
+    "note": "No separate thinking/reasoning mode is documented for this model, so there is no uncontrolled reasoning-mode condition to correct for."
+  },
+  "published_benchmarks": {
+    "Claw-Eval (text/agentic)": "Pass^3 60.9%, ranked #9 on the general leaderboard"
+  },
+  "api_quirks": [],
+  "sources": [
+    "https://wiki.agnes-ai.com/en/docs/agnes-20-flash",
+    "https://hackernoon.com/singapores-agnes-ai-becomes-first-singapore-ai-lab-on-global-benchmark-leaderboard"
+  ]
+}

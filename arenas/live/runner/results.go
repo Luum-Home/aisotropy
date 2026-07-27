@@ -22,17 +22,22 @@ type reportData struct {
 	BenchIters  int
 	ColdProbes  int
 	JudgeOn     bool
-	Concurrency int      // -concurrency the correctness/quality pass ran under (1 = sequential)
-	RPS         float64  // -rps client-side global model-call pacing (0 = off)
-	Lane        string   // "real" | "stub" — which model lane this run scored (ARENA_STUB)
-	LaneLeaks   []string // frameworks that reported the REAL model during a STUB run (should be empty)
-	Records     []record
-	Benches     []benchCell
-	IsoRecords  []isoRecord
-	CrashRecs   []crashRecord
-	ObsRecords  []obsRecord
-	MatrixDocs  []matrixDoc
-	ModelCalls  int
+	Concurrency int     // -concurrency the correctness/quality pass ran under (1 = sequential)
+	RPS         float64 // -rps client-side global model-call pacing (0 = off)
+	Lane        string  // "real" | "integration" | "stub" — what this run substituted (see main.go's lane block)
+	// ModelCaveats are the reading instructions the model profile demands, most
+	// distorting first (workload mismatch, uncontrolled reasoning mode, API
+	// quirks). Rendered ABOVE the tables on purpose: a caveat printed after the
+	// numbers is a caveat nobody applies.
+	ModelCaveats []string
+	LaneLeaks    []string // frameworks that reported the REAL model during a STUB run (should be empty)
+	Records      []record
+	Benches      []benchCell
+	IsoRecords   []isoRecord
+	CrashRecs    []crashRecord
+	ObsRecords   []obsRecord
+	MatrixDocs   []matrixDoc
+	ModelCalls   int
 }
 
 // per (framework, mode) correctness aggregate.
@@ -193,6 +198,25 @@ tags: [arenas, live, results, agnes, quality, latency, cold-start, ttft, tokens,
 		fmt.Fprintf(b, "> **New dimensions:** %s (scoped-memory & isolation, crash recovery, observability capability)\n", strings.Join(rep.Dimensions, ", "))
 	}
 	b.WriteString("\n")
+
+	// Reading instructions from the model profile, ABOVE the tables.
+	//
+	// The header used to name the model and stop there. That is provenance
+	// without interpretation, and it reliably produces the wrong reading: a
+	// coding-specialised model scoring low on a general-assistant workload looks
+	// exactly like a weak framework, and nothing on the page says otherwise. A
+	// caveat placed under the tables is a caveat nobody applies, so these go
+	// first, ordered most-distorting first. Enforced upstream by the
+	// model-profile gate — a board cannot run without them.
+	if len(rep.ModelCaveats) > 0 {
+		b.WriteString("> [!IMPORTANT]\n")
+		b.WriteString("> **Read this before any number below.** The model is part of the measurement,\n")
+		b.WriteString("> not a configuration detail attached to it.\n>\n")
+		for _, c := range rep.ModelCaveats {
+			fmt.Fprintf(b, "> - %s\n", c)
+		}
+		b.WriteString("\n")
+	}
 
 	// LANE label + leak guard (P0 reporting discipline): a run is scored either
 	// against the REAL model or the offline STUB, and a file must state which so
