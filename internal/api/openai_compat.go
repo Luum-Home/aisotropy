@@ -52,6 +52,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -98,7 +99,36 @@ const (
 	oaiErrTypeAuthentication = "authentication_error"
 	oaiErrTypeServer         = "server_error"
 	oaiErrTypeRateLimit      = "rate_limit_error"
+
+	// Request bounds. Adopted from the voicebox spike
+	// (docs/06-Daily/reports/voicebox-spike-2026-07-27.md): an unbounded
+	// request body is a liveness hazard, and the fix is cheap and explicit.
+	// Before this, the shim accepted an arbitrarily long messages[] — a verify
+	// pass fed it 20k messages and got 200 OK.
+	//
+	// The numbers are deliberate, not arbitrary: maxOAIRequestBytes is ~4x the
+	// largest legitimate transcript we can construct at the other two limits,
+	// so it only ever trips on genuinely pathological input; maxOAIMessages is
+	// far above any real chat history a client replays; maxOAIPromptChars
+	// mirrors ChatRequest's own prompt bound (see core.go's maxLength) so the
+	// shim cannot become a way around the aisotropy contract's own limit.
+	maxOAIRequestBytes = 1 << 20 // 1 MiB of JSON
+	maxOAIMessages     = 512
+	maxOAIPromptChars  = 2000
 )
+
+// oaiServerTiming reports how long the pipeline took, in the W3C Server-Timing
+// format, so a client learns the cost of its own call without scraping metrics
+// or joining a trace. Adopted from voicebox (external/voicebox app.py:119,186).
+//
+// It is set on the NON-STREAMING path only, and that asymmetry is structural,
+// not an omission: headers are flushed before the first SSE frame, so at header
+// time a streaming response does not yet know its own duration. voicebox's PCM
+// streaming path has none either, for exactly the same reason. Streaming
+// latency is observable through the OTel span and the token timing instead.
+func oaiServerTiming(d time.Duration) string {
+	return fmt.Sprintf("pipeline;dur=%.1f", float64(d.Microseconds())/1000.0)
+}
 
 // newOAICompletionID mints the completion id shared by every chunk of one
 // stream (and by the non-streaming object). Package var so the golden wire
@@ -342,15 +372,35 @@ func RegisterOpenAICompat(api huma.API, client llm.Client, wm *memory.WorkingMem
 		// Decode + validate BEFORE any streaming, so a bad request is a real
 		// HTTP status with the OpenAI error envelope (the decode-before-stream
 		// discipline the aisdk adapter established).
+		// Size gate BEFORE unmarshalling: rejecting a 50 MiB body costs a
+		// length check, decoding it costs the allocation we are refusing.
+		// (Huma has already read RawBody into memory by this point, so this is
+		// not the pre-buffer bound voicebox achieves with read(max+1) on a
+		// stream — closing that fully means an http.MaxBytesReader at the
+		// server, which would apply to every route and is a separate change.
+		// This bound is still the difference between one over-sized buffer and
+		// an unbounded decode into thousands of message structs.)
+		if len(in.RawBody) > maxOAIRequestBytes {
+			return nil, newOAIError(http.StatusRequestEntityTooLarge, oaiErrTypeInvalidRequest,
+				fmt.Sprintf("request body exceeds the %d byte limit", maxOAIRequestBytes))
+		}
 		var req oaiChatRequest
 		if err := json.Unmarshal(in.RawBody, &req); err != nil {
 			return nil, newOAIError(http.StatusBadRequest, oaiErrTypeInvalidRequest,
 				"invalid chat completions request JSON: "+err.Error())
 		}
+		if len(req.Messages) > maxOAIMessages {
+			return nil, newOAIError(http.StatusBadRequest, oaiErrTypeInvalidRequest,
+				fmt.Sprintf("messages exceeds the %d message limit (got %d)", maxOAIMessages, len(req.Messages)))
+		}
 		prompt := latestUserMessageText(req.Messages)
 		if strings.TrimSpace(prompt) == "" {
 			return nil, newOAIError(http.StatusBadRequest, oaiErrTypeInvalidRequest,
 				"messages must include a user message with text content")
+		}
+		if len(prompt) > maxOAIPromptChars {
+			return nil, newOAIError(http.StatusBadRequest, oaiErrTypeInvalidRequest,
+				fmt.Sprintf("the latest user message exceeds the %d character limit (got %d)", maxOAIPromptChars, len(prompt)))
 		}
 
 		// Identity comes EXCLUSIVELY from the verified principal — never the
@@ -387,6 +437,7 @@ func RegisterOpenAICompat(api huma.API, client llm.Client, wm *memory.WorkingMem
 // OpenAI error envelope, unlike the streaming path where the 200 is already
 // on the wire.
 func oaiNonStreaming(ctx context.Context, deps StreamDeps, chatIn *ChatInput, model string) (*huma.StreamResponse, error) {
+	started := oaiSince()
 	var final *StreamFinal
 	sink := StreamSink{
 		// Tokens are accumulated by StreamCore itself (StreamFinal.Text is the
@@ -431,9 +482,11 @@ func oaiNonStreaming(ctx context.Context, deps StreamDeps, chatIn *ChatInput, mo
 	if err != nil {
 		return nil, newOAIError(http.StatusInternalServerError, oaiErrTypeServer, "encode completion: "+err.Error())
 	}
+	elapsed := oaiSince() - started
 	return &huma.StreamResponse{
 		Body: func(hctx huma.Context) {
 			hctx.SetHeader("Content-Type", "application/json")
+			hctx.SetHeader("Server-Timing", oaiServerTiming(elapsed))
 			_, _ = hctx.BodyWriter().Write(payload)
 		},
 	}, nil
@@ -520,3 +573,8 @@ func streamOAI(hctx huma.Context, d StreamDeps, in *ChatInput, model string, inc
 		stream.done()
 	}
 }
+
+// oaiSince is the monotonic clock the Server-Timing measurement reads. It is a
+// var so a test can pin it and assert an exact header value, mirroring how
+// oaiNow/newOACompletionID are pinned for the golden wire tests.
+var oaiSince = func() time.Duration { return time.Duration(time.Now().UnixNano()) }

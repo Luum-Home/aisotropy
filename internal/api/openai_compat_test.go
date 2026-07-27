@@ -548,3 +548,119 @@ func TestOpenAICompat_QuotaRejectionIs429RateLimit(t *testing.T) {
 		t.Errorf("stream error frame type = %q, want %q", frame.Error.Type, oaiErrTypeRateLimit)
 	}
 }
+
+// TestOpenAICompat_BoundedInputs closes the unbounded-messages[] hole a verify
+// pass found (20k messages -> 200 OK) and pins each bound's status + envelope.
+// Adopted from the voicebox spike: an unbounded request body is a liveness
+// hazard, and every rejection must be a typed 4xx, never a 500.
+func TestOpenAICompat_BoundedInputs(t *testing.T) {
+	wm := newTestWorkingMemory(t)
+	handler := newOAIRouter(t, auth.NewJWTBearer(oaiTestSecret), llm.NewStubClient(), wm)
+	token := mintTenantJWT(t, "acme", "alice")
+
+	tests := []struct {
+		name       string
+		body       []byte
+		wantStatus int
+		wantIn     string
+	}{
+		{
+			name:       "too many messages",
+			body:       oaiManyMessages(t, maxOAIMessages+1),
+			wantStatus: http.StatusBadRequest,
+			wantIn:     "message limit",
+		},
+		{
+			name:       "prompt too long",
+			body:       oaiBody(t, strings.Repeat("x", maxOAIPromptChars+1), false, nil),
+			wantStatus: http.StatusBadRequest,
+			wantIn:     "character limit",
+		},
+		{
+			name:       "body too large",
+			body:       oaiBody(t, strings.Repeat("y", maxOAIRequestBytes+1), false, nil),
+			wantStatus: http.StatusRequestEntityTooLarge,
+			wantIn:     "byte limit",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := postOAI(t, handler, token, tc.body)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			var envelope struct {
+				Error oaiErrorBody `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+				t.Fatalf("not an OpenAI error envelope: %s (%v)", rec.Body.String(), err)
+			}
+			if envelope.Error.Type != oaiErrTypeInvalidRequest {
+				t.Errorf("error.type = %q, want %q", envelope.Error.Type, oaiErrTypeInvalidRequest)
+			}
+			if !strings.Contains(envelope.Error.Message, tc.wantIn) {
+				t.Errorf("error.message = %q, want it to mention %q", envelope.Error.Message, tc.wantIn)
+			}
+		})
+	}
+
+	// The bounds must not reject legitimate traffic: a request AT each limit
+	// still succeeds (a guard that trips early is as broken as one that never
+	// trips).
+	ok := oaiManyMessages(t, maxOAIMessages)
+	if rec := postOAI(t, handler, token, ok); rec.Code != http.StatusOK {
+		t.Fatalf("exactly-at-limit request status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// oaiManyMessages builds a request whose messages[] has n entries, the last one
+// a valid user turn (so only the count is under test, never the content rule).
+func oaiManyMessages(t *testing.T, n int) []byte {
+	t.Helper()
+	msgs := make([]map[string]any, 0, n)
+	for i := 0; i < n-1; i++ {
+		msgs = append(msgs, map[string]any{"role": "assistant", "content": "prior turn"})
+	}
+	msgs = append(msgs, map[string]any{"role": "user", "content": "hi"})
+	b, err := json.Marshal(map[string]any{"model": "test-model", "stream": false, "messages": msgs})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
+// TestOpenAICompat_ServerTimingHeader pins the adopted Server-Timing header:
+// a client learns the cost of its own call without scraping metrics or joining
+// a trace. The clock is pinned so the assertion is on an exact value, not a
+// range — the same discipline as the golden wire test.
+func TestOpenAICompat_ServerTimingHeader(t *testing.T) {
+	wm := newTestWorkingMemory(t)
+	handler := newOAIRouter(t, auth.NewJWTBearer(oaiTestSecret), llm.NewStubClient(), wm)
+
+	orig := oaiSince
+	calls := 0
+	oaiSince = func() time.Duration {
+		calls++
+		if calls == 1 {
+			return 0
+		}
+		return 1500 * time.Millisecond
+	}
+	t.Cleanup(func() { oaiSince = orig })
+
+	rec := postOAI(t, handler, mintTenantJWT(t, "acme", "alice"), oaiBody(t, "hi", false, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got, want := rec.Header().Get("Server-Timing"), "pipeline;dur=1500.0"; got != want {
+		t.Errorf("Server-Timing = %q, want %q", got, want)
+	}
+
+	// The streaming path deliberately has none: headers flush before the first
+	// SSE frame, so at header time the duration is not yet known. Pinned so the
+	// asymmetry stays a documented decision rather than drifting silently.
+	rec = postOAI(t, handler, mintTenantJWT(t, "acme", "alice"), oaiBody(t, "hi", true, nil))
+	if got := rec.Header().Get("Server-Timing"); got != "" {
+		t.Errorf("streaming Server-Timing = %q, want empty (see oaiServerTiming's doc)", got)
+	}
+}
