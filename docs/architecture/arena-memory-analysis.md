@@ -1,7 +1,7 @@
 ---
 type: Process
 title: "Arena Memory Analysis — is aisotropy's memory better or worse than the competitors, with reason"
-description: The forensically defensible answer to the operator's core question, now grounded in the clean FASE-5 board (commit 06945bf, real agnes lane, deterministic scores). It is not one answer — it is one per axis and workload. On within-session recall, aisotropy is WORSE — it pays the widest token premium on a board where replay is optimal (measured on the post-fix board 8154f63; on the clean board its plain-memory cells errored on a filed adapter shutdown bug). On cross-session / semantic / consolidation recall — the workloads previously only wired — aisotropy now has MEASURED numbers: 2/2, 2/2, 2/2, TYING the top tier with mastra and spring-ai (it is NOT unique). On tenancy-under-a-forgotten-scope, aisotropy is one of only three frameworks that ENFORCE (2/2 refuses, board-rendered), while langgraph and llamaindex fail 0/2 — the by-construction thesis, now measured. On adversarial safeguard, aisotropy is mid-pack (5/7) — a named weakness. mastra is the strongest overall competitor on this board. Every "better" is axis-and-workload-qualified; the "worse" is stated at equal volume.
+description: The forensically defensible answer to the operator's core question, now grounded in the clean FASE-5 board (commit 06945bf, real agnes lane, deterministic scores). It is not one answer — it is one per axis and workload. On within-session recall, aisotropy is WORSE — it pays the widest token premium on a board where replay is optimal (measured on the post-fix board 8154f63; on the clean board its plain-memory cells errored on a filed runtime defect (HTTP 500/502; NOT the shutdown artifact first reported)). On cross-session / semantic / consolidation recall — the workloads previously only wired — aisotropy now has MEASURED numbers: 2/2, 2/2, 2/2, TYING the top tier with mastra and spring-ai (it is NOT unique). On tenancy-under-a-forgotten-scope, aisotropy is one of only three frameworks that ENFORCE (2/2 refuses, board-rendered), while langgraph and llamaindex fail 0/2 — the by-construction thesis, now measured. On adversarial safeguard, aisotropy is mid-pack (5/7) — a named weakness. mastra is the strongest overall competitor on this board. Every "better" is axis-and-workload-qualified; the "worse" is stated at equal volume.
 tags: [architecture, process, arena, memory, tenancy, forensics, code-truth, bias-audit]
 timestamp: 2026-07-23T00:00:00Z
 ---
@@ -37,7 +37,7 @@ contaminated concurrency-3 run) are cited only as history, never as current resu
 
 | Axis / workload | Verdict | Status of the evidence |
 |---|---|---|
-| **Within-session recall** (the shipped `memory` dimension) | aisotropy **WORSE** — pays the widest token premium for machinery replay renders free | **MEASURED** on the post-fix board `8154f63` (100,644 memory tokens vs a 16,200–28,075 competitor range). On the clean board `06945bf`, aisotropy's plain-memory cells all errored on a filed adapter shutdown bug (§1), so `8154f63` remains the within-session reference |
+| **Within-session recall** (the shipped `memory` dimension) | aisotropy **WORSE** — pays the widest token premium for machinery replay renders free | **MEASURED** on the post-fix board `8154f63` (100,644 memory tokens vs a 16,200–28,075 competitor range). On the clean board `06945bf`, aisotropy's plain-memory cells all errored on a filed RUNTIME defect — 500/502, not the shutdown artifact first reported (§1), so `8154f63` remains the within-session reference |
 | **Cross-session recall** (`memory_cross_session`) | aisotropy **TIES the top** — 2/2, alongside mastra, spring-ai, langgraph, llamaindex, pydantic-ai; the session-keyed frameworks score 1/2 | **MEASURED** — `06945bf` |
 | **Semantic long-term recall** (`memory_semantic_recall`) | aisotropy **TIES the top tier** — 2/2 with mastra and spring-ai only; langgraph/llamaindex 1/2; the rest 0/2. Served via aisotropy's semantic tier — see the caveat in §3 | **MEASURED** — `06945bf` |
 | **Consolidation across a session boundary** (`memory_consolidation`) | aisotropy **TIES the top** — 2/2, alongside mastra, spring-ai, langgraph, llamaindex, pydantic-ai; ai-sdk/eino/genkit-go 0/2 | **MEASURED** — `06945bf` |
@@ -61,9 +61,24 @@ can lose — an **empty tie**, in the exact sense `docs/architecture/arena-bench
 ("empty parity") defines: the column cannot rank anyone because the thing it exercises is not the
 thing that differs. The clean FASE-5 board (`06945bf`, now 9 frameworks including spring-ai)
 reproduces the tie for every *scored* framework — all eight competitors again at 8/8 — with one
-asterisk: **aisotropy's own eight plain-memory runs all errored** on that pass, part of the ~16
-adapter shutdown-exit-1 blips (the adapter answers, then exits non-zero during connection drain — an
-adapter bug, filed; see the run-hygiene note in §3). So the within-session evidence in this section
+asterisk: **aisotropy's own eight plain-memory runs all errored** on that pass.
+
+> **Correction (2026-07-27) — these were NOT cosmetic shutdown blips.** An earlier revision of this
+> doc (and the `06945bf` commit message) characterized aisotropy's errored runs as "the adapter
+> answers, then exits non-zero during connection drain — an adapter bug". That reading was wrong: it
+> came from the *shape* of the stderr tail, where the adapter's deferred `stop()` logs
+> "draining connections / aisotropyd stopped" **before** `main` prints the error, making a real
+> failure look like a shutdown artifact. The committed board's per-item detail is unambiguous —
+> `grep -oE 'status [0-9]{3}' arenas/live/RESULTS.md` returns **6× status 500** (from `/chat/agent`,
+> four of them on the `(structured)` path) and **3× status 502** (from `/ask`). The adapter exits 1
+> because the request genuinely failed. "Make it exit 0" would have HIDDEN real failures — the
+> mistaken fix that mischaracterization invited. The open defect is therefore a **runtime** one
+> (why does `/chat/agent` return 500 on the structured path, and `/ask` 502?), not an adapter
+> exit-code one; the `(structured)` clustering points at reflection-loop retry exhaustion as the
+> likely 500 class. Filed as such; not yet root-caused (the board's server logs are gone, so a
+> re-run with retained logs is the next evidence step).
+
+So the within-session evidence in this section
 and §2 rests on `8154f63`, and the clean board neither contradicts nor re-measures it for aisotropy.
 
 The reason the tie cannot rank anyone is structural, and it is the crux of the whole "worse" verdict.
@@ -121,7 +136,7 @@ table), the memory dimension's total token spend was:
 | pydantic-ai | 11,349 | 4,851 | 16,200 | 1,418 | 606 |
 
 (That board has since been superseded as the arena's *current* board by `06945bf`, whose aisotropy
-plain-memory cells errored on the filed shutdown bug — §1 — so this table remains the honest
+plain-memory cells errored on the filed runtime 500/502 defect — §1 — so this table remains the honest
 within-session token reference. Nothing in the clean board contradicts it.)
 
 Even **after** the refusal-cascade adapter bug was fixed, aisotropy's memory token spend (100,644) is
