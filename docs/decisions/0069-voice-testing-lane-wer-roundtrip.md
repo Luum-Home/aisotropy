@@ -196,3 +196,26 @@ Dependency license verdicts for everything the lane adds (`pip show`, 2026-07-23
   2026-07-23: bot.py default → `alloy`; the pipecat 1.x migration remains open.)*
 - **No CI wiring / no model caching infra** — opt-in lane first; automation is a follow-on once
   the lane has operator mileage.
+
+### Dismissed follow-on (operator decision, 2026-07-27)
+
+- **The GPU / streaming-TTS path: DISMISSED, not deferred.** The 2026-07-23 measurement made
+  Kokoro-CPU's first audio byte the sandwich's bottleneck (median TTFAB 3543 ms, of which 3540 ms
+  was TTS and 3.1 ms the runtime), and the natural next move looked like the GPU image. Three
+  things dissolved that:
+  - **The hardware does not exist here.** Kokoro-GPU wants CUDA; this is Apple Silicon. Pursuing
+    it means a different machine or a remote runner — the only item of the three follow-ons that
+    is blocked by hardware rather than by effort.
+  - **The premise shrank when re-measured.** The 3540 ms record does not reproduce: re-run native
+    on 2026-07-27 with the same function, the same stack answers **1647 ms** short / **2135 ms**
+    long. Much of the original figure was machine state — that run happened at ~90 % swap under
+    several concurrent agent sessions — not model cost. Optimising against an inflated number is
+    how effort goes to the wrong place.
+  - **A CPU path already beats what GPU was meant to buy.** The voicebox spike measured **410 ms**
+    warm on CPU (`docs/06-Daily/reports/voicebox-spike-2026-07-27.md`), and voicebox has since
+    been adopted as the PoC's audio backend. The remaining gap does not justify new hardware.
+
+  What would revive it: a target that a CPU backend genuinely cannot meet (sub-200 ms first audio
+  byte, or many concurrent sessions per host — voicebox serialises inference at one call per
+  instance, measured wall/serial-sum 1.13), on a machine that has the GPU to test it on. Recorded
+  here rather than carried as open debt, because an item nobody can act on is not a plan.

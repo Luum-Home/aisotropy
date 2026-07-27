@@ -172,6 +172,28 @@ Checked before designing (dependency-reuse-first):
 - **No F5-TTS official weights** — CC-BY-NC, BARRED for SaaS (Apache alt exists: OpenF5-TTS-Base).
   Full license table: `docs/research/voice-pipeline-landscape-2026-07-23.md`.
 
+### Dismissed follow-on (operator decision, 2026-07-27)
+
+- **Verifying the shim against a real provider: DISMISSED, not deferred.** Every test of this
+  shim runs the stub LLM client — 11 Go tests, the adversarial identity suite, the golden wire
+  frames, and the live smoke with the openai Python SDK 2.47.0. What that leaves unexercised is
+  narrow and worth naming exactly: whether a *real* provider's `usage` and `finish_reason`
+  semantics match the shapes the stub emits. The operator dismissed closing it, and the reasoning
+  is sound rather than merely convenient:
+  - the gap is a **credential**, not a capability — nothing about this machine or this code
+    prevents it, so it produces no design pressure and blocks nothing;
+  - the wire contract is already pinned from **both ends** — the golden test round-trips through
+    this repo's own Chat Completions *client* (`internal/llm/openai_compat.go`), which is the
+    same code that talks to real providers in production, so a shape the shim emits that a real
+    provider would reject would have to fool our own client first;
+  - and a single un-repeated paid run would be **weaker evidence than it looks** — it verifies one
+    provider, one model, one day, while the deterministic tests verify every run.
+
+  What would revive it: adopting a provider whose usage/finish semantics are known to diverge (the
+  `openai-compat-boundary` report's "varies by backend" tier), or a report of a real client
+  rejecting our frames. Until then the honest statement is not "verified against a real provider"
+  — it is "verified against the contract, by the client that speaks it."
+
 ## Implementation plan (S, additive — pending operator approval)
 
 1. `internal/api/authn.go` — principal-derived mode behind operation metadata (small diff).
