@@ -242,9 +242,21 @@ func newJudgeClient() (*judgeClient, error) {
 	if key == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY not set")
 	}
+	// NO VENDOR DEFAULT. This used to fall back to https://api.openai.com/v1, so
+	// a runner started with OPENAI_API_KEY set but OPENAI_BASE_URL unset silently
+	// shipped every judged prompt — arena questions, retrieved corpus text,
+	// framework replies — to OpenAI. Nothing in the output said so; the board
+	// would simply contain scores from an endpoint nobody chose.
+	//
+	// That is the same failure the arena adapter's model default had, and it is
+	// worse here: the credential variable is named OPENAI_API_KEY, so pointing it
+	// at any OpenAI-COMPATIBLE provider (poolside, Agnes AI, a local server) is
+	// normal in this repo — the name gives no warning that an unset base URL
+	// means "send it to OpenAI". Fail loudly instead; see
+	// docs/architecture/model-provider.md.
 	base := strings.TrimRight(os.Getenv("OPENAI_BASE_URL"), "/")
 	if base == "" {
-		base = "https://api.openai.com/v1"
+		return nil, fmt.Errorf("OPENAI_BASE_URL is unset: the LLM judge refuses to pick a provider for you — set it (e.g. https://inference.poolside.ai/v1) so the endpoint that scores the board is the one you chose; see docs/architecture/model-provider.md")
 	}
 	return &judgeClient{apiKey: key, model: modelName(), baseURL: base, http: &http.Client{Timeout: 90 * time.Second}}, nil
 }
