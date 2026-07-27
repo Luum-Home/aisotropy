@@ -187,7 +187,13 @@ type runCtx struct {
 }
 
 func main() {
-	model := envOr("OPENAI_MODEL", "agnes-2.0-flash")
+	// NO VENDOR DEFAULT. A fallback model id is provenance fabricated by a
+	// default: an unconfigured run would label every number it produces with
+	// a model it never called. The same default was removed from the other
+	// adapters during the multi-provider work; this one and spring-ai's
+	// survived, and scripts/arena-integration-gate.sh found this one within
+	// minutes of existing — after I had already called spring-ai's "the last".
+	model := envOr("OPENAI_MODEL", "unconfigured (set OPENAI_MODEL)")
 	if stubModelMode {
 		// Never report the real model name in a stub run: the offline echo model
 		// (stub.go's stubModelFunc) is what actually answers, so the wire

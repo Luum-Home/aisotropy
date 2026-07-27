@@ -69,5 +69,29 @@ else
   fi
 fi
 
+# ---- stage 4: arena integration gate (opt-in, needs the local stack) --------
+# Real embed server + Qdrant + rqlite, MOCKED model: proves the arena lane works
+# for all nine adapters at zero model cost. Catches the four classes that reached
+# a board unnoticed — lane leaks, vendor-default model ids, store-schema
+# mismatches that silently return zero documents, and stdout pollution that
+# breaks the one-JSON-object contract.
+#
+# OPT-IN because it needs services running, and a gate that fails for "the stack
+# is down" would train everyone to bypass the whole pre-push hook. It exits 2
+# when it cannot reach the stores, and 2 is treated here as "not applicable" —
+# never as a pass, and never as a block. Set ARENA_INTEGRATION_GATE=1 to require
+# it (the right setting before touching arenas/live/).
+if [ "${ARENA_INTEGRATION_GATE:-0}" = "1" ]; then
+  echo "pre-push-gate: stage 4/4 arena integration gate ..."
+  bash "$(dirname "$0")/arena-integration-gate.sh"; rc=$?
+  if [ "$rc" -eq 2 ]; then
+    echo "pre-push-gate: arena integration gate could not run (stores unreachable) — NOT a pass." >&2
+    exit 2
+  fi
+  [ "$rc" -eq 0 ] || { echo "pre-push-gate: BLOCKED by the arena integration gate (exit $rc) — an infrastructure defect would have been reported as a framework result." >&2; exit "$rc"; }
+else
+  echo "pre-push-gate: stage 4/4 arena integration gate SKIPPED (set ARENA_INTEGRATION_GATE=1 with the local stack up)"
+fi
+
 echo "pre-push-gate: all stages clean — push may proceed."
 exit 0
