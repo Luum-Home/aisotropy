@@ -59,7 +59,40 @@ services:
     # -auth gates the arbitrary-SQL-over-HTTP surface. The users file grants the
     # "aisotropy" app user full perms and the anonymous "*" user only ready/status
     # (so the /readyz healthcheck below works unauthenticated).
-    command: ["-http-addr", "0.0.0.0:4001", "-raft-addr", "0.0.0.0:4002", "-auth", "/rqlite/auth/users.json"]
+    #
+    # -node-id is PINNED, and that is not cosmetic. rqlite derives its Raft node
+    # id from the container hostname by default, but the volume below persists
+    # the Raft configuration. Recreate the container (any `up --force-recreate`,
+    # an image bump, an edit to this file) and the persisted configuration names
+    # a node id that no longer exists: the node never wins an election
+    # ("not part of stable configuration, aborting election"), /readyz answers
+    # 503 forever and the healthcheck below stays `unhealthy` — a permanently
+    # degraded facts tier from a routine recreate. Reproduced and fixed under
+    # controlled conditions 2026-07-27 (isolated project, own volume): without
+    # -node-id, /readyz after recreate = 503; with it = 200 and the data intact.
+    #
+    # RECOVERING AN ALREADY-BROKEN STACK: this flag PREVENTS the breakage, it
+    # does not repair a volume that is already orphaned — measured, same day:
+    # adding -node-id to a volume broken by a prior recreate still answers 503.
+    # A stack stuck at 503 must either drop its Raft state:
+    #     docker compose down && docker volume rm aisotropy_rqlite-data
+    #     docker compose up -d      # facts tier starts empty
+    # or use rqlite's documented peers.json recovery to preserve the data
+    # (https://rqlite.io/docs/clustering/general-guidelines/ — not exercised here).
+    #
+    # -http-adv-addr is deliberately NOT set here: this node's client is the
+    # in-network `aisotropyd` service, and one advertised address cannot serve
+    # both in-network and host-side clients. Host-side tools (the `-tags manual`
+    # tests) need `localhost:<port>` advertised, which would break aisotropyd —
+    # they use deploy/dormant-lane/docker-compose.yml instead, which exists for
+    # exactly that reason. See docs/deployment/dormant-lanes.md.
+    command:
+      [
+        "-http-addr", "0.0.0.0:4001",
+        "-raft-addr", "0.0.0.0:4002",
+        "-node-id", "aisotropy-rqlite-1",
+        "-auth", "/rqlite/auth/users.json",
+      ]
     ports:
       - "4001:4001" # HTTP API (RQLITE_URL points here)
     volumes:

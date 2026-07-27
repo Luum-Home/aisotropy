@@ -105,6 +105,52 @@ for a healthcheck), so it is gated by `service_started` plus `aisotropyd`'s
 first boot, `aisotropyd` exits and Docker restarts it until Qdrant is ready. Expect
 one or two restart lines in the log on a cold start; this is normal.
 
+## Troubleshooting: rqlite stuck `unhealthy` / `/readyz` 503
+
+**Symptom.** `docker ps` shows `rqlite` as `unhealthy`, `curl localhost:4001/readyz`
+returns 503 indefinitely, the healthcheck's `FailingStreak` climbs without bound, and
+the log repeats:
+
+```
+[raft] [WARN]  not part of stable configuration, aborting election
+```
+
+The facts tier is down; `GET /health` reports `degraded`.
+
+**Cause.** rqlite derives its Raft node id from the container hostname unless told
+otherwise, while the named volume persists the Raft configuration. Any container
+recreate — `up --force-recreate`, an image bump, an edit to `docker-compose.yml` —
+gives the node a new hostname, so the persisted configuration names a peer that no
+longer exists and no election can ever succeed.
+
+**Prevention (already applied).** The reference `docker-compose.yml` pins
+`-node-id`, so the identity survives recreates. Measured under controlled
+conditions on 2026-07-27, isolated project and volume: without the flag `/readyz`
+after a recreate returns **503**; with it, **200** and the pre-recreate row still
+readable.
+
+**Repair, if you are already stuck.** The flag prevents the breakage; it does not
+repair a volume that is already orphaned — also measured: adding `-node-id` to an
+already-broken volume still returns 503. Two options:
+
+```bash
+# (a) Drop the Raft state. Fast, and the facts tier restarts EMPTY.
+docker compose down && docker volume rm aisotropy_rqlite-data && docker compose up -d
+
+# (b) Preserve the data: rqlite's documented peers.json recovery.
+#     https://rqlite.io/docs/clustering/general-guidelines/  (not exercised here)
+```
+
+A single-node deployment loses nothing structural with (a) if the facts tier is
+rebuildable from source documents; check before you drop it.
+
+**Note on host-side clients.** This node deliberately does *not* set
+`-http-adv-addr`: its client is the in-network `aisotropyd`, and one advertised
+address cannot serve both in-network and host-side callers. Tools running on the
+host (the `-tags manual` tests) need `localhost:<port>` advertised, which would
+break `aisotropyd` — they use [`deploy/dormant-lane/docker-compose.yml`](dormant-lanes.md)
+instead, which exists for exactly that reason.
+
 ## Sleep-cycle (opt-in overlay)
 
 The offline DataFusion consolidation ([ADR-0005](../decisions/0005-datafusion-go-rust-boundary.md))
