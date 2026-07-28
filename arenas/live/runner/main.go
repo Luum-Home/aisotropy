@@ -25,8 +25,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,6 +85,7 @@ func main() {
 	skipCorrect := flag.Bool("skip-correctness", false, "skip the correctness/quality pass entirely")
 	skipDims := flag.Bool("skip-dimensions", false, "skip the new-dimensions pass (scoped-memory, isolation, crash, observability)")
 	skipMatrixGate := flag.Bool("skip-matrix-gate", false, "skip the full-matrix completeness gate over arenas/live/<fw>/matrix.json (still renders the matrix section)")
+	skipServiceGate := flag.Bool("skip-service-gate", false, "skip the real-lane infrastructure reachability gate (Qdrant, rqlite, embed server). Only pass this if you INTEND to measure against whatever happens to be up: a store that is down does not fail loudly, it degrades into in-process defaults and publishes as a retrieval score")
 	skipDeterminismGate := flag.Bool("skip-determinism-gate", false, "skip the scripts/arena-determinism-guard.sh purity+reproducibility gate over arenas/live/runner/scoring (the PRIMARY score's enforcement gate — see .claude/rules/arena-deterministic-judging.md)")
 	renderOnlyFlag := flag.Bool("render-only", false, "ADR-0064 Layer 1: regenerate RESULTS.md purely from arenas/live/RESULTS.records.jsonl (+ the matrix.json manifests) with ZERO model calls and ZERO adapter spawns, then exit. Proves the render is decoupled from the run — the durable record stream is the single source of truth. All run/pass flags are ignored in this mode.")
 	resumeFlag := flag.Bool("resume", false, "ADR-0064 Layer 1: on a normal run, load any existing arenas/live/RESULTS.records.jsonl and SKIP every correctness cell already present (keyed framework|mode|lane|form|task-id), so a killed board continues instead of re-doing work — the resumed cells are folded back into the report. Default OFF preserves exact pre-Layer-1 behavior (a fresh run with no records file is byte-identical to before). A schema-version (v) mismatch invalidates the stale file (renamed aside), never crashes. NOTE: durable append to RESULTS.records.jsonl is ALWAYS on (the durability half of Layer 1); -resume only controls the skip-on-restart half.")
@@ -274,6 +279,27 @@ func main() {
 		lane = "stub"
 	case os.Getenv("ARENA_STUB_MODEL") == "1":
 		lane = "integration"
+	}
+
+	// ---- service gate (before the first billable call) ---------------------
+	// On 2026-07-28 a full board ran for forty minutes with Qdrant (6333/6334)
+	// and rqlite (4001) DOWN — docker was never started. Only genkit-go errored
+	// loudly; the other five RAG adapters completed all 19 items each by
+	// silently degrading to in-process defaults. That run was about to reach
+	// writeResults and REPLACE the published board with retrieval numbers
+	// measured against nothing, which reads as framework quality and is not.
+	//
+	// preflight.sh existed and was not enough: it verifies TOOLCHAINS, reported
+	// all nine adapters green, and is a separate script somebody has to remember
+	// to run. A gate the operator must remember is not a gate. So this refuses
+	// to start, in-process, alongside the determinism and matrix gates, before
+	// anything is spent.
+	if !*skipServiceGate && lane != "stub" {
+		if err := gateServices(lane, frameworks, modes); err != nil {
+			fatal("service gate: %v", err)
+		}
+	} else if *skipServiceGate {
+		logf("WARNING: -skip-service-gate set — real-lane infrastructure was NOT verified; any store that is down will degrade silently into the numbers")
 	}
 
 	// ---- model-profile gate (before the first billable call) ---------------
@@ -1500,6 +1526,213 @@ func frameworkInfraEnv(script string) []string {
 func adapterEnv(script string) []string {
 	env := append(os.Environ(), frameworkCollectionEnv(script)...)
 	return append(env, frameworkInfraEnv(script)...)
+}
+
+// ---- service gate ------------------------------------------------------------
+
+// probeResult classifies ONE probe. The classification is the whole point: on
+// 2026-07-28 a 40-minute board was killed on the conclusion "Qdrant is down",
+// reached from three probes that had all merely TIMED OUT on a machine at 93%
+// swap. Re-run on an idle machine minutes later the same commands returned
+// docker OK, port open, and HTTP 401 -- the service had been answering the
+// entire time. The 401 body even said "Must provide an API key", and it had
+// been discarded by `curl -o /dev/null`, which kept the status code and threw
+// away the sentence that disproved the conclusion.
+//
+// So this gate never reduces a probe to a boolean. ABSENCE HAS MANY CAUSES AND
+// PRESENCE HAS ONE: refused, timed-out, unauthorized and answered-correctly are
+// four different facts, and only one of them means "not there". A timeout is
+// explicitly INCONCLUSIVE -- it neither absolves nor condemns, the same
+// discipline scripts/prune-guard.sh applies when it cannot evaluate a nested
+// module.
+type probeResult int
+
+const (
+	probeOK           probeResult = iota // answered, as expected
+	probeRefused                         // connection refused -- genuinely nothing there
+	probeInconclusive                    // timed out / transport error: CANNOT CONCLUDE
+	probeAnsweredBad                     // answered, but the answer is wrong (auth, 5xx, missing collection)
+)
+
+type probe struct {
+	name   string
+	result probeResult
+	detail string
+}
+
+// httpProbe performs one HTTP GET and classifies the outcome, keeping the
+// response BODY on a non-2xx -- the discriminating evidence a status code alone
+// discards.
+func httpProbe(name, rawURL string, headers map[string]string, timeout time.Duration) probe {
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return probe{name, probeAnsweredBad, "malformed URL: " + err.Error()}
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	if err != nil {
+		// Refused is a fact about the world; a timeout is a fact about this
+		// machine's current load. They must not share a branch.
+		var nerr net.Error
+		if errors.As(err, &nerr) && nerr.Timeout() {
+			return probe{name, probeInconclusive, fmt.Sprintf("timed out after %s (NOT proof of absence — see load below)", timeout)}
+		}
+		if strings.Contains(err.Error(), "connection refused") {
+			return probe{name, probeRefused, "connection refused — nothing is listening"}
+		}
+		return probe{name, probeInconclusive, "transport error: " + err.Error()}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode/100 == 2 {
+		return probe{name, probeOK, string(body)}
+	}
+	return probe{name, probeAnsweredBad,
+		fmt.Sprintf("HTTP %d — the service ANSWERED and rejected the request: %s",
+			resp.StatusCode, strings.TrimSpace(tail(string(body), 120)))}
+}
+
+// qdrantCollections returns the set of collection names Qdrant reports.
+func qdrantCollections(body string) map[string]bool {
+	var parsed struct {
+		Result struct {
+			Collections []struct {
+				Name string `json:"name"`
+			} `json:"collections"`
+		} `json:"result"`
+	}
+	out := map[string]bool{}
+	if json.Unmarshal([]byte(body), &parsed) != nil {
+		return out
+	}
+	for _, c := range parsed.Result.Collections {
+		out[c.Name] = true
+	}
+	return out
+}
+
+// gateServices verifies, before the first billable call, that the stores this
+// lane measures THROUGH will actually answer the questions the run will ask.
+//
+// It is SEMANTIC, not a port check. A TCP dial answers "is anything listening?",
+// and on 2026-07-28 the real failure was a different question: genkit-go's RAG
+// items failed against a collection Qdrant was serving perfectly well, because
+// arena_rag_genkit_go did not exist. Every port was open. A dial-based gate
+// would have waved that run through exactly as it did.
+func gateServices(lane string, frameworks []adapter, modes []string) error {
+	const timeout = 8 * time.Second
+
+	runsRAG := false
+	for _, m := range modes {
+		if m == "rag" || m == "safeguard" {
+			runsRAG = true
+		}
+	}
+
+	var probes []probe
+	var missingColls []string
+
+	// --- Qdrant: answer + the per-framework collections this run will query ---
+	qURL := strings.TrimRight(envOr("QDRANT_REST_URL", "http://localhost:6333"), "/") + "/collections"
+	headers := map[string]string{}
+	if k := os.Getenv("QDRANT_API_KEY"); k != "" {
+		headers["api-key"] = k
+	}
+	q := httpProbe("Qdrant (REST)", qURL, headers, timeout)
+	probes = append(probes, q)
+	if q.result == probeOK && runsRAG {
+		have := qdrantCollections(q.detail)
+		for _, fw := range frameworks {
+			// Mirrors frameworkCollectionEnv: arena_rag_<fw with - as _>. The
+			// reference adapter self-ingests into its own tier and needs none.
+			if fw.name == aisotropyFrameworkName {
+				continue
+			}
+			coll := "arena_rag_" + strings.ReplaceAll(fw.name, "-", "_")
+			if !have[coll] {
+				missingColls = append(missingColls, fmt.Sprintf("%s -> %s", fw.name, coll))
+			}
+		}
+		sort.Strings(missingColls)
+	}
+
+	// --- rqlite ---
+	probes = append(probes, httpProbe("rqlite", strings.TrimRight(envOr("RQLITE_URL", "http://localhost:4001"), "/")+"/status", nil, timeout))
+
+	// --- embed server ---
+	probes = append(probes, httpProbe("embed server", strings.TrimRight(envOr("EMBED_URL", "http://127.0.0.1:8899"), "/")+"/health", nil, timeout))
+
+	var refused, inconclusive, bad []probe
+	for _, p := range probes {
+		switch p.result {
+		case probeOK:
+			logf("service gate: %s OK", p.name)
+		case probeRefused:
+			refused = append(refused, p)
+		case probeInconclusive:
+			inconclusive = append(inconclusive, p)
+		case probeAnsweredBad:
+			bad = append(bad, p)
+		}
+	}
+
+	if len(refused)+len(inconclusive)+len(bad)+len(missingColls) == 0 {
+		return nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "the %q lane cannot be measured as configured:\n", lane)
+	for _, p := range refused {
+		fmt.Fprintf(&b, "  DOWN         %-14s %s\n", p.name, p.detail)
+	}
+	for _, p := range bad {
+		fmt.Fprintf(&b, "  MISCONFIGURED %-13s %s\n", p.name, p.detail)
+	}
+	for _, m := range missingColls {
+		fmt.Fprintf(&b, "  NO COLLECTION %-13s %s\n", "Qdrant", m)
+	}
+	for _, p := range inconclusive {
+		fmt.Fprintf(&b, "  INCONCLUSIVE %-14s %s\n", p.name, p.detail)
+	}
+	if len(inconclusive) > 0 {
+		fmt.Fprintf(&b, "\nAn INCONCLUSIVE probe is NOT a service that is down. It is this gate saying it\n")
+		fmt.Fprintf(&b, "could not tell, most often because the machine is loaded. Current load: %s.\n", loadAverage())
+		fmt.Fprintf(&b, "Do not conclude absence from it — re-probe on a quiet machine before acting.\n")
+	}
+	if len(missingColls) > 0 {
+		b.WriteString("\nSeed the missing collections: python3 arenas/live/_shared/populate-qdrant.py\n")
+	}
+	if len(refused) > 0 {
+		b.WriteString("Start the stores: docker compose up -d\n")
+	}
+	b.WriteString("\nThen re-run with -resume to keep finished cells. -skip-service-gate proceeds\n")
+	b.WriteString("anyway: a store that is down does not fail loudly, it degrades into in-process\n")
+	b.WriteString("defaults and publishes as a retrieval score.")
+	return fmt.Errorf("%s", b.String())
+}
+
+func envOr(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return def
+}
+
+// loadAverage reports the machine's 1/5/15-minute load, so an INCONCLUSIVE
+// verdict carries the context that explains it instead of leaving the reader to
+// guess. Best-effort: an unavailable load is reported as such, never as zero.
+func loadAverage() string {
+	out, err := exec.Command("uptime").Output()
+	if err != nil {
+		return "unavailable"
+	}
+	s := string(out)
+	if i := strings.Index(s, "load average"); i >= 0 {
+		return strings.TrimSpace(s[i:])
+	}
+	return "unavailable"
 }
 
 // ---- determinism gate --------------------------------------------------------
