@@ -31,17 +31,32 @@ import os
 import sys
 
 
-def observed_verdict(counts: dict) -> str:
-    """Collapse a mode's cells into one verdict.
+def observed_kind(counts: dict) -> str:
+    """What the board OBSERVED, in terms the manifest can actually be compared to.
 
-    `error-only` is deliberately distinct from `fail`: a mode whose every cell
-    errored produced no measurement at all, and calling that a failure would
-    attribute an infrastructure problem to the framework — the single mistake
-    this whole arena has spent the most effort not making.
+    NARROWED ON PURPOSE, after this script twice reported drift that did not
+    exist. MATRIX-SCHEMA.md defines a `pass` cell as "the cell ran and the result
+    was a pass (DIMENSION-SPECIFIC pass condition)". That is a COVERAGE
+    declaration, not a score: each dimension owns its own notion of passing, and
+    `rag` at 17/19 has been declared `pass` on every published board.
+
+    The first version of this function used a majority rule and reported 9
+    disagreements against manifests that were entirely correct. The second used
+    "every cell must pass" and reported 10, mostly the other way. Both were
+    comparing a coverage declaration against a score aggregate — incommensurable
+    quantities — and a comparison of incommensurable quantities always produces
+    findings, which is exactly what makes it dangerous: it looks productive.
+
+    So this reports only the two cases where the manifest and the board can be
+    compared without inventing a rule:
+
+      ran        at least one cell produced a score. Says nothing about how good.
+      error-only every cell errored: nothing was measured, so a non-pending
+                 declaration is claiming coverage the run did not deliver.
     """
     if counts["pass"] == 0 and counts["fail"] == 0:
         return "error-only"
-    return "pass" if counts["pass"] > counts["fail"] else "fail"
+    return "ran"
 
 
 def main() -> int:
@@ -96,22 +111,24 @@ def main() -> int:
             counts = scored.get((fw, dim))
             if not counts:
                 continue  # the board did not run this dimension
-            obs = observed_verdict(counts)
+            obs = observed_kind(counts)
             tally = f"pass={counts['pass']} fail={counts['fail']} err={counts['err']}"
 
-            if declared == "pending":
-                print(f"   PENDING -> {obs:11s} {fw:13s} {dim:22s} {tally}  — the cell ran; declare it")
+            if declared == "pending" and obs == "ran":
+                print(f"   PENDING but the cell RAN   {fw:13s} {dim:22s} {tally}  — declare it")
                 drift += 1
-            elif declared == "fail" and obs == "error-only":
-                # Not drift: both mean "this produced nothing usable". Distinguishing
-                # them further would be noise.
-                continue
-            elif declared != obs:
-                print(f"   {declared:7s} vs {obs:11s} {fw:13s} {dim:22s} {tally}")
+            elif declared in ("pass", "fail") and obs == "error-only":
+                print(f"   declares {declared:4s}, NOTHING RAN  {fw:13s} {dim:22s} {tally}  — "
+                      f"the manifest claims coverage this run did not deliver")
                 drift += 1
+            # Deliberately NOT compared: declared pass vs a board where some cells
+            # failed. The pass condition is the dimension's own, so a score
+            # aggregate cannot contradict the declaration without inventing a rule
+            # this script has no authority to invent.
 
     if drift == 0:
-        print("   ok       every real/native declaration matches what the board observed")
+        print("   ok       no manifest claims coverage the board did not deliver,")
+        print("            and no pending cell actually ran")
         return 0
     print(f"   {drift} disagreement(s) — resolve them deliberately; this script will not sync them.")
     return 1
