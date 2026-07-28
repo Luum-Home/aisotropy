@@ -63,7 +63,7 @@ MUST match the `"framework"` field inside the file.
 |---|---|
 | `pass` | The cell ran and the result was a pass (dimension-specific pass condition — see the adapter's own mode/dimension definition). |
 | `fail` | The cell ran and the result was a fail. |
-| `infeasible:<reason>` | The cell cannot run for a structural reason (e.g. `infeasible:WASI has no sockets — the framework's HTTP model client cannot run in-sandbox`). The reason is the cell's content — one line, no trailing punctuation requirement, human-readable. |
+| `infeasible:<reason>` | The cell cannot run for a structural reason (e.g. `infeasible:Go's wasip1 target compiles net.Dial but has no sock_connect, so the model client fails at runtime`). The reason is the cell's content — one line, human-readable, and it must name a CHECKABLE cause. **Never cite "WASI has no sockets": that has been false since WASI 0.2 (January 2024).** WASI 0.2 (January 2024) already ships `wasi:sockets` and `wasi:http/outgoing-handler`, and WASI 0.3.0 landed 2026-06-11 — so the blocker is never "WASI cannot do networking". It is per-framework: whether that adapter's FULL dependency tree can be built into, and run as, a WASI guest. |
 | `pending` | Not yet filled in. This is a placeholder status ONLY — it must never survive into a manifest an agent claims is complete. The runner's completeness gate (`arenas/live/runner/matrix.go`) treats any `pending` cell as a hard failure — UNLESS the manifest is a `candidate` (see below). |
 
 ## `candidate` — a WORK-IN-PROGRESS adapter
@@ -93,12 +93,33 @@ still `pending` (declared-incomplete), never invented as `pass`.
 
 ## Feasibility ground truth (from `FULL-MATRIX.md`)
 
-- **wasm** is feasible only where the runtime executes under WASI (no host
-  sockets, no threads-by-default). Only aisotropy's wazero tool-sandbox
-  qualifies today; every networked framework (langgraph, llamaindex,
-  pydantic-ai, mastra, ai-sdk, genkit-go, eino) is
-  `infeasible:"WASI has no sockets — the framework's HTTP model client cannot
-  run in-sandbox"` for every dimension.
+- **wasm** feasibility is a question about the ADAPTER'S DEPENDENCY TREE, not
+  about WASI's capabilities. WASI 0.2 (January 2024) ships `wasi:sockets` and
+  `wasi:http/outgoing-handler`; WASI 0.3.0 landed 2026-06-11 with native async.
+  A cell that blames "WASI has no sockets" is asserting something false about a
+  public standard — and using it to say a competitor's product cannot do
+  something it can.
+
+  What IS checkable, per framework: whether that adapter's full dependency tree
+  compiles to a WASI target and RUNS there. Those are different questions, and
+  the second is usually the real one. Measured 2026-07-28: a Go program calling
+  `net.Dial` compiles cleanly under `GOOS=wasip1` and then fails at runtime under
+  wazero (`dial tcp: lookup … Connection reset by peer`), because Preview 1
+  defines no `sock_connect`. So "it does not build" is the wrong evidence for Go;
+  "it builds and cannot dial" is the right one.
+
+  Each framework's reason must name its own blocker with something a reader can
+  re-run or cite. Two worked examples: eino fails to build at all
+  (`modernc.org/sqlite` → `modernc.org/libc` excludes every file under wasip1),
+  while genkit-go builds cleanly and is blocked only at runtime.
+
+  aisotropy's own two `wasm` passes sit on a DIFFERENT AXIS and the distinction
+  must stay visible: aisotropy is the wasm HOST (a native binary embedding
+  wazero to sandbox tool execution, itself using Preview 1), while the
+  competitors are graded as wasm GUESTS. Host-embeds-sandbox and
+  framework-runs-as-guest are not the same question, `wasm_tool` is declared by
+  only one of nine adapters, and the honest reading of "only aisotropy passes
+  wasm" is partly that only aisotropy declared the dimension it wins.
 - **docker** is feasible for every adapter that ships a Dockerfile — the
   bounded pass is footprint + a smoke run per dimension.
 - **stub** is feasible for every adapter (each has a mock/fake model + in-memory

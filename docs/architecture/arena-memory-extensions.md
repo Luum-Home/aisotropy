@@ -198,7 +198,8 @@ that is executable but lacks the capability; `infeasible` is reserved for cells 
 at all** (e.g. the wasm form when the framework's model client needs sockets WASI does not provide).
 That distinction governs every row below.
 
-- **All frameworks × all three dimensions × wasm:** `infeasible` — WASI has no sockets; aisotropy's
+- **All frameworks × all three dimensions × wasm:** `infeasible` — for a per-framework toolchain/dependency
+  reason, NOT because "WASI has no sockets" (false since WASI 0.2, January 2024); aisotropy's
   own wasm form is its wazero tool-sandbox only, not a full networked runtime.
 - **eino × `memory_semantic_recall` + `memory_consolidation`:** `infeasible` — no official memory
   component exists to exercise; hand-rolling one for the test would benchmark adapter authorship, the

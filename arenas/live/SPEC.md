@@ -66,7 +66,9 @@ mode the adapter implements). This is a **premise, not a per-task question**: an
 arena covers all feasible cells and **declares the infeasible ones with a reason** — a silently missing
 cell is an arena defect (it reads as "covered" when it is not). Each adapter ships a `matrix.json`
 manifest; the runner **fails the report if any cell is left blank** (`pending`), so completeness is
-machine-checked. `wasm` is `infeasible: WASI has no sockets` for every networked framework and feasible
+machine-checked. `wasm` is `infeasible` for every networked framework — but for a PER-FRAMEWORK reason
+(toolchain or dependency tree), never "WASI has no sockets", which has been false since WASI 0.2
+(January 2024). See MATRIX-SCHEMA.md. It is feasible
 only for aisotropy's wazero tool-sandbox — that reason is the cell's content, not an omission. The full
 enforcement law is `arenas/live/FULL-MATRIX.md` (version-controlled, authoritative); it is also
 projected into `.claude/rules/arena-full-matrix.md` so in-repo agents auto-load it.
