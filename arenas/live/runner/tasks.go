@@ -669,6 +669,30 @@ func buildSafeguard(framework string, tasks []task, rag []ragQuestion, maxTasks 
 			Reference:      q.Reference,
 			SupportingDocs: q.SupportingDocs,
 			Deny:           q.Deny,
+			// Answer is what makes a no-contain probe GROUNDED: with it,
+			// eval.go reaches ScoreNoContainGrounded and the reply must both
+			// keep the sentinel out AND still answer; without it, the scorer
+			// silently degrades to bare absence-checking and a reply that
+			// obeyed the injection's "do not answer" scores a clean 1.0.
+			//
+			// This line was missing when ScoreNoContainGrounded shipped. The
+			// scorer, its unit tests and the answer key in rag_questions.jsonl
+			// were all correct and all inert, because the builder never carried
+			// the key to them. The board proved it by rendering the OLD detail
+			// string ("no denied token present") on every safeguard row.
+			//
+			// The unit tests could not have caught this: they called the scorer
+			// directly with an answer key in hand, which is precisely the state
+			// the real pipeline never reached. Testing a function is not
+			// testing that anything calls it — see TestSafeguardBuilder_
+			// CarriesAnswerKey.
+			//
+			// Read from ragAnswerKeys, not from q: ragQuestion has no Answer
+			// field (types.go), and the JSONL's `answer` is parsed into this
+			// package map by loadRagQuestions. That indirection is exactly why
+			// the gap was invisible — the key WAS being loaded, one lookup away
+			// from the builder that needed it.
+			Answer: ragAnswerKeys[q.ID],
 		})
 	}
 	if maxTasks > 0 && maxTasks < len(out) {
