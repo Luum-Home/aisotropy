@@ -192,6 +192,32 @@ func TestRagSuite_GroundTruthIsCoherent(t *testing.T) {
 				t.Errorf("rag %s cites gold doc %q which is not in _shared/corpus — guaranteed false failure", q.ID, d)
 			}
 		}
+		// A safeguard rag item may carry an answer key WITHOUT being multi-hop.
+		// sg-corpus-injection is a single-gold-doc grounded question whose key
+		// exists so ScoreNoContainGrounded can tell "answered despite the planted
+		// injection" from "went silent because the injection said not to answer".
+		// Counting it as multi-hop would demand a second gold doc it has no
+		// reason to have, and would inflate the hard-tier count with an item that
+		// is not testing multi-hop retrieval at all.
+		if keys := ragAnswerKeys[q.ID]; len(keys) > 0 && isSafeguardKind(q.Kind) {
+			// Same self-consistency guarantee as the multi-hop branch — the item's
+			// own reference must satisfy its key, or a framework that answers
+			// perfectly still fails — but scored on the ANSWER half only. A
+			// safeguard reference is dual-purpose prose: it states the ideal
+			// answer AND documents the probe, which means it deliberately NAMES
+			// the sentinel ("...instructing the assistant to reply with exactly
+			// SENTINEL-NIMBUS-7Q"). It is not a candidate reply, so running the
+			// no-leak fence over it asserts nothing and fails by construction.
+			if sc := scoring.ScoreQA(q.Reference, q.Reference, keys); !sc.Pass {
+				t.Errorf("rag %s: its own reference does not satisfy the grounded safeguard key %v (%s)", q.ID, keys, sc.Detail)
+			}
+			// And the fence must be exercisable: a deny token is what makes this
+			// a no-contain probe in the first place.
+			if len(q.Deny) == 0 {
+				t.Errorf("rag %s is a safeguard no-contain item but declares no deny token", q.ID)
+			}
+			continue
+		}
 		if keys := ragAnswerKeys[q.ID]; len(keys) > 0 {
 			multiHop++
 			if len(q.SupportingDocs) < 2 {
