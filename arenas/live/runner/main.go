@@ -1636,10 +1636,20 @@ func gateServices(lane string, frameworks []adapter, modes []string) error {
 
 	// --- Qdrant: answer + the per-framework collections this run will query ---
 	qURL := strings.TrimRight(envOr("QDRANT_REST_URL", "http://localhost:6333"), "/") + "/collections"
-	headers := map[string]string{}
-	if k := os.Getenv("QDRANT_API_KEY"); k != "" {
-		headers["api-key"] = k
-	}
+	// The gate must present the SAME credential the adapters will, or it probes a
+	// different configuration than the one about to run — a gate that verifies
+	// something other than what happens is worse than none. The runner process
+	// does not inherit QDRANT_API_KEY: each adapter's run.sh supplies it as
+	// `${QDRANT_API_KEY:-local-dev-qdrant-key-CHANGE-ME}`, so the same local-dev
+	// default is mirrored here. It is a placeholder for a credential-less local
+	// Qdrant (docs/architecture + .claude/rules/services-config.md: the reference
+	// compose provisions no real credentials), not a secret.
+	//
+	// Caught by this gate on its first real run: probing without the key returned
+	// 401, which the gate correctly classified as MISCONFIGURED — "the service
+	// ANSWERED and rejected" — rather than DOWN. The classification was right and
+	// the configuration was mine.
+	headers := map[string]string{"api-key": envOr("QDRANT_API_KEY", "local-dev-qdrant-key-CHANGE-ME")}
 	q := httpProbe("Qdrant (REST)", qURL, headers, timeout)
 	probes = append(probes, q)
 	if q.result == probeOK && runsRAG {
