@@ -192,6 +192,18 @@
         "docker": "pass",
         "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
+    },
+    "wasm_tool": {
+      "stub": {
+        "native": "infeasible:no sandbox of any kind in the official tool: LlamaIndex's code_interpreter tool calls subprocess.run on the host, and its own docs warn it 'is not recommended in production without heavy sandboxing' — the opposite of an isolation boundary. WASM sandboxing exists only via third-party llm-sandbox. Maturity: COMMUNITY-ONLY SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:no sandbox of any kind in the official tool: LlamaIndex's code_interpreter tool calls subprocess.run on the host, and its own docs warn it 'is not recommended in production without heavy sandboxing' — the opposite of an isolation boundary. WASM sandboxing exists only via third-party llm-sandbox. Maturity: COMMUNITY-ONLY SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:no sandbox of any kind in the official tool: LlamaIndex's code_interpreter tool calls subprocess.run on the host, and its own docs warn it 'is not recommended in production without heavy sandboxing' — the opposite of an isolation boundary. WASM sandboxing exists only via third-party llm-sandbox. Maturity: COMMUNITY-ONLY SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      },
+      "real": {
+        "native": "infeasible:no sandbox of any kind in the official tool: LlamaIndex's code_interpreter tool calls subprocess.run on the host, and its own docs warn it 'is not recommended in production without heavy sandboxing' — the opposite of an isolation boundary. WASM sandboxing exists only via third-party llm-sandbox. Maturity: COMMUNITY-ONLY SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:no sandbox of any kind in the official tool: LlamaIndex's code_interpreter tool calls subprocess.run on the host, and its own docs warn it 'is not recommended in production without heavy sandboxing' — the opposite of an isolation boundary. WASM sandboxing exists only via third-party llm-sandbox. Maturity: COMMUNITY-ONLY SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:no sandbox of any kind in the official tool: LlamaIndex's code_interpreter tool calls subprocess.run on the host, and its own docs warn it 'is not recommended in production without heavy sandboxing' — the opposite of an isolation boundary. WASM sandboxing exists only via third-party llm-sandbox. Maturity: COMMUNITY-ONLY SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      }
     }
   }
 }

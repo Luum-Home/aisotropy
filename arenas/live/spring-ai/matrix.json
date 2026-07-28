@@ -134,6 +134,18 @@
         "docker": "pass",
         "wasm": "infeasible:no mainline Java-to-WASI target exists — TeaVM's WASI support lives in an unmerged fork and GraalVM Web Image targets browser/Node JS-glue, not WASI; Spring's dynamic proxies and classpath scanning also conflict with the closed-world model. Independent of WASI's networking surface, which has had sockets since 0.2"
       }
+    },
+    "wasm_tool": {
+      "stub": {
+        "native": "infeasible:no WASM tool sandbox in Spring AI core: spring-ai-community/agent-sandbox offers a unified API over local processes, Docker containers and E2B cloud microVMs — none of them a WebAssembly guest — and it lives in the spring-ai-community org, not the core framework. Maturity: COMMUNITY (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:no WASM tool sandbox in Spring AI core: spring-ai-community/agent-sandbox offers a unified API over local processes, Docker containers and E2B cloud microVMs — none of them a WebAssembly guest — and it lives in the spring-ai-community org, not the core framework. Maturity: COMMUNITY (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:no WASM tool sandbox in Spring AI core: spring-ai-community/agent-sandbox offers a unified API over local processes, Docker containers and E2B cloud microVMs — none of them a WebAssembly guest — and it lives in the spring-ai-community org, not the core framework. Maturity: COMMUNITY (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      },
+      "real": {
+        "native": "infeasible:no WASM tool sandbox in Spring AI core: spring-ai-community/agent-sandbox offers a unified API over local processes, Docker containers and E2B cloud microVMs — none of them a WebAssembly guest — and it lives in the spring-ai-community org, not the core framework. Maturity: COMMUNITY (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:no WASM tool sandbox in Spring AI core: spring-ai-community/agent-sandbox offers a unified API over local processes, Docker containers and E2B cloud microVMs — none of them a WebAssembly guest — and it lives in the spring-ai-community org, not the core framework. Maturity: COMMUNITY (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:no WASM tool sandbox in Spring AI core: spring-ai-community/agent-sandbox offers a unified API over local processes, Docker containers and E2B cloud microVMs — none of them a WebAssembly guest — and it lives in the spring-ai-community org, not the core framework. Maturity: COMMUNITY (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      }
     }
   }
 }

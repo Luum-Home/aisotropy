@@ -192,6 +192,18 @@
         "docker": "pass",
         "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
       }
+    },
+    "wasm_tool": {
+      "stub": {
+        "native": "infeasible:no WASM tool sandbox: Genkit's filesystem middleware scopes model read/write to a directory (path scoping, not an execution sandbox), and server-side code execution is a PLATFORM offering in Google's Managed Agents, not something the self-hosted Go framework executes in-process. Neither runs a tool body inside a WebAssembly guest. Maturity: NATIVE path-scoping + PLATFORM offering SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:no WASM tool sandbox: Genkit's filesystem middleware scopes model read/write to a directory (path scoping, not an execution sandbox), and server-side code execution is a PLATFORM offering in Google's Managed Agents, not something the self-hosted Go framework executes in-process. Neither runs a tool body inside a WebAssembly guest. Maturity: NATIVE path-scoping + PLATFORM offering SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:no WASM tool sandbox: Genkit's filesystem middleware scopes model read/write to a directory (path scoping, not an execution sandbox), and server-side code execution is a PLATFORM offering in Google's Managed Agents, not something the self-hosted Go framework executes in-process. Neither runs a tool body inside a WebAssembly guest. Maturity: NATIVE path-scoping + PLATFORM offering SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      },
+      "real": {
+        "native": "infeasible:no WASM tool sandbox: Genkit's filesystem middleware scopes model read/write to a directory (path scoping, not an execution sandbox), and server-side code execution is a PLATFORM offering in Google's Managed Agents, not something the self-hosted Go framework executes in-process. Neither runs a tool body inside a WebAssembly guest. Maturity: NATIVE path-scoping + PLATFORM offering SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:no WASM tool sandbox: Genkit's filesystem middleware scopes model read/write to a directory (path scoping, not an execution sandbox), and server-side code execution is a PLATFORM offering in Google's Managed Agents, not something the self-hosted Go framework executes in-process. Neither runs a tool body inside a WebAssembly guest. Maturity: NATIVE path-scoping + PLATFORM offering SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:no WASM tool sandbox: Genkit's filesystem middleware scopes model read/write to a directory (path scoping, not an execution sandbox), and server-side code execution is a PLATFORM offering in Google's Managed Agents, not something the self-hosted Go framework executes in-process. Neither runs a tool body inside a WebAssembly guest. Maturity: NATIVE path-scoping + PLATFORM offering SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      }
     }
   }
 }

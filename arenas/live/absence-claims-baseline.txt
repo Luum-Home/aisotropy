@@ -1,0 +1,183 @@
+# Competitor-absence claims present when absence-claim-guard.py was
+# introduced (2026-07-28). Each asserts that somebody else's product lacks
+# something, WITHOUT a recorded ecosystem sweep. This is a DEBT LEDGER:
+# run the five-point sweep, annotate the claim with SWEPT: YYYY-MM-DD
+# <findings-doc>, then delete its line here. Editing a claim's wording
+# makes it NEW again, which is the right moment to re-check it.
+arenas/live/FULL-MATRIX.md::frameworks (langgraph/llamaindex/pydantic/mastra/ai-sdk/genkit-go/eino) are **`infeasible: WASI has no	arenas/live/FULL-MATRIX.md:34
+arenas/live/MATRIX-SCHEMA.md::only one of nine adapters, and the honest reading of "only aisotropy passes	arenas/live/MATRIX-SCHEMA.md:122
+arenas/live/MATRIX-SCHEMA.md::wasm" is partly that only aisotropy declared the dimension it wins.	arenas/live/MATRIX-SCHEMA.md:123
+arenas/live/_shared/embed-server/.venv/lib/python3.14/site-packages/filelock/_soft_rw/_sync.py::# private name nobody else can touch; if the re-verify sees a newer mtime or a different token, the	arenas/live/_shared/embed-server/.venv/lib/python3.14/site-packages/filelock/_soft_rw/_sync.py:843
+arenas/live/_shared/embed-server/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/_shared/embed-server/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py:229
+arenas/live/ai-sdk/README.md::**2026-07 ecosystem sweep.** The AI SDK core stays **L0** (no memory primitive), but Vercel now ships a	arenas/live/ai-sdk/README.md:306
+arenas/live/ai-sdk/README.md::differentiator (`docs/architecture/multi-tenancy.md`). The **Vercel AI SDK has no native	arenas/live/ai-sdk/README.md:63
+arenas/live/ai-sdk/README.md::faked capability**: the AI SDK has **no official first-party memory primitive of any kind**. The	arenas/live/ai-sdk/README.md:293
+arenas/live/ai-sdk/README.md::{"framework":"ai-sdk","mode":"isolation_leak","model":"agnes-2.0-flash","reply":"I do not know any secrets about your account. I have no information stored rega	arenas/live/ai-sdk/README.md:673
+arenas/live/ai-sdk/README.md::{"framework":"ai-sdk","mode":"isolation_leak","model":"agnes-2.0-flash","reply":"I have no information about your account.","leak_detected":true,"attacker_visib	arenas/live/ai-sdk/README.md:680
+arenas/live/ai-sdk/README.md::{"framework":"ai-sdk","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"I do not have access to information about \"your\" favorite deploy region. The o	arenas/live/ai-sdk/README.md:659
+arenas/live/ai-sdk/README.md::{"framework":"ai-sdk","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"I do not have access to information about \"your\" favorite deploy region. The o	arenas/live/ai-sdk/README.md:666
+arenas/live/ai-sdk/lib/modes/memory-scoped.mjs::// `lib/scoped-store.mjs` for the honest caveat: the AI SDK has no native	arenas/live/ai-sdk/lib/modes/memory-scoped.mjs:12
+arenas/live/ai-sdk/lib/scoped-store.mjs::// HONEST NOTE: the Vercel AI SDK (`ai` + `@ai-sdk/openai`) has NO native	arenas/live/ai-sdk/lib/scoped-store.mjs:5
+arenas/live/ai-sdk/matrix.json::"docker": "infeasible:no native scope to forget — AI SDK has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so	arenas/live/ai-sdk/matrix.json:12
+arenas/live/ai-sdk/matrix.json::"docker": "infeasible:no native scope to forget — AI SDK has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so	arenas/live/ai-sdk/matrix.json:7
+arenas/live/ai-sdk/matrix.json::"docker": "infeasible:no official first-party consolidation/fact-extraction primitive in the AI SDK — consolidation exists only via COMMUNITY providers (mem0/Le	arenas/live/ai-sdk/matrix.json:43
+arenas/live/ai-sdk/matrix.json::"docker": "infeasible:no official first-party consolidation/fact-extraction primitive in the AI SDK — consolidation exists only via COMMUNITY providers (mem0/Le	arenas/live/ai-sdk/matrix.json:48
+arenas/live/ai-sdk/matrix.json::"docker": "infeasible:no official first-party memory primitive in the AI SDK — mem0/Letta are COMMUNITY providers substituting an external service for the frame	arenas/live/ai-sdk/matrix.json:19
+arenas/live/ai-sdk/matrix.json::"docker": "infeasible:no official first-party memory primitive in the AI SDK — mem0/Letta are COMMUNITY providers substituting an external service for the frame	arenas/live/ai-sdk/matrix.json:24
+arenas/live/ai-sdk/matrix.json::"docker": "infeasible:no official first-party semantic-memory primitive in the AI SDK — semantic recall exists only via COMMUNITY providers (mem0/Letta), so a p	arenas/live/ai-sdk/matrix.json:31
+arenas/live/ai-sdk/matrix.json::"docker": "infeasible:no official first-party semantic-memory primitive in the AI SDK — semantic recall exists only via COMMUNITY providers (mem0/Letta), so a p	arenas/live/ai-sdk/matrix.json:36
+arenas/live/ai-sdk/matrix.json::"native": "infeasible:no native scope to forget — AI SDK has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so	arenas/live/ai-sdk/matrix.json:11
+arenas/live/ai-sdk/matrix.json::"native": "infeasible:no native scope to forget — AI SDK has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so	arenas/live/ai-sdk/matrix.json:6
+arenas/live/ai-sdk/matrix.json::"native": "infeasible:no official first-party consolidation/fact-extraction primitive in the AI SDK — consolidation exists only via COMMUNITY providers (mem0/Le	arenas/live/ai-sdk/matrix.json:42
+arenas/live/ai-sdk/matrix.json::"native": "infeasible:no official first-party consolidation/fact-extraction primitive in the AI SDK — consolidation exists only via COMMUNITY providers (mem0/Le	arenas/live/ai-sdk/matrix.json:47
+arenas/live/ai-sdk/matrix.json::"native": "infeasible:no official first-party memory primitive in the AI SDK — mem0/Letta are COMMUNITY providers substituting an external service for the frame	arenas/live/ai-sdk/matrix.json:18
+arenas/live/ai-sdk/matrix.json::"native": "infeasible:no official first-party memory primitive in the AI SDK — mem0/Letta are COMMUNITY providers substituting an external service for the frame	arenas/live/ai-sdk/matrix.json:23
+arenas/live/ai-sdk/matrix.json::"native": "infeasible:no official first-party semantic-memory primitive in the AI SDK — semantic recall exists only via COMMUNITY providers (mem0/Letta), so a p	arenas/live/ai-sdk/matrix.json:30
+arenas/live/ai-sdk/matrix.json::"native": "infeasible:no official first-party semantic-memory primitive in the AI SDK — semantic recall exists only via COMMUNITY providers (mem0/Letta), so a p	arenas/live/ai-sdk/matrix.json:35
+arenas/live/ai-sdk/matrix.json::"wasm": "infeasible:no native scope to forget — AI SDK has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so a	arenas/live/ai-sdk/matrix.json:13
+arenas/live/ai-sdk/matrix.json::"wasm": "infeasible:no native scope to forget — AI SDK has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so a	arenas/live/ai-sdk/matrix.json:8
+arenas/live/aisotropy/main.go::// This used to say "the capability no other framework here has".	arenas/live/aisotropy/main.go:34
+arenas/live/aisotropy/mode_middleware.go::// honest differentiator the task calls out: none of the other framework	arenas/live/aisotropy/mode_middleware.go:20
+arenas/live/aisotropy/testdata/wasmguest/main.go::// no host filesystem/network/clock), the capability no other framework in this	arenas/live/aisotropy/testdata/wasmguest/main.go:6
+arenas/live/eino/README.md::"mechanism": "eino callbacks (outbound, native OnStart/OnEnd — observe-only by Eino's own contract) + model-wrapper (inbound, since callbacks cannot mutate shar	arenas/live/eino/README.md:450
+arenas/live/eino/README.md::**Eino has no single "middleware" primitive.** It has two distinct native seams, and this mode	arenas/live/eino/README.md:461
+arenas/live/eino/README.md::**Honest note: Eino has no native multi-tenant memory isolation.** There is no key-prefixing	arenas/live/eino/README.md:223
+arenas/live/eino/README.md::**Logs.** `eino` core has no logging component and emits nothing structured on its own — there is	arenas/live/eino/README.md:432
+arenas/live/eino/README.md::- `mode_stream.go` — `stream` mode (Eino native `Stream` + time-to-first-chunk).	arenas/live/eino/README.md:970
+arenas/live/eino/README.md::- `mode_structured.go` — `structured` mode (Eino native JSON-Schema response format).	arenas/live/eino/README.md:969
+arenas/live/eino/README.md::VARIES across invocations — defeating session-keyed transcript replay by construction. Eino has no	arenas/live/eino/README.md:287
+arenas/live/eino/README.md::a property of what Eino officially ships, not of this adapter's wiring — which is why it is now reported	arenas/live/eino/README.md:315
+arenas/live/eino/README.md::cross-process persistence layer is custom code, since Eino has no built-in persisted-memory	arenas/live/eino/README.md:162
+arenas/live/eino/README.md::persistence layer for `memory` mode, because Eino has no built-in persisted-memory component.	arenas/live/eino/README.md:10
+arenas/live/eino/README.md::{"framework":"eino","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"I do not have access to that information. The stored facts for this scope contain 	arenas/live/eino/README.md:771
+arenas/live/eino/README.md::{"text":"OK","middleware":{"mechanism":"eino callbacks (outbound, native OnStart/OnEnd — observe-only by Eino's own contract) + model-wrapper (inbound, since ca	arenas/live/eino/README.md:654
+arenas/live/eino/README.md::{"text":"[ARENA_STUB echo] Say OK.","middleware":{"mechanism":"eino callbacks (outbound, native OnStart/OnEnd — observe-only by Eino's own contract) + model-wra	arenas/live/eino/README.md:678
+arenas/live/eino/main.go::// Eino has no native concept of these — see mode_scoped_memory.go.	arenas/live/eino/main.go:47
+arenas/live/eino/matrix.json::"docker": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so a	arenas/live/eino/matrix.json:12
+arenas/live/eino/matrix.json::"docker": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so a	arenas/live/eino/matrix.json:7
+arenas/live/eino/matrix.json::"native": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so a	arenas/live/eino/matrix.json:11
+arenas/live/eino/matrix.json::"native": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so a	arenas/live/eino/matrix.json:6
+arenas/live/eino/matrix.json::"wasm": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an 	arenas/live/eino/matrix.json:13
+arenas/live/eino/matrix.json::"wasm": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an 	arenas/live/eino/matrix.json:8
+arenas/live/eino/mode_memory.go::// Eino has NO user-scoped (indeed no official persisted) memory component —	arenas/live/eino/mode_memory.go:40
+arenas/live/eino/mode_memory.go::fmt.Fprintf(os.Stderr, "PROGRESS: memory: wire user_id=%q -> ADAPTER-SUPPLIED user-scoped key %q (Eino has no user-scoped memory primitive: adk CheckPointStore 	arenas/live/eino/mode_memory.go:70
+arenas/live/eino/mode_middleware.go::// Eino has no single "middleware" primitive the way an HTTP framework does.	arenas/live/eino/mode_middleware.go:18
+arenas/live/eino/mode_middleware.go::Mechanism: "eino callbacks (outbound, native OnStart/OnEnd — observe-only by Eino's own contract) + model-wrapper (inbound, since callbacks cannot mutate shared	arenas/live/eino/mode_middleware.go:128
+arenas/live/eino/mode_observability.go::"Eino's native TokenUsage. Eino core has no logging component; log_sample above is a DIY slog "+	arenas/live/eino/mode_observability.go:170
+arenas/live/eino/mode_scoped_memory.go::// Eino has NO native multi-tenant memory isolation primitive — no key	arenas/live/eino/mode_scoped_memory.go:18
+arenas/live/eino/mode_structured.go::// runStructured binds an Eino native JSON-Schema response format	arenas/live/eino/mode_structured.go:36
+arenas/live/genkit-go/README.md::**Genkit (Go) has no native multi-tenant memory-isolation primitive.** There is no scoped	arenas/live/genkit-go/README.md:258
+arenas/live/genkit-go/README.md::- **`crash_recovery`'s rqlite table** (`arena_genkit_go_crash_recovery`) has no retention/cleanup	arenas/live/genkit-go/README.md:987
+arenas/live/genkit-go/README.md::- **`memory_scoped`/`isolation_leak`'s `arena_genkit_go_scoped_memory` table** has no	arenas/live/genkit-go/README.md:955
+arenas/live/genkit-go/README.md::by construction. Genkit Go has no user-scoped memory primitive, so this adapter SUPPLIES the user	arenas/live/genkit-go/README.md:310
+arenas/live/genkit-go/README.md::matching the task's explicit fallback instruction ("if Genkit-Go lacks a Qdrant plugin, use	arenas/live/genkit-go/README.md:154
+arenas/live/genkit-go/README.md::{"framework":"genkit-go","mode":"isolation_leak","model":"agnes-2.0-flash","reply":"I do not have any record of secrets being shared with me in this conversatio	arenas/live/genkit-go/README.md:732
+arenas/live/genkit-go/matrix.json::"docker": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md),	arenas/live/genkit-go/matrix.json:12
+arenas/live/genkit-go/matrix.json::"docker": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md),	arenas/live/genkit-go/matrix.json:7
+arenas/live/genkit-go/matrix.json::"native": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md),	arenas/live/genkit-go/matrix.json:11
+arenas/live/genkit-go/matrix.json::"native": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md),	arenas/live/genkit-go/matrix.json:6
+arenas/live/genkit-go/matrix.json::"wasm": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), s	arenas/live/genkit-go/matrix.json:13
+arenas/live/genkit-go/matrix.json::"wasm": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), s	arenas/live/genkit-go/matrix.json:8
+arenas/live/genkit-go/memory.go::// Genkit Go has NO user-scoped memory primitive — re-verified in source	arenas/live/genkit-go/memory.go:34
+arenas/live/genkit-go/memory.go::fmt.Fprintf(os.Stderr, "PROGRESS: memory: wire user_id=%q -> ADAPTER-SUPPLIED user-scoped key %q (Genkit Go has no user-scoped memory primitive: ai/exp/session.	arenas/live/genkit-go/memory.go:62
+arenas/live/genkit-go/qdrant_client.go::// (Apache-2.0) over gRPC. Genkit-Go v1.10.0 ships no FIRST-PARTY (firebase/	arenas/live/genkit-go/qdrant_client.go:16
+arenas/live/genkit-go/rag.go::// github.com/qdrant/go-client — Genkit-Go ships no FIRST-PARTY Qdrant	arenas/live/genkit-go/rag.go:50
+arenas/live/genkit-go/rqlite_client.go::// Genkit-Go has NO native multi-tenant memory-isolation primitive: the	arenas/live/genkit-go/rqlite_client.go:126
+arenas/live/langgraph/.venv/lib/python3.14/site-packages/langchain_openai/chat_models/_client_utils.py::`LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S=-10` can't silently disable the	arenas/live/langgraph/.venv/lib/python3.14/site-packages/langchain_openai/chat_models/_client_utils.py:89
+arenas/live/langgraph/.venv/lib/python3.14/site-packages/langgraph/store/base/__init__.py::f'Root label for namespace cannot be "langgraph". Got: {namespace}'	arenas/live/langgraph/.venv/lib/python3.14/site-packages/langgraph/store/base/__init__.py:1274
+arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/_internal/otel/_otel_exporter.py::# Default to "langchain" if we can't determine the system	arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/_internal/otel/_otel_exporter.py:624
+arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/client.py::"You cannot provide both LANGSMITH_ENDPOINT / LANGCHAIN_ENDPOINT "	arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/client.py:1148
+arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/run_trees.py::"You cannot provide both LANGSMITH_ENDPOINT / LANGCHAIN_ENDPOINT "	arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/run_trees.py:1277
+arenas/live/langgraph/.venv/lib/python3.14/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py::"""If none of the others apply."""	arenas/live/langgraph/.venv/lib/python3.14/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py:150
+arenas/live/langgraph/.venv/lib/python3.14/site-packages/opentelemetry/semconv/trace/__init__.py::"""If none of the others apply."""	arenas/live/langgraph/.venv/lib/python3.14/site-packages/opentelemetry/semconv/trace/__init__.py:1914
+arenas/live/langgraph/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/langgraph/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py:229
+arenas/live/langgraph/.venv/lib/python3.14/site-packages/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/langgraph/.venv/lib/python3.14/site-packages/urllib3/connectionpool.py:229
+arenas/live/langgraph/README.md::verified directly against the pinned `langchain-core==1.4.9` source. Callbacks CANNOT do inbound	arenas/live/langgraph/README.md:542
+arenas/live/langgraph/matrix.json::"native": "infeasible:ARENA_STUB=1 uses InMemoryStore (langgraph.store.memory, per-process), so a recall in a SECOND process cannot see the first process's user	arenas/live/langgraph/matrix.json:162
+arenas/live/langgraph/matrix.json::"native": "infeasible:the omitted-scope verdict (leak vs silent_partition) is only observable with cross-process on-disk BaseStore state; ARENA_STUB=1's per-pro	arenas/live/langgraph/matrix.json:6
+arenas/live/langgraph/modes/observability.py::# is also capped at INFO so even a misconfigured LangChain logger can't	arenas/live/langgraph/modes/observability.py:101
+arenas/live/langgraph/modes/scoped_store.py::since 2024-12-05). So the honest claim is narrower than "LangGraph has no	arenas/live/langgraph/modes/scoped_store.py:11
+arenas/live/llamaindex/.venv/lib/python3.13/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py::"""If none of the others apply."""	arenas/live/llamaindex/.venv/lib/python3.13/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py:150
+arenas/live/llamaindex/.venv/lib/python3.13/site-packages/opentelemetry/semconv/trace/__init__.py::"""If none of the others apply."""	arenas/live/llamaindex/.venv/lib/python3.13/site-packages/opentelemetry/semconv/trace/__init__.py:1914
+arenas/live/llamaindex/.venv/lib/python3.13/site-packages/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/llamaindex/.venv/lib/python3.13/site-packages/urllib3/connectionpool.py:229
+arenas/live/llamaindex/README.md::LlamaIndex's `session_id`. LlamaIndex itself has no idea a "tenant" or "product" exists; as far	arenas/live/llamaindex/README.md:309
+arenas/live/llamaindex/README.md::{"framework": "llamaindex", "mode": "isolation_leak", "model": "agnes-2.0-flash", "reply": "I don't know. I have no memory of past conversations or secrets shar	arenas/live/llamaindex/README.md:851
+arenas/live/llamaindex/README.md::→ a different, empty collection → `VectorMemoryBlock.aget` returns nothing). LlamaIndex has no	arenas/live/llamaindex/README.md:251
+arenas/live/llamaindex/adapter.py::for a handler to rewrite the request that produced the event. There is NO native LlamaIndex	arenas/live/llamaindex/adapter.py:2012
+arenas/live/llamaindex/adapter.py::recall hits and cross-tenant recall misses in one invocation. LlamaIndex has NO	arenas/live/llamaindex/adapter.py:100
+arenas/live/mastra/README.md::documents honestly where Mastra has no native primitive (multi-tenant	arenas/live/mastra/README.md:17
+arenas/live/mastra/lib/modes/memory.mjs::// memory_scoped / isolation_leak / crash_recovery, where Mastra has no native	arenas/live/mastra/lib/modes/memory.mjs:5
+arenas/live/mastra/matrix.json::"native": "infeasible:the MockLanguageModel returns fixed text so a consolidated fact cannot be echoed on the cross-session recall; Mastra's consolidation is an	arenas/live/mastra/matrix.json:78
+arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py::"""If none of the others apply."""	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py:150
+arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/opentelemetry/semconv/trace/__init__.py::"""If none of the others apply."""	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/opentelemetry/semconv/trace/__init__.py:1914
+arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py:229
+arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pydantic_ai/.agents/skills/building-pydantic-ai-agents/SKILL.md::- **Model strings need the provider prefix**: `'openai:gpt-5.2'` not `'gpt-5.2'`. Without the prefix, Pydantic AI can't resolve the provider.	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pydantic_ai/.agents/skills/building-pydantic-ai-agents/SKILL.md:261
+arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pydantic_ai/.agents/skills/building-pydantic-ai-agents/SKILL.md::- **Observability**: Pydantic AI has first-class integration with Logfire for tracing agent runs, tool calls, and model requests. Add it with `logfire.instrumen	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pydantic_ai/.agents/skills/building-pydantic-ai-agents/SKILL.md:252
+arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/urllib3/connectionpool.py:229
+arenas/live/pydantic-ai/README.md::**`isolation_forgetful` — infeasible: no native scope to forget (L0).** Pydantic AI is **L0** for a data	arenas/live/pydantic-ai/README.md:249
+arenas/live/pydantic-ai/README.md::> **Honest note:** Pydantic AI has **no native multi-tenant memory isolation primitive**.	arenas/live/pydantic-ai/README.md:274
+arenas/live/pydantic-ai/README.md::brute force, not a Pydantic AI primitive**. So the cell is `infeasible: no official semantic-recall	arenas/live/pydantic-ai/README.md:240
+arenas/live/pydantic-ai/README.md::{"framework": "pydantic-ai", "mode": "isolation_leak", "model": "agnes-2.0-flash", "reply": "I have no information for this scope.", "input_tokens": 307, "outpu	arenas/live/pydantic-ai/README.md:350
+arenas/live/pydantic-ai/README.md::{"framework": "pydantic-ai", "mode": "memory_scoped", "model": "agnes-2.0-flash", "reply": "For tenant-acme, the Q3 launch codename is Falcon-Nebula.", "input_t	arenas/live/pydantic-ai/README.md:315
+arenas/live/pydantic-ai/adapter.py::# Pydantic AI has NO separate structured-logging channel in its	arenas/live/pydantic-ai/adapter.py:878
+arenas/live/pydantic-ai/adapter.py::# Pydantic AI has no native multi-tenant memory concept. This mode proves the	arenas/live/pydantic-ai/adapter.py:541
+arenas/live/pydantic-ai/adapter.py::# is violently killed one instant later -- but Pydantic AI itself has NO	arenas/live/pydantic-ai/adapter.py:690
+arenas/live/pydantic-ai/arena_memory_store.py::Pydantic AI has **no native multi-tenant memory isolation primitive** --	arenas/live/pydantic-ai/arena_memory_store.py:20
+arenas/live/pydantic-ai/matrix.json::"docker": "infeasible:no native scope to forget — Pydantic AI has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md	arenas/live/pydantic-ai/matrix.json:12
+arenas/live/pydantic-ai/matrix.json::"docker": "infeasible:no native scope to forget — Pydantic AI has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md	arenas/live/pydantic-ai/matrix.json:7
+arenas/live/pydantic-ai/matrix.json::"docker": "infeasible:no official semantic-recall primitive — see stub.native; Pydantic AI has no embedding-backed conversational-memory component and the harne	arenas/live/pydantic-ai/matrix.json:31
+arenas/live/pydantic-ai/matrix.json::"native": "infeasible:no native scope to forget — Pydantic AI has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md	arenas/live/pydantic-ai/matrix.json:11
+arenas/live/pydantic-ai/matrix.json::"native": "infeasible:no native scope to forget — Pydantic AI has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md	arenas/live/pydantic-ai/matrix.json:6
+arenas/live/pydantic-ai/matrix.json::"native": "infeasible:no official consolidation primitive — Pydantic AI (incl. the pydantic-ai-harness) ships no fact-extraction/consolidation memory component;	arenas/live/pydantic-ai/matrix.json:47
+arenas/live/pydantic-ai/matrix.json::"native": "infeasible:no official consolidation primitive — Pydantic AI ships no fact-extraction/background-consolidation memory component and the pydantic-ai-h	arenas/live/pydantic-ai/matrix.json:42
+arenas/live/pydantic-ai/matrix.json::"native": "infeasible:no official semantic-recall primitive — Pydantic AI ships no embedding-backed conversational memory and the pydantic-ai-harness Memory cap	arenas/live/pydantic-ai/matrix.json:35
+arenas/live/pydantic-ai/matrix.json::"native": "infeasible:no official semantic-recall primitive — Pydantic AI ships no embedding-backed conversational memory; the pydantic-ai-harness Memory capabi	arenas/live/pydantic-ai/matrix.json:30
+arenas/live/pydantic-ai/matrix.json::"wasm": "infeasible:no native scope to forget — Pydantic AI has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md);	arenas/live/pydantic-ai/matrix.json:13
+arenas/live/pydantic-ai/matrix.json::"wasm": "infeasible:no native scope to forget — Pydantic AI has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md);	arenas/live/pydantic-ai/matrix.json:8
+arenas/live/runner/matrix.go::// (mode_scoped_memory.go: "Eino has NO native multi-tenant memory isolation	arenas/live/runner/matrix.go:480
+arenas/live/runner/matrix.go::// apples-to-apples, and a gap that flatters the house is the one nobody else	arenas/live/runner/matrix.go:321
+arenas/live/runner/matrix.go::// primitive"), genkit-go (rqlite_client.go: "Genkit-Go has NO native	arenas/live/runner/matrix.go:481
+arenas/live/runner/matrix_test.go::// this is the house-flattering direction, the one nobody else is motivated	arenas/live/runner/matrix_test.go:276
+arenas/live/runner/results.go::b.WriteString("> 'only aisotropy does memory' reading, which the evidence does not support.\n")	arenas/live/runner/results.go:497
+arenas/live/runner/results.go::b.WriteString("> blanket claim here): four (ai-sdk, pydantic-ai, eino, genkit-go) have no\n")	arenas/live/runner/results.go:677
+arenas/live/runner/scoring/decline_vocabulary_test.go::{"cannot fulfill (eino, sg-offtopic-crypto)",	arenas/live/runner/scoring/decline_vocabulary_test.go:30
+arenas/live/runner/scoring/decline_vocabulary_test.go::{"cannot perform (llamaindex, sg-jailbreak-persona)",	arenas/live/runner/scoring/decline_vocabulary_test.go:32
+arenas/live/runner/scoring/decline_vocabulary_test.go::{"cannot perform + bypass (mastra, sg-jailbreak-persona)",	arenas/live/runner/scoring/decline_vocabulary_test.go:34
+arenas/live/runner/scoring/decline_vocabulary_test.go::{"cannot respond to (spring-ai, sg-jailbreak-persona)",	arenas/live/runner/scoring/decline_vocabulary_test.go:38
+arenas/live/spring-ai/README.md::Spring AI memory primitive. So both cells are `infeasible: no native primitive`, the honest label, rather	arenas/live/spring-ai/README.md:92
+arenas/live/spring-ai/README.md::{name: "spring-ai-conversationid-required", all: []string{"conversationid cannot be null or empty"}},	arenas/live/spring-ai/README.md:114
+arenas/live/spring-ai/matrix.json::"_note": "CANDIDATE (docker cells only). Authored + compiled against Spring AI 1.0.0 GA (mvn package OK, 50MB uber-jar). real.native cells are now filled from t	arenas/live/spring-ai/matrix.json:3
+arenas/live/spring-ai/matrix.json::"_verdict_note": "Spring AI is L1 (docs/architecture/arena-tenancy-levels.md). The omitted-scope read routes the blank conversationId through Spring AI's OWN Ch	arenas/live/spring-ai/matrix.json:16
+arenas/live/spring-ai/matrix.json::"docker": "infeasible:no native semantic-recall chat-memory primitive — see stub.native (jar-verified Spring AI 1.0.0)",	arenas/live/spring-ai/matrix.json:33
+arenas/live/spring-ai/matrix.json::"native": "infeasible:no native consolidation primitive — Spring AI 1.0.0 has no fact-extraction/consolidation memory component; the consolidate directive is a 	arenas/live/spring-ai/matrix.json:49
+arenas/live/spring-ai/matrix.json::"native": "infeasible:no native consolidation primitive — Spring AI 1.0.0 ships no fact-extraction / background-consolidation chat-memory component (jar-verifie	arenas/live/spring-ai/matrix.json:44
+arenas/live/spring-ai/matrix.json::"native": "infeasible:no native semantic-recall chat-memory primitive — Spring AI 1.0.0 has no VectorStore-backed chat memory (jar-verified); exercising this wo	arenas/live/spring-ai/matrix.json:37
+arenas/live/spring-ai/matrix.json::"native": "infeasible:no native semantic-recall chat-memory primitive — Spring AI 1.0.0's chat/memory package ships only ChatMemory / MessageWindowChatMemory / 	arenas/live/spring-ai/matrix.json:32
+arenas/live/spring-ai/src/main/java/arena/springai/RqliteChatMemoryRepository.java::* limitation (same as genkit-go's stub): a map cannot prove CROSS-process	arenas/live/spring-ai/src/main/java/arena/springai/RqliteChatMemoryRepository.java:37
+docs/architecture/arena-benchmark-methodology.md::framework) corrected that. Four of them (AI SDK, Pydantic AI, Eino, Genkit-Go) genuinely have no	docs/architecture/arena-benchmark-methodology.md:266
+docs/architecture/arena-fairness-protocol.md::JSON envelope only we emit).	docs/architecture/arena-fairness-protocol.md:99
+docs/architecture/arena-idiomaticity-and-dx.md::dimension); genkit-go vector (no first-party Go plugin; the third-party `qdrant/qdrant-genkit`	docs/architecture/arena-idiomaticity-and-dx.md:60
+docs/architecture/arena-infrastructure-parity.md::"no memory primitive" → "primitive exists, not enforced"; eino/genkit-go "no Qdrant plugin" is	docs/architecture/arena-infrastructure-parity.md:88
+docs/architecture/arena-memory-analysis.md::> The adapter's own docstring concedes it: *"LlamaIndex's Memory/VectorMemoryBlock has no user	docs/architecture/arena-memory-analysis.md:369
+docs/architecture/arena-memory-analysis.md::probe (2/2), AND the only framework with a perfect safeguard (7/7) — while also being among the	docs/architecture/arena-memory-analysis.md:442
+docs/architecture/arena-memory-analysis.md::unqualified anywhere in it, and no sentence claims a capability is unique to aisotropy.	docs/architecture/arena-memory-analysis.md:530
+docs/architecture/arena-memory-extensions.md::**The claim "cross-session / semantic long-term / consolidation is unique to aisotropy" does not	docs/architecture/arena-memory-extensions.md:27
+docs/architecture/arena-memory-extensions.md::- **ai-sdk × all three dimensions:** **recommendation = honest `infeasible`** — "no official memory	docs/architecture/arena-memory-extensions.md:216
+docs/architecture/arena-memory-extensions.md::- **eino × `memory_semantic_recall` + `memory_consolidation`:** `infeasible` — no official memory	docs/architecture/arena-memory-extensions.md:204
+docs/architecture/arena-memory-extensions.md::> `docs/architecture/multi-tenancy.md`). It is tempting to describe that as "unique to us": no	docs/architecture/arena-memory-extensions.md:14
+docs/architecture/arena-memory-extensions.md::> claim of "unique to aisotropy" that has not been checked against each framework's official	docs/architecture/arena-memory-extensions.md:20
+docs/architecture/arena-memory-extensions.md::description: An ecosystem-wide capability audit of the seven competitor frameworks' official memory extensions (langgraph/langmem, llamaindex, mastra, pydantic-	docs/architecture/arena-memory-extensions.md:4
+docs/architecture/arena-memory-forensics.md::- **mastra** ships the only framework-level default bound among the seven:	docs/architecture/arena-memory-forensics.md:402
+docs/architecture/arena-memory-forensics.md::and can replay the canned assistant turns verbatim (§5), so only aisotropy's per-turn design turns	docs/architecture/arena-memory-forensics.md:158
+docs/architecture/arena-memory-forensics.md::session_id (comment at `mode_memory.go:22-23`: "Eino has no built-in persisted-memory component to	docs/architecture/arena-memory-forensics.md:418
+docs/architecture/arena-tenancy-levels.md::> of the seven (AI SDK, Pydantic AI, Eino, Genkit-Go) genuinely have no framework-owned data plane to	docs/architecture/arena-tenancy-levels.md:14
+docs/architecture/arena-wasm-tool-dimension.md::"No other framework here has it" was never true.	docs/architecture/arena-wasm-tool-dimension.md:44
+docs/architecture/arena-wasm-tool-dimension.md::- The "no other framework here has" claim is **retracted** in	docs/architecture/arena-wasm-tool-dimension.md:84
+docs/architecture/arena-wasm-tool-dimension.md::> WASM sandbox **(the capability no other framework here has)**	docs/architecture/arena-wasm-tool-dimension.md:14
+docs/architecture/arena-wasm-tool-dimension.md::about: **a gap that flatters the house is the one nobody else is motivated to find.**	docs/architecture/arena-wasm-tool-dimension.md:76
+docs/architecture/arena-wasm-tool-dimension.md::llamaindex has no isolation boundary in its official tool (and it says so itself).	docs/architecture/arena-wasm-tool-dimension.md:59
+docs/architecture/capability-absence-claims.md::**A claim that a framework/tool/competitor LACKS a capability ("X has no Y", "only we do Z",	docs/architecture/capability-absence-claims.md:16
+docs/architecture/capability-absence-claims.md::other frameworks, "unique to us" statements, marketing-adjacent architecture docs, and any	docs/architecture/capability-absence-claims.md:67
+docs/architecture/observability-design.md::(llamaindex) is doing so for span-kind vocabulary, not because a `gen_ai.*`-speaking backend cannot	docs/architecture/observability-design.md:189
+docs/architecture/observability-design.md::conventions' operation names; OpenInference is unnecessary** — the only framework leaning on it	docs/architecture/observability-design.md:188
+docs/architecture/prune-evidence-gate.md::> produced the arena strawmen, the Letta "nonexistent API" claim, and "Genkit has no memory	docs/architecture/prune-evidence-gate.md:18

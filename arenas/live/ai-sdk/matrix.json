@@ -192,6 +192,18 @@
         "docker": "pass",
         "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
       }
+    },
+    "wasm_tool": {
+      "stub": {
+        "native": "infeasible:sandboxed tool execution EXISTS and is current — AI SDK 7 ships a first-class SandboxSession abstraction plus Vercel Sandbox — but the isolation boundary is a Node.js/microVM environment, not a WebAssembly guest, so no tool body executes inside a WASM sandbox. Maturity: NATIVE (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:sandboxed tool execution EXISTS and is current — AI SDK 7 ships a first-class SandboxSession abstraction plus Vercel Sandbox — but the isolation boundary is a Node.js/microVM environment, not a WebAssembly guest, so no tool body executes inside a WASM sandbox. Maturity: NATIVE (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:sandboxed tool execution EXISTS and is current — AI SDK 7 ships a first-class SandboxSession abstraction plus Vercel Sandbox — but the isolation boundary is a Node.js/microVM environment, not a WebAssembly guest, so no tool body executes inside a WASM sandbox. Maturity: NATIVE (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      },
+      "real": {
+        "native": "infeasible:sandboxed tool execution EXISTS and is current — AI SDK 7 ships a first-class SandboxSession abstraction plus Vercel Sandbox — but the isolation boundary is a Node.js/microVM environment, not a WebAssembly guest, so no tool body executes inside a WASM sandbox. Maturity: NATIVE (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:sandboxed tool execution EXISTS and is current — AI SDK 7 ships a first-class SandboxSession abstraction plus Vercel Sandbox — but the isolation boundary is a Node.js/microVM environment, not a WebAssembly guest, so no tool body executes inside a WASM sandbox. Maturity: NATIVE (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:sandboxed tool execution EXISTS and is current — AI SDK 7 ships a first-class SandboxSession abstraction plus Vercel Sandbox — but the isolation boundary is a Node.js/microVM environment, not a WebAssembly guest, so no tool body executes inside a WASM sandbox. Maturity: NATIVE (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      }
     }
   }
 }

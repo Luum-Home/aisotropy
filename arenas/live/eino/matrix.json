@@ -192,6 +192,18 @@
         "docker": "pass",
         "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
       }
+    },
+    "wasm_tool": {
+      "stub": {
+        "native": "infeasible:sandboxed tool execution EXISTS — the CommandLine tool executes instructions in Docker containers, and the ADK Agentkit Sandbox backend runs filesystem operations in a remote Volcengine sandbox — but both isolate via container/remote VM, not a WebAssembly guest. Maturity: OFFICIAL-EXTENSION (eino-ext / ADK middleware, non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:sandboxed tool execution EXISTS — the CommandLine tool executes instructions in Docker containers, and the ADK Agentkit Sandbox backend runs filesystem operations in a remote Volcengine sandbox — but both isolate via container/remote VM, not a WebAssembly guest. Maturity: OFFICIAL-EXTENSION (eino-ext / ADK middleware, non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:sandboxed tool execution EXISTS — the CommandLine tool executes instructions in Docker containers, and the ADK Agentkit Sandbox backend runs filesystem operations in a remote Volcengine sandbox — but both isolate via container/remote VM, not a WebAssembly guest. Maturity: OFFICIAL-EXTENSION (eino-ext / ADK middleware, non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      },
+      "real": {
+        "native": "infeasible:sandboxed tool execution EXISTS — the CommandLine tool executes instructions in Docker containers, and the ADK Agentkit Sandbox backend runs filesystem operations in a remote Volcengine sandbox — but both isolate via container/remote VM, not a WebAssembly guest. Maturity: OFFICIAL-EXTENSION (eino-ext / ADK middleware, non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:sandboxed tool execution EXISTS — the CommandLine tool executes instructions in Docker containers, and the ADK Agentkit Sandbox backend runs filesystem operations in a remote Volcengine sandbox — but both isolate via container/remote VM, not a WebAssembly guest. Maturity: OFFICIAL-EXTENSION (eino-ext / ADK middleware, non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:sandboxed tool execution EXISTS — the CommandLine tool executes instructions in Docker containers, and the ADK Agentkit Sandbox backend runs filesystem operations in a remote Volcengine sandbox — but both isolate via container/remote VM, not a WebAssembly guest. Maturity: OFFICIAL-EXTENSION (eino-ext / ADK middleware, non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      }
     }
   }
 }

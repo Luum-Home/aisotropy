@@ -28,9 +28,40 @@
 //	             -> GollemReflect) producing a validated typed JSON object.
 //	stream     — aisotropy's real SSE streaming (POST /v1/.../chat/stream), with
 //	             time-to-first-token measured.
-//	wasm_tool  — aisotropy's DIFFERENTIATOR: a tool body executed inside a wazero
-//	             WASM sandbox (the capability no other framework here has), its
-//	             result folded into a real agnes turn.
+//	wasm_tool  — a tool body executed inside a wazero WASM sandbox, its result
+//	             folded into a real agnes turn.
+//
+//	             This used to say "the capability no other framework here has".
+//	             That was false, on two counts, and the 2026-07-28 ecosystem
+//	             sweep that wrote the other eight adapters' infeasible reasons
+//	             is what disproved it.
+//	             SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md
+//
+//	             1. TWO competitors shipped WASM-sandboxed tool execution.
+//	                pydantic/mcp-run-python ran tool code in Pyodide
+//	                (CPython->WASM) under Deno; langchain-ai/langchain-sandbox
+//	                exposed PyodideSandboxTool wired straight into LangGraph
+//	                agents. Both were ARCHIVED in January 2026 — Pydantic's own
+//	                reason being that Pyodide could not be made both safe and
+//	                fast. So "nobody has it" was never true; what is true is
+//	                that two tried it with a different technology and retreated.
+//	             2. SIX of the eight ship sandboxed tool execution TODAY —
+//	                ai-sdk (SandboxSession + Vercel Sandbox), mastra (Workspaces
+//	                remote sandboxes), eino (Docker CommandLine + Agentkit),
+//	                genkit-go (platform Managed Agents), spring-ai
+//	                (agent-sandbox over Docker/E2B), langgraph (provider
+//	                containers). None is a WASM guest.
+//
+//	             Which exposes what this dimension actually measures: a
+//	             TECHNOLOGY CHOICE, not a capability. "Runs the tool in a WASM
+//	             guest" is a criterion only our implementation can satisfy, so a
+//	             clean sweep here is not evidence that we sandbox tools and they
+//	             do not — it is evidence that we sandbox them the way we chose
+//	             to. The capability-level comparison ("is the tool body isolated
+//	             from the host at all?") is one most of them would pass. Treat
+//	             this cell as descriptive, never as a scoreboard win, until the
+//	             dimension is either renamed to its real subject or restated as
+//	             "sandboxed tool execution" with the mechanism as a label.
 //	memory_scoped / isolation_leak — aisotropy's BY-CONSTRUCTION multi-tenant
 //	             isolation: a fact written under one (tenant,user,session) is
 //	             recalled there but never surfaces to a different tenant, enforced

@@ -192,6 +192,18 @@
         "docker": "pass",
         "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
       }
+    },
+    "wasm_tool": {
+      "stub": {
+        "native": "infeasible:sandboxed tool execution EXISTS and is current — Mastra Workspaces remote sandboxes (Daytona, E2B, Blaxel providers), each with its own filesystem/network/process space — but the isolation boundary is a container/microVM, not a WebAssembly guest. Maturity: NATIVE/OFFICIAL (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:sandboxed tool execution EXISTS and is current — Mastra Workspaces remote sandboxes (Daytona, E2B, Blaxel providers), each with its own filesystem/network/process space — but the isolation boundary is a container/microVM, not a WebAssembly guest. Maturity: NATIVE/OFFICIAL (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:sandboxed tool execution EXISTS and is current — Mastra Workspaces remote sandboxes (Daytona, E2B, Blaxel providers), each with its own filesystem/network/process space — but the isolation boundary is a container/microVM, not a WebAssembly guest. Maturity: NATIVE/OFFICIAL (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      },
+      "real": {
+        "native": "infeasible:sandboxed tool execution EXISTS and is current — Mastra Workspaces remote sandboxes (Daytona, E2B, Blaxel providers), each with its own filesystem/network/process space — but the isolation boundary is a container/microVM, not a WebAssembly guest. Maturity: NATIVE/OFFICIAL (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:sandboxed tool execution EXISTS and is current — Mastra Workspaces remote sandboxes (Daytona, E2B, Blaxel providers), each with its own filesystem/network/process space — but the isolation boundary is a container/microVM, not a WebAssembly guest. Maturity: NATIVE/OFFICIAL (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:sandboxed tool execution EXISTS and is current — Mastra Workspaces remote sandboxes (Daytona, E2B, Blaxel providers), each with its own filesystem/network/process space — but the isolation boundary is a container/microVM, not a WebAssembly guest. Maturity: NATIVE/OFFICIAL (non-WASM mechanism) SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      }
     }
   }
 }

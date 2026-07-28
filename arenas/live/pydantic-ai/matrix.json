@@ -192,6 +192,18 @@
         "docker": "pass",
         "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard dependency of pydantic v2 itself; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
+    },
+    "wasm_tool": {
+      "stub": {
+        "native": "infeasible:no CURRENT WASM tool sandbox: pydantic/mcp-run-python ran tool code in Pyodide (CPython->WASM) inside Deno, but was ARCHIVED 2026-01-30 by its own authors — 'no safe way to run Python within pyodide safely with reasonable latency' — and per capability-absence-claims.md an abandoned extension does not count as 'has'. Successor Monty is not WASM-based. Maturity: OFFICIAL-EXTENSION, ARCHIVED SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:no CURRENT WASM tool sandbox: pydantic/mcp-run-python ran tool code in Pyodide (CPython->WASM) inside Deno, but was ARCHIVED 2026-01-30 by its own authors — 'no safe way to run Python within pyodide safely with reasonable latency' — and per capability-absence-claims.md an abandoned extension does not count as 'has'. Successor Monty is not WASM-based. Maturity: OFFICIAL-EXTENSION, ARCHIVED SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:no CURRENT WASM tool sandbox: pydantic/mcp-run-python ran tool code in Pyodide (CPython->WASM) inside Deno, but was ARCHIVED 2026-01-30 by its own authors — 'no safe way to run Python within pyodide safely with reasonable latency' — and per capability-absence-claims.md an abandoned extension does not count as 'has'. Successor Monty is not WASM-based. Maturity: OFFICIAL-EXTENSION, ARCHIVED SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      },
+      "real": {
+        "native": "infeasible:no CURRENT WASM tool sandbox: pydantic/mcp-run-python ran tool code in Pyodide (CPython->WASM) inside Deno, but was ARCHIVED 2026-01-30 by its own authors — 'no safe way to run Python within pyodide safely with reasonable latency' — and per capability-absence-claims.md an abandoned extension does not count as 'has'. Successor Monty is not WASM-based. Maturity: OFFICIAL-EXTENSION, ARCHIVED SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "docker": "infeasible:no CURRENT WASM tool sandbox: pydantic/mcp-run-python ran tool code in Pyodide (CPython->WASM) inside Deno, but was ARCHIVED 2026-01-30 by its own authors — 'no safe way to run Python within pyodide safely with reasonable latency' — and per capability-absence-claims.md an abandoned extension does not count as 'has'. Successor Monty is not WASM-based. Maturity: OFFICIAL-EXTENSION, ARCHIVED SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md",
+        "wasm": "infeasible:no CURRENT WASM tool sandbox: pydantic/mcp-run-python ran tool code in Pyodide (CPython->WASM) inside Deno, but was ARCHIVED 2026-01-30 by its own authors — 'no safe way to run Python within pyodide safely with reasonable latency' — and per capability-absence-claims.md an abandoned extension does not count as 'has'. Successor Monty is not WASM-based. Maturity: OFFICIAL-EXTENSION, ARCHIVED SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md"
+      }
     }
   }
 }
