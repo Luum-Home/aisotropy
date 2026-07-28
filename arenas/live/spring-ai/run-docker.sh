@@ -19,6 +19,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 ENV_FILE="${REPO_ROOT}/.env"
+# The docker path carried the SAME defects the native path did, for the same
+# reason: nothing ever ran it. Fixed here, all found on the first real attempt —
+#   * OPENAI_MODEL defaulted to a vendor model id (the fourth surviving instance
+#     of that default, after Adapter.java, genkit-go/main.go and provider_client)
+#   * QDRANT_API_KEY was never forwarded, so every containerised retrieval failed
+#     Unauthenticated
+#   * RQLITE_URL carried no credential, so memory modes got HTTP 401
+#   * ARENA_STUB_MODEL was not forwarded, so the integration lane could not reach
+#     a container at all
 IMAGE="${SPRING_AI_LIVE_ARENA_IMAGE:-spring-ai-live-arena:latest}"
 
 if [[ -f "${ENV_FILE}" ]]; then
@@ -42,11 +51,13 @@ exec docker run --rm -i \
   --add-host=host.docker.internal:host-gateway \
   -e OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
   -e OPENAI_BASE_URL="${OPENAI_BASE_URL:?set OPENAI_BASE_URL — no vendor default: a hardcoded fallback silently sends prompts to one provider (see docs/architecture/model-provider.md)}" \
-  -e OPENAI_MODEL="${OPENAI_MODEL:-agnes-2.0-flash}" \
+  -e OPENAI_MODEL="${OPENAI_MODEL:?set OPENAI_MODEL — no vendor default: a fallback model id labels every number with a model that was never called}" \
   -e EMBED_URL="${EMBED_URL:-http://host.docker.internal:8899}" \
   -e QDRANT_URL="${QDRANT_URL:-http://host.docker.internal:6333}" \
-  -e RQLITE_URL="${RQLITE_URL:-http://host.docker.internal:4001}" \
+  -e RQLITE_URL="${RQLITE_URL:-http://aisotropy:local-dev-rqlite-pw-CHANGE-ME@host.docker.internal:4001}" \
+  -e QDRANT_API_KEY="${QDRANT_API_KEY:-local-dev-qdrant-key-CHANGE-ME}" \
   -e QDRANT_COLLECTION="${QDRANT_COLLECTION:-}" \
   -e ARENA_COLLECTION="${ARENA_COLLECTION:-}" \
   -e ARENA_STUB="${ARENA_STUB:-}" \
+  -e ARENA_STUB_MODEL="${ARENA_STUB_MODEL:-}" \
   "${IMAGE}"
