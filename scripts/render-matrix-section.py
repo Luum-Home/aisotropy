@@ -31,6 +31,9 @@ SIG_PASS = "✓"
 SIG_FAIL = "✗"
 SIG_UNKNOWN = "—"
 INFEASIBLE_PREFIX = "infeasible:"
+# pass:<provenance> — a pass that declares WHERE the capability came from.
+# See validMatrixStatus in arenas/live/runner/matrix.go for why it exists.
+PASS_PREFIX = "pass:"
 
 
 def tail(s: str, n: int) -> bytes:
@@ -51,6 +54,10 @@ def cell_glyph(status: str) -> bytes:
         return SIG_FAIL.encode("utf-8")
     if status == "pending":
         return "⧗ pending".encode("utf-8")
+    if status.startswith(PASS_PREFIX):
+        prov = status[len(PASS_PREFIX):]
+        if prov.strip():
+            return SIG_PASS.encode("utf-8") + b" " + tail(prov, 50)
     if status.startswith(INFEASIBLE_PREFIX):
         reason = status[len(INFEASIBLE_PREFIX):]
         if reason.strip():

@@ -22,8 +22,8 @@
         "wasm": "infeasible:no mainline Java-to-WASI target exists — TeaVM's WASI support lives in an unmerged fork and GraalVM Web Image targets browser/Node JS-glue, not WASI; Spring's dynamic proxies and classpath scanning also conflict with the closed-world model. Independent of WASI's networking surface, which has had sockets since 0.2"
       },
       "real": {
-        "native": "pass",
-        "docker": "pass",
+        "native": "pass:adapter-supplied axis (framework has none)",
+        "docker": "pass:adapter-supplied axis (framework has none)",
         "wasm": "infeasible:no mainline Java-to-WASI target exists — TeaVM's WASI support lives in an unmerged fork and GraalVM Web Image targets browser/Node JS-glue, not WASI; Spring's dynamic proxies and classpath scanning also conflict with the closed-world model. Independent of WASI's networking surface, which has had sockets since 0.2"
       }
     },

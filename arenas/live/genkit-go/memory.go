@@ -31,18 +31,35 @@ func runMemory(rc *runCtx, out *arenaOutput) error {
 	// memory_consolidation — docs/architecture/arena-memory-extensions.md) arrive
 	// on the wire as ordinary `memory` turns plus a SECOND scope axis, user_id,
 	// which the runner HOLDS constant while VARYING session_id across invocations.
-	// Genkit Go has NO user-scoped memory primitive: its experimental
-	// core/x/session (genkit.WithExperimental) is transcript-BY-SESSION-ID only —
-	// server-managed replay keyed on the session, not on the user. So this adapter
-	// keys the framework's NATIVE scope (session_id) and deliberately does NOT
-	// synthesize a user-keyed store from user_id (that would be a hand-rolled
-	// strawman the fairness protocol forbids — docs/architecture/
-	// arena-fairness-protocol.md). The honest, MEASURED consequence: a
-	// cross-session probe (fresh session_id, same user_id) re-hydrates zero prior
-	// turns below and run-and-fails — the finding that Genkit Go has no
-	// user-scoped memory, not a bug in this adapter.
+	// Genkit Go has NO user-scoped memory primitive — re-verified in source
+	// against genkit go@v1.10.0, because the citation this comment used to carry
+	// (`core/x/session`) does not exist in that version. The real surface is
+	// ai/exp/session.go: `SessionStore[State]` = SnapshotReader + SnapshotWriter,
+	// whose entire key space is `snapshotID` / `sessionID`
+	// ("WHERE sessionId = ? ORDER BY createdAt DESC"), plus a Firebase
+	// `SessionStoreOption` over the same shape. Nothing outside _test.go in that
+	// surface mentions a user or owner axis. So the CONCLUSION held; the evidence
+	// for it had gone stale, which is exactly the kind of drift that turns a
+	// once-true claim into an unfounded one.
+	//
+	// This adapter USED to stop there and let the cross-session probe
+	// run-and-fail, reading the fairness protocol as forbidding a synthesized
+	// user key. That reading was inverted: §4's concern is adapters that
+	// UNDERSTATE a competitor by hand-rolling instead of using the framework's
+	// best official primitive, and where the framework offers NO primitive,
+	// declining to supply the axis measures the adapter author, not Genkit. The
+	// evidence it was measuring authorship: pydantic-ai, spring-ai and
+	// llamaindex sit at the identical capability level — app-level replay, no
+	// native user axis, because their frameworks have none either — and all
+	// three PASSED, while this adapter and eino refused and FAILED.
+	//
+	// The axis is now supplied here, uniformly with those three, and the matrix
+	// cell carries `pass:<provenance>` naming it ADAPTER-SUPPLIED. The framework
+	// finding survives as a visible label instead of a silent fail.
+	scopeKey := rc.in.SessionID
 	if uid := strings.TrimSpace(rc.in.UserID); uid != "" {
-		fmt.Fprintf(os.Stderr, "PROGRESS: memory: wire user_id=%q acknowledged, but Genkit Go has no user-scoped memory primitive (core/x/session is session-keyed) — keying NATIVE scope session_id=%q; a different-session recall for this user run-and-fails by construction\n", uid, rc.in.SessionID)
+		scopeKey = "user:" + uid
+		fmt.Fprintf(os.Stderr, "PROGRESS: memory: wire user_id=%q -> ADAPTER-SUPPLIED user-scoped key %q (Genkit Go has no user-scoped memory primitive: ai/exp/session.go SessionStore is snapshot/session-keyed). Cross-session recall for this user is app-level replay, not a framework guarantee\n", uid, scopeKey)
 	}
 
 	rq := newRqliteClient(rc.rqliteURL)
@@ -50,11 +67,11 @@ func runMemory(rc *runCtx, out *arenaOutput) error {
 		return fmt.Errorf("memory: ensure table: %w", err)
 	}
 
-	prior, err := rq.loadTurns(rc.ctx, rc.in.SessionID)
+	prior, err := rq.loadTurns(rc.ctx, scopeKey)
 	if err != nil {
 		return fmt.Errorf("memory: load prior turns: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "PROGRESS: memory: loaded %d prior turn(s) for session %q from rqlite\n", len(prior), rc.in.SessionID)
+	fmt.Fprintf(os.Stderr, "PROGRESS: memory: loaded %d prior turn(s) for scope %q from rqlite\n", len(prior), scopeKey)
 
 	// Full history = whatever rqlite persisted from earlier process(es) +
 	// this invocation's new message(s). The new message(s) are NOT assumed to
@@ -90,14 +107,14 @@ func runMemory(rc *runCtx, out *arenaOutput) error {
 		if role == "" {
 			role = "user"
 		}
-		if err := rq.appendTurn(rc.ctx, rc.in.SessionID, role, m.Content); err != nil {
+		if err := rq.appendTurn(rc.ctx, scopeKey, role, m.Content); err != nil {
 			return fmt.Errorf("memory: persist inbound turn: %w", err)
 		}
 	}
-	if err := rq.appendTurn(rc.ctx, rc.in.SessionID, "assistant", out.Reply); err != nil {
+	if err := rq.appendTurn(rc.ctx, scopeKey, "assistant", out.Reply); err != nil {
 		return fmt.Errorf("memory: persist reply: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "PROGRESS: memory: persisted turn(s) to rqlite for session %q\n", rc.in.SessionID)
+	fmt.Fprintf(os.Stderr, "PROGRESS: memory: persisted turn(s) to rqlite for scope %q\n", scopeKey)
 
 	return nil
 }

@@ -27,13 +27,26 @@ const (
 	statusFail       = "fail"
 	statusPending    = "pending"
 	infeasiblePrefix = "infeasible:"
+	passPrefix       = "pass:"
 )
 
-// validMatrixStatus reports whether s is one of the four allowed status
-// forms: pass, fail, pending, or infeasible:<non-empty reason>. Anything else
-// (empty string, "n/a", "skip", "todo", a bare "infeasible" with no reason,
-// …) is invalid — the schema is deliberately closed so a typo cannot pass as
-// a covered cell.
+// validMatrixStatus reports whether s is one of the allowed status forms:
+// pass, fail, pending, infeasible:<non-empty reason>, or
+// pass:<non-empty provenance>. Anything else (empty string, "n/a", "skip",
+// "todo", a bare "infeasible" with no reason, …) is invalid — the schema is
+// deliberately closed so a typo cannot pass as a covered cell.
+//
+// pass:<provenance> exists because "it passed" can be true at more than one
+// level, and collapsing those to one glyph publishes a claim the run did not
+// make. memory_cross_session is the case that forced it: recalling a fact
+// across two sessions of the same user requires a USER axis, and for five of
+// the eight adapters the framework supplies none — the adapter synthesizes it
+// at app level. Three of those five synthesized it and passed; two refused on
+// fairness grounds and failed. Same framework capability, opposite board
+// outcome, decided by which adapter author had scruples. Labelling the pass
+// with where the axis CAME FROM lets every adapter run the dimension while the
+// cell still tells a reader whether the framework guaranteed the scope or the
+// adapter hand-rolled it. See docs/architecture/arena-fairness-protocol.md §4.
 func validMatrixStatus(s string) bool {
 	switch s {
 	case statusPass, statusFail, statusPending:
@@ -42,7 +55,22 @@ func validMatrixStatus(s string) bool {
 	if strings.HasPrefix(s, infeasiblePrefix) {
 		return strings.TrimSpace(strings.TrimPrefix(s, infeasiblePrefix)) != ""
 	}
+	if strings.HasPrefix(s, passPrefix) {
+		return strings.TrimSpace(strings.TrimPrefix(s, passPrefix)) != ""
+	}
 	return false
+}
+
+// passProvenance reports whether s is a labelled pass, and if so, its
+// provenance text. A labelled pass IS a pass everywhere it is counted or
+// gated: validMatrixStatus accepts it, so gateMatrices treats it as a filled
+// cell exactly like a bare pass. The label rides along for the renderer; it
+// never demotes the cell.
+func passProvenance(s string) (string, bool) {
+	if !strings.HasPrefix(s, passPrefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(s, passPrefix), true
 }
 
 // isFeasibleGap reports whether s is an infeasible cell, and if so, its
@@ -293,6 +321,12 @@ func matrixCellGlyph(status string) string {
 		return sigFail
 	case statusPending:
 		return "⧗ pending"
+	}
+	// A labelled pass renders as a pass PLUS its provenance, never as a bare
+	// glyph — the label is the whole point: it is what stops "passed" from
+	// implying the framework guaranteed something the adapter supplied.
+	if prov, ok := passProvenance(status); ok {
+		return sigPass + " " + tail(prov, 50)
 	}
 	if reason, ok := infeasibleReason(status); ok {
 		return "infeasible: " + tail(reason, 50)

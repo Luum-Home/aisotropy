@@ -117,8 +117,12 @@ def main() -> int:
             if declared == "pending" and obs == "ran":
                 print(f"   PENDING but the cell RAN   {fw:13s} {dim:22s} {tally}  — declare it")
                 drift += 1
-            elif declared in ("pass", "fail") and obs == "error-only":
-                print(f"   declares {declared:4s}, NOTHING RAN  {fw:13s} {dim:22s} {tally}  — "
+            # A labelled pass ("pass:<provenance>") is a pass for drift purposes
+            # — the label declares WHERE the capability came from, never whether
+            # the cell ran. Treating it as an unknown status would silently drop
+            # every labelled cell out of drift detection.
+            elif (declared == "fail" or str(declared).startswith("pass")) and obs == "error-only":
+                print(f"   declares {str(declared)[:12]:12s}, NOTHING RAN  {fw:13s} {dim:22s} {tally}  — "
                       f"the manifest claims coverage this run did not deliver")
                 drift += 1
             # Deliberately NOT compared: declared pass vs a board where some cells

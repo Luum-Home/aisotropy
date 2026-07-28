@@ -284,17 +284,23 @@ real seed-under-A / probe-as-B run.
 
 These runner-internal dimensions (`docs/architecture/arena-memory-extensions.md`) arrive on the wire
 as ordinary `memory` turns plus a second scope axis, `user_id`, HELD constant while `session_id`
-VARIES across invocations — defeating session-keyed transcript replay by construction. The verdict is
-**honest, not inflated**: Eino has no user-scoped (indeed no official persisted) memory component, so
-this adapter's SQLite store stays keyed by `session_id` (the level Eino's own primitives reach) and
-it does **not** synthesize a user-keyed store from `user_id` — that would be a hand-rolled strawman
-the fairness protocol forbids (`docs/architecture/arena-fairness-protocol.md`). Pinned version:
+VARIES across invocations — defeating session-keyed transcript replay by construction. Eino has no
+user-scoped (indeed no official persisted) memory component, so this adapter SUPPLIES the user axis
+itself (keying `user:<user_id>`) and the matrix cell declares that provenance rather than passing
+silently.
+
+This adapter previously kept the store `session_id`-keyed and let the probe FAIL, reading the fairness
+protocol as forbidding a synthesized user key. That reading was inverted — §4 exists to stop an adapter
+from UNDERSTATING a competitor by hand-rolling over a better official primitive, and where the framework
+ships none, refusing to supply the axis measures this author, not Eino. Three adapters at the identical
+level (pydantic-ai, spring-ai, llamaindex — all app-level replay, none native) were passing while this
+one failed. See `docs/architecture/arena-fairness-protocol.md` §4a. Pinned version:
 **`github.com/cloudwego/eino` v0.9.12** (`go.mod`); the research checked the `adk` subpackage at
 v0.9.13 on pkg.go.dev.
 
 | Dimension | Verdict | Framework primitive (maturity) | Evidence / matrix cell |
 |---|---|---|---|
-| `memory_cross_session` | **run-and-fail** (wired) | `adk` in-process ctx KV + `CheckPointStore` (interrupt/resume only) — session/interrupt-keyed, NOT user-scoped; `MemoryStore` exists only in `eino-examples`. Maturity: NONE in core (example-only). https://pkg.go.dev/github.com/cloudwego/eino/adk ; https://github.com/cloudwego/eino/issues/203 | `mode_memory.go` reads `user_id` and logs that Eino has no user-scoped store, keying `session_id`; a fresh-session recall loads zero turns → honest FAIL. Matrix: real=`pending` (scored on the real lane), stub=`infeasible` (`:memory:` SQLite can't cross the persist→recall process boundary), wasm=`infeasible` (sockets). |
+| `memory_cross_session` | **pass, adapter-supplied axis** | `adk` `CheckPointStore` is `Get/Set(ctx, checkPointID) []byte` (`internal/core/interrupt.go`) — an opaque blob under ONE id, no user axis, no public store interface; nothing outside `_test.go` in eino@v0.9.12 mentions `UserID`; `MemoryStore` exists only in `eino-examples`. Maturity: **NONE in core** (example-only). https://pkg.go.dev/github.com/cloudwego/eino/adk ; https://github.com/cloudwego/eino/issues/203 | `mode_memory.go` keys the store by `user:<user_id>` when the wire carries one, uniformly with pydantic-ai/spring-ai/llamaindex (all at this same level). Matrix real=`pass:adapter-supplied axis (framework has none)` — the label, not a fail, is where the framework finding lives now (see `docs/architecture/arena-fairness-protocol.md` §4a). stub=`infeasible` (`:memory:` SQLite can't cross the persist→recall process boundary), wasm=`infeasible` (build). |
 | `memory_semantic_recall` | **infeasible** | NONE — no semantic-memory component in Eino core; ranked recall would be adapter-invented. | Matrix: `infeasible` all lanes. |
 | `memory_consolidation` | **infeasible** | NONE — no fact-extraction/consolidation component in Eino core. | Matrix: `infeasible` all lanes. |
 
@@ -305,8 +311,10 @@ memory-store types) is the substitute evidence.
 **2026-07 ecosystem sweep.** The closest official artifact remains the OFFICIAL-EXAMPLE `MemoryStore`
 in `eino-examples` (<https://pkg.go.dev/github.com/cloudwego/eino-examples/flow/agent/react/memory_example/memory>,
 2026-03) — and it is **SESSION-keyed**. A session-keyed store cannot pass a varies-session/holds-user
-dimension **by construction** (the fresh recall session reads an empty conversation), so the
-run-and-fail verdict above is a property of what Eino officially ships, not of this adapter's wiring.
+dimension **by construction** (the fresh recall session reads an empty conversation). That absence is
+a property of what Eino officially ships, not of this adapter's wiring — which is why it is now reported
+as the cell's `adapter-supplied axis` label instead of as a fail a reader could mistake for a broken
+framework.
 
 ### `structured` mode
 

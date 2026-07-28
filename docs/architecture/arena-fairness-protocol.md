@@ -198,6 +198,45 @@ corpus `text` key — verified in source; mastra `semanticRecall:false`, because
 durable last-N recall, not semantic recall). So the fairness debt is specifically the open SHOULD-FIX
 list, not every deviation.
 
+### 4a. The inverted reading — refusing to supply an axis the framework does not have
+
+The rule above says "use the framework's best OFFICIAL primitive instead of hand-rolling". Two adapters
+read that as "never synthesize", and applied it to a case it was never about: **`memory_cross_session`
+needs a USER axis, and eino and genkit-go have none.** Both adapters therefore declined to key their
+store by `user_id`, let the probe run-and-fail, and recorded the fail as the finding "this framework has
+no user-scoped memory".
+
+That is the rule pointing backwards. §4 exists to stop an adapter from **understating** a competitor by
+hand-rolling something the framework already ships better. When the framework ships **nothing**, refusing
+to supply the axis does not measure the framework — it measures the adapter author. The proof it was
+measuring authorship rather than capability: **pydantic-ai, spring-ai and llamaindex sit at the identical
+capability level** — all app-level replay, none using a native user axis, because none of those three
+frameworks has one either — and all three **passed**, while eino and genkit-go **failed**. Five adapters,
+one capability level, opposite board outcomes, decided by which author had scruples. That is exactly the
+bias §4 exists to prevent, arriving through §4's own front door.
+
+**The rule, applying uniformly to all five (operator decision, 2026-07-28).** Every adapter supplies the
+axis, so the dimension measures the same thing everywhere — and **the cell declares where the axis came
+from** via `pass:<provenance>` (`arenas/live/MATRIX-SCHEMA.md`):
+
+| Provenance | Adapters | Meaning |
+|---|---|---|
+| `native axis (…)` | mastra (`Memory` `resourceId`×`threadId`, `scope:'resource'`), langgraph (`BaseStore` namespaces), aisotropy (tenant/user-scoped tiered memory) | the framework guarantees the scope |
+| `adapter-supplied axis (framework has none)` | eino, genkit-go, pydantic-ai, spring-ai, llamaindex | the adapter synthesizes it at app level |
+
+The framework finding is **not lost** — it moves from a silent `fail` (which readers mistake for "this
+framework is broken") into an explicit label (which says the true thing: "the framework does not give you
+this; the integrator must build it"). The dimension still discriminates, on the axis that actually
+matters.
+
+**Verified in source, not assumed** — the absence claims above obey `.claude/rules/capability-absence-claims.md`:
+eino@v0.9.12's `adk` CheckPointStore is `Get/Set(ctx, checkPointID) []byte` in `internal/core/interrupt.go`,
+an opaque blob under a single ID, and nothing outside `_test.go` in the module mentions `UserID`;
+genkit go@v1.10.0's `ai/exp/session.go` `SessionStore[State]` keys entirely on `snapshotID`/`sessionID`
+(`WHERE sessionId = ? ORDER BY createdAt DESC`) with no user or owner axis. (The genkit adapter had
+cited `core/x/session`, a path that does not exist in v1.10.0 — the conclusion held but its evidence had
+gone stale, which is how a once-true claim quietly becomes an unfounded one.)
+
 **The bar to close it.** Each adapter must wire its framework's best OFFICIAL primitive, and DECLARE it
 in the adapter README with a URL + maturity label (NATIVE / OFFICIAL-EXTENSION /
 OFFICIAL-THIRD-PARTY-INTEGRATION / COMMUNITY-ONLY / NONE) + last-release date — the exact discipline
