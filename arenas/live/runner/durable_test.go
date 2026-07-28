@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,7 +62,7 @@ func TestResumableAppendRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, recordsFileName)
 
-	dl, err := openDurableLog(path)
+	dl, err := openDurableLog(path, "run-test")
 	if err != nil {
 		t.Fatalf("openDurableLog: %v", err)
 	}
@@ -113,7 +114,7 @@ func TestResumeSkipFiltersPresentCells(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, recordsFileName)
 
-	dl, err := openDurableLog(path)
+	dl, err := openDurableLog(path, "run-test")
 	if err != nil {
 		t.Fatalf("openDurableLog: %v", err)
 	}
@@ -154,7 +155,7 @@ func TestResumableDedupLastWins(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, recordsFileName)
 
-	dl, _ := openDurableLog(path)
+	dl, _ := openDurableLog(path, "run-test")
 	// Same cell appended twice: first a FAIL, then a PASS.
 	_ = dl.appendCorrectness(synthRecord("alpha", "qa", "q1", false), "real")
 	_ = dl.appendCorrectness(synthRecord("alpha", "qa", "q1", true), "real")
@@ -227,7 +228,7 @@ func TestRenderFromRecordsMatchesDirect(t *testing.T) {
 
 	// Disk: append the same records, reload, render.
 	logPath := filepath.Join(dir, recordsFileName)
-	dl, _ := openDurableLog(logPath)
+	dl, _ := openDurableLog(logPath, "run-test")
 	for _, r := range recs {
 		if err := dl.appendCorrectness(r, "real"); err != nil {
 			t.Fatalf("append: %v", err)
@@ -267,7 +268,7 @@ func TestRenderOnlyWritesResultsFromRecords(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, recordsFileName)
 
-	dl, _ := openDurableLog(logPath)
+	dl, _ := openDurableLog(logPath, "run-test")
 	_ = dl.appendCorrectness(synthRecord("alpha", "qa", "q1", true), "real")
 	_ = dl.appendBench(benchCell{Framework: "alpha", Form: "native", Mode: "qa", Iters: 5, WarmP50: 100, WarmP95: 120}, "real")
 	dl.close()
@@ -288,5 +289,97 @@ func TestRenderOnlyWritesResultsFromRecords(t *testing.T) {
 	empty := t.TempDir()
 	if err := renderOnly(empty); err == nil {
 		t.Errorf("renderOnly on an empty dir should error (nothing to render)")
+	}
+}
+
+// TestInvalidate_ReMeasuresAWindow pins the answer to a question the records
+// could not answer on 2026-07-28: "which cells were measured while Qdrant was
+// refusing connections?" They did not know, because nothing stamped them, so a
+// bad cell resumed forever — -resume skips whatever is present, and presence
+// was the only fact a record carried.
+func TestInvalidate_ReMeasuresAWindow(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, recordsFileName)
+
+	write := func(runID, cell string) {
+		l, err := openDurableLog(path, runID)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		if err := l.append(recordEnvelope{
+			Kind: kindCorrectness, Cell: cell, Lane: "real", Form: "native", TaskID: cell,
+			Record: &record{Framework: "fw", Mode: "qa", ID: cell},
+		}); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+		l.close()
+	}
+	write("run-BAD", "fw|qa|real|native|bad")
+	write("run-GOOD", "fw|qa|real|native|good")
+
+	// Baseline: both resume.
+	rs, err := loadDurableLog(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(rs.present) != 2 {
+		t.Fatalf("baseline present = %d, want 2", len(rs.present))
+	}
+	if rs.oldestAt == "" || rs.newestAt == "" {
+		t.Error("stamped records produced no measurement window — a resumed board could not state its own age")
+	}
+	if rs.unstamped != 0 {
+		t.Errorf("unstamped = %d on freshly stamped records, want 0", rs.unstamped)
+	}
+
+	// Invalidate the bad run: its cell must NOT resume, so it re-measures.
+	rs, err = loadDurableLogFiltered(path, invalidateSpec{runID: "run-BAD"})
+	if err != nil {
+		t.Fatalf("load filtered: %v", err)
+	}
+	if rs.present["fw|qa|real|native|bad"] {
+		t.Error("the invalidated cell still resumed — it would keep a value measured during a known-bad window")
+	}
+	if !rs.present["fw|qa|real|native|good"] {
+		t.Error("invalidating one run dropped an unrelated run's cell — that re-spends good measurements")
+	}
+	if rs.invalidated != 1 {
+		t.Errorf("invalidated count = %d, want 1 (a silent invalidation is indistinguishable from the staleness it removes)", rs.invalidated)
+	}
+}
+
+// TestInvalidate_Unstamped covers the records that predate provenance: they
+// cannot say when they were measured, so -invalidate-unstamped is the only way
+// to guarantee a board contains nothing from an unknown time.
+func TestInvalidate_Unstamped(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, recordsFileName)
+	// Hand-write an envelope with no At/RunID, exactly as pre-change runs did.
+	line, _ := json.Marshal(recordEnvelope{
+		V: recordsSchemaVersion, Kind: kindCorrectness,
+		Cell: "fw|qa|real|native|old", Lane: "real", Form: "native", TaskID: "old",
+		Record: &record{Framework: "fw", Mode: "qa", ID: "old"},
+	})
+	if err := os.WriteFile(path, append(line, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rs, err := loadDurableLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.unstamped != 1 {
+		t.Errorf("unstamped = %d, want 1 — a pre-provenance cell must be COUNTED, not silently treated as fresh", rs.unstamped)
+	}
+	if rs.oldestAt != "" {
+		t.Error("an unstamped record invented a timestamp; it must stay unknown")
+	}
+
+	rs, err = loadDurableLogFiltered(path, invalidateSpec{unstamped: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.present) != 0 || rs.invalidated != 1 {
+		t.Errorf("-invalidate-unstamped left present=%d invalidated=%d, want 0 and 1", len(rs.present), rs.invalidated)
 	}
 }

@@ -86,6 +86,9 @@ func main() {
 	skipCorrect := flag.Bool("skip-correctness", false, "skip the correctness/quality pass entirely")
 	skipDims := flag.Bool("skip-dimensions", false, "skip the new-dimensions pass (scoped-memory, isolation, crash, observability)")
 	skipMatrixGate := flag.Bool("skip-matrix-gate", false, "skip the full-matrix completeness gate over arenas/live/<fw>/matrix.json (still renders the matrix section)")
+	invalidateBefore := flag.String("invalidate-before", "", "RFC3339 instant: do NOT resume cells measured before it — they re-measure. For a known-bad window (a store that was down, a misconfigured key) whose cells would otherwise stay frozen forever, because -resume skips whatever is present")
+	invalidateRun := flag.String("invalidate-run", "", "run id (see the 'run id:' line each run logs): do NOT resume cells produced by that run")
+	invalidateUnstamped := flag.Bool("invalidate-unstamped", false, "do NOT resume cells written before records carried provenance — they cannot state when they were measured")
 	allowNarrowing := flag.Bool("allow-narrowing", false, "permit writing a RESULTS.md that covers FEWER modes or frameworks than the one already on disk. Off by default: a scoped run that completes replaces the published board with its own narrow slice, and unlike a crash (which writes nothing) that loss looks like a successful run")
 	skipServiceGate := flag.Bool("skip-service-gate", false, "skip the real-lane infrastructure reachability gate (Qdrant, rqlite, embed server). Only pass this if you INTEND to measure against whatever happens to be up: a store that is down does not fail loudly, it degrades into in-process defaults and publishes as a retrieval score")
 	skipDeterminismGate := flag.Bool("skip-determinism-gate", false, "skip the scripts/arena-determinism-guard.sh purity+reproducibility gate over arenas/live/runner/scoring (the PRIMARY score's enforcement gate — see .claude/rules/arena-deterministic-judging.md)")
@@ -333,17 +336,31 @@ func main() {
 	// pre-Layer-1 behavior.
 	recordsPath := filepath.Join(*liveDir, recordsFileName)
 	resume := emptyResumeState()
+	inv := invalidateSpec{beforeAt: *invalidateBefore, runID: *invalidateRun, unstamped: *invalidateUnstamped}
 	if *resumeFlag {
-		resume, err = loadDurableLog(recordsPath)
+		resume, err = loadDurableLogFiltered(recordsPath, inv)
 		if err != nil {
 			fatal("load resume log %s: %v", recordsPath, err)
 		}
 		if len(resume.present) > 0 {
 			logf("resume: %d cell(s) already present in %s will be skipped (%d correctness records folded back into the report)",
 				len(resume.present), recordsPath, len(resume.records))
+			// A resumed board is a MOSAIC: cells measured minutes ago sit beside
+			// cells measured hours ago, under whatever infrastructure was up at
+			// the time. State the window so its age is a reported fact instead of
+			// something the reader has to assume away.
+			logf("resume: measurement window %s .. %s (%d resumed cell(s) carry no provenance — written before records were stamped, so they cannot say when they were measured)",
+				orDash(resume.oldestAt), orDash(resume.newestAt), resume.unstamped)
 		}
+		if resume.invalidated > 0 {
+			logf("resume: %d cell(s) INVALIDATED by -invalidate-* and will be re-measured this run", resume.invalidated)
+		}
+	} else if !inv.empty() {
+		logf("WARNING: -invalidate-* has no effect without -resume (nothing is being resumed, so every cell is measured fresh anyway)")
 	}
-	durLog, err := openDurableLog(recordsPath)
+	runID := newRunID(time.Now())
+	logf("run id: %s — every cell measured by this run is stamped with it, so a bad window can be invalidated later by id", runID)
+	durLog, err := openDurableLog(recordsPath, runID)
 	if err != nil {
 		fatal("open durable records log %s: %v", recordsPath, err)
 	}

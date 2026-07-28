@@ -31,6 +31,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // recordsSchemaVersion is stamped on every durable line as `"v"`. Bump it when
@@ -65,6 +66,31 @@ type recordEnvelope struct {
 	Form   string `json:"form"`
 	TaskID string `json:"task_id,omitempty"`
 
+	// At and RunID are the provenance of ONE measurement, and their absence was
+	// a real hole rather than a missing nicety.
+	//
+	// With -resume, a cell already in this log is never re-measured. So a board
+	// is a MOSAIC: it can carry cells measured minutes ago beside cells measured
+	// hours ago under different infrastructure. On 2026-07-28 one window had
+	// Qdrant refusing connections, and afterwards there was no way to ask "which
+	// cells were measured during it?" — the records could not answer, because
+	// they did not know. A board that cannot state when each number was taken
+	// cannot exclude the ones taken while the floor was on fire.
+	//
+	// It also made duplicates unreadable: iso/crash/obs accumulated 20 records
+	// over 9 unique keys (eino x4) with no way to tell which was which. The
+	// loader's last-wins dedup picked correctly by luck of file order, not by
+	// evidence.
+	//
+	// Both fields are omitempty and optional on read: records written before
+	// this change carry neither and are reported as "unknown (pre-timestamp)",
+	// which is the honest label. They are NOT invented a time, and the schema
+	// version is deliberately NOT bumped — bumping it would rename the existing
+	// log aside and discard a full board's worth of real measurements to fix a
+	// metadata gap.
+	At    string `json:"at,omitempty"`     // RFC3339 UTC, when this cell was measured
+	RunID string `json:"run_id,omitempty"` // which run produced it
+
 	Record *record      `json:"record,omitempty"`
 	Bench  *benchCell   `json:"bench,omitempty"`
 	Iso    *isoRecord   `json:"iso,omitempty"`
@@ -87,18 +113,26 @@ func cellKey(framework, mode, lane, form, taskID string) string {
 // all under the lock. A nil *durableLog is a no-op writer (append/close on nil
 // return nil), so callers never need to nil-check.
 type durableLog struct {
-	mu   sync.Mutex
-	f    *os.File
-	path string
+	mu    sync.Mutex
+	f     *os.File
+	path  string
+	runID string // stamped onto every envelope this run appends
+}
+
+// newRunID mints this run's identifier. Wall-clock based and human-readable on
+// purpose: its job is to let a person say "everything from run-20260728T2010Z
+// is suspect, re-measure it", which a random opaque id would not support.
+func newRunID(now time.Time) string {
+	return "run-" + now.UTC().Format("20060102T150405Z")
 }
 
 // openDurableLog opens (creating if absent) the append-only records file.
-func openDurableLog(path string) (*durableLog, error) {
+func openDurableLog(path, runID string) (*durableLog, error) {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, err
 	}
-	return &durableLog{f: f, path: path}, nil
+	return &durableLog{f: f, path: path, runID: runID}, nil
 }
 
 // append stamps the current schema version, marshals the envelope to one line,
@@ -108,6 +142,11 @@ func (d *durableLog) append(env recordEnvelope) error {
 		return nil
 	}
 	env.V = recordsSchemaVersion
+	// Stamp provenance at write time. Every cell can then answer "when was I
+	// measured, and by which run?" — the question a resumed board could not
+	// answer at all before.
+	env.At = time.Now().UTC().Format(time.RFC3339)
+	env.RunID = d.runID
 	line, err := json.Marshal(env)
 	if err != nil {
 		return err
@@ -210,6 +249,14 @@ type resumeState struct {
 	obsRecs   []obsRecord
 	lane      string // lane observed on the records (first seen); "" when empty
 	loaded    int    // total non-empty lines parsed (before dedup)
+
+	// The measurement window of the cells that SURVIVED dedup. A resumed board
+	// is a mosaic, and these let it say so out loud instead of presenting cells
+	// measured hours apart as one instant.
+	oldestAt    string // earliest RFC3339 stamp among winning cells
+	newestAt    string // latest
+	unstamped   int    // winning cells written before provenance existed
+	invalidated int    // cells dropped by -invalidate-* so they re-measure
 }
 
 func emptyResumeState() *resumeState {
@@ -222,7 +269,49 @@ func emptyResumeState() *resumeState {
 // treated as stale: it is renamed aside (path + ".stale-v<n>") and an empty
 // state is returned, so a schema change never crashes a resume and never mixes
 // incompatible records.
+// invalidateSpec selects previously-measured cells that must NOT be resumed, so
+// they are measured again. It exists because a resumed cell is otherwise frozen
+// forever: -resume skips whatever is present, so a cell measured during a known
+// bad window (2026-07-28: Qdrant refusing connections) would keep its value
+// through every subsequent board, indistinguishable from a fresh one.
+//
+// Dropping a record is always SAFE in the sense that matters: the worst case is
+// re-spending that cell. Keeping a bad one is the unsafe direction, because it
+// publishes.
+type invalidateSpec struct {
+	beforeAt  string // drop cells stamped strictly before this RFC3339 instant
+	runID     string // drop cells produced by this run id
+	unstamped bool   // drop cells that carry no provenance at all
+}
+
+func (s invalidateSpec) empty() bool {
+	return s.beforeAt == "" && s.runID == "" && !s.unstamped
+}
+
+// drops reports whether this envelope must be re-measured rather than resumed.
+func (s invalidateSpec) drops(env recordEnvelope) bool {
+	if s.empty() {
+		return false
+	}
+	if s.unstamped && env.At == "" {
+		return true
+	}
+	if s.runID != "" && env.RunID == s.runID {
+		return true
+	}
+	if s.beforeAt != "" && env.At != "" && env.At < s.beforeAt {
+		// RFC3339 UTC with a fixed layout sorts lexicographically, so a string
+		// compare is a time compare here and needs no parsing.
+		return true
+	}
+	return false
+}
+
 func loadDurableLog(path string) (*resumeState, error) {
+	return loadDurableLogFiltered(path, invalidateSpec{})
+}
+
+func loadDurableLogFiltered(path string, inv invalidateSpec) (*resumeState, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return emptyResumeState(), nil
@@ -236,6 +325,7 @@ func loadDurableLog(path string) (*resumeState, error) {
 	// first-seen order of keys so the reconstructed slices are stable.
 	order := []string{}
 	byCell := map[string]recordEnvelope{}
+	invalidated := 0
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024) // records can be long (full reply text)
@@ -249,6 +339,13 @@ func loadDurableLog(path string) (*resumeState, error) {
 		if err := json.Unmarshal([]byte(raw), &env); err != nil {
 			// A malformed line is a corrupt tail (e.g. a torn write on crash).
 			// Skip it rather than aborting the whole resume.
+			continue
+		}
+		if inv.drops(env) {
+			// Not resumed: the cell re-measures this run. Counted, never silent —
+			// an invalidation the operator cannot see is indistinguishable from
+			// the staleness it was meant to remove.
+			invalidated++
 			continue
 		}
 		if env.V != recordsSchemaVersion {
@@ -274,11 +371,24 @@ func loadDurableLog(path string) (*resumeState, error) {
 
 	rs := emptyResumeState()
 	rs.loaded = loaded
+	rs.invalidated = invalidated
 	for _, cell := range order {
 		env := byCell[cell]
 		rs.present[cell] = true
 		if rs.lane == "" && env.Lane != "" {
 			rs.lane = env.Lane
+		}
+		// Measurement window over the cells that WON dedup — those are the ones
+		// the board will render, so those are the ones whose age matters.
+		if env.At == "" {
+			rs.unstamped++
+		} else {
+			if rs.oldestAt == "" || env.At < rs.oldestAt {
+				rs.oldestAt = env.At
+			}
+			if env.At > rs.newestAt {
+				rs.newestAt = env.At
+			}
 		}
 		switch env.Kind {
 		case kindCorrectness:
@@ -470,4 +580,14 @@ func orderedSubset(order []string, set map[string]bool) []string {
 		}
 	}
 	return out
+}
+
+// orDash renders an empty provenance stamp as an explicit dash. A blank in a
+// log line reads as "nothing to report"; a dash reads as "asked, no answer" —
+// which is the true state for records written before provenance existed.
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "unknown"
+	}
+	return s
 }
