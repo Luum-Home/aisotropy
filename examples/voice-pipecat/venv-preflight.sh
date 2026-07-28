@@ -44,9 +44,10 @@ here="$(cd "$(dirname "$0")" && pwd)" || { echo "venv-preflight: cannot resolve 
 venv="$here/.venv"
 py="$venv/bin/python"
 
-# The pinned interpreter range is a real constraint, not a preference: the
-# pipecat 0.0.x line depends on numba, which does not build on 3.14.
-WANT_RANGE=">=3.9,<3.14"
+# The pinned interpreter range is a real constraint, not a preference. The
+# floor is pipecat 1.x's own `Requires-Python: >=3.11`; the ceiling is numba,
+# a base dependency of pipecat, which does not build on 3.14.
+WANT_RANGE=">=3.11,<3.14"
 
 if [ ! -d "$venv" ]; then
   say "venv-preflight: ❌ no virtualenv at $venv"
@@ -75,9 +76,10 @@ if ! ver="$("$py" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/
   exit 1
 fi
 
-if ! "$py" -c 'import sys;sys.exit(0 if (3,9) <= sys.version_info < (3,14) else 1)' 2>/dev/null; then
+if ! "$py" -c 'import sys;sys.exit(0 if (3,11) <= sys.version_info < (3,14) else 1)' 2>/dev/null; then
   say "venv-preflight: ❌ interpreter is $ver, outside the required $WANT_RANGE"
-  say "   pipecat 0.0.x depends on numba, which does not build on 3.14."
+  say "   pipecat 1.x declares Requires-Python >=3.11, and depends on numba,"
+  say "   which does not build on 3.14."
   exit 1
 fi
 

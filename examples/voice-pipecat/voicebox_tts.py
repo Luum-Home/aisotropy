@@ -4,15 +4,21 @@ WHY THIS EXISTS INSTEAD OF pipecat's stock `OpenAITTSService`
 -------------------------------------------------------------
 voicebox speaks the OpenAI audio wire, so the obvious move is the same
 `base_url` + `api_key` trick the LLM leg uses. It does not work for TTS, for one
-concrete reason verified in the installed source (pipecat-ai 0.0.108):
+concrete reason RE-VERIFIED in the installed source at the 1.x migration
+(pipecat-ai 1.6.0 — the constraint survived the major version unchanged):
 
-    .venv/.../pipecat/services/openai/tts.py:242
-        "voice": VALID_VOICES[self._settings.voice],
+    .venv/.../pipecat/services/openai/tts.py:251
+        if voice not in VALID_VOICES:
+            yield ErrorFrame(error=f"OpenAI TTS voice {voice!r} is not supported ...")
 
-`VALID_VOICES` (tts.py:46-60) is a closed dict of the **13 OpenAI voice ids**
-(`alloy`, `ash`, ... `verse`). A voice outside it raises `KeyError` inside
-`run_tts`. Kokoro-FastAPI got away with this because it MAPS OpenAI voice names
-to Kokoro voices server-side — which is why `bot.py` used to pass `alloy`.
+`VALID_VOICES` (tts.py:49-63) is a closed dict of the **13 OpenAI voice ids**
+(`alloy`, `ash`, ... `verse`). 1.x improved the FAILURE MODE — 0.0.108 raised a
+bare `KeyError` from the `VALID_VOICES[...]` lookup, 1.6.0 checks membership
+first and yields a named `ErrorFrame` — but not the CONSTRAINT: a voice outside
+the dict still cannot be synthesized, and the lookup at tts.py:262 is still
+inline in `run_tts` with no seam to override. Kokoro-FastAPI got away with this
+because it MAPS OpenAI voice names to Kokoro voices server-side — which is why
+`bot.py` used to pass `alloy`.
 voicebox does **no such mapping**: it forwards `voice` straight to the engine —
 Kokoro (`external/voicebox/src/voicebox/tts.py:52`, `kokoro.create(..., voice=v)`)
 or Piper (`tts_piper.py:78`) — and both know only their own ids (`af_heart`,

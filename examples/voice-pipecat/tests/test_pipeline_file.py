@@ -10,8 +10,7 @@ output is captured from the pipeline as `TTSAudioRawFrame`s.
 The seam is first-party: `pipecat.tests.utils.run_test` (BSD-2, shipped inside
 the pipecat package) wraps a processor in a source/sink pair of queue
 processors — exactly the harness pipecat uses for its own unit tests. Written
-against the pinned `pipecat-ai>=0.0.60,<0.1` line (requirements.txt); NOT
-compatible with pipecat 1.x (which removed `openai_llm_context`).
+against the pinned `pipecat-ai>=1.6,<2` line (requirements.txt).
 
 Requirements beyond the round-trip tests: a running aisotropyd with the JWT
 authenticator (README step 1) and `AISOTROPY_TENANT_JWT` exported (step 2).
@@ -81,10 +80,10 @@ def test_pipeline_wav_in_tts_frames_out(audio_api, synth):
         "pipecat", reason="pipecat-ai not installed (pip install -r requirements.txt)"
     )
     version = importlib.metadata.version("pipecat-ai")
-    if not version.startswith("0."):
+    if not version.startswith("1."):
         pytest.skip(
             f"pipecat-ai {version} installed; this test targets the pinned "
-            "pipecat-ai>=0.0.60,<0.1 line (see requirements.txt)"
+            "pipecat-ai>=1.6,<2 line (see requirements.txt)"
         )
 
     asyncio.run(_run_pipeline(synth))
@@ -96,14 +95,12 @@ async def _run_pipeline(synth):
         from pipecat.frames.frames import (
             InputAudioRawFrame,
             TTSAudioRawFrame,
-            UserStartedSpeakingFrame,
-            UserStoppedSpeakingFrame,
             VADUserStartedSpeakingFrame,
             VADUserStoppedSpeakingFrame,
         )
         from pipecat.pipeline.pipeline import Pipeline
-        from pipecat.pipeline.task import PipelineParams
-        from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+        from pipecat.pipeline.worker import PipelineParams
+        from pipecat.processors.aggregators.llm_context import LLMContext
         from pipecat.services.openai.llm import OpenAILLMService
         from pipecat.tests.utils import SleepFrame, run_test
     except ImportError as e:  # partial install (e.g. missing transitive dep)
@@ -118,9 +115,16 @@ async def _run_pipeline(synth):
     # The SAME constructors bot.py uses — a lane that builds a different chain
     # than the bot proves nothing about the bot.
     stt = audio_backend.make_stt(laneconf.BACKEND, whisper_model=laneconf.WHISPER_MODEL)
-    llm = OpenAILLMService(api_key=TENANT_JWT, base_url=SHIM_BASE_URL, model="aisotropy")
+    llm = OpenAILLMService(
+        api_key=TENANT_JWT,
+        base_url=SHIM_BASE_URL,
+        settings=OpenAILLMService.Settings(model="aisotropy"),
+    )
     tts = audio_backend.make_tts(laneconf.BACKEND)
-    context_aggregator = llm.create_context_aggregator(OpenAILLMContext())
+    # No `vad_analyzer`: this lane injects the VAD frames a real transport's
+    # analyzer would emit (below), so running Silero over the fixture audio as
+    # well would produce a second, competing set of turn signals.
+    context_aggregator = audio_backend.make_context_aggregators(LLMContext())
 
     pipeline = Pipeline([stt, context_aggregator.user(), llm, tts])
 
@@ -137,24 +141,28 @@ async def _run_pipeline(synth):
         )
         for i in range(0, len(pcm16k), chunk_bytes)
     ]
+    # Only the VAD frames are injected. In pipecat 1.x the user context
+    # aggregator is what turns VAD signals into UserStarted/StoppedSpeaking
+    # frames (llm_response_universal.py:1205, :1259) — injecting those directly
+    # too would double the turn signals the aggregator is meant to derive.
     frames_to_send = [
-        UserStartedSpeakingFrame(),
         VADUserStartedSpeakingFrame(),
         *audio_frames,
         VADUserStoppedSpeakingFrame(),
-        UserStoppedSpeakingFrame(),
         # Give STT (whisper on CPU) + LLM (shim) + TTS (Kokoro) time to flush
         # before run_test sends EndFrame.
         SleepFrame(sleep=15.0),
     ]
 
+    # `allow_interruptions` is gone from 1.x's PipelineParams: interruption is
+    # a property of the user-turn start strategy and defaults to enabled
+    # (user_start/base_user_turn_start_strategy.py:56).
     down_frames, _up_frames = await run_test(
         pipeline,
         frames_to_send=frames_to_send,
         pipeline_params=PipelineParams(
             audio_in_sample_rate=WHISPER_SAMPLE_RATE,
             audio_out_sample_rate=24000,
-            allow_interruptions=True,
         ),
     )
 

@@ -84,9 +84,10 @@ export AISOTROPY_TENANT_JWT=$(python3 mint_jwt.py --tenant acme --user alice)
 ### 3. Python environment
 
 ```bash
-# Python >= 3.9, < 3.14: the pinned pipecat-ai 0.0.x line depends on numba,
-# which does not build on 3.14 (verified 2026-07-23). Any interpreter in that
-# range works — 3.11 is what this was last rebuilt with.
+# Python >= 3.11, < 3.14. The floor is pipecat 1.x's own `Requires-Python`
+# (ADR-0078 moved this example onto the 1.x line); the ceiling is numba, a base
+# dependency of pipecat, which does not build on 3.14 (verified 2026-07-23).
+# 3.11 is what this was last rebuilt with (2026-07-28, pipecat-ai 1.6.0).
 python3.11 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 # macOS: local audio needs portaudio first:  brew install portaudio

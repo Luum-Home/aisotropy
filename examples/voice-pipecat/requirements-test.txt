@@ -13,6 +13,10 @@
 # container, under the license-policy §Exceptions separate-service boundary —
 # the pip line is exactly what must not exist. Full rationale: ADR-0069, ADR-0077.
 pytest>=8
-# pipecat 0.0.x's stt_service imports `websockets` at module import time but
-# the [whisper] extra does not pull it — needed by test_pipeline_file.py.
-websockets>=13  # BSD-3-Clause
+# The explicit `websockets>=13` line that used to live here is GONE, not
+# forgotten: it worked around pipecat 0.0.x importing `websockets` in
+# stt_service at module scope without any extra pulling it in. On the 1.x line
+# `websockets>=13.1` is an unconditional dependency of pipecat-ai itself
+# (pipecat_ai-1.6.0.dist-info/METADATA), so pinning it here would state a
+# requirement the package already guarantees. Same for `openai` and
+# `onnxruntime`, both promoted to base dependencies in 1.x.

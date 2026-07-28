@@ -72,13 +72,19 @@ def tts_voice(backend: str) -> str:
 def make_stt(backend: str, *, whisper_model: str | None = None):
     """Build the pipecat STT service for `backend`.
 
-    voicebox: pipecat's stock `OpenAISTTService` — verified to accept `base_url`
-    (`pipecat/services/whisper/base_stt.py:220`, `AsyncOpenAI(api_key, base_url)`)
-    and to POST a complete WAV as multipart to `{base_url}/audio/transcriptions`
-    (`openai/stt.py:156-177`; the WAV is built by `SegmentedSTTService`
-    at `stt_service.py:661-666`). That is exactly voicebox's route contract.
+    voicebox: pipecat's stock `OpenAISTTService` — re-verified on 1.6.0 to
+    accept `base_url` (`pipecat/services/openai/stt.py:76`, reaching
+    `AsyncOpenAI(api_key, base_url)` at `whisper/base_stt.py:228`) and to POST a
+    complete WAV as multipart to `{base_url}/audio/transcriptions`
+    (`openai/stt.py:178`, `self._client.audio.transcriptions.create`). That is
+    exactly voicebox's route contract.
 
     kokoro-fastapi: the previous in-process faster-whisper service.
+
+    The model id goes through `settings=` rather than the `model=` constructor
+    argument: 1.x deprecated the latter on both services (removal in 2.0.0), and
+    `Settings` is a delta — unset fields keep the service's own defaults
+    (`services/settings.py:226-231`).
     """
     if backend == VOICEBOX:
         from pipecat.services.openai.stt import OpenAISTTService
@@ -86,12 +92,59 @@ def make_stt(backend: str, *, whisper_model: str | None = None):
         return OpenAISTTService(
             api_key=VOICEBOX_API_KEY or "not-needed",
             base_url=VOICEBOX_BASE_URL,
-            model=VOICEBOX_STT_MODEL_ID,
+            settings=OpenAISTTService.Settings(model=VOICEBOX_STT_MODEL_ID),
         )
 
     from pipecat.services.whisper.stt import WhisperSTTService
 
-    return WhisperSTTService(model=whisper_model or WHISPER_MODEL)
+    return WhisperSTTService(
+        settings=WhisperSTTService.Settings(model=whisper_model or WHISPER_MODEL)
+    )
+
+
+def make_context_aggregators(context, *, vad_analyzer=None):
+    """Build the pipecat 1.x user/assistant context aggregator pair.
+
+    Lives here for the same reason `make_stt`/`make_tts` do: `bot.py` and the
+    ADR-0069 lane must build the SAME chain. In pipecat 0.0.x this was one
+    provider-owned call — `llm.create_context_aggregator(OpenAILLMContext())` —
+    so there was nothing to share. 1.x replaced it with the universal
+    `LLMContextAggregatorPair`, which now also owns the VAD analyzer and the
+    turn-taking policy, so the construction is big enough to drift.
+
+    Args:
+        context: an `LLMContext` (pipecat 1.x's provider-neutral replacement
+            for `OpenAILLMContext`).
+        vad_analyzer: the VAD analyzer, or `None` when VAD frames are injected
+            externally (the file-based lane feeds `VADUser*SpeakingFrame`s
+            itself instead of running Silero over the fixture audio).
+
+    Turn policy: `SpeechTimeoutUserTurnStopStrategy` reproduces 0.0.x's
+    VAD-silence end-of-turn (it fires on `VADUserStoppedSpeakingFrame`,
+    user_stop/speech_timeout_user_turn_stop_strategy.py:163). pipecat 1.x's
+    DEFAULT is `TurnAnalyzerUserTurnStopStrategy(LocalSmartTurnAnalyzerV3)`
+    (user_turn_strategies.py:43-51) — a semantic end-of-turn ONNX model that
+    ships inside the wheel. That is a genuine upgrade, but adopting it is a
+    behavior change, not a migration, so it is deliberately NOT taken here.
+    """
+    from pipecat.processors.aggregators.llm_response_universal import (
+        LLMContextAggregatorPair,
+        LLMUserAggregatorParams,
+    )
+    from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import (
+        SpeechTimeoutUserTurnStopStrategy,
+    )
+    from pipecat.turns.user_turn_strategies import UserTurnStrategies
+
+    return LLMContextAggregatorPair(
+        context,
+        user_params=LLMUserAggregatorParams(
+            vad_analyzer=vad_analyzer,
+            user_turn_strategies=UserTurnStrategies(
+                stop=[SpeechTimeoutUserTurnStopStrategy()]
+            ),
+        ),
+    )
 
 
 def make_tts(backend: str):

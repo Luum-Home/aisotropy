@@ -11,20 +11,48 @@
 # INTO the venv and void the license-policy §Exceptions boundary.
 #
 # The pipecat extras pull the pieces the pipeline uses:
-#   silero  -> Silero VAD (voice activity detection / barge-in trigger)
+#   silero  -> Silero VAD (voice activity detection / barge-in trigger). On the
+#              1.x line this extra is DECLARED BUT EMPTY: its only dependency,
+#              onnxruntime, was promoted to a base dependency. Kept for intent.
 #   whisper -> WhisperSTTService backed by faster-whisper (local STT; used only
 #              by the VOICE_AUDIO_BACKEND=kokoro-fastapi fallback)
 #   local   -> LocalAudioTransport (mic/speaker via PyAudio; needs portaudio:
 #              `brew install portaudio` on macOS, libportaudio2 on Debian)
 #
-# Floor raised from 0.0.60 to 0.0.108 (2026-07-27, ADR-0077): the voicebox
-# wiring depends on two things verified in the 0.0.108 source and not present
-# across the whole older line — `OpenAISTTService(base_url=...)`
-# (pipecat/services/openai/stt.py:80) and the
+# Migrated 0.0.108 -> 1.x (2026-07-28, ADR-0078). 0.0.108 was itself emitting
+# the deprecation that names the replacement: `OpenAILLMContext` +
+# `llm.create_context_aggregator()` -> the universal `LLMContext` +
+# `LLMContextAggregatorPair`. The two things the voicebox wiring depends on
+# both survive, verified in the 1.6.0 source: `OpenAISTTService(base_url=...)`
+# (pipecat/services/openai/stt.py:76) and the
 # `TTSService.run_tts(self, text, context_id)` signature that voicebox_tts.py
-# implements (pipecat/services/tts_service.py:491). Still <1.0: pipecat 1.x
-# removed `openai_llm_context`, which bot.py and the lane both use.
-pipecat-ai[silero,whisper,local]>=0.0.108,<0.1
+# implements (pipecat/services/tts_service.py:487).
+#
+# Floor is 1.6 because `LLMContextAggregatorPair` is not stable across the
+# whole 1.x line (turn strategies moved in 1.2, PipelineWorker/WorkerRunner
+# replaced PipelineTask/PipelineRunner in 1.3). Ceiling <2 because every
+# deprecated alias the migration leans on is documented for removal in 2.0.0.
+# Requires Python >=3.11 (1.x's own floor; numba still caps the venv at <3.14).
+pipecat-ai[silero,whisper,local]>=1.6,<2
+
+# APPLE-SILICON ONLY, and only for the `VOICE_AUDIO_BACKEND=kokoro-fastapi`
+# fallback. pipecat 1.x made an import guard that 0.0.108 kept inert real: in
+# 0.0.108 both guards in services/whisper/stt.py sat under `if TYPE_CHECKING:`
+# (lines 29-42 — never executed at runtime), while 1.6.0 runs them at module
+# scope and hard-requires `mlx_whisper` when
+# `platform.system()=="Darwin" and platform.machine()=="arm64"` (stt.py:41-48).
+# So on an M-series Mac `pipecat-ai[whisper]` alone no longer imports
+# `WhisperSTTService` — verified by the migration: 0.0.108 imports it, 1.6.0
+# raises `ImportError: Missing module: No module named 'mlx_whisper'`.
+#
+# This line exists to keep ADR-0077's revert switch REAL. That ADR's premise is
+# that leaving voicebox is one variable, not a code edit; a fallback that
+# ImportErrors on the primary dev platform would quietly void it. mlx-whisper is
+# MIT (`pip show`), so no license question — but it pulls mlx + torch, so it is
+# marked, not unconditional: nothing is added on Linux/Intel, where the 1.6.0
+# guard does not fire at all. The DEFAULT voicebox backend never touches this
+# code path (it uses OpenAISTTService over HTTP).
+mlx-whisper~=0.4.2; sys_platform == "darwin" and platform_machine == "arm64"
 
 # The metric scripts talk to the shim/TTS directly (no Pipecat needed there).
 openai>=1.50

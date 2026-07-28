@@ -45,14 +45,14 @@ import sys
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
+from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transports.local.audio import (
     LocalAudioTransport,
     LocalAudioTransportParams,
 )
+from pipecat.workers.runner import WorkerRunner
 
 import audio_backend
 
@@ -69,16 +69,14 @@ async def main() -> None:
         )
         raise SystemExit(2)
 
-    # Mic + speaker with Silero VAD: VAD both segments the user's turns for STT
-    # and triggers interruptions — Pipecat cancels the in-flight LLM/TTS work
-    # when the user starts speaking, which closes the HTTP request to the shim,
-    # which aisotropy's StreamCore turns into an immediate upstream LLM stop
-    # (the constitutional ctx-cancellation gate). That chain IS barge-in.
+    # Mic + speaker. In pipecat 1.x the VAD analyzer is NO LONGER a transport
+    # parameter — it moved onto the user context aggregator below
+    # (`LLMUserAggregatorParams.vad_analyzer`, llm_response_universal.py:173),
+    # which is also where turn-taking and interruptions are now decided.
     transport = LocalAudioTransport(
         LocalAudioTransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
         )
     )
 
@@ -93,7 +91,13 @@ async def main() -> None:
     # NOTE: aisotropy owns the system prompt server-side (persona + tenant
     # memory hydration); incoming system messages are ignored by the shim (v1
     # floor), so no system message is configured here.
-    llm = OpenAILLMService(api_key=TENANT_JWT, base_url=SHIM_BASE_URL, model="aisotropy")
+    # `settings=` rather than the deprecated `model=` constructor argument (1.x
+    # marks the latter for removal in 2.0.0).
+    llm = OpenAILLMService(
+        api_key=TENANT_JWT,
+        base_url=SHIM_BASE_URL,
+        settings=OpenAILLMService.Settings(model="aisotropy"),
+    )
 
     tts = audio_backend.make_tts(backend)
 
@@ -102,8 +106,23 @@ async def main() -> None:
     # real cross-session memory server-side from its own tiers; this local
     # context just carries the current session's transcript shape the OpenAI
     # wire expects.
-    context = OpenAILLMContext()
-    context_aggregator = llm.create_context_aggregator(context)
+    #
+    # 1.x replaces the provider-specific `OpenAILLMContext` +
+    # `llm.create_context_aggregator(...)` with the universal `LLMContext` and
+    # `LLMContextAggregatorPair` — the migration path 0.0.108 itself names in
+    # its deprecation warning. Silero VAD and the turn policy are constructor
+    # arguments of the pair now; barge-in is ON by default
+    # (`BaseUserTurnStartStrategy.enable_interruptions=True`,
+    # user_start/base_user_turn_start_strategy.py:56), which is what the old
+    # `PipelineParams(allow_interruptions=True)` used to say.
+    #
+    # VAD frames still reach the STT service even though the analyzer now sits
+    # DOWNSTREAM of it: the aggregator emits them with `broadcast_frame`, which
+    # pushes upstream and downstream (frame_processor.py:761-777).
+    context = LLMContext()
+    context_aggregator = audio_backend.make_context_aggregators(
+        context, vad_analyzer=SileroVADAnalyzer()
+    )
 
     pipeline = Pipeline(
         [
@@ -117,20 +136,15 @@ async def main() -> None:
         ]
     )
 
-    task = PipelineTask(
-        pipeline,
-        params=PipelineParams(
-            allow_interruptions=True,  # barge-in ON: user speech cancels the bot
-        ),
-    )
+    worker = PipelineWorker(pipeline, params=PipelineParams())
 
-    runner = PipelineRunner()
+    runner = WorkerRunner()
     print(
         f"voice bot up: shim={SHIM_BASE_URL} audio_backend={backend} "
         f"audio={audio_backend.tts_base_url(backend)} voice={audio_backend.tts_voice(backend)}"
     )
     print("speak into the mic; interrupt the bot mid-reply to exercise barge-in. Ctrl-C to quit.")
-    await runner.run(task)
+    await runner.run(worker)
 
 
 if __name__ == "__main__":
