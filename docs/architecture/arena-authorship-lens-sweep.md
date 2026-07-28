@@ -1,7 +1,7 @@
 ---
 title: The authorship lens — sweeping every arena dimension for adapter-decided outcomes
 date: 2026-07-28
-status: in progress — 3 of 16 dimensions verified, 3 defects found
+status: in progress — 4 of 16 dimensions verified, 3 defects + 1 clean
 ---
 
 # The authorship lens
@@ -54,27 +54,32 @@ the same defect, and nobody looked?**
    stress-test. A sweep that audits eight competitors and exempts the house is
    marketing.
 
-## Verdicts so far — 3 of 16
+## Verdicts so far — 4 of 16
 
 | dimension | verdict | evidence |
 |---|---|---|
 | `memory_cross_session` | **DEFECT** — no framework has a native user axis; 3 adapters synthesized it and passed, 2 refused and failed | eino `internal/core/interrupt.go` (CheckPointStore = opaque blob under one id); genkit `ai/exp/session.go` (keys on snapshotID/sessionID) |
 | `memory_scoped` | **DEFECT** — 8/8 competitors hand-roll a compound scope key; aisotropy enforces by construction; all nine rendered one identical ✓ | ai-sdk `lib/scoped-store.mjs:1`; mastra `lib/scoped-store.mjs:1`; eino `mode_scoped_memory.go:22`; genkit-go `rqlite_client.go:130`; langgraph `modes/memory_scoped.py:21`; llamaindex `adapter.py:98`; pydantic-ai `arena_memory_store.py:185`; ours `mode_scoped.go:23` |
 | `isolation_leak` | **DEFECT** — same mechanism, same eight, same label | eino `main.go:46` and the same set above |
+| `observability` | **CLEAN** — the results table already declares the mechanism per framework (`native`, `callback→OTel bridge`, `via-SDK-registration`), which is the provenance labelling the other dimensions were missing. Frameworks genuinely differ here and the board says how. **But our OWN row carried a stale falsehood**: `dimensions.go:158` read "n/a — adapter exposes no observability mode" long after `mode_observability.go` and the `modeObservability` constant existed, so the board printed that sentence beside a measured span count from the very mode it denied. Fixed. | `dimensions.go:155`; `arenas/live/aisotropy/mode_observability.go` |
 
 Fixed by labelling: 32 cells now carry `pass:L1 adapter-supplied compound key` or
 `pass:L3 by construction (prefix + in-scan filter)`.
 
-**Three for three.** Not one dimension examined under this lens has been clean.
-That rate is the finding — more than any individual dimension — and it is the
-reason the remaining thirteen matter.
+**Three defects in four.** `observability` is the first clean one — and clean for the
+instructive reason: it already did what the broken dimensions did not, declaring the
+mechanism beside the result. It is the shape the others are being fixed into, which
+means the fix is not an invention, it is a pattern the arena already had in one place
+and had never generalised.
 
-## Remaining — 13, with the leads
+The rate is still the finding — more than any individual dimension — and it is why
+the remaining twelve matter.
+
+## Remaining — 12, with the leads
 
 | dimension | spread | why it is suspicious |
 |---|---|---|
 | `crash_recovery` | 8 pass, 0 fail | uniform: does every adapter hand-build durability, or does the framework provide it? |
-| `observability` | 8 pass, 0 fail | uniform, and our own README calls ours "NATIVE OTel, no bridge" — implying others bridge. If so, that is L1-vs-L3 again |
 | `middleware` | 8 pass, 0 fail | uniform; ADR-0062 says gollem ships middleware natively, so who else does |
 | `memory` | 9 pass | uniform, and the base case the extensions build on |
 | `qa` / `structured` / `stream` | 9 pass | uniform; least likely to hide authorship, verify cheaply and move on |

@@ -154,8 +154,20 @@ type obsPlatform struct {
 
 var nativeObsPlatform = map[string]obsPlatform{
 	"aisotropy": {
-		Platform: "structured slog (in-proc), OTel-ready core seam",
-		Emission: "n/a — adapter exposes no observability mode",
+		Platform: "structured slog (in-proc) + native OTel spans (internal/llm/otel.go)",
+		// Was "n/a — adapter exposes no observability mode" long after the mode
+		// existed: arenas/live/aisotropy/mode_observability.go and the
+		// modeObservability constant in that adapter's main.go. The board
+		// rendered the stale sentence next to a measured span count from the
+		// very mode it claimed was absent.
+		//
+		// It is the same rot the citation guard catches — a once-true sentence
+		// nobody edited while the code moved under it — and it landed on OUR
+		// row, understating us. Symmetric rigor is not only about auditing
+		// competitors leniently; a stale claim about the house is still a false
+		// claim, and this one had the arena reporting a capability we ship as
+		// one we lack.
+		Emission: "native in-proc OTel (no bridge, no auto-instrumentation)",
 	},
 	"eino": {
 		Platform: "Eino callbacks (eino-ext apmplus / OTel ACL)",
