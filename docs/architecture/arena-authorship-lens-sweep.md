@@ -1,7 +1,7 @@
 ---
 title: The authorship lens — sweeping every arena dimension for adapter-decided outcomes
 date: 2026-07-28
-status: in progress — 4 of 16 dimensions verified, 3 defects + 1 clean
+status: in progress — 5 of 16 dimensions verified, 3 defects + 2 clean
 ---
 
 # The authorship lens
@@ -54,33 +54,42 @@ the same defect, and nobody looked?**
    stress-test. A sweep that audits eight competitors and exempts the house is
    marketing.
 
-## Verdicts so far — 4 of 16
+## Verdicts so far — 5 of 16
 
 | dimension | verdict | evidence |
 |---|---|---|
 | `memory_cross_session` | **DEFECT** — no framework has a native user axis; 3 adapters synthesized it and passed, 2 refused and failed | eino `internal/core/interrupt.go` (CheckPointStore = opaque blob under one id); genkit `ai/exp/session.go` (keys on snapshotID/sessionID) |
 | `memory_scoped` | **DEFECT** — 8/8 competitors hand-roll a compound scope key; aisotropy enforces by construction; all nine rendered one identical ✓ | ai-sdk `lib/scoped-store.mjs:1`; mastra `lib/scoped-store.mjs:1`; eino `mode_scoped_memory.go:22`; genkit-go `rqlite_client.go:130`; langgraph `modes/memory_scoped.py:21`; llamaindex `adapter.py:98`; pydantic-ai `arena_memory_store.py:185`; ours `mode_scoped.go:23` |
 | `isolation_leak` | **DEFECT** — same mechanism, same eight, same label | eino `main.go:46` and the same set above |
+| `middleware` | **CLEAN** — every adapter drives a framework-NATIVE primitive, so the uniform pass is real rather than eight people building the same thing: ai-sdk `wrapLanguageModel({model, middleware})`, genkit-go `ai.ModelMiddleware` via `ai.WithMiddleware`, pydantic-ai `ArenaMiddlewareModel(WrapperModel)`, llamaindex native interception, langgraph LangChain-native model middleware (three mechanisms exist; the adapter documents which it picked), eino no single primitive but TWO documented native seams, aisotropy `WithModelMiddleware` (ADR-0062). One nuance worth a label rather than a fail: **mastra** wraps via the **AI SDK's** `wrapLanguageModel`, i.e. native to the stack it is built on, not a Mastra-specific middleware API. | `arenas/live/langgraph/modes/middleware.py:1`; `arenas/live/mastra/index.mjs:30`; each adapter README's `middleware` row |
 | `observability` | **CLEAN** — the results table already declares the mechanism per framework (`native`, `callback→OTel bridge`, `via-SDK-registration`), which is the provenance labelling the other dimensions were missing. Frameworks genuinely differ here and the board says how. **But our OWN row carried a stale falsehood**: `dimensions.go:158` read "n/a — adapter exposes no observability mode" long after `mode_observability.go` and the `modeObservability` constant existed, so the board printed that sentence beside a measured span count from the very mode it denied. Fixed. | `dimensions.go:155`; `arenas/live/aisotropy/mode_observability.go` |
 
 Fixed by labelling: 32 cells now carry `pass:L1 adapter-supplied compound key` or
 `pass:L3 by construction (prefix + in-scan filter)`.
 
-**Three defects in four.** `observability` is the first clean one — and clean for the
+**Three defects in five.** `observability` is the first clean one — and clean for the
 instructive reason: it already did what the broken dimensions did not, declaring the
 mechanism beside the result. It is the shape the others are being fixed into, which
 means the fix is not an invention, it is a pattern the arena already had in one place
 and had never generalised.
 
-The rate is still the finding — more than any individual dimension — and it is why
-the remaining twelve matter.
+`middleware` is the second clean one, and it sharpens what the lens is actually
+detecting. Both clean dimensions came out clean because the FRAMEWORKS genuinely
+provide the primitive — so a uniform pass is a real finding, not a hidden one. The
+three defects were all cases where no framework provided it and every adapter built
+it, which is when uniformity becomes camouflage.
 
-## Remaining — 12, with the leads
+That is the discriminator to carry into the remaining eleven: uniform-because-native
+is fine; uniform-because-everyone-hand-built-it is the defect. Only reading the
+adapters tells them apart, which is why the coarse grep in step 2 must always be
+followed by the per-dimension context — it reported "hand-rolled x7" for BOTH clean
+dimensions, matching text about a different mode in the same README.
+
+## Remaining — 11, with the leads
 
 | dimension | spread | why it is suspicious |
 |---|---|---|
 | `crash_recovery` | 8 pass, 0 fail | uniform: does every adapter hand-build durability, or does the framework provide it? |
-| `middleware` | 8 pass, 0 fail | uniform; ADR-0062 says gollem ships middleware natively, so who else does |
 | `memory` | 9 pass | uniform, and the base case the extensions build on |
 | `qa` / `structured` / `stream` | 9 pass | uniform; least likely to hide authorship, verify cheaply and move on |
 | `rag` | 8 pass, spring-ai fails | divergence: is spring-ai's failure a framework limit or an adapter gap? |
