@@ -36,6 +36,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -85,6 +86,7 @@ func main() {
 	skipCorrect := flag.Bool("skip-correctness", false, "skip the correctness/quality pass entirely")
 	skipDims := flag.Bool("skip-dimensions", false, "skip the new-dimensions pass (scoped-memory, isolation, crash, observability)")
 	skipMatrixGate := flag.Bool("skip-matrix-gate", false, "skip the full-matrix completeness gate over arenas/live/<fw>/matrix.json (still renders the matrix section)")
+	allowNarrowing := flag.Bool("allow-narrowing", false, "permit writing a RESULTS.md that covers FEWER modes or frameworks than the one already on disk. Off by default: a scoped run that completes replaces the published board with its own narrow slice, and unlike a crash (which writes nothing) that loss looks like a successful run")
 	skipServiceGate := flag.Bool("skip-service-gate", false, "skip the real-lane infrastructure reachability gate (Qdrant, rqlite, embed server). Only pass this if you INTEND to measure against whatever happens to be up: a store that is down does not fail loudly, it degrades into in-process defaults and publishes as a retrieval score")
 	skipDeterminismGate := flag.Bool("skip-determinism-gate", false, "skip the scripts/arena-determinism-guard.sh purity+reproducibility gate over arenas/live/runner/scoring (the PRIMARY score's enforcement gate — see .claude/rules/arena-deterministic-judging.md)")
 	renderOnlyFlag := flag.Bool("render-only", false, "ADR-0064 Layer 1: regenerate RESULTS.md purely from arenas/live/RESULTS.records.jsonl (+ the matrix.json manifests) with ZERO model calls and ZERO adapter spawns, then exit. Proves the render is decoupled from the run — the durable record stream is the single source of truth. All run/pass flags are ignored in this mode.")
@@ -429,6 +431,9 @@ func main() {
 		ModelCalls: callBudget.total(),
 	}
 	resultsPath := filepath.Join(*liveDir, "RESULTS.md")
+	if err := gateNarrowing(resultsPath, modes, len(frameworks), *allowNarrowing); err != nil {
+		fatal("results narrowing gate: %v", err)
+	}
 	if err := writeResults(resultsPath, rep); err != nil {
 		fatal("write results: %v", err)
 	}
@@ -1526,6 +1531,99 @@ func frameworkInfraEnv(script string) []string {
 func adapterEnv(script string) []string {
 	env := append(os.Environ(), frameworkCollectionEnv(script)...)
 	return append(env, frameworkInfraEnv(script)...)
+}
+
+// ---- results narrowing gate --------------------------------------------------
+
+// gateNarrowing refuses to replace a broader RESULTS.md with a narrower one.
+//
+// On 2026-07-28, verifying the service gate, a one-framework one-mode run
+// (`-modes rag -frameworks eino`) reached writeResults and cut the published
+// board from 1525 lines to 315. It was recovered with `git checkout` only
+// because RESULTS.md happens to be tracked -- luck, not design.
+//
+// Note which failure mode this is. A crash mid-run is SAFE: writeResults is
+// called once, at the end, so an interrupted board leaves the old file
+// untouched. The dangerous run is the one that SUCCEEDS with a smaller scope,
+// because success is exactly what makes it overwrite. That inversion is why a
+// human reviewing "did the run finish OK?" cannot catch it.
+//
+// The board already states its own scope in its `> **Run:**` header (modes and
+// framework count), so the check reads what the previous run declared rather
+// than inferring from the rendered tables.
+func gateNarrowing(resultsPath string, modes []string, frameworks int, allow bool) error {
+	prevModes, prevFw, ok := parseResultsScope(resultsPath)
+	if !ok {
+		return nil // no previous board (or an unparseable header): nothing to narrow
+	}
+	have := map[string]bool{}
+	for _, m := range modes {
+		have[m] = true
+	}
+	var lost []string
+	for _, m := range prevModes {
+		if !have[m] {
+			lost = append(lost, m)
+		}
+	}
+	lostFw := prevFw - frameworks
+	if len(lost) == 0 && lostFw <= 0 {
+		return nil
+	}
+	if allow {
+		logf("WARNING: -allow-narrowing set — overwriting a broader board (dropping modes: %s; %d fewer framework(s))",
+			strings.Join(lost, ","), max(lostFw, 0))
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString("this run would REPLACE a broader published board with a narrower one:\n")
+	if len(lost) > 0 {
+		fmt.Fprintf(&b, "  modes on disk but not in this run: %s\n", strings.Join(lost, ", "))
+	}
+	if lostFw > 0 {
+		fmt.Fprintf(&b, "  frameworks: %d on disk, %d in this run\n", prevFw, frameworks)
+	}
+	b.WriteString("Nothing was written; the board on disk is intact. A scoped run is for testing,\n")
+	b.WriteString("and its result is not a board. Re-run with the full mode/framework set (add\n")
+	b.WriteString("-resume to keep finished cells), or pass -allow-narrowing if replacing the\n")
+	b.WriteString("published board with this slice is genuinely what you want.")
+	return fmt.Errorf("%s", b.String())
+}
+
+// parseResultsScope reads the `> **Run:** ... **Modes:** a, b **Frameworks:** N`
+// header the renderer writes. Returns ok=false when there is no file or the
+// header is not in the expected shape -- an unreadable header must not block a
+// run, only a CONFIRMED narrowing does.
+func parseResultsScope(path string) (modes []string, frameworks int, ok bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.Contains(line, "**Modes:**") {
+			continue
+		}
+		mi := strings.Index(line, "**Modes:**") + len("**Modes:**")
+		rest := line[mi:]
+		end := strings.Index(rest, "•")
+		if end < 0 {
+			end = len(rest)
+		}
+		for _, m := range strings.Split(rest[:end], ",") {
+			if m = strings.TrimSpace(m); m != "" {
+				modes = append(modes, m)
+			}
+		}
+		if fi := strings.Index(line, "**Frameworks:**"); fi >= 0 {
+			f := strings.TrimSpace(line[fi+len("**Frameworks:**"):])
+			if sp := strings.IndexAny(f, " •"); sp > 0 {
+				f = f[:sp]
+			}
+			frameworks, _ = strconv.Atoi(strings.TrimSpace(f))
+		}
+		return modes, frameworks, len(modes) > 0
+	}
+	return nil, 0, false
 }
 
 // ---- service gate ------------------------------------------------------------
