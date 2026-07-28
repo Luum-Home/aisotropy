@@ -127,5 +127,17 @@ bench/footprint/*/*-footprint
 # Runner artifacts and local working notes — regenerated or machine-local, and
 # the same "untracked but not ignored" trap as the compiled binaries above: a
 # single `git add -A` before publication would commit them permanently.
+# The durable record stream: the ONLY source from which a board can be
+# re-rendered, drift-checked or re-analysed at cell level. Gitignored because it
+# is large and regenerated per run — but that also means git cannot recover it,
+# and the runner APPENDS to it on every invocation, so a small debugging run
+# mixes into a finished board. An Agnes board's 780 records were destroyed this
+# way on 2026-07-28 (a failed `head -n -2` whose redirect emptied the file).
+# scripts/arena-post-board.sh now archives it read-only as its FIRST action —
+# archive the artefact before anything is allowed to touch it.
 arenas/live/RESULTS.records.jsonl
+# Read-only per-board archives written by arena-post-board.sh. Kept out of git
+# for size; they are the local safety net, not the published evidence (RESULTS.md
+# is, and it IS committed).
+arenas/live/.records-archive/
 CACHE.md

@@ -40,6 +40,28 @@ echo "==================================================================="
 echo " arena-post-board: anchors + manifest drift + render (0 model calls)"
 echo "==================================================================="
 echo
+
+# STEP ZERO: ARCHIVE THE STREAM BEFORE ANYTHING ELSE TOUCHES IT.
+#
+# RESULTS.records.jsonl is the single source from which a board can be
+# re-rendered, drift-checked and re-analysed at cell level — and it is
+# gitignored, so git cannot bring it back. Worse, the runner appends to it on
+# EVERY invocation, so a two-cell debugging run silently mixes into a
+# thousand-cell board.
+#
+# On 2026-07-28 an Agnes board's 780 records were destroyed by a one-line
+# mistake: `head -n -2` (a GNU-ism BSD head rejects) failed, its redirect left an
+# empty file, and the "backup" was taken AFTER the truncation rather than before.
+# The rendered RESULTS.md survived only because it was committed. Nothing about
+# that sequence was exotic; it just had no archive standing in front of it.
+ARCHIVE_DIR="${LIVE}/.records-archive"
+mkdir -p "${ARCHIVE_DIR}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+ARCHIVE="${ARCHIVE_DIR}/records-${STAMP}.jsonl"
+cp "${RECORDS}" "${ARCHIVE}"
+chmod 444 "${ARCHIVE}"   # read-only: an archive that can be overwritten is not one
+echo "0) archived $(wc -l < "${ARCHIVE}" | tr -d ' ') record(s) -> ${ARCHIVE#${LIVE}/} (read-only)"
+echo
 echo "1) anchor baseline"
 python3 "${REPO_ROOT}/scripts/arena-extract-anchors.py" --records "${RECORDS}" || exit 2
 echo

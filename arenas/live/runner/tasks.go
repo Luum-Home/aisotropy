@@ -140,6 +140,27 @@ func init() {
 // hit@1 scoring unchanged.
 var ragAnswerKeys = map[string][]string{}
 
+// arenaToolDefs is the tool the tools-mode suite is written against, sent ON THE
+// WIRE in every tools invocation.
+//
+// WHY THIS EXISTS. `adapterInput` has declared a `Tools` field since the wire
+// contract was written, and NOTHING ever populated it. Eight adapters coped by
+// hardcoding their own `calculate` tool (eino/mode_tools.go registers calcTool
+// directly); spring-ai read the field it was promised, found it empty, and
+// errored on every tools cell of every board — 7 errors, attributed for months
+// to the framework.
+//
+// A contract field nobody fills is a lie in the contract, and the adapter that
+// TRUSTED it is the one that looked broken. Filling it makes the declaration
+// true. It is additive for the eight adapters that ignore the field, and it lets
+// any adapter use its framework's own tool-registration primitive on a
+// definition the runner supplied rather than one it had to guess.
+var arenaToolDefs = []inTool{{
+	Name:        "calculate",
+	Description: "Evaluate an arithmetic expression and return the numeric result.",
+	Parameters:  json.RawMessage(`{"type":"object","properties":{"expression":{"type":"string","description":"The arithmetic expression to evaluate, e.g. \"7 * 6\""}},"required":["expression"]}`),
+}}
+
 const toolSystem = "You are an assistant that uses tools for arithmetic. When the user asks for a calculation, call the calculate tool with the expression, then report the numeric result."
 
 func loadSuite(path string) ([]task, error) {
@@ -576,6 +597,7 @@ func buildTools(framework string, maxTasks int) []workItem {
 				Mode:     "tools",
 				System:   toolSystem,
 				Messages: []inMessage{{Role: "user", Content: a.question}},
+				Tools:    arenaToolDefs,
 			}},
 			Question:       a.question,
 			ExpectedNumber: a.expected,
