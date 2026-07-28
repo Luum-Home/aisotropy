@@ -68,8 +68,8 @@
         "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
       },
       "real": {
-        "native": "pass",
-        "docker": "pass",
+        "native": "pass:L1 adapter-supplied compound key",
+        "docker": "pass:L1 adapter-supplied compound key",
         "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
       }
     },
@@ -92,8 +92,8 @@
         "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
       },
       "real": {
-        "native": "pass",
-        "docker": "pass",
+        "native": "pass:L1 adapter-supplied compound key",
+        "docker": "pass:L1 adapter-supplied compound key",
         "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
       }
     },
