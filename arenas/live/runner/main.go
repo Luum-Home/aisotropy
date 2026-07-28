@@ -446,6 +446,12 @@ func main() {
 			return profile.readingCaveats()
 		}(),
 		ModelCalls: callBudget.total(),
+
+		// A live run's window spans the cells it measured PLUS any it resumed —
+		// which is the honest span, because both kinds are rendered side by side.
+		MeasuredFrom: resume.oldestAt,
+		MeasuredTo:   time.Now().UTC().Format(time.RFC3339),
+		Unstamped:    resume.unstamped,
 	}
 	resultsPath := filepath.Join(*liveDir, "RESULTS.md")
 	if err := gateNarrowing(resultsPath, modes, len(frameworks), *allowNarrowing); err != nil {

@@ -530,6 +530,11 @@ func reportFromResume(rs *resumeState, matrixDocs []matrixDoc) reportData {
 		CrashRecs:  rs.crashRecs,
 		ObsRecords: rs.obsRecs,
 		MatrixDocs: matrixDocs,
+
+		MeasuredFrom: rs.oldestAt,
+		MeasuredTo:   rs.newestAt,
+		Unstamped:    rs.unstamped,
+		RenderOnly:   true,
 	}
 }
 

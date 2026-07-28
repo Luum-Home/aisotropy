@@ -38,6 +38,16 @@ type reportData struct {
 	ObsRecords   []obsRecord
 	MatrixDocs   []matrixDoc
 	ModelCalls   int
+
+	// Provenance of the NUMBERS, distinct from the moment this markdown was
+	// written. The header used to stamp time.Now() and call it "Run", so a
+	// -render-only pass relabelled a 220-call concurrent board as a 0-call
+	// sequential one taken two hours later. The cells had not changed; only the
+	// sentence describing them had, and it was false.
+	MeasuredFrom string // earliest cell stamp (RFC3339), "" when unknown
+	MeasuredTo   string // latest
+	Unstamped    int    // cells that cannot say when they were measured
+	RenderOnly   bool   // true when no cell was measured by this pass
 }
 
 // per (framework, mode) correctness aggregate.
@@ -189,9 +199,22 @@ tags: [arenas, live, results, agnes, quality, latency, cold-start, ttft, tokens,
 
 `, model, model)
 
-	fmt.Fprintf(b, "> **Run:** %s • **Model (held constant):** `%s` • **Modes:** %s • **Frameworks:** %d • **Execution forms:** %s\n",
-		time.Now().UTC().Format("2006-01-02 15:04 MST"), model,
+	measured := "unknown — these cells predate measurement provenance"
+	switch {
+	case rep.MeasuredFrom != "" && rep.MeasuredFrom == rep.MeasuredTo:
+		measured = rep.MeasuredFrom
+	case rep.MeasuredFrom != "":
+		measured = rep.MeasuredFrom + " .. " + rep.MeasuredTo
+	}
+	fmt.Fprintf(b, "> **Measured:** %s • **Rendered:** %s • **Model (held constant):** `%s` • **Modes:** %s • **Frameworks:** %d • **Execution forms:** %s\n",
+		measured, time.Now().UTC().Format("2006-01-02 15:04 MST"), model,
 		strings.Join(rep.Modes, ", "), len(rep.Frameworks), strings.Join(rep.Forms, ", "))
+	if rep.Unstamped > 0 {
+		fmt.Fprintf(b, "> **%d cell(s) carry no measurement provenance** — written before records were stamped, so this board cannot state when those numbers were taken. `-invalidate-unstamped` forces them to re-measure.\n", rep.Unstamped)
+	}
+	if rep.RenderOnly {
+		b.WriteString("> **This is a re-render, not a run.** No cell was measured by this pass; the numbers below are the ones already in the durable records. The counters on the next line describe the RUN THAT MEASURED THEM only where the records preserved them.\n")
+	}
 	fmt.Fprintf(b, "> **Billable model round-trips this run:** %d • **Bench modes:** %s • **Bench iters:** %d • **Cold probes:** %d (empty-stdin, 0 model calls)\n",
 		rep.ModelCalls, strings.Join(rep.BenchModes, ", "), rep.BenchIters, rep.ColdProbes)
 	if len(rep.Dimensions) > 0 {

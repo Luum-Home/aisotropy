@@ -47,7 +47,19 @@ func stripRunBanner(s string) string {
 	lines := strings.Split(s, "\n")
 	out := lines[:0]
 	for _, ln := range lines {
-		if strings.HasPrefix(ln, "> **Run:**") {
+		// Banner lines describe HOW this markdown was produced (when it was
+		// rendered, whether any cell was measured this pass, how many cells
+		// cannot state their age). They are provenance ABOUT the render, not
+		// content DERIVED FROM the records, and the invariant under test is the
+		// latter: disk and memory must render the same DATA.
+		//
+		// Extending this list is only legitimate for lines that carry no
+		// record-derived value. A line that reports a NUMBER from the records
+		// belongs in the comparison, or this test stops having teeth.
+		if strings.HasPrefix(ln, "> **Run:**") ||
+			strings.HasPrefix(ln, "> **Measured:**") ||
+			strings.HasPrefix(ln, "> **This is a re-render") ||
+			strings.Contains(ln, "carry no measurement provenance") {
 			continue
 		}
 		out = append(out, ln)
