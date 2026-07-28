@@ -186,7 +186,7 @@ name-compatible with the OTel GenAI semantic-convention draft.
 
 **How the spans are actually captured (investigated against the code, not
 assumed).** aisotropy's `App` does **not** read the process-global
-`otel.GetTracerProvider()` (unlike, e.g., Genkit-Go's `core/tracing.go`), and the
+`otel.GetTracerProvider()` (unlike, e.g., Genkit-Go's `core/tracing/tracing.go`), and the
 public façade (`aisotropy.Option`) exposes **no `WithTracerProvider` builder
 option** either. Every `App.startRuntime` call builds its **own**
 `*sdktrace.TracerProvider` from scratch (`internal/llm/otel.go`'s

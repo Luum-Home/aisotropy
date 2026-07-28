@@ -362,7 +362,7 @@ instrumentation emits, not a chat capability.
 call, a tool call) is wrapped in an OTel span by `core/action.go`'s
 `Action.runWithTelemetry`, and `genkit.Generate` additionally wraps the whole turn in its
 own outer `"generate"` span (`ai/generate.go`'s `runGenerate`). Both go through
-`core/tracing.go`'s `tracing.RunInNewSpan`, which reads the process-global
+`core/tracing/tracing.go`'s `tracing.RunInNewSpan`, which reads the process-global
 `otel.GetTracerProvider()` and only falls back to a private, unexported default
 `*sdktrace.TracerProvider` (**no span processor attached — spans are silently dropped**)
 if the caller never sets one.
@@ -389,8 +389,8 @@ iteration 1's still-open `"generate"` span. Because `span_timings_ms` is a flat
 legitimately repeat, repeats are disambiguated with a `#N` suffix (`N` = occurrence
 order = span-end/export order) instead of one timing silently overwriting another.
 
-**Logging:** Genkit uses Go's standard `log/slog` throughout — `core/logger.go` wraps a
-`*slog.Logger`, and `core/tracing.go`'s `RunInNewSpan` itself logs `"span start"`/
+**Logging:** Genkit uses Go's standard `log/slog` throughout — `core/logger/logger.go` wraps a
+`*slog.Logger`, and `core/tracing/tracing.go`'s `RunInNewSpan` itself logs `"span start"`/
 `"span end"`, `core/action.go`'s `Action.Run` logs on every call — so every entry carries
 typed key=value attributes (structured by construction), not `fmt.Printf` text. Genkit's
 own default is a plain `slog.TextHandler` to stderr at `Info` level

@@ -210,6 +210,13 @@ func main() {
 		logf("WARNING: %d WIP candidate adapter(s) excluded from the matrix completeness gate, each with its OWN declared reason: %s. Their cells render labeled CANDIDATE, never as passes.",
 			len(cands), strings.Join(cands, "; "))
 	}
+	// Undeclared dimensions are a blank the completeness gate structurally
+	// cannot see: it checks the cells a manifest DECLARED, so an absent row
+	// costs nothing. Always logged, never silenced — see undeclaredDimensions.
+	if und := undeclaredWarnings(matrixDocs); len(und) > 0 {
+		logf("WARNING: %d adapter(s) do not declare every dimension their peers do — an ABSENT ROW is a blank the completeness gate cannot see (it only checks declared cells): %s. Each should carry a real result or an explicit infeasible:<reason>; note this includes dimensions where WE are the only declarant.",
+			len(und), strings.Join(und, "; "))
+	}
 	if !*skipMatrixGate {
 		if err := gateMatrices(matrixDocs); err != nil {
 			fatal("matrix completeness gate: %v", err)

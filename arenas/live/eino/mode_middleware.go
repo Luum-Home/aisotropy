@@ -35,7 +35,7 @@ import (
 //     cloning + mutating a copy before that call is safe and is Eino's
 //     documented pattern for a model-level interceptor (the same shape
 //     ToolCallingChatModel.WithTools itself uses — "returns a new instance,
-//     does not mutate the receiver," per model/interface.go).
+//     does not mutate the receiver," per components/model/interface.go).
 //
 // So: INBOUND goes through mwModel (a model-wrapper), and OUTBOUND goes
 // through Eino's native callbacks.Handler — attached via

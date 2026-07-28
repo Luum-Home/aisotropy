@@ -297,6 +297,73 @@ func gateMatrices(docs []matrixDoc) error {
 	return fmt.Errorf("%s", b.String())
 }
 
+// undeclaredDimensions reports, per framework, the dimensions that OTHER
+// manifests declare and this one does not mention at all.
+//
+// THE LOOPHOLE THIS CLOSES. gateMatrices asks "is every cell you DECLARED
+// filled?" — nothing asked "did you declare every dimension?". So a manifest
+// could earn a clean gate by simply never mentioning a dimension, and the
+// no-blank-cells law (arenas/live/FULL-MATRIX.md: every cell is a result or an
+// explicit infeasible:<reason>, never a silent blank) would not notice: the
+// blank is not an empty cell, it is an absent ROW.
+//
+// Two live instances found it, and the asymmetry runs in both directions:
+//   - spring-ai declares 11 dimensions where its peers declare 16 — five
+//     competitor rows silently missing.
+//   - wasm_tool is declared by aisotropy ALONE. That is OUR differentiator
+//     dimension, and every competitor is silently absent from it rather than
+//     carrying an explicit infeasible:<reason>. A reader sees one ✓ and no
+//     rows, which reads as "untested" when the truth is a per-framework
+//     structural blocker that we know and could state.
+//
+// The second one is why this is a WARNING the run always prints rather than
+// something left to a reviewer's memory: the arena's whole claim is being
+// apples-to-apples, and a gap that flatters the house is the one nobody else
+// is motivated to find.
+//
+// Deliberately NOT a hard gate failure. A `pending` cell is a promise unkept
+// and blocks. An undeclared dimension may be genuinely out of an adapter's
+// scope, and deciding which it is needs the operator and a TRUE reason —
+// inventing eight infeasibility reasons to silence a warning would be the
+// fabrication the law exists to prevent.
+func undeclaredDimensions(docs []matrixDoc) map[string][]string {
+	union := map[string]bool{}
+	for _, doc := range docs {
+		for dim := range doc.Dimensions {
+			union[dim] = true
+		}
+	}
+	out := map[string][]string{}
+	for _, doc := range docs {
+		var missing []string
+		for dim := range union {
+			if _, ok := doc.Dimensions[dim]; !ok {
+				missing = append(missing, dim)
+			}
+		}
+		if len(missing) > 0 {
+			sort.Strings(missing)
+			out[doc.Framework] = missing
+		}
+	}
+	return out
+}
+
+// undeclaredWarnings renders one line per framework with undeclared dimensions.
+func undeclaredWarnings(docs []matrixDoc) []string {
+	byFw := undeclaredDimensions(docs)
+	fws := make([]string, 0, len(byFw))
+	for fw := range byFw {
+		fws = append(fws, fw)
+	}
+	sort.Strings(fws)
+	out := make([]string, 0, len(fws))
+	for _, fw := range fws {
+		out = append(out, fmt.Sprintf("%s does not declare: %s", fw, strings.Join(byFw[fw], ", ")))
+	}
+	return out
+}
+
 func sortedDimNames(m map[string]matrixLanes) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

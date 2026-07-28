@@ -244,3 +244,45 @@ func TestGateMatrices_CandidateExcluded(t *testing.T) {
 		t.Errorf("candidateFrameworks = %v, want [spring-ai]", got)
 	}
 }
+
+// TestUndeclaredDimensions pins the absent-ROW check. The completeness gate
+// only inspects cells a manifest declared, so a manifest that never mentions a
+// dimension earns a clean gate while leaving a blank — including, in the live
+// arena, a dimension where aisotropy is the sole declarant and every competitor
+// is silently absent rather than carrying an explicit infeasible reason.
+func TestUndeclaredDimensions(t *testing.T) {
+	pass := matrixForms{Native: statusPass, Docker: statusPass, Wasm: statusPass}
+	lanes := matrixLanes{Stub: pass, Real: pass}
+	docs := []matrixDoc{
+		{Framework: "alpha", Dimensions: map[string]matrixLanes{"qa": lanes, "rag": lanes, "wasm_tool": lanes}},
+		{Framework: "beta", Dimensions: map[string]matrixLanes{"qa": lanes}},
+		{Framework: "gamma", Dimensions: map[string]matrixLanes{"qa": lanes, "rag": lanes, "wasm_tool": lanes}},
+	}
+	got := undeclaredDimensions(docs)
+	if len(got["alpha"]) != 0 {
+		t.Errorf("alpha declares the full union, want no gaps, got %v", got["alpha"])
+	}
+	want := []string{"rag", "wasm_tool"}
+	if len(got["beta"]) != len(want) {
+		t.Fatalf("beta undeclared = %v, want %v", got["beta"], want)
+	}
+	for i, w := range want {
+		if got["beta"][i] != w {
+			t.Errorf("beta undeclared[%d] = %q, want %q (result must be sorted)", i, got["beta"][i], w)
+		}
+	}
+
+	// A dimension only ONE adapter declares must surface for all the others —
+	// this is the house-flattering direction, the one nobody else is motivated
+	// to report.
+	solo := []matrixDoc{
+		{Framework: "ours", Dimensions: map[string]matrixLanes{"qa": lanes, "wasm_tool": lanes}},
+		{Framework: "theirs", Dimensions: map[string]matrixLanes{"qa": lanes}},
+	}
+	if g := undeclaredDimensions(solo); len(g["theirs"]) != 1 || g["theirs"][0] != "wasm_tool" {
+		t.Errorf("a solo-declared dimension must be reported against every other adapter, got %v", g)
+	}
+	if lines := undeclaredWarnings(solo); len(lines) != 1 || !strings.Contains(lines[0], "wasm_tool") {
+		t.Errorf("warning line must name the dimension, got %v", lines)
+	}
+}

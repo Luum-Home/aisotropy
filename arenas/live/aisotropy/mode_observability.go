@@ -6,7 +6,7 @@
 //
 // Investigation (see README.md's "observability" section for the full
 // writeup): aisotropy's App does NOT read the process-global
-// otel.GetTracerProvider() (unlike, e.g., Genkit-Go's core/tracing.go — see
+// otel.GetTracerProvider() (unlike, e.g., Genkit-Go's core/tracing/tracing.go — see
 // the sibling genkit-go adapter's observability.go), and the public façade
 // (aisotropy.Option, aisotropy/app.go) exposes no WithTracerProvider builder
 // option either. Every App.startRuntime call builds its OWN

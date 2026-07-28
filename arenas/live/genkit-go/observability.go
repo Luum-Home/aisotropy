@@ -109,7 +109,7 @@ func (c *logCapture) SawStructuredEntry() bool {
 }
 
 // Sample returns one representative captured log line, preferring an entry
-// that looks like Genkit's own span/action instrumentation (core/tracing.go's
+// that looks like Genkit's own span/action instrumentation (core/tracing/tracing.go's
 // "span start"/"span end", core/action.go's "Action.Run") over this
 // adapter's own PROGRESS lines (which bypass slog entirely — plain
 // fmt.Fprintf to os.Stderr — and so are never captured here).
@@ -159,7 +159,7 @@ func setupObservabilityTracing() *obsHooks {
 
 	logs := newLogCapture()
 	// slog.LevelDebug: Genkit's span-lifecycle logs ("span start"/"span end" in
-	// core/tracing.go, "Action.Run" in core/action.go) are emitted at Debug,
+	// core/tracing/tracing.go, "Action.Run" in core/action.go) are emitted at Debug,
 	// below the stdlib slog default of Info — a real integrator has to opt in
 	// to see them, same as this adapter does here.
 	h := slog.NewJSONHandler(io.MultiWriter(os.Stderr, logs), &slog.HandlerOptions{Level: slog.LevelDebug})
@@ -291,7 +291,7 @@ func buildObservabilityNotes(res *observabilityOutput, turnErr error) string {
 	} else {
 		b.WriteString("This run captured 0 spans — either the representative turn failed before any span closed, or Genkit's span emission regressed; see \"error\". ")
 	}
-	b.WriteString("Logging: Genkit uses Go's standard log/slog throughout (core/logger.FromContext wraps a *slog.Logger; core/tracing.go's RunInNewSpan itself logs \"span start\"/\"span end\", and core/action.go's Action.Run logs on every call), so every entry carries typed key=value attributes — structured by construction, not fmt.Printf text. ")
+	b.WriteString("Logging: Genkit uses Go's standard log/slog throughout (core/logger.FromContext wraps a *slog.Logger; core/tracing/tracing.go's RunInNewSpan itself logs \"span start\"/\"span end\", and core/action.go's Action.Run logs on every call), so every entry carries typed key=value attributes — structured by construction, not fmt.Printf text. ")
 	b.WriteString("Genkit's own default is a plain slog.TextHandler to stderr at Info level (core/logger.SetLevel), which does NOT show the Debug-level span/action entries; this adapter raises the level and swaps in a slog.JSONHandler to observe and capture them, exactly as a real integrator wiring log aggregation would.")
 	if turnErr != nil {
 		b.WriteString(" The representative turn itself returned an error this pass; see \"error\" for what failed — span/log capture above is still real, reflecting whatever executed up to that point.")
