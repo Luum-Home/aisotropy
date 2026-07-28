@@ -2,68 +2,196 @@
   "framework": "eino",
   "dimensions": {
     "isolation_forgetful": {
-      "stub": {"native":"infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework","docker":"infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework","wasm":"infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework"},
-      "real": {"native":"infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework","docker":"infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework","wasm":"infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework"}
+      "stub": {
+        "native": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
+        "docker": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
+        "wasm": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework"
+      },
+      "real": {
+        "native": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
+        "docker": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
+        "wasm": "infeasible:no native scope to forget — Eino has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework"
+      }
     },
     "memory_cross_session": {
-      "stub": {"native":"infeasible:offline stub uses an in-memory SQLite (:memory:, mode_memory.go) that does not survive the persist→recall process boundary — the honest run-and-fail is scored on the real lane against the on-disk store","docker":"infeasible:offline stub uses an in-memory SQLite (:memory:, mode_memory.go) that does not survive the persist→recall process boundary — the honest run-and-fail is scored on the real lane against the on-disk store","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"fail","docker":"fail","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "infeasible:offline stub uses an in-memory SQLite (:memory:, mode_memory.go) that does not survive the persist→recall process boundary — the honest run-and-fail is scored on the real lane against the on-disk store",
+        "docker": "infeasible:offline stub uses an in-memory SQLite (:memory:, mode_memory.go) that does not survive the persist→recall process boundary — the honest run-and-fail is scored on the real lane against the on-disk store",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "fail",
+        "docker": "fail",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "memory_semantic_recall": {
-      "stub": {"native":"infeasible:no semantic-memory component in Eino — adk subpackage (eino v0.9.12 pinned in go.mod) has only in-process ctx KV + CheckPointStore (interrupt/resume); MemoryStore exists only in eino-examples, so ranked recall would be adapter-invented, not the framework","docker":"infeasible:no semantic-memory component in Eino — adk subpackage (eino v0.9.12 pinned in go.mod) has only in-process ctx KV + CheckPointStore (interrupt/resume); MemoryStore exists only in eino-examples, so ranked recall would be adapter-invented, not the framework","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"infeasible:no semantic-memory component in Eino — adk subpackage (eino v0.9.12 pinned in go.mod) has only in-process ctx KV + CheckPointStore (interrupt/resume); MemoryStore exists only in eino-examples, so ranked recall would be adapter-invented, not the framework","docker":"infeasible:no semantic-memory component in Eino — adk subpackage (eino v0.9.12 pinned in go.mod) has only in-process ctx KV + CheckPointStore (interrupt/resume); MemoryStore exists only in eino-examples, so ranked recall would be adapter-invented, not the framework","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "infeasible:no semantic-memory component in Eino — adk subpackage (eino v0.9.12 pinned in go.mod) has only in-process ctx KV + CheckPointStore (interrupt/resume); MemoryStore exists only in eino-examples, so ranked recall would be adapter-invented, not the framework",
+        "docker": "infeasible:no semantic-memory component in Eino — adk subpackage (eino v0.9.12 pinned in go.mod) has only in-process ctx KV + CheckPointStore (interrupt/resume); MemoryStore exists only in eino-examples, so ranked recall would be adapter-invented, not the framework",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "infeasible:no semantic-memory component in Eino — adk subpackage (eino v0.9.12 pinned in go.mod) has only in-process ctx KV + CheckPointStore (interrupt/resume); MemoryStore exists only in eino-examples, so ranked recall would be adapter-invented, not the framework",
+        "docker": "infeasible:no semantic-memory component in Eino — adk subpackage (eino v0.9.12 pinned in go.mod) has only in-process ctx KV + CheckPointStore (interrupt/resume); MemoryStore exists only in eino-examples, so ranked recall would be adapter-invented, not the framework",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "memory_consolidation": {
-      "stub": {"native":"infeasible:no consolidation/fact-extraction component in Eino core — adk subpackage (eino v0.9.12 pinned in go.mod) has nothing to consolidate; synthesizing one would benchmark adapter authorship, not the framework","docker":"infeasible:no consolidation/fact-extraction component in Eino core — adk subpackage (eino v0.9.12 pinned in go.mod) has nothing to consolidate; synthesizing one would benchmark adapter authorship, not the framework","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"infeasible:no consolidation/fact-extraction component in Eino core — adk subpackage (eino v0.9.12 pinned in go.mod) has nothing to consolidate; synthesizing one would benchmark adapter authorship, not the framework","docker":"infeasible:no consolidation/fact-extraction component in Eino core — adk subpackage (eino v0.9.12 pinned in go.mod) has nothing to consolidate; synthesizing one would benchmark adapter authorship, not the framework","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "infeasible:no consolidation/fact-extraction component in Eino core — adk subpackage (eino v0.9.12 pinned in go.mod) has nothing to consolidate; synthesizing one would benchmark adapter authorship, not the framework",
+        "docker": "infeasible:no consolidation/fact-extraction component in Eino core — adk subpackage (eino v0.9.12 pinned in go.mod) has nothing to consolidate; synthesizing one would benchmark adapter authorship, not the framework",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "infeasible:no consolidation/fact-extraction component in Eino core — adk subpackage (eino v0.9.12 pinned in go.mod) has nothing to consolidate; synthesizing one would benchmark adapter authorship, not the framework",
+        "docker": "infeasible:no consolidation/fact-extraction component in Eino core — adk subpackage (eino v0.9.12 pinned in go.mod) has nothing to consolidate; synthesizing one would benchmark adapter authorship, not the framework",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "crash_recovery": {
-      "stub": {"native":"infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)","docker":"infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)",
+        "docker": "infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "isolation_leak": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "memory": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "memory_scoped": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "middleware": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "observability": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "qa": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "rag": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "safeguard": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"fail","docker":"fail","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "fail",
+        "docker": "fail",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "stream": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "structured": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     },
     "tools": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the eino chat-model client (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
+      }
     }
   }
 }

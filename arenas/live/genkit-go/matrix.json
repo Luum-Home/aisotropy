@@ -2,68 +2,196 @@
   "framework": "genkit-go",
   "dimensions": {
     "isolation_forgetful": {
-      "stub": {"native":"infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework","docker":"infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework","wasm":"infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework"},
-      "real": {"native":"infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework","docker":"infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework","wasm":"infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework"}
+      "stub": {
+        "native": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
+        "docker": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
+        "wasm": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework"
+      },
+      "real": {
+        "native": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
+        "docker": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
+        "wasm": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework"
+      }
     },
     "memory_cross_session": {
-      "stub": {"native":"infeasible:offline stub backs the session transcript in a process-local in-memory map (rqlite_client.go stubTurns) that does not survive the persist→recall process boundary — the honest run-and-fail is scored on the real lane against networked rqlite","docker":"infeasible:offline stub backs the session transcript in a process-local in-memory map (rqlite_client.go stubTurns) that does not survive the persist→recall process boundary — the honest run-and-fail is scored on the real lane against networked rqlite","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"fail","docker":"fail","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "infeasible:offline stub backs the session transcript in a process-local in-memory map (rqlite_client.go stubTurns) that does not survive the persist→recall process boundary — the honest run-and-fail is scored on the real lane against networked rqlite",
+        "docker": "infeasible:offline stub backs the session transcript in a process-local in-memory map (rqlite_client.go stubTurns) that does not survive the persist→recall process boundary — the honest run-and-fail is scored on the real lane against networked rqlite",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "fail",
+        "docker": "fail",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "memory_semantic_recall": {
-      "stub": {"native":"infeasible:no semantic-memory primitive at any maturity — Genkit Go's experimental core/x/session is transcript-by-session-ID only (no embedding-ranked recall); hand-rolling one would benchmark adapter authorship, not the framework","docker":"infeasible:no semantic-memory primitive at any maturity — Genkit Go's experimental core/x/session is transcript-by-session-ID only (no embedding-ranked recall); hand-rolling one would benchmark adapter authorship, not the framework","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"infeasible:no semantic-memory primitive at any maturity — Genkit Go's experimental core/x/session is transcript-by-session-ID only (no embedding-ranked recall); hand-rolling one would benchmark adapter authorship, not the framework","docker":"infeasible:no semantic-memory primitive at any maturity — Genkit Go's experimental core/x/session is transcript-by-session-ID only (no embedding-ranked recall); hand-rolling one would benchmark adapter authorship, not the framework","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "infeasible:no semantic-memory primitive at any maturity — Genkit Go's experimental core/x/session is transcript-by-session-ID only (no embedding-ranked recall); hand-rolling one would benchmark adapter authorship, not the framework",
+        "docker": "infeasible:no semantic-memory primitive at any maturity — Genkit Go's experimental core/x/session is transcript-by-session-ID only (no embedding-ranked recall); hand-rolling one would benchmark adapter authorship, not the framework",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "infeasible:no semantic-memory primitive at any maturity — Genkit Go's experimental core/x/session is transcript-by-session-ID only (no embedding-ranked recall); hand-rolling one would benchmark adapter authorship, not the framework",
+        "docker": "infeasible:no semantic-memory primitive at any maturity — Genkit Go's experimental core/x/session is transcript-by-session-ID only (no embedding-ranked recall); hand-rolling one would benchmark adapter authorship, not the framework",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "memory_consolidation": {
-      "stub": {"native":"infeasible:no consolidation/fact-extraction memory primitive at any maturity — Genkit Go's core/x/session replays raw transcript only; nothing to exercise","docker":"infeasible:no consolidation/fact-extraction memory primitive at any maturity — Genkit Go's core/x/session replays raw transcript only; nothing to exercise","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"infeasible:no consolidation/fact-extraction memory primitive at any maturity — Genkit Go's core/x/session replays raw transcript only; nothing to exercise","docker":"infeasible:no consolidation/fact-extraction memory primitive at any maturity — Genkit Go's core/x/session replays raw transcript only; nothing to exercise","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "infeasible:no consolidation/fact-extraction memory primitive at any maturity — Genkit Go's core/x/session replays raw transcript only; nothing to exercise",
+        "docker": "infeasible:no consolidation/fact-extraction memory primitive at any maturity — Genkit Go's core/x/session replays raw transcript only; nothing to exercise",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "infeasible:no consolidation/fact-extraction memory primitive at any maturity — Genkit Go's core/x/session replays raw transcript only; nothing to exercise",
+        "docker": "infeasible:no consolidation/fact-extraction memory primitive at any maturity — Genkit Go's core/x/session replays raw transcript only; nothing to exercise",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "crash_recovery": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "isolation_leak": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "memory": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "memory_scoped": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "middleware": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "observability": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "qa": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "rag": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "safeguard": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"fail","docker":"fail","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "fail",
+        "docker": "fail",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "stream": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "structured": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     },
     "tools": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Genkit model plugin (HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
+      }
     }
   }
 }

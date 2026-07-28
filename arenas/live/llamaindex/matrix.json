@@ -5,192 +5,192 @@
       "stub": {
         "native": "fail",
         "docker": "fail",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "fail",
         "docker": "fail",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "memory_cross_session": {
       "stub": {
         "native": "infeasible:offline stub uses an in-memory VectorMemoryBlock store that does not survive the persist→recall process boundary — cross-session retrieval needs the persistent real Qdrant collection",
         "docker": "infeasible:offline stub uses an in-memory VectorMemoryBlock store that does not survive the persist→recall process boundary — cross-session retrieval needs the persistent real Qdrant collection",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "memory_semantic_recall": {
       "stub": {
         "native": "infeasible:offline stub uses an in-memory VectorMemoryBlock store that does not survive the persist→recall process boundary, and MockEmbedding returns constant vectors so ranking is not semantic — real e5 + persistent Qdrant needed",
         "docker": "infeasible:offline stub uses an in-memory VectorMemoryBlock store that does not survive the persist→recall process boundary, and MockEmbedding returns constant vectors so ranking is not semantic — real e5 + persistent Qdrant needed",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "fail",
         "docker": "fail",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "memory_consolidation": {
       "stub": {
         "native": "infeasible:FactExtractionMemoryBlock runs against MockLLM offline (no real extraction) and the in-memory VectorMemoryBlock store does not survive the persist→recall process boundary — real agnes + persistent Qdrant needed",
         "docker": "infeasible:FactExtractionMemoryBlock runs against MockLLM offline (no real extraction) and the in-memory VectorMemoryBlock store does not survive the persist→recall process boundary — real agnes + persistent Qdrant needed",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "crash_recovery": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "isolation_leak": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "memory": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "memory_scoped": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "middleware": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "observability": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "qa": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "rag": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "safeguard": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "fail",
         "docker": "fail",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "stream": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "structured": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "tools": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets — the LlamaIndex LLM client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     }
   }

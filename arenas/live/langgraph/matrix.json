@@ -3,194 +3,194 @@
   "dimensions": {
     "isolation_forgetful": {
       "stub": {
-        "native": "infeasible:the omitted-scope verdict (leak vs silent_partition) is only observable with cross-process on-disk BaseStore state; ARENA_STUB=1's per-process InMemoryStore leaves the read process's store empty regardless of framework behavior, so it cannot measure whether LangGraph's SqliteStore leaks the other user's memory \u2014 it DOES (proven via the MEMORY_STORE_ONDISK seam) \u2014 the same cross-process infeasibility as the memory-extension dimensions",
-        "docker": "infeasible:same cross-process reason as native \u2014 the omitted-scope read container starts with an empty per-process InMemoryStore, so the real SqliteStore leak verdict cannot manifest offline",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "native": "infeasible:the omitted-scope verdict (leak vs silent_partition) is only observable with cross-process on-disk BaseStore state; ARENA_STUB=1's per-process InMemoryStore leaves the read process's store empty regardless of framework behavior, so it cannot measure whether LangGraph's SqliteStore leaks the other user's memory — it DOES (proven via the MEMORY_STORE_ONDISK seam) — the same cross-process infeasibility as the memory-extension dimensions",
+        "docker": "infeasible:same cross-process reason as native — the omitted-scope read container starts with an empty per-process InMemoryStore, so the real SqliteStore leak verdict cannot manifest offline",
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "fail",
         "docker": "fail",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "crash_recovery": {
       "stub": {
-        "native": "infeasible:stub near-zero-latency \u2014 no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)",
-        "docker": "infeasible:stub near-zero-latency \u2014 no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "native": "infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)",
+        "docker": "infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)",
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "isolation_leak": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "memory": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "memory_scoped": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "middleware": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "observability": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "qa": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "rag": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "safeguard": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "fail",
         "docker": "fail",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "stream": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "structured": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "tools": {
       "stub": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "memory_cross_session": {
       "stub": {
         "native": "infeasible:ARENA_STUB=1 uses InMemoryStore (langgraph.store.memory, per-process), so a recall in a SECOND process cannot see the first process's user-scoped BaseStore fact; the dimension structurally requires the on-disk SqliteStore cross-process persistence (same class as crash_recovery stub-infeasibility). The MEMORY_STORE_ONDISK evidence seam proves the machinery cross-process, but the arena stub lane never sets it",
-        "docker": "infeasible:same per-process InMemoryStore semantics as native \u2014 the persist container's user-scoped fact is not visible to the separate recall container without the on-disk SqliteStore",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "docker": "infeasible:same per-process InMemoryStore semantics as native — the persist container's user-scoped fact is not visible to the separate recall container without the on-disk SqliteStore",
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "memory_semantic_recall": {
       "stub": {
         "native": "infeasible:ARENA_STUB=1 has no real e5 embedder (the hash-to-vector stub is deterministic, not semantic) and uses per-process InMemoryStore, so a paraphrase needle cannot be embedded, persisted, and retrieved across the cross-session process boundary; requires the real e5 embed server + on-disk SqliteStore semantic index",
-        "docker": "infeasible:same as native \u2014 the offline stub provides neither the real e5 embedder nor the cross-process on-disk SqliteStore a paraphrase recall needs",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "docker": "infeasible:same as native — the offline stub provides neither the real e5 embedder nor the cross-process on-disk SqliteStore a paraphrase recall needs",
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
-        "native": "fail",
-        "docker": "fail",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
     "memory_consolidation": {
       "stub": {
         "native": "infeasible:ARENA_STUB=1's FakeListChatModel cannot drive langmem's trustcall structured extraction (the consolidate turn falls back to the BaseStore write path, documented in modes/store_memory.py) AND InMemoryStore is per-process, so the consolidated fact cannot cross the persist->recall process boundary; requires the real model for langmem + on-disk SqliteStore",
-        "docker": "infeasible:same as native \u2014 no real model for langmem extraction and no cross-process on-disk SqliteStore under the offline stub",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "docker": "infeasible:same as native — no real model for langmem extraction and no cross-process on-disk SqliteStore under the offline stub",
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
         "native": "pass",
         "docker": "pass",
-        "wasm": "infeasible:WASI has no sockets \u2014 the LangChain/LangGraph model client (HTTP) cannot run in a WASI sandbox"
+        "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard transitive dependency; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     }
   }

@@ -2,68 +2,196 @@
   "framework": "mastra",
   "dimensions": {
     "isolation_forgetful": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "crash_recovery": {
-      "stub": {"native":"infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)","docker":"infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)",
+        "docker": "infeasible:stub near-zero-latency — no mid-flight window; SIGKILL-survival requires real model I/O (persistence itself verified: resumed=true)",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "isolation_leak": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "memory": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "memory_cross_session": {
-      "stub": {"native":"infeasible:ARENA_STUB=1 uses a MockLanguageModel that returns fixed text (cannot echo a recalled fact) and a hash embedder with no semantic meaning, so ScoreMemory answer-key containment cannot pass offline; the resource-scoped Memory (scope:'resource' semanticRecall + working memory, LibSQLVector) WIRING drives — persist under sessionA + cross-thread recall under sessionB for the same user verified offline — but the SCORED recall needs the real model","docker":"infeasible:same as native — the offline MockLanguageModel + hash embedder cannot score cross-session recall; the resource-scoped wiring drives but scoring requires the real model + real e5/Qdrant","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "infeasible:ARENA_STUB=1 uses a MockLanguageModel that returns fixed text (cannot echo a recalled fact) and a hash embedder with no semantic meaning, so ScoreMemory answer-key containment cannot pass offline; the resource-scoped Memory (scope:'resource' semanticRecall + working memory, LibSQLVector) WIRING drives — persist under sessionA + cross-thread recall under sessionB for the same user verified offline — but the SCORED recall needs the real model",
+        "docker": "infeasible:same as native — the offline MockLanguageModel + hash embedder cannot score cross-session recall; the resource-scoped wiring drives but scoring requires the real model + real e5/Qdrant",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "memory_semantic_recall": {
-      "stub": {"native":"infeasible:the offline hash embedder carries no cosine-similarity meaning, so a paraphrase needle cannot be retrieved by vector similarity, and the MockLanguageModel cannot answer from recalled context; requires the real multilingual-e5 embedder + real Qdrant (QdrantVector) for a genuine semantic recall","docker":"infeasible:same as native — no real embedder/Qdrant under the stub, so semanticRecall(scope:'resource') has no meaningful vector space to retrieve a paraphrase from","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "infeasible:the offline hash embedder carries no cosine-similarity meaning, so a paraphrase needle cannot be retrieved by vector similarity, and the MockLanguageModel cannot answer from recalled context; requires the real multilingual-e5 embedder + real Qdrant (QdrantVector) for a genuine semantic recall",
+        "docker": "infeasible:same as native — no real embedder/Qdrant under the stub, so semanticRecall(scope:'resource') has no meaningful vector space to retrieve a paraphrase from",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "memory_consolidation": {
-      "stub": {"native":"infeasible:the MockLanguageModel returns fixed text so a consolidated fact cannot be echoed on the cross-session recall; Mastra's consolidation is an IN-HOT-PATH working-memory profile (no async consolidator — a reported finding, the consolidate directive turn is a near-no-op), scored on the real model's recall output the stub cannot produce","docker":"infeasible:same as native — the stub model cannot produce the recall output the consolidation outcome is scored on","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "infeasible:the MockLanguageModel returns fixed text so a consolidated fact cannot be echoed on the cross-session recall; Mastra's consolidation is an IN-HOT-PATH working-memory profile (no async consolidator — a reported finding, the consolidate directive turn is a near-no-op), scored on the real model's recall output the stub cannot produce",
+        "docker": "infeasible:same as native — the stub model cannot produce the recall output the consolidation outcome is scored on",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "memory_scoped": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "middleware": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "observability": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "qa": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "rag": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "safeguard": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "stream": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "structured": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     },
     "tools": {
-      "stub": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"},
-      "real": {"native":"pass","docker":"pass","wasm":"infeasible:WASI has no sockets — the Mastra/AI-SDK model client (fetch/HTTP) cannot run in a WASI sandbox"}
+      "stub": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      },
+      "real": {
+        "native": "pass",
+        "docker": "pass",
+        "wasm": "infeasible:the WASI JS runtime (StarlingMonkey/ComponentizeJS) implements Web APIs, not node: builtins, and the package's transitive dependencies require node:crypto / node:stream / undici internals. WASI itself is not the blocker — 0.2 provides wasi:http/outgoing-handler"
+      }
     }
   }
 }
