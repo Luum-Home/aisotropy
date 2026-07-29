@@ -80,8 +80,8 @@
         "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
       },
       "real": {
-        "native": "pass",
-        "docker": "pass",
+        "native": "pass:L1 adapter-managed history",
+        "docker": "pass:L1 adapter-managed history",
         "wasm": "infeasible:builds cleanly for wasip1 but cannot dial out at runtime — Go's Preview 1 target defines no sock_connect, so net.Dial compiles and then fails in-sandbox (verified 2026-07-28 under wazero: 'dial tcp: lookup ... Connection reset by peer'). There is no gc-toolchain wasip2 target (golang/go#77141 open)"
       }
     },

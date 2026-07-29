@@ -44,8 +44,8 @@
         "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
       },
       "real": {
-        "native": "pass",
-        "docker": "pass",
+        "native": "pass:L2 native tiered memory (App.Turn)",
+        "docker": "pass:L2 native tiered memory (App.Turn)",
         "wasm": "infeasible:the aisotropy HTTP/gateway path is not a WASI guest; only the wazero tool-sandbox runs under WASI (wasm_tool)"
       }
     },
