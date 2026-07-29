@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -171,6 +172,7 @@ func writeResults(path string, rep reportData) error {
 
 	var b strings.Builder
 	writeHeader(&b, rep)
+	writeSubjectLegend(&b, rep)
 	writeMatrixSection(&b, rep)
 	writeQualityTable(&b, rep, aggs, get)
 	writeJudgeSection(&b, rep, get)
@@ -1479,4 +1481,56 @@ func avg2(sum float64, count int) float64 {
 		return math.NaN()
 	}
 	return sum / float64(count)
+}
+
+// writeSubjectLegend states what each executed dimension MEASURES, before any
+// table shows a result. It is placed first on purpose: a reader who meets the
+// quality table without it will read a `qa` tick and a `memory_scoped` tick as
+// the same kind of claim, and they are not — the model is held constant, so the
+// model-subject dimensions cannot discriminate frameworks at all.
+func writeSubjectLegend(b *strings.Builder, rep reportData) {
+	all := append(append([]string{}, rep.Modes...), rep.Dimensions...)
+	if len(all) == 0 {
+		return
+	}
+	seen := map[string]bool{}
+	var order []string
+	for _, d := range all {
+		if !seen[d] {
+			seen[d] = true
+			order = append(order, d)
+		}
+	}
+	sort.Strings(order)
+
+	b.WriteString("## What each dimension measures\n\n")
+	b.WriteString("The model is held constant so a difference between cells is attributable to the\n")
+	b.WriteString("**framework**. That holds only where the framework does the work. Where the model\n")
+	b.WriteString("does it, every row hands the SAME prompt to the SAME model, so those cells cannot\n")
+	b.WriteString("discriminate frameworks **by construction** — the variable was deliberately fixed.\n")
+	b.WriteString("Read a tick below as an answer to the question in its row, not as a score.\n\n")
+	b.WriteString("| dimension | measures | a pass claims |\n|---|---|---|\n")
+
+	var unclassified []string
+	for _, d := range order {
+		s, ok := subjectOf(d)
+		if !ok {
+			unclassified = append(unclassified, d)
+			fmt.Fprintf(b, "| `%s` | **UNCLASSIFIED** | this dimension ran without declaring what it measures — a reader cannot tell whether its result is about the framework, the model, or the integration |\n", d)
+			continue
+		}
+		fmt.Fprintf(b, "| `%s` | **%s** | %s |\n", d, s.Subject, s.Note)
+	}
+	b.WriteString("\n")
+	if len(unclassified) > 0 {
+		fmt.Fprintf(b, "> **%d dimension(s) are UNCLASSIFIED** (%s). Add them to `dimensionSubjects` in\n",
+			len(unclassified), strings.Join(unclassified, ", "))
+		b.WriteString("> `arenas/live/runner/subject.go`: a cell that does not say what it is about is the\n")
+		b.WriteString("> state this legend exists to remove, and leaving it blank silently re-creates it.\n\n")
+	}
+	b.WriteString("> **MODEL-subject rows are a control lane.** They prove the wiring is alive and the\n")
+	b.WriteString("> model is behaving; they are not evidence that one framework is better than another.\n")
+	b.WriteString("> **FRAMEWORK-subject rows are the comparison** — and their `pass:<provenance>` label\n")
+	b.WriteString("> in the matrix says whether the capability came from the framework or from adapter\n")
+	b.WriteString("> code standing in for one.\n\n")
 }
