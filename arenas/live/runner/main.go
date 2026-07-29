@@ -336,6 +336,16 @@ func main() {
 	// cells already present (the resume half); default OFF is byte-identical to
 	// pre-Layer-1 behavior.
 	recordsPath := filepath.Join(*liveDir, recordsFileName)
+	if *resultsOut != "" {
+		// The records file must follow the board. -results-out existed to make a
+		// validation run harmless, and it was not: two validation runs appended
+		// 17 envelopes to the SHARED log, including 8 failing ai-sdk memory cells
+		// that -resume would have folded into the next real board as genuine
+		// failures. Redirecting the render while leaving the durable log shared
+		// moves the contamination rather than removing it.
+		recordsPath = *resultsOut + ".records.jsonl"
+		logf("results-out: durable records also redirected to %s — a validation run must not write into the shared log", recordsPath)
+	}
 	resume := emptyResumeState()
 	inv := invalidateSpec{beforeAt: *invalidateBefore, runID: *invalidateRun, unstamped: *invalidateUnstamped}
 	if *resumeFlag {
