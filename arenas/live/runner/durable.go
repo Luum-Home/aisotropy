@@ -541,7 +541,11 @@ func reportFromResume(rs *resumeState, matrixDocs []matrixDoc) reportData {
 // renderOnly regenerates RESULTS.md purely from the durable records log and the
 // matrix manifests — no model calls, no adapter spawns. It is the `-render-only`
 // entry point.
-func renderOnly(liveDir string) error {
+//
+// renderOnly regenerates the board from the durable records. resultsOut, when
+// non-empty, redirects the write away from the published RESULTS.md — the same
+// validation escape the run path has.
+func renderOnly(liveDir, resultsOut string) error {
 	recordsPath := filepath.Join(liveDir, recordsFileName)
 	rs, err := loadDurableLog(recordsPath)
 	if err != nil {
@@ -556,6 +560,9 @@ func renderOnly(liveDir string) error {
 	}
 	rep := reportFromResume(rs, matrixDocs)
 	resultsPath := filepath.Join(liveDir, "RESULTS.md")
+	if resultsOut != "" {
+		resultsPath = resultsOut
+	}
 	if err := writeResults(resultsPath, rep); err != nil {
 		return fmt.Errorf("write results: %w", err)
 	}

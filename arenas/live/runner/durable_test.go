@@ -285,7 +285,7 @@ func TestRenderOnlyWritesResultsFromRecords(t *testing.T) {
 	_ = dl.appendBench(benchCell{Framework: "alpha", Form: "native", Mode: "qa", Iters: 5, WarmP50: 100, WarmP95: 120}, "real")
 	dl.close()
 
-	if err := renderOnly(dir); err != nil {
+	if err := renderOnly(dir, ""); err != nil {
 		t.Fatalf("renderOnly: %v", err)
 	}
 	out, err := os.ReadFile(filepath.Join(dir, "RESULTS.md"))
@@ -299,7 +299,7 @@ func TestRenderOnlyWritesResultsFromRecords(t *testing.T) {
 	// A directory with no records must be a clean error, not a crash or a
 	// truncated file.
 	empty := t.TempDir()
-	if err := renderOnly(empty); err == nil {
+	if err := renderOnly(empty, ""); err == nil {
 		t.Errorf("renderOnly on an empty dir should error (nothing to render)")
 	}
 }
@@ -393,5 +393,48 @@ func TestInvalidate_Unstamped(t *testing.T) {
 	}
 	if len(rs.present) != 0 || rs.invalidated != 1 {
 		t.Errorf("-invalidate-unstamped left present=%d invalidated=%d, want 0 and 1", len(rs.present), rs.invalidated)
+	}
+}
+
+// TestResultsOut_LeavesPublishedBoardUntouched pins the whole reason the flag
+// exists. Validating a change to one adapter's stub needs a scoped run, a scoped
+// run that completes overwrites the published board with its own narrow slice
+// (1525 lines -> 315, observed 2026-07-28), and the narrowing gate correctly
+// refuses it. Without an escape the only options were "cannot validate" or
+// "validate by destroying the board" — so the escape must be proven to actually
+// leave the board alone, not merely documented as doing so.
+func TestResultsOut_LeavesPublishedBoardUntouched(t *testing.T) {
+	dir := t.TempDir()
+	published := filepath.Join(dir, "RESULTS.md")
+	const sentinel = "PUBLISHED BOARD — must survive\n"
+	if err := os.WriteFile(published, []byte(sentinel), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// One durable record so renderOnly has something to render.
+	l, err := openDurableLog(filepath.Join(dir, recordsFileName), "run-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.appendCorrectness(record{Framework: "fw", Mode: "qa", ID: "q1"}, "real"); err != nil {
+		t.Fatal(err)
+	}
+	l.close()
+
+	out := filepath.Join(dir, "validation.md")
+	if err := renderOnly(dir, out); err != nil {
+		t.Fatalf("renderOnly with -results-out: %v", err)
+	}
+
+	got, err := os.ReadFile(published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != sentinel {
+		t.Error("the published board was modified despite -results-out — the escape does not escape, " +
+			"which leaves validation and board-safety mutually exclusive again")
+	}
+	if st, err := os.Stat(out); err != nil || st.Size() == 0 {
+		t.Errorf("nothing was written to the -results-out path (err=%v) — the run cannot be inspected", err)
 	}
 }

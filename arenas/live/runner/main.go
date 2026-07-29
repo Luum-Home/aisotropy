@@ -86,6 +86,7 @@ func main() {
 	skipCorrect := flag.Bool("skip-correctness", false, "skip the correctness/quality pass entirely")
 	skipDims := flag.Bool("skip-dimensions", false, "skip the new-dimensions pass (scoped-memory, isolation, crash, observability)")
 	skipMatrixGate := flag.Bool("skip-matrix-gate", false, "skip the full-matrix completeness gate over arenas/live/<fw>/matrix.json (still renders the matrix section)")
+	resultsOut := flag.String("results-out", "", "write the rendered board to this path instead of <live>/RESULTS.md. THE VALIDATION ESCAPE: a scoped run (one framework, one mode, a changed stub) can be verified end-to-end without touching the published board — which is exactly what the narrowing gate refuses, and refuses correctly. With this set the narrowing gate does not apply, because nothing published is being replaced")
 	invalidateBefore := flag.String("invalidate-before", "", "RFC3339 instant: do NOT resume cells measured before it — they re-measure. For a known-bad window (a store that was down, a misconfigured key) whose cells would otherwise stay frozen forever, because -resume skips whatever is present")
 	invalidateRun := flag.String("invalidate-run", "", "run id (see the 'run id:' line each run logs): do NOT resume cells produced by that run")
 	invalidateUnstamped := flag.Bool("invalidate-unstamped", false, "do NOT resume cells written before records carried provenance — they cannot state when they were measured")
@@ -100,7 +101,7 @@ func main() {
 	// A pure render (no model calls, no adapter spawns, no scoring) — it exits
 	// before every pass and every gate. See ADR-0064 Layer 1.
 	if *renderOnlyFlag {
-		if err := renderOnly(*liveDir); err != nil {
+		if err := renderOnly(*liveDir, *resultsOut); err != nil {
 			fatal("render-only: %v", err)
 		}
 		return
@@ -454,7 +455,10 @@ func main() {
 		Unstamped:    resume.unstamped,
 	}
 	resultsPath := filepath.Join(*liveDir, "RESULTS.md")
-	if err := gateNarrowing(resultsPath, modes, len(frameworks), *allowNarrowing); err != nil {
+	if *resultsOut != "" {
+		resultsPath = *resultsOut
+		logf("results-out: writing to %s — the published board is untouched, and the narrowing gate does not apply because nothing published is being replaced", resultsPath)
+	} else if err := gateNarrowing(resultsPath, modes, len(frameworks), *allowNarrowing); err != nil {
 		fatal("results narrowing gate: %v", err)
 	}
 	if err := writeResults(resultsPath, rep); err != nil {
