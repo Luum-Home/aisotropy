@@ -41,6 +41,38 @@ function textOf(part) {
 }
 
 /** Best-effort extraction of the last user message's plain text from a V4 prompt array. */
+// wholePromptText flattens EVERY message the framework assembled — system
+// prompt included — into one string.
+//
+// WHY THE WHOLE PROMPT AND NOT THE LAST USER TURN. In the integration lane
+// (real stores, mock model) the plumbing dimensions are scored from the reply:
+// "was the fact re-hydrated?" is answerable only if a fact the STORE returned
+// shows up in the text. That fact never lives in the last user message — the
+// last user message is the QUESTION ("what is the spare key code?"). It lives
+// in the history or system prompt the framework just rebuilt from disk.
+//
+// Echoing only the last user turn therefore makes every memory, scope,
+// isolation and crash cell fail identically whether the plumbing worked or not,
+// which is worse than not measuring: it looks like a result.
+//
+// It also keeps the NEGATIVE direction honest. isolation_leak passes only when
+// another tenant's fact is ABSENT; if the plumbing leaks it into the prompt,
+// this echo puts it in the reply and the cell fails, as it should.
+function wholePromptText(prompt) {
+  if (!Array.isArray(prompt)) {
+    return '';
+  }
+  return prompt
+    .map((msg) => {
+      if (!msg) return '';
+      if (typeof msg.content === 'string') return msg.content;
+      if (Array.isArray(msg.content)) return msg.content.map(textOf).join(' ');
+      return '';
+    })
+    .join(' ')
+    .trim();
+}
+
 function lastUserText(prompt) {
   if (!Array.isArray(prompt)) {
     return '';
