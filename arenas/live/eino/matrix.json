@@ -56,8 +56,8 @@
         "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
       },
       "real": {
-        "native": "pass",
-        "docker": "pass",
+        "native": "pass:L1 adapter-checkpointed turns",
+        "docker": "pass:L1 adapter-checkpointed turns",
         "wasm": "infeasible:the adapter does not build for a WASI target — modernc.org/sqlite -> modernc.org/libc excludes every Go file under wasip1 (verified 2026-07-28: GOOS=wasip1 go build ./... fails). Not a WASI networking limit: WASI 0.2 has had sockets since January 2024"
       }
     },

@@ -56,8 +56,8 @@
         "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
-        "native": "pass",
-        "docker": "pass",
+        "native": "pass:L2 native Memory store (on-disk)",
+        "docker": "pass:L2 native Memory store (on-disk)",
         "wasm": "infeasible:componentize-py cannot host compiled wheels, and the adapter's dependency tree (pydantic-core, qdrant-client, tokenizers) is native-extension-bound; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },

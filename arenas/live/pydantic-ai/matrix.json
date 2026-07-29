@@ -56,8 +56,8 @@
         "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard dependency of pydantic v2 itself; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       },
       "real": {
-        "native": "pass",
-        "docker": "pass",
+        "native": "pass:L1 adapter-checkpointed turns",
+        "docker": "pass:L1 adapter-checkpointed turns",
         "wasm": "infeasible:componentize-py cannot host compiled wheels and pydantic-core (Rust) is a hard dependency of pydantic v2 itself; CPython's wasm32-wasip2 is not a supported PEP 11 tier. The blocker is the dependency tree, not WASI — 0.2 has shipped sockets since January 2024"
       }
     },
