@@ -21,7 +21,10 @@ timestamp: 2026-07-23T00:00:00Z
 >   TTFT/barge-in are measured; full-stack numbers with real STT/TTS models remain pending an
 >   idle-machine run.
 > - Still true as written: the CORE has no audio code (by design — that was the
->   recommendation), telephony/Asterisk remains deferred, F5-TTS official weights remain barred.
+>   recommendation) and F5-TTS official weights remain barred. **Telephony is no longer deferred:**
+>   [ADR-0079](../decisions/0079-telephony-cpaas-first-asterisk-gpl-exception-precleared.md)
+>   decides it CPaaS-first — and corrects this report's own Asterisk row, which was wrong in the
+>   cautious direction (see below).
 > - **Audio-backend spike (2026-07-27)**: [voicebox](../06-Daily/reports/voicebox-spike-2026-07-27.md)
 >   evaluated as a single-process replacement for the STT+TTS legs — measured TTS first-audio-byte
 >   **410.7 ms** warm vs this stack's re-measured 1647 ms (~4x short text, ~1.2x long — an initial
@@ -106,7 +109,7 @@ Multi-tenancy carries over untouched: the voice gateway is just another client o
 | [Chatterbox](https://github.com/resemble-ai/chatterbox) (Resemble AI) | TTS local, zero-shot voice cloning, emotion control | MIT ([LICENSE](https://github.com/resemble-ai/chatterbox/blob/master/LICENSE)) | ✅ | Heavier than Kokoro; brings cloning if needed |
 | [F5-TTS](https://github.com/swivid/f5-tts) | TTS, zero-shot | ⚠️ **Code MIT, official weights CC-BY-NC-4.0** (Emilia training data; [discussion #997](https://github.com/SWivid/F5-TTS/discussions/997)) — NC survives fine-tuning | 🚫 for SaaS (weights) | Use [OpenF5-TTS-Base](https://huggingface.co/mrfakename/OpenF5-TTS-Base) (Apache-2.0 retrain) if the architecture is wanted commercially |
 | [Inflect-Micro-v2](https://huggingface.co/owensong/Inflect-Micro-v2) | TTS local, VITS-family, **9.4M params / 37.5 MB**, 6.28× realtime on a 4-thread CPU | ⚠️ **Weights Apache-2.0, but the inference path needs eSpeak-ng (GPL-3.0)** — the model card's own words: *"The English eSpeak-ng frontend remains CPU-side code"* | 🚫 same gate as Kokoro/piper: the GPL is in the G2P, not the model | Evaluated 2026-08-03, **rejected on licence, not on quality**. See the note below |
-| [Asterisk](https://www.asterisk.org) | Telephony (PSTN/SIP PBX); bots attach via [ARI](https://docs.asterisk.org/Asterisk_22_Documentation/API_Documentation/Asterisk_REST_Interface/) | ⚠️ **GPLv2** | Allowed **only** under the [license-policy exception](../../.claude/rules/cos/license-policy.md#exceptions): separate service, unmodified, public API (ARI/SIP), documented + operator-approved → **requires an ADR** | The self-hosted telephony standard; CPaaS (Twilio et al.) is the no-GPL alternative |
+| [Asterisk](https://www.asterisk.org) | Telephony (PSTN/SIP PBX); bots attach via [ARI](https://docs.asterisk.org/Asterisk_22_Documentation/API_Documentation/Asterisk_REST_Interface/) | ⚠️→✅ **GPLv2 — but its LICENSE carries an explicit AMI/AGI/ARI protocol grant**: applications using those protocols to control an Asterisk instance *"do not have to be licensed under the GPL"*, with a fallback licence from Sangoma naming ARI if a court disagreed | **Correction (2026-08-03):** this row previously said the exception "requires an ADR" as if the GPL were the obstacle. It is the cleanest of this repo's three GPL cases — cleaner than Grafana (ADR-0067) or voicebox (ADR-0077), both of which rest on OUR reading of the process boundary with no fallback grant | Decided in [ADR-0079](../decisions/0079-telephony-cpaas-first-asterisk-gpl-exception-precleared.md): **CPaaS-first**, on engineering grounds, not licence ones — pipecat 1.6.0 ships 6 CPaaS serializers and 0 Asterisk support, and ARI carries control but not media |
 | LangGraph | **Not a voice piece** — it is the arena competitor ([competitive landscape](competitive-landscape.md)). Neither it nor aisotropy ships voice natively; voice frameworks like Pipecat consume either as an LLM/agent backend the same way | MIT | — | Included here only to answer "does LangGraph change the picture?" — it doesn't |
 
 ### The recurring trap: the licence that matters is the G2P's, not the model's

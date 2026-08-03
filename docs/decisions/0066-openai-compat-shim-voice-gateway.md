@@ -168,7 +168,12 @@ Checked before designing (dependency-reuse-first):
 - **No tool calls** (`delta.tool_calls`), no logprobs, no `n>1`, no vision/audio content parts —
   text-only v1 floor; Pipecat reads `tool_calls` but does not require it.
 - **No `GET /v1/models`** in v1 — Open WebUI convenience, named follow-on, not part of the floor.
-- **No telephony/Asterisk** — GPLv2 requires its own license-exception ADR (or a CPaaS); deferred.
+- **No telephony** in this change. *(Updated 2026-08-03: "deferred" was stale from
+  2026-07-23. Telephony is now decided in
+  [ADR-0079](0079-telephony-cpaas-first-asterisk-gpl-exception-precleared.md) —
+  **CPaaS-first**, and Asterisk's GPLv2 turned out to carry an explicit ARI protocol grant,
+  making it the cleanest of this repo's three GPL cases rather than a blocker. The decision
+  moved to engineering grounds: pipecat ships 6 CPaaS serializers and no Asterisk support.)*
 - **No F5-TTS official weights** — CC-BY-NC, BARRED for SaaS (Apache alt exists: OpenF5-TTS-Base).
   Full license table: `docs/research/voice-pipeline-landscape-2026-07-23.md`.
 
