@@ -90,10 +90,23 @@ missing_core=""
 for m in pytest; do
   "$py" -c "import $m" 2>/dev/null || missing_core="$missing_core $m"
 done
-missing_lane=""
-for m in pipecat faster_whisper openai httpx; do
-  "$py" -c "import $m" 2>/dev/null || missing_lane="$missing_lane $m"
-done
+# Probe what each BACKEND actually needs, not a flat package list. The flat
+# list was a real hole, found 2026-08-03: it probed `faster_whisper`, which
+# imports fine, while `pipecat.services.whisper.stt` — the class the
+# kokoro-fastapi fallback actually constructs — raised ImportError because
+# pipecat 1.x hard-requires mlx_whisper on Darwin/arm64 (ADR-0078). The venv
+# reported ✅ with the fallback backend broken. A package importing is not the
+# same as the service that uses it importing, and only the second one matters.
+probe_backend() { # $1 = label, $2... = importable module paths
+  local label="$1"; shift
+  local miss=""
+  for m in "$@"; do "$py" -c "import $m" 2>/dev/null || miss="$miss $m"; done
+  printf '%s' "$miss"
+}
+missing_common="$(probe_backend common pipecat openai httpx)"
+missing_voicebox="$(probe_backend voicebox pipecat.services.openai.stt)"
+missing_kokoro="$(probe_backend kokoro faster_whisper pipecat.services.whisper.stt)"
+missing_lane="$missing_common$missing_voicebox"   # the DEFAULT backend gates the lane
 
 if [ -n "$missing_core" ]; then
   say "venv-preflight: ❌ interpreter $ver OK, but the test floor is missing:$missing_core"
@@ -108,5 +121,18 @@ if [ -n "$missing_lane" ]; then
   exit 0
 fi
 
-say "venv-preflight: ✅ python $ver, test floor and voice-lane imports all present"
+if [ -n "$missing_kokoro" ]; then
+  say "venv-preflight: ✅ python $ver — DEFAULT backend (voicebox) ready"
+  say "   ⚠️  the VOICE_AUDIO_BACKEND=kokoro-fastapi fallback is NOT usable here:$missing_kokoro"
+  say "   That switch is what makes depending on a v0.2.x project safe (ADR-0077),"
+  say "   so a broken fallback is worth knowing about even though the lane passes."
+  say "   On Darwin/arm64 pipecat 1.x hard-requires mlx_whisper (ADR-0078); it is"
+  say "   declared in requirements.txt but pulls mlx + torch, so it is often absent:"
+  say "     $venv/bin/pip install -r $here/requirements.txt"
+  say "   (exit 0: the default backend and the whole test lane work without it)"
+  exit 0
+fi
+
+say "venv-preflight: ✅ python $ver — test floor, default backend (voicebox) and the"
+say "   kokoro-fastapi fallback are all importable"
 exit 0
