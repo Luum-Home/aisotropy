@@ -1,7 +1,7 @@
 ---
 type: Legal
 title: "Counsel review packet — licensing, contributions, and publication readiness"
-description: Everything a lawyer needs to review Aisotropy's licensing position in one sitting, and nothing they should have to re-derive. Part 1 states what was decided and shipped by the engineering side (Apache-2.0 per ADR-0080, NOTICE, CLA drafts, the history rewrite) with the evidence for each. Part 2 is eleven numbered questions in priority order, each with the context, the position taken, and what turns on the answer - the load-bearing ones being Q1 the exact legal entity behind "Luum", Q2 whether replacing the Apache ICLA's nonprofit reciprocal promise with an outbound open-source commitment is sound, Q3 governing law and whether a click-through CLA binds in the relevant jurisdiction, and Q5 whether copyright in a repository authored entirely by one person actually vests in the company. Part 3 lists what engineering verified itself, with the commands, so counsel can spot-check rather than repeat. NOT legal advice - written by the engineering side to be corrected.
+description: Everything a lawyer needs to review Aisotropy's licensing position in one sitting, and nothing they should have to re-derive. Part 1 states what was decided and shipped by the engineering side (Apache-2.0 per ADR-0080, NOTICE, CLA drafts, the history rewrite) with the evidence for each. Part 2 is twelve numbered questions in priority order, each with the context, the position taken, and what turns on the answer - the load-bearing ones being Q1 the exact legal entity behind "Luum", Q2 whether replacing the Apache ICLA's nonprofit reciprocal promise with an outbound open-source commitment is sound, Q3 governing law and whether a click-through CLA binds in the relevant jurisdiction, and Q5 whether copyright in a repository authored entirely by one person actually vests in the company. Part 3 lists what engineering verified itself, with the commands, so counsel can spot-check rather than repeat. NOT legal advice - written by the engineering side to be corrected.
 tags: [legal, review, counsel, licensing, cla, publication, checklist]
 timestamp: 2026-08-03T00:00:00Z
 ---
@@ -65,6 +65,18 @@ preserved so a commercial tier may also include the Contribution.
 3. Does §9 create any obligation that would obstruct a future acquisition or a source-available tier?
 4. Alternative on the table if §9 is a problem: delete it. More permissive for the Company,
    materially less attractive to contributors. **Operator's call, informed by yours.**
+
+### Q2b — One deviation was found late, and is flagged rather than buried
+
+The ICLA's deviation table claims no deviation is silent. An independent re-read against the source
+PDF (2026-08-03, after the table was written) found one that was: the preamble extends the ASF's *"It
+does not change your rights to use your own Contributions for any other purpose"* with a plain-language
+gloss (*"you keep your copyright, and you may license the same work to anyone else…"*). It is now
+listed as deviation 6b.
+
+**Please confirm** the gloss accurately states what §2 leaves the contributor — or tell us to strike
+it, since the ASF sentence alone is sufficient. Raised separately because it sits in the **operative
+text**, not in a marked non-binding note.
 
 ### Q3 — Governing law, venue, and how a CLA gets signed
 

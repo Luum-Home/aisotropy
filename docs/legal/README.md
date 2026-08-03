@@ -1,7 +1,7 @@
 ---
 type: Section Index
 title: Legal — licensing, contribution agreements, counsel review
-description: The project's outbound legal surface, as distinct from the inbound dependency gate. Holds the two CLA drafts required before Aisotropy accepts external code contributions (ADR-0080), the counsel review packet that turns "legal review pending" into eleven answerable questions, and the contribution workflow that switches on once a lawyer signs off. Everything here is DRAFT and NOT IN FORCE - which costs nothing today, because external code contributions are closed until it is.
+description: The project's outbound legal surface, as distinct from the inbound dependency gate. Holds the two CLA drafts required before Aisotropy accepts external code contributions (ADR-0080), the counsel review packet that turns "legal review pending" into twelve answerable questions, and the contribution workflow that switches on once a lawyer signs off. Everything here is DRAFT and NOT IN FORCE - which costs nothing today, because external code contributions are closed until it is.
 tags: [legal, licensing, cla, contributions, index]
 timestamp: 2026-08-03T00:00:00Z
 ---
