@@ -1,0 +1,244 @@
+# Retired commit identifiers cited in the documentation
+#
+# WHAT THIS IS
+# Hexadecimal identifiers that appear in the docs formatted like git commit
+# hashes, and that no longer resolve to any commit reachable from HEAD.
+#
+# WHY THEY DO NOT RESOLVE
+# The 2026-07-27 filter-repo run did not merely renumber these commits; they are
+# absent from its history entirely. Two pieces of evidence, of different strength:
+#
+#   STRONG, covers all of them — NONE of these identifiers appears as a key in
+#   the 2026-07-27 commit-map. A commit that survived a rewrite always does. So
+#   none of them can be repointed the way the 2026-08-03 rewrite's 31 citations
+#   were (ADR-0080, "Note on the repository history").
+#
+#   NAMES ONLY THREE — the July run's own residue:
+#     .git/filter-repo/suboptimal-issues (2026-07-27)
+#     "The following commits were filtered out, but referenced in another
+#      commit message ... left as-is"  9634e4f  06945bf  5404913
+#   filter-repo only reports hashes referenced from COMMIT MESSAGES; it never
+#   scans docs, so the other identifiers could not appear here even if filtered
+#   out the same way. Read as confirmation of the MECHANISM, not as a roster.
+#
+# Which leaves two possible fates per identifier, both unrecoverable and not
+# worth distinguishing further: filtered out by the July run, or living on a
+# worktree branch deleted before it (the entry for 9634e4f is literally cited in
+# the docs as "Branch worktree-agent-… (deleted)"). They are unrecoverable from
+# every artifact this project retains, including the pre-2026-08-03 backup
+# bundle, which post-dates the July run.
+#
+# WHAT THEY STILL MEAN
+# Nearly all of them label an ARENA BOARD RUN - "RESULTS.md @ 06945bf" names
+# which measurement produced a number. That labelling function survives the
+# hash becoming unresolvable, so the identifiers are RETAINED rather than
+# deleted: removing them would destroy the provenance of measured claims to
+# fix a link. They are declared here instead, which is the same rule the arena
+# applies to its own matrix - declare, never silently omit.
+#
+# HOW THIS FILE IS USED
+# scripts/check-doc-commit-citations.sh fails on any doc-cited hash that
+# neither resolves nor appears below. New rot is caught; this debt is not
+# re-reported.
+#
+# DO NOT add an entry to silence a citation you have just broken. If a hash
+# stops resolving because of a NEW rewrite, repoint it from that rewrite's
+# commit-map first; this file is only for hashes whose commits are gone.
+#
+# Generated 2026-08-03. Regenerate the occurrence counts with:
+#   bash scripts/check-doc-commit-citations.sh --report
+
+retired:
+  - id: 06945bf
+    occurrences: 44
+    files:
+      - docs/architecture/arena-memory-analysis.md: 40
+      - docs/decisions/0070-structured-output-rider-safeguard-fix.md: 2
+      - docs/architecture/arena-memory-extensions.md: 1
+      - docs/security/owasp-llm-coverage.md: 1
+    context: "> clean board (`06945bf`) has now RUN, and the result is"
+  - id: 8154f63
+    occurrences: 12
+    files:
+      - docs/architecture/arena-memory-analysis.md: 11
+      - docs/architecture/arena-adapter-artifacts.md: 1
+    context: "ed by a real, separately-tracked product gap — see §5) | `14355a7`; board republished at `8154f63` showing memory 8/8 |"
+  - id: 098ef91
+    occurrences: 8
+    files:
+      - docs/architecture/arena-memory-analysis.md: 8
+    context: "scorers, 9 frameworks) — with the full-matrix cells filled from that board in `098ef91`. Earlier"
+  - id: 0bdd3ff
+    occurrences: 8
+    files:
+      - docs/architecture/arena-memory-analysis.md: 8
+    context: "adapters across the FASE-3 commit wave (`0bdd3ff` langgraph, `55ee6b1` llamaindex"
+  - id: 674c0e8
+    occurrences: 6
+    files:
+      - docs/architecture/arena-adapter-artifacts.md: 3
+      - docs/architecture/arena-fairness-protocol.md: 3
+    context: "ure/arena-memory-forensics.md` §10, item 2); the placeholder substitution was removed in `674c0e8` (`mode_tools.go` now prefers th"
+  - id: 39017e9
+    occurrences: 6
+    files:
+      - docs/architecture/arena-memory-analysis.md: 6
+    context: "chat route (semantic-hydrated) — commit `39017e9`. That is **apples-to-apples wit"
+  - id: 87eaba1
+    occurrences: 5
+    files:
+      - docs/architecture/arena-memory-forensics.md: 3
+      - docs/architecture/arena-memory-analysis.md: 2
+    context: "boards (the pre-fix `87eaba1`, the post-fix within-session bo"
+  - id: 14355a7
+    occurrences: 4
+    files:
+      - docs/architecture/arena-memory-analysis.md: 2
+      - docs/architecture/arena-adapter-artifacts.md: 1
+      - docs/architecture/arena-fairness-protocol.md: 1
+    context: "replayed | **ADAPTER** (compounded by a real, separately-tracked product gap — see §5) | `14355a7`; board republished at `8154f63`"
+  - id: 48dbf62
+    occurrences: 4
+    files:
+      - docs/architecture/arena-adapter-artifacts.md: 2
+      - docs/architecture/arena-fairness-protocol.md: 2
+    context: "— the same `out.Reply` fabrication as #2, not a chaining defect | **ADAPTER — fixed** | `48dbf62` + `674c0e8`; validated 7/7, see"
+  - id: a9a7261
+    occurrences: 4
+    files:
+      - docs/architecture/arena-memory-analysis.md: 3
+      - docs/decisions/0064-arena-harness-durability-and-store-concurrency.md: 1
+    context: "server that serialised every embed across all nine adapters, is fixed (`a9a7261`). Net effect: on"
+  - id: 55ee6b1
+    occurrences: 4
+    files:
+      - docs/architecture/arena-memory-analysis.md: 4
+    context: "adapters across the FASE-3 commit wave (`0bdd3ff` langgraph, `55ee6b1` llamaindex, `594d816` mastra,"
+  - id: 594d816
+    occurrences: 4
+    files:
+      - docs/architecture/arena-memory-analysis.md: 4
+    context: "adapters across the FASE-3 commit wave (`0bdd3ff` langgraph, `55ee6b1` llamaindex, `594d816` mastra,"
+  - id: 7b229be
+    occurrences: 4
+    files:
+      - docs/architecture/observability-design.md: 2
+      - docs/decisions/0065-local-otel-backend-aspire-dashboard.md: 2
+    context: "`git log --oneline -5`). It has since been committed as **`7b229be`"
+  - id: d5307d1
+    occurrences: 3
+    files:
+      - docs/06-Daily/reports/gap-claims-verification-2026-07-27.md: 1
+      - docs/decisions/0075-dormant-lanes-operator-runnable.md: 1
+      - docs/decisions/index.md: 1
+    context: "-repo**: `crates/bitrate-scorer/{Cargo.toml,src/main.rs,tests/golden.rs}` tracked, added `d5307d1` (2026-07-10, *before* the doc)."
+  - id: 6dcf6a7
+    occurrences: 3
+    files:
+      - docs/architecture/arena-adapter-artifacts.md: 3
+    context: "lane | **DOC** (stale contract, then 4 adapter bugs it caused) | `8c8aaff` (SPEC fix) + `6dcf6a7` (mastra, ai-sdk) + `fccda84` (l"
+  - id: 2232d37
+    occurrences: 3
+    files:
+      - docs/architecture/arena-adapter-artifacts.md: 3
+    context: "until `2232d37` (see §5), not even retrievable:"
+  - id: 7743d51
+    occurrences: 3
+    files:
+      - docs/architecture/arena-tenancy-levels.md: 2
+      - docs/architecture/arena-fairness-protocol.md: 1
+    context: "four competitors that DO ship scoping primitives) landed in commit `7743d51`."
+  - id: f4e473d
+    occurrences: 3
+    files:
+      - docs/architecture/arena-memory-analysis.md: 3
+    context: "`5f58150` genkit-go/eino/ai-sdk, `f4e473d` pydantic-ai/spring-ai, `affaf93"
+  - id: 172f125
+    occurrences: 2
+    files:
+      - docs/06-Daily/reports/gap-claims-verification-2026-07-27.md: 1
+      - docs/architecture/positioning-key-brokering.md: 1
+    context: "*bounded** and documented as degrading to best-effort. The worker-join race was fixed in `172f125`. `http.Server` does not cancel"
+  - id: 8c8aaff
+    occurrences: 2
+    files:
+      - docs/architecture/arena-adapter-artifacts.md: 1
+      - docs/architecture/arena-memory-forensics.md: 1
+    context: "ed for the offline stub lane | **DOC** (stale contract, then 4 adapter bugs it caused) | `8c8aaff` (SPEC fix) + `6dcf6a7` (mastra,"
+  - id: adf2311
+    occurrences: 2
+    files:
+      - docs/architecture/arena-adapter-artifacts.md: 2
+    context: "lamaindex, pydantic-ai); genkit-go's own fix is referenced inside `6dcf6a7`'s message as `adf2311`, pydantic-ai's numeric-result v"
+  - id: c510fb5
+    occurrences: 2
+    files:
+      - docs/architecture/arena-adapter-artifacts.md: 2
+    context: "erenced inside `6dcf6a7`'s message as `adf2311`, pydantic-ai's numeric-result variant as `c510fb5` |"
+  - id: 71e9ee9
+    occurrences: 2
+    files:
+      - docs/architecture/arena-adapter-artifacts.md: 2
+    context: "count. Fixed additively in `71e9ee9` ('feat(adoption): App.SeedHisto"
+  - id: 30826914
+    occurrences: 2
+    files:
+      - docs/architecture/arena-adapter-artifacts.md: 2
+    context: "`30826914`** — settling every residual th"
+  - id: 5f58150
+    occurrences: 2
+    files:
+      - docs/architecture/arena-memory-analysis.md: 2
+    context: "`5f58150` genkit-go/eino/ai-sdk, `f4e473d"
+  - id: affaf93
+    occurrences: 2
+    files:
+      - docs/architecture/arena-memory-analysis.md: 2
+    context: "`5f58150` genkit-go/eino/ai-sdk, `f4e473d` pydantic-ai/spring-ai, `affaf93` the runner nonce), and"
+  - id: dcab1ac
+    occurrences: 2
+    files:
+      - docs/architecture/capabilities-and-gaps.md: 1
+      - docs/tour.md: 1
+    context: "penai_compat_test.go`); quota rejection maps to 429/`rate_limit_error` pre-spend (commit `dcab1ac`). **Bounded:** text-only v1 flo"
+  - id: 0da9ce6
+    occurrences: 2
+    files:
+      - docs/architecture/capabilities-and-gaps.md: 1
+      - docs/tour.md: 1
+    context: "dary auto-attribution (`internal/o11y/handler.go`, `internal/api/o11y_bridge.go`, commit `0da9ce6`); HTTP tracing decorator (`inte"
+  - id: 92e5949
+    occurrences: 2
+    files:
+      - docs/research/arena-infra-isolation-2026-07-18.md: 2
+    context: "`run.sh`/`run-docker.sh`. Commit `92e5949` re-ran the identical sweep at"
+  - id: 9634e4f
+    occurrences: 1
+    files:
+      - docs/06-Daily/reports/worktree-prune-reconstruction-2026-07-27.md: 1
+    context: "### 1. Branch `worktree-agent-a723f81a920d3aae0` @ `9634e4f` (deleted)"
+  - id: fccda84
+    occurrences: 1
+    files:
+      - docs/architecture/arena-adapter-artifacts.md: 1
+    context: "ct, then 4 adapter bugs it caused) | `8c8aaff` (SPEC fix) + `6dcf6a7` (mastra, ai-sdk) + `fccda84` (llamaindex, pydantic-ai); genk"
+  - id: 1af6a19
+    occurrences: 1
+    files:
+      - docs/research/arena-infra-isolation-2026-07-18.md: 1
+    context: "Commit `1af6a19` ran the correctness/quality pas"
+
+# Identifiers that name a commit in ANOTHER repository. These are not rot and
+# never will be: they cannot resolve here by construction, and deleting or
+# repointing them would destroy a correct citation. Checked 2026-08-03 against
+# the external checkouts; 539325c is the only one of the 33 in this class.
+external:
+  - id: 539325c
+    repo: external/voicebox
+    resolves_in: "cd external/voicebox && git cat-file -e 539325c^{commit}"  # verified 2026-08-03: 'chore: release 0.2.12'
+    occurrences: 6
+    files:
+      - docs/decisions/0077-voicebox-gpl-exception-audio-backend.md: 4
+      - docs/06-Daily/reports/voicebox-spike-2026-07-27.md: 1
+      - docs/decisions/index.md: 1
+    context: "**aisotropy HEAD:** `8c407b8`. **voicebox:** `external/voicebox` @ `539325c`, tag `v0.2.12`"

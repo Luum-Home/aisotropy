@@ -93,5 +93,30 @@ else
   echo "pre-push-gate: stage 4/4 arena integration gate SKIPPED (set ARENA_INTEGRATION_GATE=1 with the local stack up)"
 fi
 
+# ---- stage 5: doc commit-citation rot ---------------------------------------
+# The docs cite commits by short hash as evidence ("landed in `abc1234`"). A
+# history rewrite invalidates all of them at once and silently: the prose still
+# reads like proof. Cheap (no build, no network), and it belongs on push rather
+# than commit because that is when a rewrite reaches everyone else.
+if [ "${SKIP_CITATION_GATE:-0}" = "1" ]; then
+  echo "pre-push-gate: stage 5/5 doc-citation gate SKIPPED (SKIP_CITATION_GATE=1)"
+else
+  if [ -x "$(dirname "$0")/check-doc-commit-citations.sh" ]; then
+    echo "pre-push-gate: stage 5/5 doc commit-citation check ..."
+    bash "$(dirname "$0")/check-doc-commit-citations.sh" >/dev/null; rc=$?
+    if [ "$rc" -eq 2 ]; then
+      echo "pre-push-gate: doc-citation gate could not evaluate — NOT a pass." >&2
+      exit 2
+    fi
+    [ "$rc" -eq 0 ] || {
+      echo "pre-push-gate: BLOCKED by the doc-citation gate (exit $rc) — a doc cites a commit that no longer exists." >&2
+      bash "$(dirname "$0")/check-doc-commit-citations.sh" >&2
+      exit "$rc"
+    }
+  else
+    echo "pre-push-gate: scripts/check-doc-commit-citations.sh missing or not executable — skipping stage 5" >&2
+  fi
+fi
+
 echo "pre-push-gate: all stages clean — push may proceed."
 exit 0
