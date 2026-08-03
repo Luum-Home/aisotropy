@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: Threat model — the multi-tenant isolation boundary
-description: The security threat model for Aisotropy's #1 differentiator, tenant/user isolation. Enumerates the trust boundary, the assets, the concrete threats (cross-tenant leak, prompt-injection tool bypass, identity forgery, cost exhaustion, consolidation poisoning, memory-persistence poisoning, secret leakage, supply chain), the mitigation that is REAL vs aspirational today, and the tenant-leak testing strategy. Honest about the load-bearing gap: identity is not yet authenticated.
+description: The security threat model for Aisotropy's #1 differentiator, tenant/user isolation. Enumerates the trust boundary, the assets, the concrete threats (cross-tenant leak, prompt-injection tool bypass, identity forgery, cost exhaustion, consolidation poisoning, memory-persistence poisoning, secret leakage, supply chain), the mitigation that is REAL vs aspirational today, and the tenant-leak testing strategy. Identity can now be authenticated in-process (ADR-0024/0025 authn seam), but authentication remains opt-in for the shipped binary — the residual gap this model tracks.
 tags: [architecture, security, threat-model, multi-tenancy, isolation, prompt-injection, scopes]
 timestamp: 2026-07-14T00:00:00Z
 ---
