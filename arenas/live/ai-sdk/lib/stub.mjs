@@ -189,7 +189,11 @@ export function createStubChatModel() {
         };
       }
 
-      const query = lastUserText(prompt);
+      // Echo the WHOLE assembled prompt, not just the question — see
+      // wholePromptText. On the integration lane the plumbing dimensions are
+      // scored from this reply, and the recalled fact lives in the history the
+      // framework just rebuilt from rqlite, never in the last user turn.
+      const query = wholePromptText(prompt) || lastUserText(prompt);
       const text = query
         ? `[stub reply, ARENA_STUB=1] ${query}`
         : '[stub reply, ARENA_STUB=1] ok';
