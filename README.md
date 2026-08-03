@@ -303,6 +303,9 @@ cross-linked, both human- and agent-readable):
 
 ## License
 
-[Apache-2.0](LICENSE) © 2026 Luum.
+[Apache License 2.0](LICENSE) © 2026 Luum — see [`NOTICE`](NOTICE) and
+[ADR-0080](docs/decisions/0080-project-license-apache-2.md) for why (express patent grant,
+trademark reservation, inbound-contribution terms). One exception, called out in `NOTICE`:
+`bench/rag-quality/testdata/xquad_slice.json` is CC-BY-SA-4.0.
 </content>
 </invoke>

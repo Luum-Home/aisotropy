@@ -6,7 +6,8 @@ Apache License 2.0. Apache-2.0 §4(d) requires any distributed derivative work
 to include a readable copy of the attribution notices contained in a NOTICE
 file shipped by those modules. This file aggregates every such NOTICE found in
 the dependency tree; the Dockerfile copies it into the published image next to
-the binary, together with the project's own LICENSE (Apache-2.0).
+the binary, together with the project's own LICENSE and NOTICE (Apache-2.0
+since ADR-0080 — this project is now on the giving end of §4(d) too).
 
 Regenerate the inventory (from the repo root, read-only):
 

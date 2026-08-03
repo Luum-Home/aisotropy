@@ -148,5 +148,26 @@ ADR — just open the PR.
 
 ## License
 
-By contributing, you agree that your contributions are licensed under the
-project's [Apache License 2.0](LICENSE).
+The project is licensed under the [Apache License 2.0](LICENSE) ([ADR-0080](docs/decisions/0080-project-license-apache-2.md)).
+
+Per **Apache-2.0 §5**, any contribution you intentionally submit for inclusion is
+licensed under those same terms, unless you explicitly state otherwise. If your
+employer holds rights in work you contribute, make sure you have their
+permission before opening the PR.
+
+**Code contributions additionally require a signed CLA** (ADR-0080). Apache §5
+licenses your contribution *under Apache-2.0* — it does not let the project offer
+your code under any other terms, so a CLA with an explicit relicensing grant is
+what keeps a future commercial tier possible without hunting down every past
+contributor. The CLA text is not in place yet; **until it is, external code
+contributions are not accepted** — issues, bug reports, benchmarks and
+documentation fixes are, and are very welcome. If you want to contribute code
+before then, open an issue first and we will sort the paperwork out with you.
+
+Two things the license does *not* cover, and that a contribution must respect:
+
+- **`NOTICE`** is part of the distribution (§4(d)). If your change adds a
+  dependency that ships its own NOTICE, add it to
+  [`THIRD-PARTY-NOTICES`](THIRD-PARTY-NOTICES).
+- **`bench/rag-quality/testdata/xquad_slice.json`** is CC-BY-SA-4.0, not
+  Apache-2.0 — see [`bench/rag-quality/LICENSE-DATA.md`](bench/rag-quality/LICENSE-DATA.md).

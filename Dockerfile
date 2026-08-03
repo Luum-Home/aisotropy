@@ -36,9 +36,10 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:aef9602f8710ec12bde19d593f
 COPY --from=builder /aisotropyd /aisotropyd
 
 # Apache-2.0 §4(d): a distributed derivative must carry the attribution notices
-# of its Apache-2.0 deps (today: wazero's NOTICE). LICENSE (MIT) travels along.
-# See THIRD-PARTY-NOTICES at the repo root for the audited inventory.
-COPY --from=builder /src/LICENSE /src/THIRD-PARTY-NOTICES /licenses/
+# of its Apache-2.0 deps (today: wazero's NOTICE) — and, since ADR-0080, of this
+# project itself, whose own NOTICE travels with LICENSE.
+# See THIRD-PARTY-NOTICES at the repo root for the audited dependency inventory.
+COPY --from=builder /src/LICENSE /src/NOTICE /src/THIRD-PARTY-NOTICES /licenses/
 
 EXPOSE 8080
 

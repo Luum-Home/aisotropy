@@ -76,3 +76,8 @@ lexical rarity instead of using raw bits — not just a bigger or better-fit mod
   Pipecat/Whisper/Kokoro/Chatterbox/F5-TTS/ElevenLabs/Asterisk, each license-verified against the
   repo gate. Conclusion executed same-day: the OpenAI-compat shim shipped as ADR-0066 and the
   hardware-free WER-gated voice test lane as ADR-0069 (see the report's outcome addendum).
+- [MIT vs Apache-2.0 — the project's OWN license](license-mit-vs-apache-2026-08-03.md) — the first
+  license review pointing *inward* instead of at dependencies. Verdict: switch to Apache-2.0 before
+  publication (patent grant §3, trademark reservation §6, inbound terms §5, a NOTICE channel §4(d))
+  against one real loss, GPLv2-only combination. Includes a defect that stands under either license:
+  the LICENSE file appends 32.3% non-MIT text, so detectors report "Other", not MIT.

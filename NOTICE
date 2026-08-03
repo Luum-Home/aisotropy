@@ -1,0 +1,31 @@
+Aisotropy
+Copyright 2026 Luum
+
+This product includes software developed at Luum (https://github.com/Luum-Home/aisotropy).
+
+Licensed under the Apache License, Version 2.0 — see LICENSE.
+
+----------------------------------------------------------------------
+Third-party data NOT covered by the Apache-2.0 grant above
+----------------------------------------------------------------------
+
+  bench/rag-quality/testdata/xquad_slice.json  —  CC-BY-SA-4.0
+
+That file is a derived retrieval slice of the XQuAD dataset (released by
+DeepMind under CC-BY-SA-4.0), redistributed under the same terms. CC-BY-SA-4.0
+is a SHARE-ALIKE license: it is NOT sublicensable under the Apache-2.0 terms of
+this repository. Redistributing that file, or an adaptation of it, requires
+attribution and the same CC-BY-SA-4.0 license.
+
+Provenance and the full obligation: bench/rag-quality/LICENSE-DATA.md
+
+Everything else in this repository is Apache-2.0.
+
+----------------------------------------------------------------------
+Attribution notices of bundled dependencies
+----------------------------------------------------------------------
+
+Binary distributions of aisotropyd statically link Apache-2.0 Go modules whose
+own NOTICE files must travel with the derivative work (Apache-2.0 §4(d)). That
+inventory is maintained separately, and shipped next to the binary by the
+Dockerfile: see THIRD-PARTY-NOTICES.
