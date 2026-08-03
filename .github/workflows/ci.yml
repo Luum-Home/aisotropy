@@ -14,6 +14,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      voice_real_lane:
+        description: >-
+          Run the ADR-0069 voice lane in its REAL mode (downloads STT/TTS models
+          and builds the voicebox audio-backend image, several GB). Off by
+          default: this is the opt-in half of the lane, exactly as it is on a
+          developer machine.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -133,3 +143,113 @@ jobs:
         # (TestRunTask_BrokerInvariant_KeyNeverEntersContainer) and the
         # key-brokering arena execute rather than skip.
         run: go test -tags keybroker ./... -race
+
+  voice-lane:
+    name: voice lane · offline WER units (ADR-0069)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # pipecat 1.x declares Requires-Python >=3.11; numba (a base dep) does
+          # not build on 3.14 — the same range venv-preflight.sh enforces.
+          python-version: '3.11'
+
+      # The cheap half of the lane, and the reason it can live on every push:
+      # without VOICE_LANE=real the model-backed tests SKIP by their own
+      # conftest, leaving the pure-stdlib WER unit tests. No models, no
+      # containers, no provider, no network — pytest is the only install.
+      - name: Install the test floor only
+        run: pip install -r examples/voice-pipecat/requirements-test.txt
+
+      - name: Offline lane (models absent by design)
+        working-directory: examples/voice-pipecat
+        run: pytest tests/ -q
+
+      # A lane that always skips is a lane nobody notices has stopped working.
+      # This asserts the split itself: some tests RAN and some SKIPPED. If a
+      # future change makes everything skip, this job fails instead of going
+      # quietly green.
+      - name: Assert the lane split is real, not vacuous
+        working-directory: examples/voice-pipecat
+        run: |
+          out="$(pytest tests/ -q 2>&1 | tail -1)"
+          echo "$out"
+          case "$out" in
+            *passed*skipped*) echo "lane split intact: some ran, some skipped" ;;
+            *) echo "::error::expected 'N passed, M skipped' — got: $out"; exit 1 ;;
+          esac
+
+  voice-lane-real:
+    name: voice lane · REAL (manual dispatch only)
+    # Opt-in by construction: never on push, never on PR. It downloads models
+    # and builds a multi-GB image, which is exactly what the machine guard
+    # exists to refuse locally — on a hosted runner the equivalent restraint is
+    # requiring a human to ask for it.
+    if: github.event_name == 'workflow_dispatch' && inputs.voice_real_lane
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: false
+
+      # voicebox is built from the UNMODIFIED upstream clone. That is not a
+      # convenience: building from source at a pinned tag is one of the
+      # conditions that keeps the ADR-0077 GPL service exception valid, and
+      # the published image is not publicly pullable anyway.
+      - name: Clone voicebox at the pinned tag
+        run: |
+          git clone https://github.com/agjs/voicebox external/voicebox
+          git -C external/voicebox checkout v0.2.12
+
+      - name: Build + start the audio backend
+        working-directory: examples/voice-pipecat
+        run: |
+          docker compose -f docker-compose.voicebox.yml up -d --build
+          for _ in $(seq 1 60); do
+            curl -fsS localhost:8790/health && break
+            sleep 5
+          done
+          curl -fsS localhost:8790/health
+
+      - name: Install the voice lane
+        run: pip install -r examples/voice-pipecat/requirements.txt -r examples/voice-pipecat/requirements-test.txt
+
+      - name: venv-independent preflight (packages are on the system python here)
+        run: python -c "import pipecat, openai, httpx; import pipecat.services.openai.stt; print('voice lane imports OK')"
+
+      - name: Start aisotropyd with JWT auth
+        env:
+          AISOTROPY_JWT_SECRET: ci-secret-change-me-32-bytes-min!!
+        run: |
+          go build -o /tmp/aisotropyd ./cmd/aisotropyd
+          AISOTROPY_JWT_SECRET="$AISOTROPY_JWT_SECRET" /tmp/aisotropyd &
+          for _ in $(seq 1 30); do curl -fsS localhost:8080/healthz && break; sleep 2; done
+
+      - name: Real lane (WER round-trip, fixtures, file-based pipeline)
+        working-directory: examples/voice-pipecat
+        env:
+          VOICE_LANE: real
+          AISOTROPY_JWT_SECRET: ci-secret-change-me-32-bytes-min!!
+        run: |
+          export AISOTROPY_TENANT_JWT="$(python mint_jwt.py --tenant acme --user alice)"
+          pytest tests/ -q
+
+      - name: Tear the backend down
+        if: always()
+        working-directory: examples/voice-pipecat
+        run: docker compose -f docker-compose.voicebox.yml down
