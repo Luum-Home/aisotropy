@@ -7,6 +7,14 @@
 .agent-tooling/
 .claude/
 agent-tooling.yaml
+# Proyecciones del mismo contenido para otros arneses (Codex, agentes genéricos).
+# Se generan por find/replace desde .claude/ — p. ej. .codex/hooks/*.sh es
+# byte-idéntico a su gemelo en .claude/hooks/, y .agents/skills/*/SKILL.md solo
+# cambia "claude-code"→"Codex". Si el canónico no se trackea, la proyección
+# tampoco: de lo contrario el repo público publicaría por la puerta de atrás la
+# config de agentes que el resto del repo deliberadamente no publica.
+.agents/
+.codex/
 
 # ── Go (producto) ──
 # Binarios compilados y artefactos de build.
