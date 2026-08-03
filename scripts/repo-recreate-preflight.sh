@@ -15,6 +15,15 @@
 #
 # Read-only: every call is a GET.
 #
+# Usage:
+#   repo-recreate-preflight.sh [owner/repo] [--as <gh-account>]
+#
+# --as switches the active gh account for this run and switches BACK on exit,
+# via trap, on every path: success, findings, refusal, error, Ctrl-C. `gh auth
+# switch` writes to a GLOBAL config file, not per-terminal, so a bare switch
+# leaves every other shell and every concurrent agent session on the wrong
+# account — and an `&&` chain that dies in the middle never switches back.
+#
 # ─────────────────────────────────────────────────────────────────────────────
 # WHY exit 2 EXISTS, AND WHY IT IS THE MOST IMPORTANT PART OF THIS SCRIPT
 #
@@ -31,12 +40,33 @@
 
 set -uo pipefail
 
-REPO="${1:-Luum-Home/aisotropy}"
+REPO="Luum-Home/aisotropy"
+AS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --as) AS="${2:-}"; [ -n "$AS" ] || { echo "--as needs an account" >&2; exit 2; }; shift 2 ;;
+    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) echo "unknown flag: $1" >&2; exit 2 ;;
+    *) REPO="$1"; shift ;;
+  esac
+done
 
 command -v gh >/dev/null 2>&1 || { echo "gh not found" >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "jq not found" >&2; exit 2; }
 
 who=$(gh api user --jq .login 2>/dev/null) || { echo "gh is not authenticated" >&2; exit 2; }
+
+# Switch account for this run, and guarantee the restore. The trap fires on
+# EXIT, which covers every exit path below including the refusal and Ctrl-C.
+restore_account() { gh auth switch -u "$1" >/dev/null 2>&1 || \
+  echo "WARNING: could not switch back to '$1' — run: gh auth switch -u $1" >&2; }
+if [ -n "$AS" ] && [ "$AS" != "$who" ]; then
+  original="$who"
+  gh auth switch -u "$AS" >/dev/null 2>&1 || { echo "cannot switch to '$AS' (is it logged in? gh auth status)" >&2; exit 2; }
+  trap 'restore_account "$original"' EXIT
+  who=$(gh api user --jq .login 2>/dev/null) || { echo "switched to '$AS' but the API refuses it" >&2; exit 2; }
+  echo "note:    switched to '$who' for this run; '$original' restored on exit"
+fi
 
 # Access probe. Must come before every count below.
 if ! gh api "repos/$REPO" >/dev/null 2>&1; then
@@ -71,9 +101,12 @@ count() {
   echo "${n:-0}"
 }
 
-open_issues=$(gh api "repos/$REPO" --jq '.open_issues_count')      # includes PRs
+# GitHub's /issues endpoint RETURNS PULL REQUESTS TOO, so a naive count double-
+# counts every PR as an issue. Filter them out, or the report says "2 issues, 2
+# PRs" for what is really 2 PRs and no issues. (Caught on the first real run.)
 prs=$(count "pulls?state=all")
-issues_all=$(count "issues?state=all")
+issues_all=$(gh api "repos/$REPO/issues?state=all&per_page=100" \
+  --jq '[.[] | select(.pull_request == null)] | length' 2>/dev/null || echo UNKNOWN)
 forks=$(gh api "repos/$REPO" --jq '.forks_count')
 stars=$(gh api "repos/$REPO" --jq '.stargazers_count')
 watchers=$(gh api "repos/$REPO" --jq '.subscribers_count')

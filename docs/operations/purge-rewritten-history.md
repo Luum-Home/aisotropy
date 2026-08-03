@@ -56,16 +56,22 @@ Deleting the remote's copy while a bundle sits on your disk is theatre.
 ## Step 1 — preflight: what would recreating cost?
 
 ```bash
-scripts/repo-recreate-preflight.sh Luum-Home/aisotropy
+scripts/repo-recreate-preflight.sh Luum-Home/aisotropy --as <account-with-access>
 ```
 
 Exit 0 nothing would be lost · 1 something would · **2 cannot evaluate — never a pass**.
+
+`--as` switches the gh account for the run and switches back on exit, via trap, on
+every path including the refusal and Ctrl-C. It exists because `gh auth switch`
+writes a **global** config, not a per-terminal one: a bare switch leaves every other
+shell and every concurrent agent session on the wrong account, and an `&&` chain that
+dies in the middle never switches back.
 
 It enumerates issues, PRs, forks, stars, watchers, releases, wiki, webhooks, deploy
 keys, collaborators, Actions secrets/variables, environments and branch protection —
 everything GitHub stores *about* a repo, none of which is in your clone.
 
-Two refusals are built in, both from mistakes made while writing it:
+Three of its rules were paid for by mistakes made while writing it:
 
 - **GitHub answers 404, not 403, for a private repo you cannot see.** A wrong-account
   run would report zeros across the board and read as a clean bill of health. The
@@ -74,6 +80,10 @@ Two refusals are built in, both from mistakes made while writing it:
   error into a reported zero — which it did, on the "Actions secrets" row, the one
   annotated *CI breaks silently if not re-added*. Those rows now read `UNKNOWN` and
   force exit 2.
+- **GitHub's `/issues` endpoint returns pull requests too.** The first real run
+  reported "2 issues, 2 pull requests" for what was 2 PRs and no issues. Counting
+  issues now filters `.pull_request == null`. An inflated loss estimate is a bad
+  input to an irreversible decision in exactly the same way a deflated one is.
 
 ## Step 2 — choose a route
 
