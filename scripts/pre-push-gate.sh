@@ -14,6 +14,17 @@
 #                               offline, zero model calls (SKIP_OWASP_SCAN=1)
 #   3. golden-set gate        — frozen quality baseline, deterministic CodeJudge,
 #                               zero model calls (SKIP_GOLDEN_GATE=1)
+#   4. arena-integration-gate — OPT-IN, needs the local stack (ARENA_INTEGRATION_GATE=1)
+#   5. doc-citation gate      — docs citing commits that no longer exist
+#                               (SKIP_CITATION_GATE=1)
+#
+# Reference every stage's script as "$REPO_ROOT/scripts/…", never
+# "$(dirname "$0")/…": git invokes this through the .git/hooks/pre-push symlink,
+# so $0 is the HOOK path and dirname resolves to .git/hooks. Stage 5 shipped with
+# that bug and its first push printed "missing or not executable — skipping",
+# then "all stages clean" — a gate that skips itself while reporting success is
+# worse than no gate. Stage 4 carried the same latent bug, unnoticed because it
+# is opt-in and had never run.
 #
 # Enforcement here (local hooks) rather than a CI runner is deliberate: this
 # repo treats local gates as authoritative (the GitHub workflow is .disabled).
@@ -83,7 +94,7 @@ fi
 # it (the right setting before touching arenas/live/).
 if [ "${ARENA_INTEGRATION_GATE:-0}" = "1" ]; then
   echo "pre-push-gate: stage 4/4 arena integration gate ..."
-  bash "$(dirname "$0")/arena-integration-gate.sh"; rc=$?
+  bash "$REPO_ROOT/scripts/arena-integration-gate.sh"; rc=$?
   if [ "$rc" -eq 2 ]; then
     echo "pre-push-gate: arena integration gate could not run (stores unreachable) — NOT a pass." >&2
     exit 2
@@ -101,16 +112,16 @@ fi
 if [ "${SKIP_CITATION_GATE:-0}" = "1" ]; then
   echo "pre-push-gate: stage 5/5 doc-citation gate SKIPPED (SKIP_CITATION_GATE=1)"
 else
-  if [ -x "$(dirname "$0")/check-doc-commit-citations.sh" ]; then
+  if [ -x "$REPO_ROOT/scripts/check-doc-commit-citations.sh" ]; then
     echo "pre-push-gate: stage 5/5 doc commit-citation check ..."
-    bash "$(dirname "$0")/check-doc-commit-citations.sh" >/dev/null; rc=$?
+    bash "$REPO_ROOT/scripts/check-doc-commit-citations.sh" >/dev/null; rc=$?
     if [ "$rc" -eq 2 ]; then
       echo "pre-push-gate: doc-citation gate could not evaluate — NOT a pass." >&2
       exit 2
     fi
     [ "$rc" -eq 0 ] || {
       echo "pre-push-gate: BLOCKED by the doc-citation gate (exit $rc) — a doc cites a commit that no longer exists." >&2
-      bash "$(dirname "$0")/check-doc-commit-citations.sh" >&2
+      bash "$REPO_ROOT/scripts/check-doc-commit-citations.sh" >&2
       exit "$rc"
     }
   else
