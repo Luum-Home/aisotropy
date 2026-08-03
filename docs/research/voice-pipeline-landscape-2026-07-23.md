@@ -105,9 +105,35 @@ Multi-tenancy carries over untouched: the voice gateway is just another client o
 | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) + [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) | TTS, lightweight local (82M params), served with an OpenAI-compatible `/v1/audio/speech` | Apache-2.0 (weights **and** wrapper) | ✅ | Best fit for a self-hosted default: small, fast, license-clean |
 | [Chatterbox](https://github.com/resemble-ai/chatterbox) (Resemble AI) | TTS local, zero-shot voice cloning, emotion control | MIT ([LICENSE](https://github.com/resemble-ai/chatterbox/blob/master/LICENSE)) | ✅ | Heavier than Kokoro; brings cloning if needed |
 | [F5-TTS](https://github.com/swivid/f5-tts) | TTS, zero-shot | ⚠️ **Code MIT, official weights CC-BY-NC-4.0** (Emilia training data; [discussion #997](https://github.com/SWivid/F5-TTS/discussions/997)) — NC survives fine-tuning | 🚫 for SaaS (weights) | Use [OpenF5-TTS-Base](https://huggingface.co/mrfakename/OpenF5-TTS-Base) (Apache-2.0 retrain) if the architecture is wanted commercially |
-| [ElevenLabs](https://elevenlabs.io) | TTS cloud, top quality | Proprietary paid API | ✅ (service, not dependency) | No copyleft risk; vendor lock + per-char cost + audio leaves the perimeter |
+| [Inflect-Micro-v2](https://huggingface.co/owensong/Inflect-Micro-v2) | TTS local, VITS-family, **9.4M params / 37.5 MB**, 6.28× realtime on a 4-thread CPU | ⚠️ **Weights Apache-2.0, but the inference path needs eSpeak-ng (GPL-3.0)** — the model card's own words: *"The English eSpeak-ng frontend remains CPU-side code"* | 🚫 same gate as Kokoro/piper: the GPL is in the G2P, not the model | Evaluated 2026-08-03, **rejected on licence, not on quality**. See the note below |
 | [Asterisk](https://www.asterisk.org) | Telephony (PSTN/SIP PBX); bots attach via [ARI](https://docs.asterisk.org/Asterisk_22_Documentation/API_Documentation/Asterisk_REST_Interface/) | ⚠️ **GPLv2** | Allowed **only** under the [license-policy exception](../../.claude/rules/cos/license-policy.md#exceptions): separate service, unmodified, public API (ARI/SIP), documented + operator-approved → **requires an ADR** | The self-hosted telephony standard; CPaaS (Twilio et al.) is the no-GPL alternative |
 | LangGraph | **Not a voice piece** — it is the arena competitor ([competitive landscape](competitive-landscape.md)). Neither it nor aisotropy ships voice natively; voice frameworks like Pipecat consume either as an LLM/agent backend the same way | MIT | — | Included here only to answer "does LangGraph change the picture?" — it doesn't |
+
+### The recurring trap: the licence that matters is the G2P's, not the model's
+
+Three separate TTS candidates have now been rejected for the **same** reason, and each one
+advertised itself as permissive:
+
+| Candidate | Advertised | What the inference path actually needs |
+|---|---|---|
+| Kokoro via `kokoro-onnx` | Apache-2.0 weights | `phonemizer-fork` (GPL-3.0), imported at module load, plus espeak-ng |
+| voicebox's "purely permissive image" recipe | MIT source | same `kokoro-onnx` chain — **verified by building it** ([spike](../06-Daily/reports/voicebox-spike-2026-07-27.md)) |
+| Inflect-Micro-v2 | Apache-2.0 weights | eSpeak-ng (GPL-3.0), stated in its own model card |
+
+A TTS model's licence covers the weights. Speech synthesis also needs grapheme-to-phoneme, and the
+default English G2P in this ecosystem is espeak-ng, which is GPL-3.0. Reading only the model
+licence gives the wrong answer every time.
+
+**What would actually change the picture:** a G2P that is not espeak — `misaki` (MIT) is the known
+one, and it is what the PyTorch `kokoro` package uses. Any candidate paired with it deserves a real
+look; a candidate paired with espeak is the exception path we already took for voicebox
+([ADR-0077](../decisions/0077-voicebox-gpl-exception-audio-backend.md)), not a way out of it.
+
+On Inflect-Micro-v2 specifically, setting the licence aside: 9.4M parameters against Kokoro's 82M
+and 6.28× realtime on CPU are attractive given that CPU-side TTS is the measured bottleneck of this
+sandwich. Against that, it ships **one fixed male voice, English only** (Kokoro has 50+), and its
+quality numbers are self-described as *"descriptive community evidence, not formal MOS"* — a candour
+worth noting, and still informal evaluation by a single author.
 
 ## The one thing worth building in-repo: the OpenAI-compat shim
 
