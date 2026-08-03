@@ -130,18 +130,37 @@ in someone else's local clone survives; one that exists only in the remote does 
 
 ## Step 4 — verify, do not assume
 
-The same probe that found the problem proves it is gone:
+**Verify in a FRESH CLONE, never in your working repo.** `git fetch origin <sha>`
+succeeds when the object is already present locally — the server is never asked.
+Your working repo is the one place guaranteed to be contaminated: every earlier
+probe pulled the object back in, and so does any fetch of a ref whose pack happens
+to carry it. Run in the working repo, this check reported "still served" for an
+object the server had already dropped.
 
 ```bash
-git fetch origin <old-tip-sha>
-# expected: fatal — the object no longer exists on the server
+git clone --depth 1 <url> /tmp/verify-purge
+git -C /tmp/verify-purge fetch origin <old-tip-sha>
+# expected: fatal: remote error: upload-pack: not our ref <sha>
+rm -rf /tmp/verify-purge
 ```
 
-If it still succeeds, the purge did not happen. Clean up afterwards, because a
-successful probe re-imports what you just deleted:
+Anything other than `not our ref` means the purge did not take. A *successful*
+fetch there is the real failure signal.
+
+Then clean your working repo, whose object store still holds the old history from
+those probes:
 
 ```bash
-rm -f .git/FETCH_HEAD && git reflog expire --expire=now --all && git gc --prune=now
+git reflog expire --expire=now --all && git gc --prune=now
+git cat-file -e <old-tip-sha>^{commit} && echo "still local" || echo "gone"
+```
+
+And check what else anchors it. A ref you created to preserve something — a PR
+head, a rescued branch — keeps its whole ancestry alive, which after a licence or
+secret purge is exactly the history you were removing:
+
+```bash
+git for-each-ref --format='%(refname) %(objectname:short)' | grep -v refs/remotes
 ```
 
 ## What none of this achieves
