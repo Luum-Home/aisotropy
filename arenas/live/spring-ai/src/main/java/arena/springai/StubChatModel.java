@@ -93,7 +93,31 @@ final class StubChatModel implements ChatModel {
         return new AssistantMessage(plainReply(prompt));
     }
 
+    /**
+     * The plain-text reply, echoing the WHOLE prompt rather than the last user
+     * message.
+     *
+     * On the integration lane (mock model, REAL stores) the plumbing dimensions
+     * are scored from this reply: "was the fact re-hydrated?" is answerable only
+     * if a fact the STORE returned appears in the text. That fact is never in the
+     * last user message, which is the QUESTION; it lives in the history Spring
+     * AI's ChatMemoryRepository just reloaded from rqlite.
+     *
+     * Echoing only the question makes every memory, scope, isolation and crash
+     * cell fail identically whether the store worked or not -- worse than not
+     * measuring, because it renders as a result. The same change took ai-sdk,
+     * eino, genkit-go, langgraph, pydantic-ai and mastra from 0/8 to the lane's
+     * 6/8 ceiling with zero billable calls.
+     *
+     * promptText() already existed and does exactly this flattening; only the
+     * tool-call branch above keeps its canned behaviour, deliberately, since
+     * that is what lets real tool execution run offline.
+     */
     private String plainReply(Prompt prompt) {
+        String whole = promptText(prompt);
+        if (whole != null && !whole.isBlank()) {
+            return "[spring-ai-stub] " + whole.trim();
+        }
         String user = lastUserText(prompt);
         if (user.isEmpty()) {
             return "[spring-ai-stub] OK";
