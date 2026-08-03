@@ -252,7 +252,44 @@ def build_chat_model(
                             ],
                         )
                         return ChatResult(generations=[ChatGeneration(message=ai_msg)])
-                return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+                # ECHO the whole conversation instead of a canned response.
+                #
+                # On the integration lane (mock model, REAL stores — the
+                # checkpointer above is the real SqliteSaver there) the plumbing
+                # dimensions are scored from this reply: "was the fact
+                # re-hydrated?" is answerable only if a fact the STORE returned
+                # appears in the text. FakeListChatModel's canned responses
+                # ignore `messages` entirely, so a recalled fact never reaches
+                # the reply and every memory, scope, isolation and crash cell
+                # fails identically whether the checkpointer worked or not —
+                # worse than not measuring, because it renders as a result.
+                #
+                # Verified on ai-sdk, eino and genkit-go: the same change moved
+                # memory from 0/8 to 8/8 with zero billable calls.
+                #
+                # The NEGATIVE direction stays honest: isolation_leak passes only
+                # when another tenant's fact is ABSENT, so a leak into the prompt
+                # now surfaces in the reply and fails the cell, as it should.
+                from langchain_core.messages import AIMessage
+                from langchain_core.outputs import ChatGeneration, ChatResult
+
+                parts: list[str] = []
+                for m in messages or []:
+                    content = getattr(m, "content", None)
+                    if isinstance(content, str) and content:
+                        parts.append(content)
+                    elif isinstance(content, list):
+                        for chunk in content:
+                            if isinstance(chunk, str):
+                                parts.append(chunk)
+                            elif isinstance(chunk, dict) and chunk.get("text"):
+                                parts.append(str(chunk["text"]))
+                whole = " ".join(parts).strip()
+                if not whole:
+                    return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+                return ChatResult(
+                    generations=[ChatGeneration(message=AIMessage(content="[stub-echo] " + whole))]
+                )
 
         return _StubChatModel(responses=list(responses or _DEFAULT_STUB_RESPONSES))
 

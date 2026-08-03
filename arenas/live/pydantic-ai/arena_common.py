@@ -143,7 +143,46 @@ def build_model(*, custom_output_text: str | None = None):
             return TestModel(custom_output_text=custom_output_text), model_name
 
         class _CannedToolArgsTestModel(TestModel):
-            """TestModel with canned, genuinely-evaluable arguments for known EXECUTED tools."""
+            """TestModel with canned tool args, and a final answer that ECHOES the conversation.
+
+            THE ECHO. On the integration lane (mock model, REAL stores) the plumbing
+            dimensions -- memory, memory_scoped, isolation_leak, crash_recovery -- are
+            scored from the reply: "was the fact re-hydrated?" is answerable only if a
+            fact the STORE returned appears in the text. TestModel's default output is a
+            fixed string that ignores `messages` entirely, so a recalled fact never
+            reaches the reply and every plumbing cell fails identically whether the store
+            worked or not -- worse than not measuring, because it renders as a result.
+
+            Verified on ai-sdk, eino, genkit-go and langgraph: this change moved memory
+            from 0/8 to 8/8 with zero billable calls.
+
+            Only the FINAL TEXT is replaced. TestModel's tool-calling behaviour (which
+            this adapter relies on to exercise real tool execution offline) is left
+            untouched, and a response carrying tool calls is returned verbatim -- the same
+            scope discipline applied to langgraph's stub.
+            """
+
+            async def request(self, messages, model_settings, model_request_parameters):
+                response = await super().request(messages, model_settings, model_request_parameters)
+
+                from pydantic_ai.messages import TextPart, ToolCallPart
+
+                # A tool-calling turn is TestModel's decision to make; leave it alone.
+                if any(isinstance(p, ToolCallPart) for p in response.parts):
+                    return response
+
+                parts: list[str] = []
+                for m in messages or []:
+                    for part in getattr(m, "parts", []) or []:
+                        content = getattr(part, "content", None)
+                        if isinstance(content, str) and content:
+                            parts.append(content)
+                whole = " ".join(parts).strip()
+                if not whole:
+                    return response
+
+                response.parts = [TextPart(content="[stub-echo] " + whole)]
+                return response
 
             def gen_tool_args(self, tool_def):
                 canned = _STUB_CANNED_TOOL_ARGS.get(tool_def.name)
