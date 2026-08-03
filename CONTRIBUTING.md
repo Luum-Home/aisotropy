@@ -159,10 +159,20 @@ permission before opening the PR.
 licenses your contribution *under Apache-2.0* — it does not let the project offer
 your code under any other terms, so a CLA with an explicit relicensing grant is
 what keeps a future commercial tier possible without hunting down every past
-contributor. The CLA text is not in place yet; **until it is, external code
-contributions are not accepted** — issues, bug reports, benchmarks and
-documentation fixes are, and are very welcome. If you want to contribute code
-before then, open an issue first and we will sort the paperwork out with you.
+contributor.
+
+The two agreements are drafted and readable now —
+[individual](docs/legal/cla-individual.md) and [corporate](docs/legal/cla-corporate.md),
+both adapted from the Apache ICLA/CCLA with every deviation listed at the bottom
+of each — but they are **DRAFT, not yet reviewed by counsel, and nobody should
+sign them yet**. So: **until the review lands, external code contributions are
+not accepted.** Issues, bug reports, benchmarks and documentation fixes are, and
+are very welcome. If you want to contribute code before then, open an issue first
+and we will sort the paperwork out with you.
+
+Read [`docs/legal/`](docs/legal/README.md) before signing anything — in
+particular the plain-language note under §2 of the individual agreement, which
+explains the one clause you should actually weigh.
 
 Two things the license does *not* cover, and that a contribution must respect:
 

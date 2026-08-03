@@ -45,6 +45,7 @@ relative markdown links. See [principles](vision/principles.md).
 | [Decisions (ADRs)](decisions/index.md) | Record of architectural decisions with trade-offs. |
 | [Guides](guides/index.md) | Task-oriented how-tos, starting with **building your own agent** on the public extension surface. |
 | [Roadmap](roadmap/index.md) | Executable MVP-first plan with OKRs and milestones. |
+| [Legal](legal/README.md) | The **outbound** licensing surface — the two CLA drafts and the counsel review packet. Distinct from the *inbound* dependency gate, which lives in the rules and `scripts/license-audit.sh`. |
 
 ## Primary sources
 
