@@ -201,6 +201,23 @@ if [ "$INSTALL" != 1 ]; then
     exit 3
   fi
   echo "PROGRESS: all discovered adapters have their toolchain present." >&2
+  # State the SCOPE of this green, or it reads as "ready to run".
+  #
+  # On 2026-07-28 this script reported all nine adapters green and a full board
+  # was launched against Qdrant, rqlite and the embed server that were not
+  # reachable. Forty minutes later the run was killed. The check was correct and
+  # the conclusion drawn from it was not: it verifies TOOLCHAINS, and a board
+  # needs toolchains AND stores.
+  #
+  # The stores are deliberately NOT probed here. The runner gates them in-process
+  # before the first billable call (gateServices, arenas/live/runner/main.go) and
+  # distinguishes DOWN from MISCONFIGURED from INCONCLUSIVE from NO COLLECTION —
+  # a bash reimplementation would drift from that vocabulary and be worse than
+  # the pointer. What this script owes the reader is not a second probe, it is
+  # honesty about which half it checked.
+  echo "PROGRESS: SCOPE — toolchains only. Stores (Qdrant, rqlite, embed server) are NOT checked here;" >&2
+  echo "PROGRESS:   the runner gates them in-process before spending. A green here means the adapters" >&2
+  echo "PROGRESS:   CAN run, not that a board WILL. Start the stores with 'docker compose up -d'." >&2
   exit 0
 fi
 
