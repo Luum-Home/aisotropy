@@ -18,14 +18,14 @@ the arena stub/real lane precedent (`.claude/rules/arena-full-matrix.md`),
 
 ## Context
 
-Commit `3d39c44` ("ship mini/local Kubernetes deploy — Kustomize + Helm, verified on Kind") closed
+Commit `852e91e` ("ship mini/local Kubernetes deploy — Kustomize + Helm, verified on Kind") closed
 the "zero manifests, zero charts" gap: `deploy/helm/aisotropy/` and `deploy/k8s/` both exist and
 both work. Its commit message records a genuine end-to-end verification on a throwaway Kind
 cluster — image built (55.7 MB), pod 1/1 Running, `/healthz` and `/health` returning ok.
 
 That verification happened **once, by hand, and left nothing behind that re-runs.** The next edit to
 a probe path, a resource block, or a Secret reference has nothing checking it. Meanwhile
-`docs/architecture/capabilities-and-gaps.md` still carried the pre-`3d39c44` text ("Zero k8s
+`docs/architecture/capabilities-and-gaps.md` still carried the pre-`852e91e` text ("Zero k8s
 manifests, zero Helm charts") — a stale doc claim about shipped code, the exact failure class
 `.claude/rules/prune-evidence-gate.md` exists to prevent, pointing the wrong way this time
 (understating what exists rather than overstating it).
@@ -133,7 +133,7 @@ assertions). Both deploy surfaces are covered. The stale capabilities row is cor
   only far enough to verify its gates (off-by-default skip, resource refusal exit 3, usage exit 2,
   and the plan-only dry run), and the one accidental partial run described above was aborted and
   cleaned up. So the claim "the chart installs and serves on a real cluster" rests on commit
-  `3d39c44`'s manual Kind verification, not on this lane's own output.
+  `852e91e`'s manual Kind verification, not on this lane's own output.
 - **The offline lane cannot prove the image boots.** It validates declarative correctness only. A
   binary that panics at startup renders a perfectly valid Deployment. That is what the cluster lane
   is for, and why it is kept rather than deleted.

@@ -97,7 +97,7 @@ it records $0 cost for that (non-default) path.
 ### 2.3 Consolidation now on both chat routes (recently closed gap)
 
 An earlier state had `/chat` read facts but persist via plain `Append`, so its turns never fed the
-outbox → facts/semantic pipeline. Commit `85caf46` closed it: `/chat` now calls `AppendWithOutbox`,
+outbox → facts/semantic pipeline. Commit `37c2a4e` closed it: `/chat` now calls `AppendWithOutbox`,
 so **both** chat routes grow long-term memory. Only `/chat/agent` remains non-consolidating (folds
 into the §2.1 asymmetry). Kept as a worked example of a cross-session seam that was found *and*
 closed: this integration pass caught the stale claim in `runtime-as-built.md §6` (verified against

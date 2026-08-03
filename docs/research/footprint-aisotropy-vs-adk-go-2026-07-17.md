@@ -3,7 +3,7 @@
 **Date:** 2026-07-17
 **Data source:** `arenas/BENCHMARKS.md` §"Class 3 — Framework footprint (REAL, run-verified)" +
 `bench/footprint/` (`bash bench/footprint/run.sh`, raw in `bench/footprint/results.txt`), committed
-run-verified in `117b5dc`.
+run-verified in `6798a62`.
 **Question (operator):** the Go control **ADK-Go** ships a *smaller* image/RSS than aisotropy because
 aisotropy boots its full runtime (memory/gates/tiers). **Is that good or bad?**
 **Short answer:** it is **expected and mostly good** — the control makes the comparison *more* honest,
@@ -98,7 +98,7 @@ weakness.
 
 ## References
 
-- Data: `arenas/BENCHMARKS.md` §Class 3; harness `bench/footprint/`; commit `117b5dc`.
+- Data: `arenas/BENCHMARKS.md` §Class 3; harness `bench/footprint/`; commit `6798a62`.
 - Lazy/opt-in evidence: `aisotropy/app.go:490` (ensureSemantic), `aisotropy/knowledge.go` (`semanticOnce.Do`),
   `aisotropy/app.go:606` (sleep-cycle opt-in).
 - Positioning context: `docs/architecture/overview.md` (the "specialized tools by access temperature"

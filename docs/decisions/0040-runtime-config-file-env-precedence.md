@@ -45,7 +45,7 @@ changing any existing default.
 
 A later task was dispatched to "close the no-runtime-config-file gap", on the strength of a **stale
 `GAP` row** in `docs/architecture/capabilities-and-gaps.md` that still read *"no TOML; no single
-runtime config file — env-only"* a week after this ADR shipped (`bfeca15`, 2026-07-17 10:49). The
+runtime config file — env-only"* a week after this ADR shipped (`feef436`, 2026-07-17 10:49). The
 feature was found already built, wired, and tested; the gap row has been corrected. Nothing in the
 decision above changed. Two previously-undocumented behaviors were pinned by tests in that pass:
 

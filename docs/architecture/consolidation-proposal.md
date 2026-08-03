@@ -24,7 +24,7 @@ status: proposal — recommendations only, no code changed
 >    dropped. Any bets demotion must not label Bet 1 "refuted", and must not conflate Bet 1
 >    (memory/novelty) with Bet 4 (difficulty/routing).
 > 3. The **README "sells all 5 bets" premise is already resolved** by the positioning surgery
->    (commit `8e78a71`); the compression thesis is now a caveated "go deeper" link.
+>    (commit `5f3297a`); the compression thesis is now a caveated "go deeper" link.
 > 4. **`cmd/skill-import` "tested: partial" → actually 0 tests**; the ADR count is **42 (0000–0041)**,
 >    not 39. `internal/primitives` "DORMANT" is more precisely "REAL write-half / open-loop /
 >    effect-inert" (the code runs continuously; only the read-back is absent).

@@ -57,7 +57,7 @@ The single ABSENT path is `examples/graphbot/graphbot` — a **50.9 MB compiled 
 artifact. Its source (`main.go`, `README.md`, `go.mod`, `go.sum`) is complete in `main`, and the
 binary is correctly excluded by `.gitignore`; it should never have entered a commit at all.
 
-The commit's own work landed on `main` independently as `1fd59ee`, which is why `git cherry`
+The commit's own work landed on `main` independently as `08f176d`, which is why `git cherry`
 reported it as unapplied while `internal/graph/graph.go`, `internal/graph/exec.go` and
 `aisotropy/graph.go` are byte-identical between the two.
 
@@ -81,7 +81,7 @@ and byte-identical to the worktree copy).
 
 ### 3. Branches `-a90a12f0be9219d5f`, `-a9a32b9e7dbf96c50`, `-a9bcfcf3abe979e30`
 
-All three pointed at `9ef786a`, already an ancestor of `main` — zero commits outside it.
+All three pointed at `153cfc4`, already an ancestor of `main` — zero commits outside it.
 
 ## Verdict
 

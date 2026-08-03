@@ -15,7 +15,7 @@ timestamp: 2026-07-27T00:00:00Z
 
 # voicebox spike — 2026-07-27
 
-**aisotropy HEAD:** `113aed0`. **voicebox:** `external/voicebox` @ `539325c`, tag `v0.2.12`
+**aisotropy HEAD:** `8c407b8`. **voicebox:** `external/voicebox` @ `539325c`, tag `v0.2.12`
 (upstream commit dated 2026-07-26 — the clone is one day old). **Machine guard at every heavy
 step:** `scripts/with-heavy-lane.sh --need-mb N` (verdict DEGRADED throughout; never BLOCKED).
 
