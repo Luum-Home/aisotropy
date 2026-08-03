@@ -60,6 +60,34 @@ function fabricate(schema) {
   return 'stub';
 }
 
+// wholePromptText flattens every message the framework assembled — system
+// prompt and re-hydrated history included — into one string.
+//
+// On the integration lane (mock model, REAL stores) the plumbing dimensions are
+// scored from the reply: "was the fact re-hydrated?" is answerable only if a
+// fact the STORE returned appears in the text. STUB_TEXT is a constant that
+// ignores the prompt entirely, so a recalled fact never reaches the reply and
+// every memory, scope, isolation and crash cell fails identically whether the
+// store worked or not — worse than not measuring, because it renders as a
+// result.
+//
+// Verified on ai-sdk, eino, genkit-go, langgraph and pydantic-ai: this change
+// moved memory from 0/8 to 8/8 with zero billable calls.
+function wholePromptText(prompt) {
+  if (!Array.isArray(prompt)) return '';
+  return prompt
+    .map((msg) => {
+      if (!msg) return '';
+      if (typeof msg.content === 'string') return msg.content;
+      if (Array.isArray(msg.content)) {
+        return msg.content.map((p) => (p && typeof p.text === 'string' ? p.text : '')).join(' ');
+      }
+      return '';
+    })
+    .join(' ')
+    .trim();
+}
+
 function hasToolResult(prompt) {
   return Array.isArray(prompt) && prompt.some((m) => m && m.role === 'tool');
 }
@@ -117,8 +145,12 @@ function respond({ prompt, tools, responseFormat }) {
     };
   }
 
+  // Echo the assembled prompt rather than the constant — see wholePromptText.
+  // Falls back to STUB_TEXT when there is nothing to echo, so the previous
+  // behaviour still covers the empty-prompt case.
+  const whole = wholePromptText(prompt);
   return {
-    content: [{ type: 'text', text: STUB_TEXT }],
+    content: [{ type: 'text', text: whole ? `[stub-echo] ${whole}` : STUB_TEXT }],
     finishReason: 'stop',
     usage: stubUsage(),
     warnings: [],

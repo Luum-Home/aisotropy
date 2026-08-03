@@ -377,7 +377,25 @@ func buildMemory(framework string, mem []task, maxTasks int) []workItem {
 		}
 		persist := t.Messages[:idx]
 		recall := []inMessage{t.Messages[idx]}
-		session := fmt.Sprintf("arena-mem-%s-%s", framework, t.ID)
+		// runSuffix() is what makes this recall a test of THIS run's persist.
+		//
+		// Without it the session id is fixed forever, so every run appends to the
+		// same rows and the recall turn can be satisfied by history a PREVIOUS
+		// run left behind. A persist step that silently stopped working would
+		// keep passing, answered by its own past.
+		//
+		// Found 2026-07-28 while validating the integration lane: the store held
+		// four rows containing "677" — the answer to mem-h05-derived, computed by
+		// a REAL model in an earlier run and persisted. On the mock lane the echo
+		// replayed that stored answer, and an item requiring arithmetic scored
+		// 1.00 for four adapters that had computed nothing. mastra scored 6/8 on
+		// the same code and was the only honest number, because its table lacked
+		// those rows.
+		//
+		// The memory-EXTENSION modes (buildMemoryExt) already scope their user id
+		// this way. The base `memory` mode did not, which is how the one dimension
+		// every other memory dimension builds on was the least isolated of them.
+		session := fmt.Sprintf("arena-mem-%s-%s%s", framework, t.ID, runSuffix())
 		invs := []adapterInput{}
 		if len(persist) > 0 {
 			invs = append(invs, adapterInput{Mode: "memory", System: t.System, Messages: persist, SessionID: session})
