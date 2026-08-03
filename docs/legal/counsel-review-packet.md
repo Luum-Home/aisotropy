@@ -25,7 +25,7 @@ confirm or correct the licensing position, and tell us what must change.
 | 2 | Reasoning recorded | [ADR-0080](../decisions/0080-project-license-apache-2.md), [full review](../research/license-mit-vs-apache-2026-08-03.md) | Patent grant §3, trademark §6, inbound terms §5, ecosystem cohort |
 | 3 | **`NOTICE`** added as the §4(d) channel, carrying the one attribution obligation the project cannot sublicense | [`NOTICE`](../../NOTICE) | `bench/rag-quality/testdata/xquad_slice.json` is CC-BY-SA-4.0 |
 | 4 | Contributions to require a **CLA**, not a DCO | [ICLA draft](cla-individual.md), [CCLA draft](cla-corporate.md) | Adapted from Apache ICLA v2.2 / CCLA r190612; deviations listed in each |
-| 5 | Until the CLA is in force, **external code contributions are not accepted** | [`CONTRIBUTING.md`](../../CONTRIBUTING.md) | Deliberate temporary closure |
+| 5 | Contributions **open under Apache-2.0 §5 alone** — no CLA, no DCO, nothing to sign | [`CONTRIBUTING.md`](../../CONTRIBUTING.md) | Reversed the same day (ADR-0080 amendment). **Counsel should know:** code may therefore be merged BEFORE any CLA exists, and that code is distributable under Apache-2.0 only. If a CLA lands later it governs future contributions; earlier ones would need each contributor's individual consent to be offered on other terms. This is accepted, not overlooked — see Q2. |
 | 6 | The MIT period was **expunged from git history** | ADR-0080 §"Note on the repository history" | 541 commits rewritten; backup bundle retained outside the repo |
 
 **Position taken on #6, which we would like confirmed or corrected (Q9):** the rewrite is repository

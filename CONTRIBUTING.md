@@ -155,24 +155,31 @@ licensed under those same terms, unless you explicitly state otherwise. If your
 employer holds rights in work you contribute, make sure you have their
 permission before opening the PR.
 
-**Code contributions additionally require a signed CLA** (ADR-0080). Apache §5
-licenses your contribution *under Apache-2.0* — it does not let the project offer
-your code under any other terms, so a CLA with an explicit relicensing grant is
-what keeps a future commercial tier possible without hunting down every past
-contributor.
+**There is nothing to sign.** Code contributions are open under Apache-2.0 §5:
+submit a PR and your contribution is licensed under the same terms as the
+project. No CLA, no DCO, no paperwork.
 
-The two agreements are drafted and readable now —
-[individual](docs/legal/cla-individual.md) and [corporate](docs/legal/cla-corporate.md),
-both adapted from the Apache ICLA/CCLA with every deviation listed at the bottom
-of each — but they are **DRAFT, not yet reviewed by counsel, and nobody should
-sign them yet**. So: **until the review lands, external code contributions are
-not accepted.** Issues, bug reports, benchmarks and documentation fixes are, and
-are very welcome. If you want to contribute code before then, open an issue first
-and we will sort the paperwork out with you.
+You will find two CLA drafts in [`docs/legal/`](docs/legal/) — **ignore them.**
+They are unreviewed drafts kept in the open so the eventual legal review has a
+concrete object; both carry a DO-NOT-SIGN banner and neither is in force.
+Nobody should sign anything today, and nobody will be asked to sign anything
+retroactively.
 
-Read [`docs/legal/`](docs/legal/README.md) before signing anything — in
-particular the plain-language note under §2 of the individual agreement, which
-explains the one clause you should actually weigh.
+**What this means for your contribution, stated plainly, because it is
+permanent.** Under §5 the project may distribute your code under Apache-2.0 and
+nothing else. If a CLA is introduced later (it may be — see
+[ADR-0080](docs/decisions/0080-project-license-apache-2.md)), it will govern
+contributions made *after* it exists. Yours stays under the terms you submitted
+it under. The practical consequence for the project, not for you: code merged
+before that point cannot be offered under any other licence without asking you
+first — which is a cost the project accepts in exchange for being open to
+contributions now.
+
+If you want the reasoning behind all of this — why Apache-2.0, why a CLA is
+still on the table, and what the drafts would change if one ever lands — it is
+in [`docs/legal/`](docs/legal/README.md) and
+[ADR-0080](docs/decisions/0080-project-license-apache-2.md). Reading it is
+optional; contributing today requires nothing from you but the PR.
 
 Two things the license does *not* cover, and that a contribution must respect:
 

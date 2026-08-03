@@ -1,7 +1,7 @@
 ---
 type: Section Index
 title: Legal — licensing, contribution agreements, counsel review
-description: The project's outbound legal surface, as distinct from the inbound dependency gate. Holds the two CLA drafts required before Aisotropy accepts external code contributions (ADR-0080), the counsel review packet that turns "legal review pending" into twelve answerable questions, and the contribution workflow that switches on once a lawyer signs off. Everything here is DRAFT and NOT IN FORCE - which costs nothing today, because external code contributions are closed until it is.
+description: The project's outbound legal surface, as distinct from the inbound dependency gate. Holds the two CLA drafts that a future contribution regime MAY rest on (ADR-0080) — they are not required today, the counsel review packet that turns "legal review pending" into twelve answerable questions, and the contribution workflow that switches on once a lawyer signs off. Everything here is DRAFT and NOT IN FORCE - which costs nothing today, because contributions are open under Apache-2.0 §5 alone and there is nothing to sign.
 tags: [legal, licensing, cla, contributions, index]
 timestamp: 2026-08-03T00:00:00Z
 ---
@@ -26,9 +26,9 @@ Two different things get called "licensing" in this repo. They do not live toget
 ## Status: DRAFT, NOT IN FORCE
 
 Neither CLA has been reviewed by counsel. **Nobody should sign either one yet.** This blocks nothing,
-because [`CONTRIBUTING.md`](../../CONTRIBUTING.md) states that external **code** contributions are not
-accepted until the review lands — issues, bug reports, benchmarks and documentation fixes are open and
-welcome. A temporary closed door is strictly better than accepting code under terms that may turn out
+because contributions do not depend on them: [`CONTRIBUTING.md`](../../CONTRIBUTING.md) opens code
+contributions under **Apache-2.0 §5 alone**, with nothing to sign, and these drafts stay bannered and
+out of force until counsel reviews them. A temporary closed door is strictly better than accepting code under terms that may turn out
 to be the wrong ones.
 
 ## The workflow this switches on (once counsel signs off)

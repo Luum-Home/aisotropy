@@ -259,6 +259,31 @@ Until that review lands, both drafts carry a **DO NOT SIGN** banner and `CONTRIB
 **external code contributions closed** (issues, reports, benchmarks and docs are open). A deliberate,
 temporary closed door — strictly better than accepting code under terms that later turn out to be the
 wrong ones, and it costs nothing while the contributor count is zero.
+
+#### Amendment — contributions OPEN under Apache §5 (operator decision, 2026-08-03)
+
+The closed door above was **reversed the same day**, before it ever applied to anyone. Contributions
+are open now, under **Apache-2.0 §5 alone**: submit a PR, the contribution is licensed under the
+project's own terms, nothing to sign. The CLA drafts stay in the repo, still bannered, still not in
+force, and **nobody is asked to sign anything retroactively**.
+
+The reasoning is that publication and paperwork were coupled by accident, not by necessity. §5 is a
+term of the licence the project already publishes, so accepting contributions under it needs no
+counsel — what needs counsel is *asking someone to sign a contract*, which is a different act. Keeping
+the repo closed to code until a lawyer reads an agreement nobody has been asked to sign was paying a
+real cost for no protection.
+
+**The cost is real, permanent, and accepted — and it is exactly the cost the CLA-over-DCO decision
+above was taken to avoid.** Every contribution merged before a CLA exists can only ever be distributed
+under Apache-2.0. If a commercial tier later wants that code, the only route is asking each contributor
+individually. The sub-decision's asymmetry still holds — CLA→DCO is free, DCO→CLA is not — but it now
+applies from *whenever a CLA lands*, not from today, and the window in between is a one-way door.
+
+Two things make that acceptable rather than reckless: the tier of ADR-0033/0034 does not exist and may
+never, so the option being spent is speculative; and the alternative was a repository that publishes as
+open source while refusing patches, which buys the option at the price of the thing the option is
+supposed to serve. Recorded here so that if the commercial tier does arrive, nobody has to reconstruct
+why some files carry a contributor who never signed anything.
 - **It does not discharge the CC-BY-SA obligation** on the XQuAD slice — that travels with the data file
   regardless, which is exactly why `NOTICE` must exist rather than `LICENSE` simply being reverted.
 - **No legal review was performed.** This is an engineering reading of two license texts, the FSF
