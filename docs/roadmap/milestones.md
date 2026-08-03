@@ -13,11 +13,15 @@ module. The rule: a phase is *done* when its criterion can be **verified with a 
 test, curl, benchmark) — never "by vibes" (per the [observability](../architecture/observability.md)
 discipline and the [OKRs](okrs.md)). Each phase leaves the system **running**, just more capable.
 
-> **Global status (2026-07-14):** Phases 0–7 implemented and Phase 8 (public adoption surface)
-> shipped; Phase 9 (composition surface) partially delivered (ADR-0000..0023 accepted). The
-> per-phase checkboxes below are the intended-scope definition; for what is actually **running vs
-> dormant vs aspirational** the authoritative node is the
-> [reality ledger](../architecture/reality-ledger.md). Phases are numbered the same as in the
+> **Global status (2026-08-03):** Phases 0–9 delivered, and the project has since shipped whole
+> capability families **beyond** the numbered roadmap — authentication (ADR-0024/0025), plugins &
+> WASM sandbox (0032–0038), encryption at rest + GDPR erasure + audit log (0044–0047/0056),
+> multilingual (0049–0054), voice/telephony (0066/0069/0077–0079), the evaluation harnesses
+> (0026/0058/0059), and the Apache-2.0 relicense (0080). **ADRs run through 0080** — the
+> [decisions index](../decisions/index.md) is the authoritative decision log, and for what is
+> actually **running vs dormant vs aspirational** the arbiter is the
+> [reality ledger](../architecture/reality-ledger.md). The per-phase checkboxes below are the
+> intended-scope definition for Phases 0–9 only. Phases are numbered as in the
 > [roadmap index](index.md).
 
 ---

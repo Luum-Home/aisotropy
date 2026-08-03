@@ -520,12 +520,12 @@ threaded through the handlers:
   above, which does facts dedup, not primitive rewriting.)
 - **Model degradation needs `AISOTROPY_CHEAP_MODEL`.** Without it `CheapClientFromEnv()` returns
   `nil` and every near-quota tenant gets the primary model (the degradation branch is skipped).
-- **The agent loop has TWO dispatch paths (ADR-0012).** When the LLM client implements
-  `llm.ToolCaller` — today **only** the OpenAI-compatible/OpenRouter client — the endpoint runs a
-  Gollem `core.Agent[string]` with real function tools (native provider tool-calling), inheriting its
-  guardrails/cost-tracker/OTel. Otherwise (the stub, the Anthropic client) it falls back to the
-  homegrown `internal/agentloop`, which asks the model for a JSON `Decision` over the plain
-  `StreamChat` interface. **Both paths enforce the identical double scope-gate** (only
+- **The agent loop has TWO dispatch paths (ADR-0012/0063).** When the LLM client implements
+  `llm.ToolCaller` — **both** the OpenAI-compatible/OpenRouter client (ADR-0012) **and** the
+  `AnthropicClient` via native `tool_use` (ADR-0063) — the endpoint runs a Gollem `core.Agent[string]`
+  with real function tools (native provider tool-calling), inheriting its guardrails/cost-tracker/OTel.
+  Only the **keyless stub** (no provider to call) falls back to the homegrown `internal/agentloop`,
+  which asks the model for a JSON `Decision` over the plain `StreamChat` interface. **Both paths enforce the identical double scope-gate** (only
   scope-permitted tools offered; the chosen name re-validated before execution). The default
   executor is `DemoExecutor` (echoes the call); a consumer injects a real one via the builder's
   `WithToolExecutor` (Phase 8). The agent route still does not hydrate memory, persist turns,

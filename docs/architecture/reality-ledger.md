@@ -69,7 +69,7 @@ step behind the code.
 | **Facts memory** (SQLite + FTS5, Engram-style, tenant-scoped statement builder) | **REAL** (in-process) · **CODE-ONLY** (networked) | in-memory SQLite+FTS5 | file SQLite, or **rqlite** via `RQLITE_URL` | 25 local-suite tests; rqlite only under `manual` tag |
 | **Reflection loop** (Gollem default, homegrown fallback, fail-closed 502 on `/chat`) | **REAL** | Gollem reflection on `/chat` | same | local suite (`reflect_auto`, `gollem`) |
 | **Semantic memory** (Qdrant, payload-filter isolation, multi-kind Document/Fact/Turn) | **CODE-ONLY** | in-process brute-force cosine | **Qdrant** gRPC via `QDRANT_HOST` | in-process path in the local suite; Qdrant only under `manual` tag |
-| **Native tool-calling agent** (Gollem `Agent[T]` + `FuncTool`, ADR-0012) | **CODE-ONLY** | falls back to homegrown `agentloop` | needs a `ToolCaller` provider (**only** `OpenAICompatClient`/OpenRouter today) | unit tests via fake ToolCaller (local suite); live only under `manual` |
+| **Native tool-calling agent** (Gollem `Agent[T]` + `FuncTool`, ADR-0012/0063) | **REAL** with any real provider · falls back for the keyless stub | keyless stub → homegrown `agentloop` | **both** `OpenAICompatClient`/OpenRouter (ADR-0012) **and** `AnthropicClient` (native `tool_use`, ADR-0063) implement `ToolCaller` → native path; only the keyless stub falls back | unit tests via fake ToolCaller (local suite); live only under `manual` |
 | **Sleep cycle** (DataFusion Rust subprocess, ADR-0005) | **CODE-ONLY** | disabled (only the pure-Go turn-vector pruner runs) | build the crate + set `AISOTROPY_SLEEPCYCLE_BIN` | the default suite uses a **bash stub**; real binary only under `manual` |
 | **Granular control** (per-tenant rate limit, circuit breaker, cost meter, scope-gated tools, `/health`, `/costs`) | **REAL** | all wired | same | local suite |
 | **Authenticated-identity seam** (ADR-0024: default-deny Authenticator middleware, must-agree bind, `NoAuth` opt-out, stdlib-HS256 `JWTBearer` ref impl) | **REAL** (seam + middleware + must-agree bind) · gap: verified scopes not yet used for tool-gating | library default is **default-deny** (401 all `/v1`); the `./aisotropyd` binary opts into `NoAuth()` (insecure, loudly warned) to stay zero-config | pass `aisotropy.WithAuthenticator(NewJWTAuthenticator(secret))` for a real credential check | `internal/auth` (9 JWT tests + `auth_test`), `internal/api/authn_test.go` (5), `aisotropy/isolation_e2e_test.go` regression anchor (local suite) — added 2026-07-14 |
@@ -81,20 +81,23 @@ step behind the code.
 
 ## Known honesty gaps (fix these before quoting them)
 
-1. **The entry-point status was stale — now reconciled (2026-07-14).** `README.md` announced
-   "Phase 0–1" and the `milestones.md` banner lagged on the ADR range; both now state the real
-   state (Phases 0–7 implemented, Phase 8 shipped, Phase 9 partial, ADRs through 0038 accepted).
-   This ledger remains the arbiter if they drift again.
+1. **The entry-point status drifts and this ledger itself lags the ADR set.** ADRs now run
+   **through 0080** (auth, plugins, encryption, GDPR, multilingual, voice, observability,
+   Apache-2.0 relicense). The `milestones.md` banner still cites an old ADR range (see the roadmap
+   reconciliation), and the capability table above does **not yet enumerate** the 0032–0080
+   families (multilingual, voice, plugins, encryption/GDPR) — treat those as shipped-per-ADR but
+   not-yet-rowed here. Timestamp this ledger and re-row it when reconciling; it is the arbiter only
+   as far as it is current.
 2. **The "−72% fewer input tokens than LangChain" figure is measured against a naive baseline**
    (full-history LangChain, no summarization middleware). The *mechanism* (surgical context
    assembly) is a real efficiency lever; the number is a synthetic-harness artifact and must be
    quoted only with its `bench/token-economy/` caveat — never as "72% more efficient than
    LangChain."
-3. **Anthropic silently loses native tool-calling.** `FromEnv` precedence is OpenRouter > OpenAI >
-   Anthropic > stub, but only `OpenAICompatClient` implements `CallTools`. With the stub or the
-   Anthropic client, `/chat/agent` always takes the homegrown `agentloop` fallback. The
-   best-supported provider for the *full* feature set is OpenAI-compatible/OpenRouter, not
-   Anthropic.
+3. **Anthropic native tool-calling — RESOLVED (ADR-0063, 2026-07-17).** `AnthropicClient` now
+   implements `CallTools` via native `tool_use`, so **both** OpenAI-compatible/OpenRouter and
+   Anthropic take the native Gollem tool-calling path; only the **keyless stub** falls back to the
+   homegrown `agentloop` (expected — the stub has no provider to call). The earlier "Anthropic
+   silently loses tool-calling" gap no longer holds.
 4. **`docker-compose.yml` is a reference artifact, not a recorded result.** There is no captured
    evidence the Qdrant/rqlite stack has been booted and health-checked in this repo; the "services
    are live / the moat is active" framing is aspirational verification.

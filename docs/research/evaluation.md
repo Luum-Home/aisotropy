@@ -56,11 +56,15 @@ provider exposes the needed log-probs) and the [bitrate/bpt scorer](../component
 
 - **Live `bpt(tenant,t)` curve** on real traffic — the actual North Star (KR8.1).
 - **Real-tokenizer** token counts (the economy benchmark uses heuristics).
-- **Bets 1–5** beyond Bet 1's inconclusive spike (Bet 2's codec is "proven by Bellard," not
-  in-product; Bets 3–5 are framework/vision).
+- **In-product validation of Bets 2–5.** The offline spikes measured them (Bet 2 codec ladder, Bet 3
+  rate-distortion, Bet 4 refuted-for-every-cheap-signal-with-a-trained-hatch — see the table above),
+  and Bet 5's first brick (the sovereign embedder, ADR-0023/0049) shipped, but none is validated
+  **in the running product under real traffic** — they remain offline / component-level.
 - **Latency/TTFT under load**, and **cross-replica** quota/cost behavior.
-- **End-to-end tenant-leak fuzz** across the full authenticated request path (blocked on the
-  auth gap — [threat model](threat-model.md) T3).
+- **End-to-end tenant-leak fuzz** across the full authenticated request path. The auth seam shipped
+  (ADR-0024/0025; `aisotropy/isolation_e2e_test.go` is the regression anchor), so this is no longer
+  "blocked on the auth gap" — what remains is a broad fuzz beyond the current isolation regression
+  test (see the [threat model](../architecture/threat-model.md)).
 
 ## References
 
