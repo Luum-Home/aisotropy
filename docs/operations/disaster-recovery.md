@@ -1,3 +1,12 @@
+---
+type: Runbook
+title: "Disaster Recovery Runbook — Aisotropy"
+description: >
+  Operator-facing procedure for recovering the Aisotropy runtime after data loss, corruption, or a host/region failure.
+tags: [operations, disaster-recovery, runbook, backup, resilience]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Disaster Recovery Runbook — Aisotropy
 
 This runbook is the operator-facing procedure for recovering the Aisotropy

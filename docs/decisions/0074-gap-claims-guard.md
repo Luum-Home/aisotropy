@@ -1,3 +1,12 @@
+---
+type: ADR
+title: "ADR-0074: capabilities-and-gaps.md stops being a dispatch source — a claims registry re-derived from the code"
+description: >
+  Turns capabilities-and-gaps.md into a claims registry re-derived from code via a guard, ending its use as a dispatch source.
+tags: [decisions, adr, docs-truth, claims-registry, guard, code-truth]
+timestamp: 2026-07-27T00:00:00Z
+---
+
 # ADR-0074: `capabilities-and-gaps.md` stops being a dispatch source — a claims registry re-derived from the code
 
 **Status:** Accepted (2026-07-27 — implementation landed with the ADR:

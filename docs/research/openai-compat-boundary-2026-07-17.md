@@ -1,3 +1,12 @@
+---
+type: Research
+title: "OpenAI-compatible is a spectrum — where agnes (and gateways like it) break"
+description: >
+  Documents where OpenAI-compatible gateways like agnes break, discovered while building the Vercel AI SDK arena adapter.
+tags: [research, openai-compat, agnes, gateway, arena]
+timestamp: 2026-07-17T00:00:00Z
+---
+
 # "OpenAI-compatible" is a spectrum — where agnes (and gateways like it) break
 
 **Date:** 2026-07-17

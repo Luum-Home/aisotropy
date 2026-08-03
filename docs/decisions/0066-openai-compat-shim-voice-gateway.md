@@ -1,3 +1,12 @@
+---
+type: ADR
+title: "ADR-0066: OpenAI-compat shim (POST /v1/chat/completions) — the voice-gateway enabler"
+description: >
+  An OpenAI Chat-Completions-compatible route over the existing streaming pipeline, so any OpenAI-client ecosystem can point a base_url at aisotropy with zero client modification.
+tags: [decisions, adr, openai-compat, voice, streaming, api]
+timestamp: 2026-07-23T00:00:00Z
+---
+
 # ADR-0066: OpenAI-compat shim (`POST /v1/chat/completions`) — the voice-gateway enabler
 
 **Status:** Accepted (2026-07-23 — operator approved implementation of both workstreams; implementation landed and passed the SDD verify phase the same day: `internal/api/openai_compat.go` + the principal-derived mode in `internal/api/authn.go` + `examples/voice-pipecat/`. Verify reran all gates fresh — build/vet/gofmt clean, the shim + adversarial probe suites green — and confirmed the must-agree path byte-identical for every existing route)

@@ -1,3 +1,12 @@
+---
+type: Research
+title: "Archestra (AGPL) vs aisotropy — Security-Surface Gap Analysis"
+description: >
+  Clean-room, patterns-only gap analysis of aisotropy's security surface versus Archestra.
+tags: [research, archestra, security, gap-analysis, clean-room]
+timestamp: 2026-07-17T00:00:00Z
+---
+
 # Archestra (AGPL) vs aisotropy — Security-Surface Gap Analysis
 
 > **Date:** 2026-07-17 · **Type:** clean-room, patterns-only research report

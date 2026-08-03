@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "AI-layer guardrails: stored prompt injection + guardrail defaults"
+description: >
+  The security posture of the AI-layer guardrails after closing the stored/indirect prompt-injection and guardrail-default findings.
+tags: [security, guardrails, prompt-injection, ai-layer, defense]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # AI-layer guardrails: stored prompt injection + guardrail defaults
 
 This note documents the security posture of the AI-layer guardrails after closing

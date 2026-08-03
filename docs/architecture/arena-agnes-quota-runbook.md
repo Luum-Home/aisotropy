@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "Runbook — running the live arena against agnes without exhausting the quota"
+description: >
+  How to launch a real (non-stub) arena sweep against agnes-2.0-flash without tripping its free-tier limits.
+tags: [architecture, arena, agnes, quota, rate-limiting, runbook]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Runbook — running the live arena against agnes without exhausting the quota
 
 > How to launch a real (non-stub) arena sweep against `agnes-2.0-flash` without

@@ -66,7 +66,7 @@ below as live.
   reached via env vars and verified only under the `manual` build tag — the zero-config binary runs
   their in-process fallbacks.
 - **Framework name:** **Aisotropy** (decided). See [ADR-0000](decisions/index.md).
-- **Stack:** closed and 100% permissive (MIT / Apache-2.0 / BSD-3-Clause), zero copyleft/BSL. See [architecture](architecture/overview.md).
+- **Stack:** the CORE dependency set is closed and 100% permissive (MIT / Apache-2.0 / BSD-3-Clause), zero copyleft/BSL. Documented copyleft/BSL exceptions exist for OPTIONAL external / observability / voice components — Redpanda BSL ([ADR-0055](decisions/0055-redpanda-bsl-position.md)), Grafana AGPL ([ADR-0067](decisions/0067-grafana-agpl-exception-observability-stack.md)), Voicebox GPL ([ADR-0077](decisions/0077-voicebox-gpl-exception-audio-backend.md)), Asterisk GPL ([ADR-0079](decisions/0079-telephony-cpaas-first-asterisk-gpl-exception-precleared.md)). See [architecture](architecture/overview.md).
 - **Positioning:** why this stack over the LangChain suite / Mastra — recorded as a falsifiable
   decision with "when this stops being true" triggers in
   [ADR-0020](decisions/0020-build-vs-adopt-lang-suite-mastra.md).

@@ -1,4 +1,5 @@
 ---
+type: Research
 title: "Inter-service protocols for aisotropy — sync, streaming, and async chaining (2026)"
 description: >
   Phase-0 research answering "can microservices chain aisotropy — as a service or

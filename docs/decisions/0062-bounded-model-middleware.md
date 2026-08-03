@@ -1,3 +1,12 @@
+---
+type: ADR
+title: "ADR-0062: Bounded model-middleware seam (WithModelMiddleware)"
+description: >
+  A user-pluggable model-middleware API, the safe/bounded counterpart to Vercel AI SDK's wrapLanguageModel, without weakening the constitutional pre-spend gate.
+tags: [decisions, adr, llm, middleware, extensibility, cost-governance]
+timestamp: 2026-07-17T00:00:00Z
+---
+
 # ADR-0062: Bounded model-middleware seam (`WithModelMiddleware`)
 
 **Status:** implemented (2026-07-17)

@@ -1,3 +1,12 @@
+---
+type: ADR
+title: "ADR-0071: Kubernetes deploy validation — a deterministic offline lane, and an opt-in real-cluster lane"
+description: >
+  A regression gate for the Kubernetes deploy surface that runs in about two seconds with no cluster, plus an opt-in real-cluster lane.
+tags: [decisions, adr, kubernetes, deploy, validation, ci]
+timestamp: 2026-07-27T00:00:00Z
+---
+
 # ADR-0071: Kubernetes deploy validation — a deterministic offline lane, and an opt-in real-cluster lane
 
 **Status:** Accepted (2026-07-27 — implementation landed with the ADR: `scripts/k8s-chart-guard.sh`,

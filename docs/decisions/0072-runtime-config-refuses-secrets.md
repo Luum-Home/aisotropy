@@ -1,3 +1,12 @@
+---
+type: ADR
+title: "ADR-0072: The runtime config file refuses secrets — fail-closed at load, env-only, in a public repo"
+description: >
+  The runtime config file fails closed at load if it carries secrets, keeping them env-only in a public repo.
+tags: [decisions, adr, config, secrets, security, fail-closed]
+timestamp: 2026-07-27T00:00:00Z
+---
+
 # ADR-0072: The runtime config FILE refuses secrets — fail-closed at load, env-only, in a public repo
 
 **Status:** Accepted (2026-07-27 — implementation landed with the ADR: `aisotropy/runtimeconfig.go`

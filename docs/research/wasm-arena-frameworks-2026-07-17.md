@@ -1,3 +1,12 @@
+---
+type: Research
+title: "WASM/WASI Feasibility for the Agent-Framework Arena — Can They Make Real Outbound LLM Calls?"
+description: >
+  Internet research on whether each candidate agent framework can run under WASM/WASI and make real outbound LLM calls.
+tags: [research, wasm, wasi, arena, frameworks, feasibility]
+timestamp: 2026-07-17T00:00:00Z
+---
+
 # WASM/WASI Feasibility for the Agent-Framework Arena — Can They Make Real Outbound LLM Calls?
 
 **Date:** 2026-07-17

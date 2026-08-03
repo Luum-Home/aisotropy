@@ -1,4 +1,5 @@
 ---
+type: Concept
 title: The integration lane measures plumbing, and 6/8 on memory is its ceiling
 date: 2026-07-28
 status: active — read before interpreting any integration-lane memory number

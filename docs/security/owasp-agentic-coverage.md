@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "OWASP Top 10 for Agentic Applications — aisotropy deterministic coverage"
+description: >
+  Maps aisotropy's deterministic controls against the OWASP Top 10 for Agentic Applications 2026.
+tags: [security, owasp, agentic, coverage, threat-model]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # OWASP Top 10 for Agentic Applications — aisotropy deterministic coverage
 
 **Baseline:** OWASP Top 10 for **Agentic Applications 2026**, released **2025-12-09**

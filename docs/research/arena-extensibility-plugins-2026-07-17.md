@@ -1,3 +1,12 @@
+---
+type: Research
+title: "Arena — Extensibility / Plugins (2026-07-17)"
+description: >
+  Scores framework extensibility: whether a third party can add a custom tool/component/integration without forking the framework.
+tags: [research, arena, extensibility, plugins, architecture]
+timestamp: 2026-07-17T00:00:00Z
+---
+
 # Arena — Extensibility / Plugins (2026-07-17)
 
 > **What this measures.** The per-turn arena modes score *behavior* on a single

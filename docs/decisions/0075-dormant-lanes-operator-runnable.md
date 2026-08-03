@@ -1,3 +1,12 @@
+---
+type: ADR
+title: "ADR-0075: Dormant lanes — one operator-runnable command that builds the Rust workers and runs the real-service tests"
+description: >
+  A status-first, resource-guarded command that builds the Rust workers and runs the real-service tests for two paths whose code already existed.
+tags: [decisions, adr, dormant-lanes, rust, testing, operations]
+timestamp: 2026-07-27T00:00:00Z
+---
+
 # ADR-0075: Dormant lanes — one operator-runnable command that builds the Rust workers and runs the real-service tests
 
 **Status:** Accepted (2026-07-27 — implementation landed with the ADR: `scripts/dormant-lanes.sh`,

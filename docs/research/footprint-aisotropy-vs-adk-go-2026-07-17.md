@@ -1,3 +1,12 @@
+---
+type: Research
+title: "Footprint analysis: aisotropy vs ADK-Go (the Go control) — is bigger than the bare loop good or bad?"
+description: >
+  Footprint analysis comparing aisotropy against ADK-Go as the Go control, asking whether being bigger than the bare loop is good or bad.
+tags: [research, footprint, adk-go, benchmark, comparison]
+timestamp: 2026-07-17T00:00:00Z
+---
+
 # Footprint analysis: aisotropy vs ADK-Go (the Go control) — is "bigger than the bare loop" good or bad?
 
 **Date:** 2026-07-17

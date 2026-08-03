@@ -1,4 +1,5 @@
 ---
+type: Research
 title: What the community already built, and what our arena reinvented worse
 date: 2026-07-28
 status: research — adopt list at the end, not yet actioned

@@ -1,3 +1,12 @@
+---
+type: Reference
+title: "Aisotropy SLO catalog & error-budget policy"
+description: >
+  Operator-facing reliability targets for aisotropyd and the single source of truth the Prometheus rules encode.
+tags: [operations, slo, error-budget, reliability, prometheus]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Aisotropy SLO catalog & error-budget policy
 
 Operator-facing reliability targets for `aisotropyd`. These are the single

@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "Arena QA/memory scoring — answer keys, not verbosity"
+description: >
+  Why the deterministic QA and memory scorer moved from reference token-containment to explicit answer keys as a fairness fix for every framework.
+tags: [architecture, arena, scoring, qa, memory, fairness]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Arena QA/memory scoring — answer keys, not verbosity
 
 > Why the deterministic QA and memory scorer moved from **reference token-containment**

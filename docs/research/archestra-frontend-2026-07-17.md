@@ -1,3 +1,12 @@
+---
+type: Research
+title: "Archestra Frontend Review — Patterns for a Future aisotropy Security/Observability UI"
+description: >
+  Read-only, patterns-only review of Archestra's Next.js frontend for a future aisotropy security/observability UI.
+tags: [research, archestra, frontend, ui, observability]
+timestamp: 2026-07-17T00:00:00Z
+---
+
 # Archestra Frontend Review — Patterns for a Future aisotropy Security/Observability UI
 
 Date: 2026-07-17

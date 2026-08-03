@@ -1,4 +1,5 @@
 ---
+type: Research
 title: Inspect AI — evaluated, not adopted, and what to steal instead
 date: 2026-07-28
 status: verdict — DO NOT ADOPT as the harness; steal two things

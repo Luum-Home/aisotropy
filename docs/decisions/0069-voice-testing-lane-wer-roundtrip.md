@@ -1,3 +1,12 @@
+---
+type: ADR
+title: "ADR-0069: Voice testing lane — TTS to STT round-trip gated on WER, without audio hardware"
+description: >
+  An automated, hardware-free test lane for the ADR-0066 voice PoC that gates word error rate under an empirically calibrated threshold.
+tags: [decisions, adr, voice, testing, wer, tts, stt]
+timestamp: 2026-07-23T00:00:00Z
+---
+
 # ADR-0069: Voice testing lane — TTS→STT round-trip gated on WER, without audio hardware
 
 **Status:** Accepted (2026-07-23 — implementation landed with the ADR: `examples/voice-pipecat/tests/`

@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "Arena infrastructure parity — is the comparison fair on real infra?"
+description: >
+  Investigates whether the arena comparison is fair given aisotropy uses real Qdrant/rqlite while competitor adapters use in-memory stores.
+tags: [architecture, arena, infrastructure, parity, fairness]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Arena infrastructure parity — is the comparison fair on real infra?
 
 > **Trigger:** the concern that "aisotropy uses real Qdrant/rqlite/e5 while the competitor

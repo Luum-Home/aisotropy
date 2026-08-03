@@ -1,3 +1,12 @@
+---
+type: Research
+title: "Research: WebAssembly (WASM) vs Docker for aisotropy isolation — 2026-07-17"
+description: >
+  Phase-0 read-only report on whether aisotropy considered running with WebAssembly instead of Docker for isolation.
+tags: [research, wasm, docker, sandbox, isolation, phase-0]
+timestamp: 2026-07-17T00:00:00Z
+---
+
 # Research: WebAssembly (WASM) vs Docker for aisotropy isolation — 2026-07-17
 
 > **Phase 0 research report (read-only).** Operator question: *"Did we consider

@@ -1,3 +1,12 @@
+---
+type: Research
+title: "The full Lang* suite (LangChain ecosystem) — map + how the arena & aisotropy relate"
+description: >
+  Maps the whole LangChain ecosystem so the arena's single langgraph result is read in context.
+tags: [research, langchain, langgraph, ecosystem, arena]
+timestamp: 2026-07-17T00:00:00Z
+---
+
 # The full "Lang*" suite (LangChain ecosystem) — map + how the arena & aisotropy relate
 
 **Date:** 2026-07-17

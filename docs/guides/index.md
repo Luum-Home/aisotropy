@@ -29,3 +29,6 @@ concepts and the [decisions](../decisions/index.md) log).
 - [API versioning & deprecation policy](api-versioning-policy.md) — The 0.x stability contract: since
   the Go struct **is** the OpenAPI contract, a struct change is a contract change. What is breaking vs.
   additive, the `/v1` prefix, and how a consumer pins and migrates ([ADR-0013](../decisions/0013-public-extension-surface-facade-vs-promote.md)).
+- [CLI tools](cli-tools.md) — Every binary under `cmd/`: what each command does and when to reach for it.
+- [Extending the pipeline](extending-the-pipeline.md) — Plug policy at the seam instead of wrapping the
+  client — the idiomatic extension point for pipeline behavior.

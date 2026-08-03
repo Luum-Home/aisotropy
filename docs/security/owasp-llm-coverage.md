@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "OWASP Top 10 for LLM Applications — aisotropy deterministic coverage"
+description: >
+  Maps aisotropy's deterministic controls against the OWASP Top 10 for LLM Applications 2025.
+tags: [security, owasp, llm, coverage, threat-model]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # OWASP Top 10 for LLM Applications — aisotropy deterministic coverage
 
 **Baseline:** OWASP Top 10 for LLM Applications **2025** (v4.2.0a, published **2024-11-18**

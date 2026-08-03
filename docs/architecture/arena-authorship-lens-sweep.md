@@ -1,4 +1,5 @@
 ---
+type: Concept
 title: The authorship lens — sweeping every arena dimension for adapter-decided outcomes
 date: 2026-07-28
 status: in progress — 7 of 16 dimensions verified, 5 defects + 2 clean

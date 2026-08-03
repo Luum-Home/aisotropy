@@ -1,3 +1,12 @@
+---
+type: Guide
+title: "Deploying aisotropy on Kubernetes"
+description: >
+  How to deploy aisotropy — a single Distroless Go binary that boots a complete runtime from in-process defaults — on Kubernetes.
+tags: [deployment, kubernetes, distroless, operations, guide]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Deploying aisotropy on Kubernetes
 
 aisotropy ships as a **single Distroless Go binary** (`gcr.io/distroless/static-debian12:nonroot`,

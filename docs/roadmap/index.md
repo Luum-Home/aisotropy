@@ -19,6 +19,8 @@ then thicken each layer.
 - [Adoption learnings](adoption-learnings.md) — what the first external adopter validated and the
   evidence-driven generic gaps it revealed (frontend adapters, `WithDevUI`, a scaffold, a
   grounded-output check). Roadmap items that map to what a real dev hand-rolled.
+- [Spec-Driven Development (SDD) specs](sdd/index.md) — the SDD spec subtree: requirements, design,
+  and task breakdowns for planned changes driven through the SDD pipeline.
 
 > **Global status (2026-07-14):** Phases 0–7 implemented and Phase 8 (public adoption surface)
 > shipped; Phase 9 (composition surface) partially delivered. The per-phase "done" criteria and

@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "Dependency-Reuse-First (gollem-first) — a standing PREMISE"
+description: >
+  Before building a capability on a dependency, inventory what it already provides from source and either reuse it or document the precise gap.
+tags: [architecture, premise, dependency, gollem, reuse, code-truth]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Dependency-Reuse-First (gollem-first) — a standing PREMISE
 
 > **Origin (the mistake this prevents):** we began building `WithModelMiddleware` (ADR-0062) as a

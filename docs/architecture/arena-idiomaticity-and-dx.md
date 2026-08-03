@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "Arena idiomaticity audit + a deterministic developer-experience metric"
+description: >
+  Audits whether each adapter's adoption of its framework's infrastructure is idiomatic and defines a deterministic developer-experience metric.
+tags: [architecture, arena, idiomaticity, developer-experience, adapters]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Arena idiomaticity audit + a deterministic developer-experience metric
 
 > Two linked questions about the live arena (`arenas/live/`):

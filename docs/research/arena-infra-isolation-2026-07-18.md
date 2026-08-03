@@ -1,3 +1,12 @@
+---
+type: Research
+title: "Arena Performance Lever 2: Per-Framework Infra Isolation"
+description: >
+  Design and proven PoC for per-framework infrastructure isolation, not yet rolled out to the full 8-framework sweep.
+tags: [research, arena, infrastructure, isolation, performance]
+timestamp: 2026-07-18T00:00:00Z
+---
+
 # Arena Performance Lever 2: Per-Framework Infra Isolation
 
 Status: design + PoC (proven). Not yet rolled out to the full 8-framework sweep.

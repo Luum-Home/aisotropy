@@ -1,3 +1,12 @@
+---
+type: Runbook
+title: "Aisotropy runbooks — the 3am playbooks"
+description: >
+  Symptom to diagnosis to mitigation playbooks, each diagnosis step naming a real signal or endpoint that exists today.
+tags: [operations, runbooks, incident-response, diagnosis, playbook]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Aisotropy runbooks — the 3am playbooks
 
 Symptom → diagnosis (which signal/endpoint) → mitigation. Every diagnosis step

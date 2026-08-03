@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "Capability-Absence Claims — ecosystem sweep required (a standing PREMISE)"
+description: >
+  A claim that a competitor lacks a capability requires an ecosystem-level sweep, not core-source reading alone.
+tags: [architecture, premise, competitive-claims, evidence, methodology]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Capability-Absence Claims — ecosystem sweep required (a standing PREMISE)
 
 > **Origin (the mistake this prevents):** a public doc claimed the seven competitor frameworks

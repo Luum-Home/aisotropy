@@ -1,3 +1,12 @@
+---
+type: Runbook
+title: "Backup & Restore — the Aisotropy memory tiers"
+description: >
+  Per-tier operator procedure for backing up and restoring the three persistent Aisotropy stores using each store's native mechanism.
+tags: [operations, backup, restore, memory-tiers, runbook]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Backup & Restore — the Aisotropy memory tiers
 
 This document is the per-tier operator procedure for backing up and restoring the

@@ -17,6 +17,9 @@ Two ways Aisotropy runs, matching the two states in the [reality ledger](../arch
 | [Dormant lanes — build the Rust workers, run the real-service tests](dormant-lanes.md) | The single operator-runnable lane (`scripts/dormant-lanes.sh`) that compiles `crates/sleep-cycle` + `crates/bitrate-scorer` and exercises them through the `-tags manual` live tests, and that brings up an **isolated** rqlite + Qdrant stack to run the real-service tests against before tearing it down. Status-first (the default spends nothing), resource-guarded with **measured** `--need-mb` budgets, and it leaves the machine exactly as it was found (ADR-0075). |
 | [Reverse proxy — SSE streaming](reverse-proxy.md) | Fronting the plain-HTTP `aisotropyd` with Caddy or nginx **without buffering the token-by-token SSE routes** into a single dump. The reference `deploy/proxy/` configs, the `X-Accel-Buffering: no` middleware that makes streaming survive a default nginx, and the executable end-to-end proof under `test/proxy/`. |
 | [Supply-chain hardening](supply-chain.md) | The supply-chain security posture — `govulncheck` + dependency scanning as a **local pre-push git hook** (no extra paid GitHub Actions), base images pinned by immutable `@sha256:` digest, and secrets fenced out of the Docker build context. |
+| [Kubernetes](kubernetes.md) | Deploying aisotropy on Kubernetes. |
+| [Serverless & edge](serverless-edge.md) | Serverless and edge deployment — a tiered honesty matrix of what runs where. |
+| [Operations runbook](runbook.md) | Running aisotropyd in production — the operations runbook. |
 
 Which one you run is exactly the "REAL by default vs CODE-ONLY behind env vars" split the
 [reality ledger](../architecture/reality-ledger.md) records: the distroless binary alone is the

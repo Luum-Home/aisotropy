@@ -62,7 +62,8 @@ compute is local and cheap.
 
 ## Risk and maturity
 
-🟡 Medium. The technique is proven, but: (a) model↔codec determinism is a real operational
+🟢 Method confirmed in-repo (2026-07-10), matching the banner. The technique is proven, but two
+operational trade-offs remain: (a) model↔codec determinism is a real operational
 trade-off; (b) decompression compute isn't free. Apply first where lossless retention value
 outweighs the cost (facts/decisions), not to trivial chit-chat (which gets discarded by [Bet 1](bet-01-surprisal-gated-memory.md) anyway).
 

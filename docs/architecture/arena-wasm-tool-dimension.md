@@ -1,4 +1,5 @@
 ---
+type: Concept
 title: The wasm_tool dimension measures a technology choice, not a capability
 date: 2026-07-28
 status: finding — dimension retained, claim retracted, restatement proposed

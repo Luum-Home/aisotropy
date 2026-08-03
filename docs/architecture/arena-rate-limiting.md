@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "Arena rate-limiting — surviving the agnes FREE-TIER 429 under concurrency"
+description: >
+  How the arena survives the agnes free-tier request-rate limit (429s) when the sweep runs under concurrency.
+tags: [architecture, arena, rate-limiting, agnes, concurrency]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Arena rate-limiting — surviving the agnes FREE-TIER 429 under concurrency
 
 ## The problem this solves (code-truth, from a real run)

@@ -1,3 +1,12 @@
+---
+type: Research
+title: "Arena — Extension Mechanisms (beyond MCP) & aisotropy Adoption Candidates (2026-07-17)"
+description: >
+  A deeper companion cataloguing framework extension mechanisms beyond MCP and aisotropy adoption candidates.
+tags: [research, arena, extension-mechanisms, mcp, adoption-candidates]
+timestamp: 2026-07-17T00:00:00Z
+---
+
 # Arena — Extension Mechanisms (beyond MCP) & aisotropy Adoption Candidates (2026-07-17)
 
 > **What this is.** A companion to `arena-extensibility-plugins-2026-07-17.md`. That

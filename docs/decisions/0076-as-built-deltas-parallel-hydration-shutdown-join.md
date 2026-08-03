@@ -1,3 +1,12 @@
+---
+type: ADR
+title: "ADR-0076: As-built deltas — parallel hydration, a shutdown join, and one delta kept on purpose"
+description: >
+  A verdict on three remaining deltas between the aspirational request lifecycle and runtime-as-built: two closed in code, one kept on purpose.
+tags: [decisions, adr, request-lifecycle, hydration, shutdown, as-built]
+timestamp: 2026-07-27T00:00:00Z
+---
+
 # ADR-0076: As-built deltas — parallel hydration, a shutdown join, and one delta kept on purpose
 
 **Status:** Accepted (2026-07-27 — implementation landed with the ADR: `internal/api/chat_stream.go`,

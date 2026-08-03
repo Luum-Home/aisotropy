@@ -70,6 +70,8 @@ infrastructure, a metric we already compute.
 
 ## Risk and maturity
 
+**Superseded by the 2026-07 refutation** (see the banner above and [ADR-0021](../decisions/0021-compression-signal-small-lm-surprisal-ceiling.md)): every cheap prompt-intrinsic signal was measured length-confounded and refuted, so the calibration risk below is moot except behind a trained classifier. The original framing follows.
+
 🟡 Medium. Main risk: threshold calibration and edge cases (short trivial queries with spuriously high
 perplexity). Mitigation: combine with simple signals (length, presence of tool-intent) and
 calibrate with real data before relying on bits alone.
@@ -79,6 +81,8 @@ calibrate with real data before relying on bits alone.
 A local cheap model that gives perplexity fast. Ideally the [sovereign NN core (Bet 5)](bet-05-sovereign-nn-core.md), so the routing decision doesn't cost a network call.
 
 ## Next experiment
+
+**Superseded by the 2026-07 refutation** (see the banner above and [ADR-0021](../decisions/0021-compression-signal-small-lm-surprisal-ceiling.md)): the probe below has already been run and refuted for every cheap signal; the only live hatch is a trained classifier or a measured frontier-vs-cheap answer-quality gap. The original plan follows.
 
 On a log of queries labeled by difficulty (did the cheap model suffice?), measure whether surprisal
 separates the classes. If it separates, wire it into the router.

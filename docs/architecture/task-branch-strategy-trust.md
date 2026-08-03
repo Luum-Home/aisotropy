@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "Task branch strategy and prompt trust"
+description: >
+  The supply-chain posture of TaskRequest.BranchStrategy in the sandboxed task runner behind the keybroker build tag.
+tags: [architecture, security, task-runner, supply-chain, branch-strategy]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Task branch strategy and prompt trust
 
 > Applies to the sandboxed task runner (`aisotropy.App.RunTask` / `App.RunTasks`,

@@ -56,6 +56,53 @@ lexical rarity instead of using raw bits — not just a bigger or better-fit mod
 3. **Yellows (2, 3, 4):** research with bounded prototypes; each has its own "minimum experiment."
 4. **Red (5):** the convergence — the in-process NN core that everything else points to. Built once the greens/yellows prove their value.
 
+## Research notes & audits
+
+Dated research write-ups and audits (2026-07/08). These are point-in-time investigations that fed
+decisions, ADRs, and arena work; they are not part of the six-bet compression ledger above.
+
+### Gollem exploitation audit (2026-07-17)
+
+Per-subsystem ledger classifying each aisotropy construct as REUSE-CORRECT / REINVENTION-ADOPT-GOLLEM
+/ ADDITIVE-JUSTIFIED / EXPLOIT-MORE — the first full application of the dependency-reuse-first premise.
+
+- [SYNTHESIS](gollem-exploitation-audit-SYNTHESIS-2026-07-17.md) — The cross-slice synthesis of the audit.
+- [Agent loop / middleware / interceptors / tools / hooks](gollem-exploitation-audit-agent-loop-2026-07-17.md)
+- [Control gates (quota / cost / circuit-breaker / degrade)](gollem-exploitation-audit-control-gates-2026-07-17.md)
+- [Memory slice](gollem-exploitation-audit-memory-2026-07-17.md)
+- [Orchestration / multi-agent graph slice](gollem-exploitation-audit-orchestration-2026-07-17.md)
+- [Reflection / self-repair / structured output / schema](gollem-exploitation-audit-reflection-2026-07-17.md)
+- [Model/transport abstraction, stub, streaming, MCP, contrib](gollem-exploitation-audit-transport-mcp-2026-07-17.md)
+
+### Competitive & prior-art
+
+- [Archestra vs aisotropy — security-surface gap analysis](archestra-vs-aisotropy-2026-07-17.md)
+- [Archestra security architecture — code-level review](archestra-security-arch-2026-07-17.md)
+- [Archestra frontend review](archestra-frontend-2026-07-17.md) — Patterns for a future security/observability UI.
+- [The full "Lang*" suite map](langchain-suite-map-2026-07-17.md) — How the LangChain ecosystem, the arena, and aisotropy relate.
+- [Footprint: aisotropy vs ADK-Go](footprint-aisotropy-vs-adk-go-2026-07-17.md) — Is "bigger than the bare loop" good or bad?
+- [Arena prior-art sweep](arena-prior-art-sweep-2026-07-28.md) — Prior art on agent-framework benchmarking.
+- [Inspect AI as our trajectory layer, evaluated](inspect-ai-evaluation-2026-07-28.md)
+
+### Arena mechanisms & infra
+
+- [Arena extensibility / plugins](arena-extensibility-plugins-2026-07-17.md)
+- [Arena extension mechanisms (beyond MCP) & aisotropy candidates](arena-extension-mechanisms-and-aisotropy-candidates-2026-07-17.md)
+- [Arena performance lever 2 — per-framework infra isolation](arena-infra-isolation-2026-07-18.md)
+
+### Isolation, sandbox & protocols
+
+- [WASM vs Docker for aisotropy isolation](wasm-vs-docker-sandbox-2026-07-17.md)
+- [WASM/WASI feasibility for the arena](wasm-arena-frameworks-2026-07-17.md) — Can competitors make real outbound LLM calls in-sandbox?
+- [Inter-service protocols for aisotropy](inter-service-protocols-2026-07-17.md)
+- [OpenAI-compatible is a spectrum](openai-compat-boundary-2026-07-17.md) — Where agnes and gateways like it break.
+- [Prompt-injection defense — 2026 state of the art](prompt-injection-defense-soa-2026-2026-07-17.md)
+
+### Readiness (Phase 0)
+
+- [i18n / multilingual readiness](i18n-multilingual-readiness-2026-07-17.md)
+- [Multi-agent graph / swarm orchestration readiness](multi-agent-graph-readiness-2026-07-17.md)
+
 ## Relationship to the rest of the KB
 
 - Rationale: [compression manifesto](../vision/compression-thesis.md) and [principles](../vision/principles.md).

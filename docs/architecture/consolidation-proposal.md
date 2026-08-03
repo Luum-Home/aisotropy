@@ -303,10 +303,12 @@ your key", "Why aisotropy — and why Go", "The differentiator: compression as a
    tutorial ladder, and the arenas — as *"go deeper"* links, not inline walls.
 4. **Move the stack table, the "LLM OS" model, the compression thesis, and the why-Go essay** below
    the fold or into `docs/` — they are context, not onramp.
-5. **Add a `docs/getting-started.md`-first pointer at the very top of the README** ("New here? Start
-   at [Getting Started](docs/getting-started.md)"). That file already does the 30-second + 2-minute
-   job well ([`getting-started.md:20-46`](../getting-started.md)) — the README should *defer* to it
-   rather than duplicate-and-exceed it.
+5. **Add a `docs/getting-started.md`-first pointer at the very top of the README** — literally
+   `New here? Start at [Getting Started](docs/getting-started.md)` (that link text is written for the
+   **repo-root README**, where `docs/getting-started.md` resolves; it is example content, not a link
+   from this doc). That file already does the 30-second + 2-minute job well
+   ([`getting-started.md:20-46`](../getting-started.md)) — the README should *defer* to it rather
+   than duplicate-and-exceed it.
 
 **Net effect:** a newcomer reaches a working, differentiator-proving `go run .` in under 5 minutes
 and meets the 43-row matrix only if they choose to. The matrix stays — it just stops being the

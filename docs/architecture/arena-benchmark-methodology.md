@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "Arena benchmark methodology — how cold-start, latency, TTFT, RSS and tokens are actually measured"
+description: >
+  Documents how the live arena's cold-start, latency, TTFT, RSS and token numbers are measured, since RESULTS.md is regenerated output.
+tags: [architecture, arena, benchmark, methodology, metrics]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Arena benchmark methodology — how cold-start, latency, TTFT, RSS and tokens are actually measured
 
 > **Why this doc exists:** `arenas/live/RESULTS.md` is **regenerated output** — the runner

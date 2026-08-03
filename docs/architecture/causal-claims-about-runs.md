@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "Causal Claims About Runs — falsify before you assert (a standing PREMISE)"
+description: >
+  Before asserting a cause for what a run did, state the observation that would disprove it and check that first.
+tags: [architecture, premise, causal-claims, evidence, debugging]
+timestamp: 2026-08-03T00:00:00Z
+---
+
 # Causal Claims About Runs — falsify before you assert (a standing PREMISE)
 
 > **Origin (2026-07-28, five in one session).** Every guard in this repo enforces
