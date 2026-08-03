@@ -14,6 +14,44 @@ tags: [arenas, live, benchmarks, agnes, quality, latency, tokens, tool-calling, 
 > and multi-turn memory. Same model → measured differences are the **framework**, not
 > the model.
 
+## Where this sits relative to the standard suites
+
+**We do not claim to have invented memory evaluation, and this arena should not be
+read as competing with the suites that did.** LoCoMo (1,540 QA samples over 10
+conversations averaging 27 sessions each) and LongMemEval (500 questions across
+single-session user/assistant/preference recall, knowledge update, temporal
+reasoning and multi-session recall) are larger, peer-reviewed, and better at the
+question they ask: **how good is a system's memory?**
+
+Our memory items are now labelled with LongMemEval's category names precisely so
+the relationship is legible rather than implied — `memory_cross_session` IS
+multi-session recall, `mem-h01-overwrite` IS knowledge update, `mem-03-deadline`
+IS temporal reasoning. Where a reader wants memory QUALITY at scale, those suites
+are the reference, and this arena's eight items are a smoke test beside them.
+
+**What this arena measures that they do not** is a different question entirely —
+not how good the memory is, but what the INTEGRATION guarantees:
+
+| question | asked by |
+|---|---|
+| how well does this system remember? | LoCoMo, LongMemEval |
+| does framework X leak tenant A's data to tenant B? | **here** |
+| is the scope enforced by construction, or by a key the caller must remember to pass? | **here** |
+| does state survive `kill -9` and reload in a separate process? | **here** |
+| does the store fail loudly, or degrade silently, when it is unreachable? | **here** |
+
+Those are properties of a multi-tenant integration, not of a model's recall. None
+of LoCoMo, LongMemEval, AgentBench, GAIA or SWE-bench asks them, and they are
+where this arena's findings actually live: eight of eight competitors hand-roll a
+compound scope key, verified with file:line in each adapter's own source, while
+aisotropy enforces it by construction — an L1-vs-L3 difference the standard
+suites have no column for.
+
+Stated plainly so it cannot be mistaken for more: **we use the field's taxonomy
+for memory quality and add the isolation and durability questions it does not
+cover.** Prior-art sweep and the full comparison:
+`docs/research/arena-prior-art-sweep-2026-07-28.md`.
+
 ## The thesis: hold the model constant, make it REAL
 
 `arenas/BENCHMARKS.md` is explicit that its cross-framework quality numbers are
