@@ -344,6 +344,31 @@ repository was never public (§Context), so MIT was never granted to any third p
 record would not have revoked such a grant if one had existed. This is repository hygiene, not a legal
 act — and it is the reason the *decision* had to stay written down even though the *commits* did not.
 
+### Second rewrite, 2026-08-03 — an unrelated organisation's name
+
+A pre-publication sweep over file **contents** found four guard scripts crediting their exit-code
+convention to an organisation unrelated to this project. The convention is unchanged and still
+documented; the attribution was removed, from HEAD and then from history.
+
+Same technique as above: `git filter-repo`, one exact string, in blobs and in the one commit message
+that quoted it. 559 commits in, 559 out; 1780 tracked files before and after; one commit pruned — the
+removal commit, whose change became a no-op once its parent no longer carried the string. Verified by
+walking every commit: zero occurrences remaining.
+
+Two process notes worth keeping:
+
+- **One sweep, then one rewrite.** Everything else the sweep raised (cross-project references, an
+  external citation, three credential-shaped strings that are placeholders of 11–24 characters against
+  a real key's 100+) was checked and cleared *before* rewriting. Each rewrite invalidates every SHA and
+  spawns backup copies; one rewrite per finding multiplies both.
+- **The citation gate made the repair mechanical.** `scripts/check-doc-commit-citations.sh` ran clean
+  with no repointing needed — the affected commits were recent and the docs cite older ones. The first
+  rewrite had to work that out by hand.
+
+The repository was private throughout, re-verified unauthenticated (`404` on both the API and the web
+URL). That is why both rewrites were cheap, and why the ordering rule in
+[`purge-rewritten-history.md`](../operations/purge-rewritten-history.md) is *purge before publish*.
+
 ## Consequences
 
 **As shipped:**
