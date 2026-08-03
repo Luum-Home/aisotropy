@@ -87,7 +87,7 @@ exercised by an executable smoke against Dify's transcribed schema + real ORM
 | 5.3 | Quota-pressure degradation | exec | **DIY** | no load-based model downgrade |
 | 5.4 | Cost meter (per-tenant) | exec | **PARTIAL** | per-message `total_price`+`currency`+tokens BUILT-IN (`model.py:1541`) — richer than most arenas (real $ field); a queryable per-tenant meter endpoint is the cloud billing dashboard (PAID) |
 | 5.5 | Constitutional-gate governance surface | arch | **DIY** | isolation/cost/license/contract left to developer discipline |
-| 5.6 | License 100% MIT/Apache, self-hostable | arch | **PARTIAL / BLOCKER** | **modified Apache-2.0**: multi-tenant operation needs a commercial license (see §License) |
+| 5.6 | License permissive, self-hostable | arch | **PARTIAL / BLOCKER** | **modified Apache-2.0**: multi-tenant operation needs a commercial license (see §License) |
 | 5.7 ▶ | Dependency license posture (scanned) | exec | PERMISSIVE +LGPL leaf | 39/41 direct deps permissive; 2 weak-copyleft LGPL-3.0 (`psycopg2-binary`, `gmpy2`); 0 GPL/AGPL/BUSL/SSPL in the tree. **But Dify's OWN license blocks multi-tenant SaaS** |
 | 6.1 | OTel gen_ai spans w/ tenant native | exec | **PARTIAL** | OTel instrumentation + tracing integrations; `gen_ai` semconv + native tenant tag DIY |
 | 6.2 | Health / readiness probes | exec | **PARTIAL** | server health endpoints; no per-memory-tier readiness probe |

@@ -86,7 +86,7 @@ pasted output.
 | 5.3 | Quota-pressure model degradation | **DIY** | S — no analog |
 | 5.4 | Cost meter (per-tenant) | **DIY** | S — AI Gateway logs usage (rented); per-tenant meter is your code |
 | 5.5 | Constitutional-gate governance surface | **DIY** | S — none of these are enforced gates |
-| 5.6 | License 100% MIT/Apache, self-hostable | **PARTIAL** | R+S — SDK is **MIT**, runtime `workerd` is **Apache-2.0** (open, runs locally via miniflare), **but production Durable Objects run ONLY on Cloudflare** — the durability + global-uniqueness + per-object isolation guarantee is a **rented platform**, not self-hostable OSS |
+| 5.6 | License permissive, self-hostable | **PARTIAL** | R+S — SDK is **MIT**, runtime `workerd` is **Apache-2.0** (open, runs locally via miniflare), **but production Durable Objects run ONLY on Cloudflare** — the durability + global-uniqueness + per-object isolation guarantee is a **rented platform**, not self-hostable OSS |
 | 5.7 | Dependency license posture (scanned) † | **PERMISSIVE + weak-copyleft leaves** | R — `pnpm licenses`: prod tree 184 pkgs, **0 hard blockers**; 2× **MPL-2.0** (`lightningcss`) = CAUTION. Full tree 237 pkgs adds 1× **LGPL-3.0** (`@img/sharp-libvips`, dev tooling only). Passes the hard gate; not "100% MIT/Apache" |
 | 6.1 | OTel gen_ai spans w/ tenant_id native | **DIY** | S — SDK "observability" is a **diagnostics-channel event bus** (`ObservabilityEvent`, lifecycle/MCP events), **not** gen_ai OTel spans. Platform AI Gateway captures LLM telemetry (rented); `tenant_id` DIY |
 | 6.2 | Health / readiness probe (no LLM spend) | **DIY** | R — I hand-wrote `/healthz`; no built-in readiness that probes tiers |

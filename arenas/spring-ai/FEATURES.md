@@ -198,7 +198,7 @@ Per-tenant aggregation is DIY (no tenant concept). PARTIAL.
 ### 5.5 Constitutional-gate governance surface — **DIY** · SOURCE
 No enforced isolation/cost/license/contract gates. DIY.
 
-### 5.6 License 100% MIT/Apache, self-hostable — **BUILT-IN** · SOURCE
+### 5.6 License permissive, self-hostable — **BUILT-IN** · SOURCE
 Apache-2.0, fully self-hostable, no SaaS gate anywhere in the framework. BUILT-IN.
 
 ### 5.7 Dependency license posture (scanned) — **PERMISSIVE** · RAN
