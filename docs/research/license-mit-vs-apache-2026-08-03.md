@@ -24,6 +24,14 @@ timestamp: 2026-08-03T00:00:00Z
 > §8 "cost of switching" table understated the collateral, because rewriting history invalidates every
 > commit SHA cited anywhere in the docs (31 citations remapped, 33 found already broken from an earlier
 > rewrite).
+>
+> **Holder settled the same day.** The review wrote "© 2026 Luum" throughout because that is what
+> `LICENSE` then said. Counsel-packet Q1 asked which registered entity that named; the operator
+> answered that Aisotropy is a **personal project** and the holder is the natural person
+> **Matías Nahuel Amendola** — "Luum" was only ever the GitHub organisation. `NOTICE`, `README` and
+> both CLAs now say so, the CLAs' defined term moved from "the Company" to "the Maintainer", and that
+> **unblocks publication**: a natural person needs no registry lookup. It does not unblock the CLAs,
+> which are still waiting on counsel.
 
 Every license review in this repo so far has pointed **outward** — at dependencies
 ([license-audit](../architecture/license-audit.md), [rust-dependency-licenses](../architecture/rust-dependency-licenses.md)),
@@ -77,8 +85,8 @@ Why it lands here and not on a generic library:
   bits-per-token routing ([bet 4](bet-04-compressibility-routing.md), [bet 6](bet-06-bits-per-token-metric.md)),
   sleep-cycle consolidation. Technique-shaped work is what patent claims are drafted around, by us or
   by someone else.
-- **The grant flows from contributors, not just from Luum.** This is the part usually missed: today
-  Luum owns no patents, so *our* grant is worth little. The value is prospective and defensive — the
+- **The grant flows from contributors, not just from the holder.** This is the part usually missed: today
+  the holder owns no patents, so *our* grant is worth little. The value is prospective and defensive — the
   day a company contributes code covered by *their* patents, Apache §3 pulls the grant in
   automatically. Under MIT there is no such mechanism, and the risk lands on every downstream adopter.
 
@@ -176,9 +184,9 @@ mastra is the live precedent for the exact shape (permissive core + enterprise d
 
 - **Neither license blocks a paid tier.** Both are permissive; a proprietary component alongside, or on
   top of, either core is fine.
-- **Neither license blocks relicensing *by the copyright holder*.** Luum owns 100% of the copyright
-  today, so Luum can ship the same code under any terms it wants, whenever it wants.
-- **But Apache §5 does NOT give Luum the right to relicense a *contributor's* code under proprietary
+- **Neither license blocks relicensing *by the copyright holder*.** The holder owns 100% of the copyright
+  today, so the holder can ship the same code under any terms they want, whenever they want.
+- **But Apache §5 does NOT give the holder the right to relicense a *contributor's* code under proprietary
   terms.** §5 licenses contributions **under Apache-2.0**, full stop. If dual-licensing or a
   source-available tier that includes community contributions is genuinely on the roadmap, that
   requires a **CLA with a relicensing grant** — under MIT *and* under Apache-2.0 alike. This is the
@@ -252,7 +260,7 @@ excluding dependency lockfiles):
 | File | Change |
 |---|---|
 | [`LICENSE`](../../LICENSE) | Replace with the **verbatim, unmodified** Apache-2.0 text (Apache's own guidance: do not edit the license body) |
-| `NOTICE` *(new)* | `Aisotropy — Copyright 2026 Luum` + the XQuAD CC-BY-SA-4.0 carve-out, pointing at `bench/rag-quality/LICENSE-DATA.md` |
+| `NOTICE` *(new)* | `Aisotropy — Copyright 2026 Matías Nahuel Amendola` + the XQuAD CC-BY-SA-4.0 carve-out, pointing at `bench/rag-quality/LICENSE-DATA.md` |
 | [`README.md:306`](../../README.md) | `[MIT](LICENSE) © 2026 Luum.` → Apache-2.0 |
 | [`CONTRIBUTING.md:152`](../../CONTRIBUTING.md) | Inbound clause → Apache-2.0 §5 (plus the DCO/CLA decision from §5 above) |
 | `crates/{bitrate-scorer,embed,guardrail-model,sleep-cycle}/Cargo.toml:6` | `license = "MIT"` → `"Apache-2.0"` (4 files) |
@@ -280,7 +288,7 @@ go build ./... && go test ./...                               # expect exit 0 (n
 
 ## 9. What this does NOT solve (symmetric rigor)
 
-- **It grants no patents Luum does not hold.** §3's value to *us* is defensive and prospective.
+- **It grants no patents the holder does not own.** §3's value to *us* is defensive and prospective.
 - **It does not enable proprietary relicensing of contributed code** — that needs a CLA (§5 above).
 - **It does not discharge the CC-BY-SA obligation** on the XQuAD slice; that travels with the data file
   regardless, and is the reason `NOTICE` must exist rather than the LICENSE being simply reverted.

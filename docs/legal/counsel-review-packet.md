@@ -1,7 +1,7 @@
 ---
 type: Legal
 title: "Counsel review packet — licensing, contributions, and publication readiness"
-description: Everything a lawyer needs to review Aisotropy's licensing position in one sitting, and nothing they should have to re-derive. Part 1 states what was decided and shipped by the engineering side (Apache-2.0 per ADR-0080, NOTICE, CLA drafts, the history rewrite) with the evidence for each. Part 2 is twelve numbered questions in priority order, each with the context, the position taken, and what turns on the answer - the load-bearing ones being Q1 the exact legal entity behind "Luum", Q2 whether replacing the Apache ICLA's nonprofit reciprocal promise with an outbound open-source commitment is sound, Q3 governing law and whether a click-through CLA binds in the relevant jurisdiction, and Q5 whether copyright in a repository authored entirely by one person actually vests in the company. Part 3 lists what engineering verified itself, with the commands, so counsel can spot-check rather than repeat. NOT legal advice - written by the engineering side to be corrected.
+description: Everything a lawyer needs to review Aisotropy's licensing position in one sitting, and nothing they should have to re-derive. Part 1 states what was decided and shipped by the engineering side (Apache-2.0 per ADR-0080, NOTICE, CLA drafts, the history rewrite) with the evidence for each. Part 2 is twelve numbered questions in priority order, each with the context, the position taken, and what turns on the answer - the load-bearing ones being Q1, now ANSWERED — the holder is a natural person, Matías Nahuel Amendola, on a personal project, which unblocks publication, Q2 whether replacing the Apache ICLA's nonprofit reciprocal promise with an outbound open-source commitment is sound, Q3 governing law and whether a click-through CLA binds in the relevant jurisdiction, and Q5, which Q1's answer inverts — whether any employer or client could claim the copyright the operator now asserts publicly. Part 3 lists what engineering verified itself, with the commands, so counsel can spot-check rather than repeat. NOT legal advice - written by the engineering side to be corrected.
 tags: [legal, review, counsel, licensing, cla, publication, checklist]
 timestamp: 2026-08-03T00:00:00Z
 ---
@@ -36,21 +36,32 @@ third party; erasing the record neither revokes a grant nor creates one.
 
 ## Part 2 — Questions, in priority order
 
-### Q1 — What is the legal entity, exactly? *(blocks publication)*
+### Q1 — Who is the holder? *(ANSWERED 2026-08-03 — no longer blocks publication)*
 
-`LICENSE`, `NOTICE` and both CLA drafts name the copyright holder as **"Luum"**. We do not know
-whether that is the registered legal name, and we did not invent one. The GitHub organisation is
-`Luum-Home`.
+Previously this asked for the registered entity behind **"Luum"**, which appeared in `LICENSE`,
+`NOTICE` and both CLA drafts and which nobody could confirm was a registered name. **The operator has
+answered: Aisotropy is a personal project and the holder is the natural person, Matías Nahuel
+Amendola.** "Luum" is retained only as the GitHub organisation (`Luum-Home`), not as a legal person.
+`NOTICE`, `README` and both CLAs were updated accordingly; the CLAs' defined term changed from
+"the Company" to "the Maintainer", and §9's *change of control* — a company concept — became a
+successors-and-assigns undertaking.
 
-**Needed:** the exact registered name and jurisdiction to appear in `NOTICE` ("Copyright 2026
-\_\_\_\_"), in both CLAs as "the Company", and in any future trademark filing. **Nothing else in this
-packet can be finalised before this.**
+A natural person is unambiguous, so **publication is unblocked**. Three residual asks, none blocking:
+
+1. **Exact spelling for a contract.** The copyright notice is fine as written; a signed CLA names a
+   party, so confirm the legal spelling and whether an identity document number should appear.
+2. **Hold personally or assign to a company later?** If a commercial tier ever arrives
+   ([ADR-0033](../decisions/0033-open-core-extension-seams.md)/[0034](../decisions/0034-open-core-tier2-sealed-driver.md)),
+   the copyright and the executed CLAs must move to it. §9 was drafted to survive that assignment —
+   confirm it actually does, and say whether it is cheaper to incorporate before accepting the first
+   contribution than to assign afterwards.
+3. **Jurisdiction** for a CLA held by an individual — feeds Q3.
 
 ### Q2 — Is the CLA's substituted consideration sound? *(the drafting question)*
 
 The Apache ICLA gives the contributor a reciprocal promise anchored in ASF's nonprofit status
 (*"…shall not use Your Contributions in a way that is contrary to the public benefit or inconsistent
-with its nonprofit status and bylaws…"*). Luum is a company; the clause is inapplicable.
+with its nonprofit status and bylaws…"*). The Maintainer is a natural person, not a nonprofit; the clause is inapplicable.
 
 **What we did:** replaced it with an **Outbound Commitment** (ICLA §9) — the Company undertakes that
 every accepted Contribution will remain available under Apache-2.0, a later version, or another
@@ -95,15 +106,25 @@ whatever `LICENSE` says at publication. Confirm — and say whether the internal
 sufficient evidence of the decision, or whether a board/officer resolution is wanted given the entity
 is a company.
 
-### Q5 — Does copyright in the existing code actually vest in the Company?
+### Q5 — Is the copyright really the operator's to hold? *(the question Q1's answer creates)*
 
-`git shortlog -sne --all` reports **a single author across every commit in the repository** (544 as of 2026-08-03). That author is the operator. The
-CLA governs *external* contributions and does nothing for internal ones.
+`git shortlog -sne --all` reports **a single author across every commit** (547 as of 2026-08-03), and
+Q1 records the operator's position that this is a personal project. The CLA governs *external*
+contributions and does nothing for this.
 
-**Needed:** confirm that employment or contractor agreements vest copyright in the Company for all
-work to date. If any part was written before an agreement was in place, by a contractor without an
-assignment clause, or outside working time under a jurisdiction that matters, we would like to know
-before publication rather than before a financing due-diligence.
+Q1's answer turns the old question inside out. It is no longer "does copyright vest in the company";
+it is **"is there any employer or client who could claim it does?"** Please confirm, against the
+operator's actual employment and contracting arrangements:
+
+- No employment agreement assigns IP created outside assigned duties, or the project falls outside it.
+- No work-for-hire, contractor, or client agreement reaches it.
+- Employer-device / employer-time / employer-resources clauses, where the applicable jurisdiction
+  gives them effect, do not capture it.
+
+**Why it matters more now, not less:** naming an individual in `LICENSE` is a public assertion of
+ownership. If an employer could claim the work, that assertion is wrong in public rather than
+ambiguous in private. This surfaces in financing or acquisition due diligence, which is the expensive
+moment to discover it.
 
 ### Q6 — Personal data in signed CLAs
 
