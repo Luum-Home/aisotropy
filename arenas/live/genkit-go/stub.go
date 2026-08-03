@@ -127,7 +127,12 @@ func stubModelFunc(ctx context.Context, req *ai.ModelRequest, cb ai.ModelStreamC
 			Usage:        approxUsage(lastUser, ""),
 		}, nil
 	default:
-		reply = "[stub-echo] " + lastUser
+		// Whole request, not just the question — see wholeRequestText.
+		whole := wholeRequestText(req)
+		if whole == "" {
+			whole = lastUser
+		}
+		reply = "[stub-echo] " + whole
 	}
 
 	msg := &ai.Message{Role: ai.RoleModel, Content: []*ai.Part{ai.NewTextPart(reply)}}
@@ -145,6 +150,37 @@ func stubModelFunc(ctx context.Context, req *ai.ModelRequest, cb ai.ModelStreamC
 
 // lastRequestUserText returns the concatenated text of the final user-role
 // message in the request, or "" if there is none.
+// wholeRequestText flattens EVERY message in the request — system prompt and
+// re-hydrated history included — into one string.
+//
+// On the integration lane (mock model, REAL stores) the plumbing dimensions are
+// scored from the reply: "was the fact re-hydrated?" is answerable only if a
+// fact the STORE returned appears in the text. That fact is never in the last
+// user message, which is the QUESTION; it is in the history the adapter just
+// reloaded from rqlite.
+//
+// Echoing only the question makes every plumbing cell fail identically whether
+// the store worked or not — worse than not measuring, because it renders as a
+// result. Verified on ai-sdk and eino, where this change moved memory from 0/8
+// to 8/8 with zero billable calls.
+func wholeRequestText(req *ai.ModelRequest) string {
+	var b strings.Builder
+	for _, m := range req.Messages {
+		if m == nil {
+			continue
+		}
+		for _, p := range m.Content {
+			if p.IsText() {
+				if b.Len() > 0 {
+					b.WriteString(" ")
+				}
+				b.WriteString(p.Text)
+			}
+		}
+	}
+	return b.String()
+}
+
 func lastRequestUserText(req *ai.ModelRequest) string {
 	for i := len(req.Messages) - 1; i >= 0; i-- {
 		m := req.Messages[i]

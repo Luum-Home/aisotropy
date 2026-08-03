@@ -90,18 +90,40 @@ func (m *stubChatModel) IsCallbacksEnabled() bool { return true }
 // not a real provider count) so input_tokens/output_tokens are populated
 // rather than left at -1.
 func (m *stubChatModel) reply(in []*schema.Message) *schema.Message {
-	last := ""
-	for i := len(in) - 1; i >= 0; i-- {
-		if in[i].Role == schema.User {
-			last = in[i].Content
-			break
+	// Echo the WHOLE conversation, not just the last user turn.
+	//
+	// On the integration lane (mock model, REAL stores) the plumbing dimensions
+	// — memory, memory_scoped, isolation_leak, crash_recovery — are scored from
+	// this reply: "was the fact re-hydrated?" is answerable only if a fact the
+	// STORE returned appears in the text. That fact is never in the last user
+	// message, which is the QUESTION; it is in the history Eino just rebuilt
+	// from SQLite.
+	//
+	// Echoing only the question makes every plumbing cell fail identically
+	// whether the store worked or not — worse than not measuring, because it
+	// renders as a result. Verified on ai-sdk, where the same change moved
+	// memory from 0/8 to 8/8 with zero billable calls.
+	//
+	// The NEGATIVE direction stays honest too: isolation_leak passes only when
+	// another tenant's fact is ABSENT, so a leak into the prompt now surfaces in
+	// the reply and fails the cell, which is the behaviour that dimension wants.
+	var parts []string
+	for _, msg := range in {
+		if msg != nil && msg.Content != "" {
+			parts = append(parts, msg.Content)
 		}
 	}
-	if last == "" && len(in) > 0 {
-		last = in[len(in)-1].Content
+	whole := strings.Join(parts, " ")
+	if whole == "" {
+		for i := len(in) - 1; i >= 0; i-- {
+			if in[i].Role == schema.User {
+				whole = in[i].Content
+				break
+			}
+		}
 	}
 
-	content := stubEchoPrefix + last
+	content := stubEchoPrefix + whole
 
 	promptTokens := 0
 	for _, msg := range in {
