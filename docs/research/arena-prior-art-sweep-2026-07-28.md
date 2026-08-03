@@ -131,7 +131,14 @@ sweep forced it out.
    (`.claude/rules/arena-deterministic-judging.md` is not negotiable), but stop
    hand-rolling trajectory inspection if a maintained harness expresses it.
 4. **Report output determinism per framework** — one column, real signal,
-   already conventional elsewhere.
+   already conventional elsewhere. **But not where it first looked cheap.** The
+   integration lane's mock echoes the prompt, so it is deterministic BY
+   CONSTRUCTION and would report 100% for everyone: the cheap place to measure
+   it is the place where the measurement means nothing. It has to run on the
+   REAL lane, where a framework's retry, temperature and caching behaviour
+   actually shows, and there it costs 2x model calls per measured item. That
+   makes it a spending decision, not a free column — scope it to a small fixed
+   sample (e.g. the 3 qa items) rather than the whole suite.
 5. **Name the isolation/durability dimensions as the arena's contribution**, and
    consider citing LoCoMo/LongMemEval for the memory-quality half rather than
    competing with them. A benchmark that says "we use the standard suite for
