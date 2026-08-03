@@ -149,3 +149,6 @@ arenas/live/RESULTS.records.jsonl
 # is, and it IS committed).
 arenas/live/.records-archive/
 CACHE.md
+
+# Lista local de términos privados para scripts/pre-publication-sweep.sh (nunca se versiona)
+.private-sweep-names
