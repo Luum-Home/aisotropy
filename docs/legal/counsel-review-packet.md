@@ -161,7 +161,7 @@ Each of these is reproducible; spot-check rather than redo.
 | Claim | How to check |
 |---|---|
 | `LICENSE` is the unmodified canonical Apache-2.0 | `shasum -a256 LICENSE` vs `curl -s https://www.apache.org/licenses/LICENSE-2.0.txt \| shasum -a256` |
-| No first-party file still declares MIT | `git grep -nIE '"license": *"MIT"\|^license = "MIT"\|MIT\]\(LICENSE\)' -- . ':!*package-lock.json'` → 0 |
+| No first-party file still declares MIT | `git grep -nIE '"license": *"MIT"\|^license = "MIT"' -- '*package.json' '*Cargo.toml' ':!*package-lock.json'` → 0, and the same for `MIT](LICENSE)` over `README.md CONTRIBUTING.md` → 0. Scoped to files that *declare* a license: a repo-wide grep also matches ADR-0080 quoting the strings it replaced. |
 | No third-party source is redistributed in the tree | `git ls-files external/` → 0; `git ls-files \| grep -c '^vendor/'` → 0 |
 | Every dependency is permissively licensed | `scripts/license-audit.sh` → exit 0; [audit](../architecture/license-audit.md), [rust](../architecture/rust-dependency-licenses.md) |
 | Copyleft is present only by explicit, documented exception | [ADR-0067](../decisions/0067-grafana-agpl-exception-observability-stack.md) Grafana AGPL (image only), [ADR-0077](../decisions/0077-voicebox-gpl-exception-audio-backend.md) voicebox GPL-3.0 (separate service), [ADR-0079](../decisions/0079-telephony-cpaas-first-asterisk-gpl-exception-precleared.md) Asterisk GPLv2 (pre-cleared, not granted) |

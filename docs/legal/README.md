@@ -20,7 +20,7 @@ Two different things get called "licensing" in this repo. They do not live toget
 - **[Individual CLA](cla-individual.md)** — for a person contributing on their own behalf.
 - **[Corporate CLA](cla-corporate.md)** — for an organisation authorising its employees. Does not
   replace the individual agreement; both are needed.
-- **[Counsel review packet](counsel-review-packet.md)** — what was decided, the evidence, and eleven
+- **[Counsel review packet](counsel-review-packet.md)** — what was decided, the evidence, and twelve
   numbered questions for a lawyer. Written so the review is one sitting, not a discovery exercise.
 
 ## Status: DRAFT, NOT IN FORCE
