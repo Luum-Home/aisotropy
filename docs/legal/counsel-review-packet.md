@@ -36,6 +36,28 @@ third party; erasing the record neither revokes a grant nor creates one.
 
 ## Part 2 — Questions, in priority order
 
+> ### Re-scope, 2026-08-03: most of this is no longer urgent, and saying so is part of the job
+>
+> This packet was written when a **CLA sat on the critical path to publication**. It no longer does.
+> Contributions are open under **Apache-2.0 §5 alone** — nothing to sign, no CLA in force, no signer,
+> no personal data collected — and Q1 was answered by the operator. A packet that keeps presenting
+> twelve blocking questions after its premise changed is asking someone to bill for moot work.
+>
+> | Status | Questions | Why |
+> |---|---|---|
+> | **Answered — no review needed** | Q1 | Holder is a natural person, personal project. |
+> | **Moot while no CLA is in force** | Q2, Q2b, Q3, Q6 | All four are about a contract nobody is being asked to sign. They become live again the day a CLA is actually wanted, and not before. |
+> | **Engineering is confident; confirm only if cheap** | Q4, Q9 | Q4: the holder owns the copyright and publishes under the licence in `LICENSE`; no further act is known to be required. Q9: the rewrite grants and revokes nothing. |
+> | **Live, but read a document before paying for advice** | **Q5** | Whether an employer or client could claim the copyright now asserted publicly. The first step is reading your own employment/contractor agreement, not a consultation. Escalate only if its IP clause is ambiguous. |
+> | **Live, low stakes** | Q7, Q10 | Q7: the CC-BY-SA file carries its own licence and attribution. Q10: standard-library crypto in publicly available open source. |
+> | **Business decision, not a blocker** | Q8, Q11 | Trademark filing and posture advice can happen after publication. |
+>
+> **The honest bottom line, from the engineering side and not as legal advice: nothing here blocks
+> publishing.** The one item worth attention before the repo goes public is **Q5**, and its first step
+> costs a document read, not a retainer. Bring the full packet to counsel when a CLA is genuinely
+> wanted — that is when it earns its hour.
+
+
 ### Q1 — Who is the holder? *(ANSWERED 2026-08-03 — no longer blocks publication)*
 
 Previously this asked for the registered entity behind **"Luum"**, which appeared in `LICENSE`,
