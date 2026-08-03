@@ -30,6 +30,10 @@
 #      `go vet` in each examples/* module. Catches public-API rot: a break in the
 #      aisotropy/ façade that a copied example would hit — the root `go test ./...`
 #      never descends into the separate example modules, so nothing else catches it.
+#   5. arena/bench modules build     — BLOCKING. Same rot check for arenas/*, bench/*.
+#   6. license audit (--root-only)   — BLOCKING. Runs scripts/license-audit.sh over the
+#      root deps + compose-image allowlist: the local twin of the CI license step, so a
+#      non-permissive dep/unreviewed image can't reach origin even if CI is never watched.
 #
 # NOTE ON MODULES: only the ROOT module is vuln-scanned (internal/…, aisotropy, cmd/…).
 # BUILD gating is wider than vuln gating: examples/* (stage 4) AND arenas/*, bench/*
@@ -158,6 +162,31 @@ else
   echo "   all arena/bench modules build."
 fi
 
+# --- 6. license audit (BLOCKING) ---
+# WHY AT PRE-PUSH. The license gate lives in three places: the pre-commit hook
+# (conditional, only when a manifest is staged), the GitHub Actions CI step, and
+# here. This stage is the one that does NOT depend on observing a remote runner:
+# a commit made with --no-verify, by a concurrent session without the hook
+# installed, or before the gate existed can still carry a non-permissive dep or
+# an unreviewed compose image to the push. Running license-audit --root-only here
+# (~1s, same scope as the CI step) makes the guarantee local: an unreviewed
+# license cannot leave this machine even if CI is never looked at.
+echo
+echo "6) license audit  (root-module deps + compose-image allowlist — the CI step, run locally)"
+if bash "$(git rev-parse --show-toplevel)/scripts/license-audit.sh" --root-only >/dev/null 2>&1; then
+  echo "   license audit clean (permissive deps + allowlisted images)."
+else
+  lic_rc=$?
+  if [ "$lic_rc" -eq 2 ]; then
+    echo "   license audit could not run (env error, exit 2) — not blocking on tooling failure."
+  else
+    echo "   LICENSE AUDIT FAILED (exit $lic_rc): a root dep resolves to a non-permissive/absent"
+    echo "   license, or a compose image is not on the reviewed allowlist. Re-run to see the finding:"
+    echo "     bash scripts/license-audit.sh --root-only"
+    BLOCKED=1
+  fi
+fi
+
 # --- VERDICT ---
 echo
 echo "==================================================================="
@@ -167,6 +196,6 @@ if [ "$BLOCKED" -eq 1 ]; then
   echo "==================================================================="
   exit 1
 fi
-echo " VERDICT: clean — no reachable known-exploitable CVEs. Push may proceed."
+echo " VERDICT: clean — no reachable CVEs, all modules build, licenses permissive. Push may proceed."
 echo "==================================================================="
 exit 0
