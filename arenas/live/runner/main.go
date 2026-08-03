@@ -1394,6 +1394,11 @@ func runWorkItem(fw adapter, it workItem, budget *callCounter, retries int) reco
 	hasTok := true
 	for i, in := range it.Invocations {
 		res := runAdapterRetry(fw.runSh, in, invocationTimeout(in), retries, budget)
+		// Record the pairing BEFORE any early return, so a failed or errored
+		// invocation is in the trace too — those are the ones worth reading.
+		rec.Trace = append(rec.Trace, invocationTrace{
+			N: i + 1, Total: len(it.Invocations), In: in, Out: res.out, WallMs: res.wallMs,
+		})
 		// A spent provider budget invalidates the RUN, not just this cell: every
 		// remaining framework would fail for a reason that has nothing to do with
 		// it, and because the schedule is ordered, the damage lands entirely on

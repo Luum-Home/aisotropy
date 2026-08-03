@@ -169,6 +169,15 @@ type workItem struct {
 
 // ---- per-run record --------------------------------------------------------
 
+// invocationTrace is one adapter call: what went in, what came back.
+type invocationTrace struct {
+	N      int           `json:"n"` // 1-based, of Total
+	Total  int           `json:"total"`
+	In     adapterInput  `json:"in"`
+	Out    adapterOutput `json:"out"`
+	WallMs int64         `json:"wall_ms"`
+}
+
 type record struct {
 	Framework string
 	Mode      string
@@ -182,6 +191,34 @@ type record struct {
 	HasTok bool  // true when every invocation reported usage >= 0
 
 	RunErr string // runner-side failure (adapter crash / timeout / bad JSON)
+
+	// Trace is what was actually SENT and RECEIVED, per invocation.
+	//
+	// The record used to keep only Out — the LAST invocation's output. For a
+	// single-shot mode that is the whole story; for `memory` (persist, then
+	// recall) and memory_consolidation (persist, consolidate, recall) it throws
+	// away everything except the final answer, including which session id was
+	// used and what the earlier turns returned.
+	//
+	// That cost real time on 2026-07-28, and the first thing this field did once
+	// it existed was expose the diagnosis as unsound.
+	//
+	// While chasing why ai-sdk scored 0/8 on the integration lane, the reasoning
+	// was: input_tokens is 8 on BOTH turns, so the recall turn never received the
+	// history. The conclusion was right for another reason, but the inference was
+	// invalid — ai-sdk's mock returns a CONSTANT usage (stub.mjs stubUsage():
+	// inputTokens 8, outputTokens 6). That 8 is 8 with history and without it.
+	//
+	// The trace is what makes that visible: with the INPUT recorded beside the
+	// output, "the messages sent on turn 2 did/did not contain the earlier turn"
+	// is a fact you can read, instead of a token count you can misread.
+	//
+	// This is the one thing worth taking from Inspect AI (see
+	// docs/research/inspect-ai-evaluation-2026-07-28.md): a structured
+	// transcript per sample. Recording it needs NO adapter-contract change — the
+	// runner already builds every adapterInput and receives every adapterOutput;
+	// it simply discarded the pairing.
+	Trace []invocationTrace
 
 	// Det is the PRIMARY, always-computed deterministic score
 	// (arenas/live/runner/scoring) — pure, reproducible, no LLM/network/
