@@ -7,15 +7,16 @@ name: CI
 # NOTE ON MODULES: the arenas/*, examples/* and bench/* directories are SEPARATE
 # Go modules (each has its own go.mod), so the root `go test ./...` does not
 # descend into them. Only the root module (internal/..., aisotropy, cmd/...) is
-# coverage-gated — the floor is a statement about the SHIPPED runtime, and demo
-# modules would dilute it.
+# built, vetted, tested and coverage-gated here.
 #
-# They are NOT ungated, though: the `nested-modules` job below builds and tests
-# every one of them via scripts/test-all.sh --quick. That job was added on
-# 2026-08-04, when this note still read "not covered by this gate" and meant it —
-# which is exactly how a stale go.mod in arenas/live/aisotropy invalidated a
-# 58-run diagnostic, and how a grpc CVE bump broke 13 nested modules while every
-# job here stayed green. Gated for compile+test, excluded from the floor.
+# They are gated — just NOT here. ADR-0043 (local-first CI gates) records the
+# operator directive that new gates go to local git hooks rather than more paid
+# Actions jobs, so the nested-module build/test lives in the pre-push hook
+# (scripts/pre-push-gate.sh, via scripts/test-all.sh --quick), alongside
+# govulncheck, the OWASP suite, the golden-set gate, the doc-citation check and
+# the competitor-absence-claim guard. Do not re-add those as jobs here without
+# amending ADR-0043 first — they were briefly added on 2026-08-04 and reverted
+# the same day for exactly that reason.
 
 on:
   push:
@@ -150,68 +151,6 @@ jobs:
         # (TestRunTask_BrokerInvariant_KeyNeverEntersContainer) and the
         # key-brokering arena execute rather than skip.
         run: go test -tags keybroker ./... -race
-
-  nested-modules:
-    name: nested modules · build + test (arenas/*, examples/*, bench/*)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          check-latest: false
-
-      # WHY THIS JOB EXISTS. `go test ./...` does not descend into a nested
-      # go.mod, so every job above can be green while an arenas/ or examples/
-      # module does not even compile. That is not hypothetical here: a stale
-      # go.mod in arenas/live/aisotropy silently invalidated a 58-run
-      # diagnostic (the runs had been measuring a build that no longer
-      # compiled), and a grpc CVE bump broke 13 nested modules against a green
-      # root suite. The header note above ("nested demo modules are not gated
-      # here; the full sweep is scripts/test-all.sh run manually") described a
-      # sweep that nothing ever ran automatically — which is the same failure
-      # shape as a manual-tagged test lane with no runner.
-      #
-      # This runs the maintained script rather than re-implementing its module
-      # discovery inline, for two reasons: the logic stays in one place, and
-      # the script itself gets exercised on every push instead of rotting.
-      # --quick = root module + nested modules; no build tags (the keybroker
-      # job above owns those), no Rust, no standalone guards. The script
-      # reports SKIPPED separately from PASS and its final verdict names the
-      # skips, so a layer that could not run never reads as green.
-      - name: All modules (root + nested)
-        run: bash scripts/test-all.sh --quick
-
-  absence-claims:
-    name: competitor-absence claims · sweep marker + freshness
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # WHY THIS JOB EXISTS. The guard itself predates this job by weeks and was
-      # never wired to anything — it ran when somebody remembered to run it,
-      # which is the same shape as the manual-tagged test lanes and the nested
-      # modules above: a check that exists, works, and is not enforced. On
-      # 2026-08-04 the repo's own front page carried "no competing Go agent
-      # framework builds it" and a claim that a named competitor "leaked across
-      # tenants" — the exact sentences this guard was written for — and both
-      # shipped, because nothing ran it and because its patterns did not match
-      # them anyway. Patterns widened, ledger re-derived, and now it runs.
-      #
-      # Python only, no pip install: the guard is stdlib.
-      #
-      # Failure means a competitor claim is NEW or its sweep is older than 180
-      # days. The fix is the five-point ecosystem sweep in
-      # .claude/rules/capability-absence-claims.md, then a `SWEPT: YYYY-MM-DD
-      # <findings-doc>` annotation — never deleting the sentence's evidence
-      # requirement by adding it to the baseline. The baseline is a ledger of
-      # PRE-EXISTING debt, not a place to put today's claim.
-      - name: Absence-claim guard
-        run: python3 scripts/absence-claim-guard.py
 
   voice-lane:
     name: voice lane · offline WER units (ADR-0069)

@@ -17,6 +17,17 @@
 #   4. arena-integration-gate — OPT-IN, needs the local stack (ARENA_INTEGRATION_GATE=1)
 #   5. doc-citation gate      — docs citing commits that no longer exist
 #                               (SKIP_CITATION_GATE=1)
+#   6. absence-claim guard    — competitor claims without a current ecosystem
+#                               sweep (SKIP_ABSENCE_GUARD=1). Stdlib python3,
+#                               no network, sub-second.
+#   7. nested-module lane     — the 20+ separate go.mod under arenas/, examples/
+#                               and bench/, which the root `go test ./...` does
+#                               not descend into (SKIP_NESTED_MODULES=1). This
+#                               is the SLOW stage — it runs scripts/test-all.sh
+#                               --quick, minutes not seconds. Skip it for a
+#                               docs-only push; do not skip it after touching
+#                               aisotropy/'s public surface, which is precisely
+#                               what silently rots the nested modules.
 #
 # Reference every stage's script as "$REPO_ROOT/scripts/…", never
 # "$(dirname "$0")/…": git invokes this through the .git/hooks/pre-push symlink,
@@ -26,8 +37,13 @@
 # worse than no gate. Stage 4 carried the same latent bug, unnoticed because it
 # is opt-in and had never run.
 #
-# Enforcement here (local hooks) rather than a CI runner is deliberate: this
-# repo treats local gates as authoritative (the GitHub workflow is .disabled).
+# Enforcement here (local hooks) rather than a CI runner is deliberate, and is
+# recorded as ADR-0043: Actions minutes are billed, so NEW gates go here rather
+# than growing the workflow. (This comment used to say "the GitHub workflow is
+# .disabled". It is not, and no .disabled file exists — `.github/workflows/ci.yml`
+# is active and runs the correctness gate. Corrected 2026-08-04. What is true is
+# the narrower thing ADR-0043 actually decided: ci.yml keeps gofmt/vet/build/
+# test -race/coverage, and everything added since lives in this hook.)
 # The readiness audit (docs/architecture/ai-product-readiness.md) flagged that
 # the OWASP suite existed and passed but was NOT enforced on any push — a
 # suite nobody runs rots silently. This closes that gap.
@@ -114,7 +130,11 @@ if [ "${SKIP_CITATION_GATE:-0}" = "1" ]; then
 else
   if [ -x "$REPO_ROOT/scripts/check-doc-commit-citations.sh" ]; then
     echo "pre-push-gate: stage 5/5 doc commit-citation check ..."
-    bash "$REPO_ROOT/scripts/check-doc-commit-citations.sh" >/dev/null; rc=$?
+    # Same `set -eu` fix as stages 6 and 7 (2026-08-04): with `; rc=$?` this
+    # stage blocked the push correctly but printed NOTHING about why — the
+    # diagnostic below was unreachable because the script had already exited.
+    rc=0
+    bash "$REPO_ROOT/scripts/check-doc-commit-citations.sh" >/dev/null || rc=$?
     if [ "$rc" -eq 2 ]; then
       echo "pre-push-gate: doc-citation gate could not evaluate — NOT a pass." >&2
       exit 2
@@ -126,6 +146,69 @@ else
     }
   else
     echo "pre-push-gate: scripts/check-doc-commit-citations.sh missing or not executable — skipping stage 5" >&2
+  fi
+fi
+
+# ---- stage 6: competitor-absence claims -------------------------------------
+# Every claim that somebody else's product LACKS something, or that only we do
+# something, or that a named competitor leaked, needs a dated ecosystem sweep.
+# The guard predates this stage by weeks and was wired to nothing: on 2026-08-04
+# the repo's own front page carried both a blanket "no competing Go agent
+# framework builds it" and a claim that a named competitor "leaked across
+# tenants", and the guard reported clean — its patterns did not match either
+# sentence, and nothing ran it anyway. Patterns widened, ledger re-derived, and
+# now it runs on every push. Stdlib python3, no network, sub-second.
+if [ "${SKIP_ABSENCE_GUARD:-0}" = "1" ]; then
+  echo "pre-push-gate: stage 6/7 absence-claim guard SKIPPED (SKIP_ABSENCE_GUARD=1)"
+else
+  if [ -f "$REPO_ROOT/scripts/absence-claim-guard.py" ]; then
+    echo "pre-push-gate: stage 6/7 competitor-absence claim guard ..."
+    # `|| rc=$?`, not `; rc=$?`: this script runs under `set -eu`, so a bare
+    # failing command terminates it BEFORE the assignment — the push is blocked
+    # with the correct exit code but WITHOUT the diagnostic below ever printing.
+    # Measured, not theorised: the first version of this stage blocked silently.
+    rc=0
+    python3 "$REPO_ROOT/scripts/absence-claim-guard.py" >/dev/null || rc=$?
+    if [ "$rc" -eq 2 ]; then
+      echo "pre-push-gate: absence-claim guard could not evaluate — NOT a pass." >&2
+      exit 2
+    fi
+    [ "$rc" -eq 0 ] || {
+      echo "pre-push-gate: BLOCKED by the absence-claim guard (exit $rc)." >&2
+      python3 "$REPO_ROOT/scripts/absence-claim-guard.py" >&2
+      exit "$rc"
+    }
+  else
+    echo "pre-push-gate: scripts/absence-claim-guard.py missing — skipping stage 6" >&2
+  fi
+fi
+
+# ---- stage 7: nested modules (the slow one) ---------------------------------
+# `go test ./...` does not descend into a nested go.mod, so the root suite can be
+# green while an arenas/ or examples/ module does not compile. Twice paid for
+# here: a stale go.mod in arenas/live/aisotropy silently invalidated a 58-run
+# diagnostic (the runs had been measuring a build that no longer compiled), and a
+# grpc CVE bump broke 13 nested modules against a green root suite.
+#
+# Calls the maintained script instead of re-implementing module discovery, so the
+# logic stays in one place AND the script itself gets exercised rather than
+# rotting — the failure mode that produced every other gap in this file.
+# test-all.sh reports SKIPPED separately from PASS and names the skips in its
+# verdict, so a layer that could not run never reads as green.
+if [ "${SKIP_NESTED_MODULES:-0}" = "1" ]; then
+  echo "pre-push-gate: stage 7/7 nested-module lane SKIPPED (SKIP_NESTED_MODULES=1)"
+else
+  if [ -x "$REPO_ROOT/scripts/test-all.sh" ]; then
+    echo "pre-push-gate: stage 7/7 nested modules (root + arenas/ + examples/ + bench/) — slow ..."
+    rc=0
+    bash "$REPO_ROOT/scripts/test-all.sh" --quick >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 0 ] || {
+      echo "pre-push-gate: BLOCKED by the nested-module lane (exit $rc)." >&2
+      echo "pre-push-gate: re-run to see which module: scripts/test-all.sh --quick" >&2
+      exit "$rc"
+    }
+  else
+    echo "pre-push-gate: scripts/test-all.sh missing or not executable — skipping stage 7" >&2
   fi
 fi
 
