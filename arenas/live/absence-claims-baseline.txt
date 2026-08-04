@@ -1,14 +1,116 @@
 # Competitor-absence claims present when absence-claim-guard.py was
-# introduced (2026-07-28). Each asserts that somebody else's product lacks
+# introduced (2026-08-04). Each asserts that somebody else's product lacks
 # something, WITHOUT a recorded ecosystem sweep. This is a DEBT LEDGER:
 # run the five-point sweep, annotate the claim with SWEPT: YYYY-MM-DD
 # <findings-doc>, then delete its line here. Editing a claim's wording
 # makes it NEW again, which is the right moment to re-check it.
+arenas/ARENA-SPEC-v2.md::- **Eino** — CONVENTION / NOT-POSSIBLE-by-framework: a correctly composed key isolates; a dropped product segment collapses two keys (any string-keyed KV behave	arenas/ARENA-SPEC-v2.md:238
+arenas/ARENA-SPEC-v2.md::- **Genkit Go** — CONVENTION: the experimental `ai/exp` `SessionStore` (session-id-keyed) gives persistence, not isolation; product folded into the key by dev. 	arenas/ARENA-SPEC-v2.md:240
+arenas/ARENA-SPEC-v2.md::- **Pydantic AI** — DIY / out-of-scope: a stateless lib with no memory tier; `product_id` is one more dev-computed key, no framework layer to reject a wrong one	arenas/ARENA-SPEC-v2.md:235
+arenas/BENCHMARKS.md::The script runs only aisotropy's own module — no arena runtimes needed — and never contacts a	arenas/BENCHMARKS.md:365
+arenas/COST-OBS.md::**ADK Go** and **aisotropy**; Genkit is proprietary `genkit:*` (zero `gen_ai.*`); Eino has no	arenas/COST-OBS.md:77
+arenas/COST-OBS.md::dimension at all**; the tenant ledger is always hand-rolled. Only aisotropy ships per-tenant	arenas/COST-OBS.md:70
+arenas/README.md::**Two things the new entrants sharpen.** (1) **Cloudflare Agents** is the only framework of all	arenas/README.md:104
+arenas/README.md::- **Pydantic AI (Py)** — `DIY / out-of-scope`, **not a leak**: it is a stateless agent library that	arenas/README.md:216
+arenas/README.md::because there is no framework boundary to reject it — plain-dict behavior. **Genuinely great at:**	arenas/README.md:219
+arenas/README.md::locally, or a Vercel sandbox) so the agent's file writes and shell commands cannot touch the host.	arenas/README.md:333
+arenas/README.md::tier by design** (the same category as Pydantic AI or LangGraph), not because it "leaks."	arenas/README.md:175
+arenas/adk-go/FEATURES.md::`userID` with no framework-enforced separator, and is the developer-discipline,	arenas/adk-go/FEATURES.md:69
+arenas/adk-go/README.md::of its own and must be concatenated into `userID` (no framework-enforced	arenas/adk-go/README.md:204
+arenas/adk-go/orbit/product_isolation.go::// no framework-enforced separator. THAT axis — and only that one — is developer	arenas/adk-go/orbit/product_isolation.go:24
+arenas/cloudflare-agents/DX-NOTES.md::*inside* the object, which LangGraph literally cannot do. Working memory hydration "just	arenas/cloudflare-agents/DX-NOTES.md:28
+arenas/cloudflare-agents/README.md::lives *inside* the object (something LangGraph cannot do at all). **[RAN]**	arenas/cloudflare-agents/README.md:240
+arenas/dify/DX-NOTES.md::Dify is the only framework in this arena set whose **own license blocks Orbit's	arenas/dify/DX-NOTES.md:19
+arenas/eino/FEATURES.md::`Get/Set(ctx, id string)`, so Eino has no dimension to catch the dropped segment.	arenas/eino/FEATURES.md:234
+arenas/eino/FEATURES.md::a bare string with no tenant dimension and no default implementation, so multi-tenant isolation is	arenas/eino/FEATURES.md:154
+arenas/eino/FEATURES.md::attribution is [DIY]. Core Eino ships **no native OTel `gen_ai.*` semconv emitter**; turnkey	arenas/eino/FEATURES.md:108
+arenas/eino/FEATURES.md::because Eino has no tenant dimension to catch a dropped segment, not because Eino "leaks".	arenas/eino/FEATURES.md:30
+arenas/eino/FEATURES.md::exists anywhere in the interface, and there is **no default implementation**. Per-node state	arenas/eino/FEATURES.md:23
+arenas/eino/FEATURES.md::library with no tenancy primitive — the same category as LangGraph or Pydantic AI.	arenas/eino/FEATURES.md:25
+arenas/eino/README.md::This does not soften the de-strawman finding — Eino still has no tenancy/memory-isolation axis (see	arenas/eino/README.md:43
+arenas/eino/README.md::anywhere in the interface, and there is no default implementation** — the developer owns the key	arenas/eino/README.md:118
+arenas/eino/README.md::because Eino has no tenant dimension to notice a dropped segment — scoping is 100% the developer's	arenas/eino/README.md:134
+arenas/eino/cmd/costobs/cost_obs_demo.go::// Tenant identity: Eino's RunInfo (Name/Type/Component) has NO tenant field.	arenas/eino/cmd/costobs/cost_obs_demo.go:34
+arenas/eino/cmd/costobs/cost_obs_demo.go::fmt.Println(" Core Eino ships NO native OTel gen_ai emitter. Turnkey targets in eino-ext")	arenas/eino/cmd/costobs/cost_obs_demo.go:397
+arenas/eino/cmd/costobs/cost_obs_demo.go::fmt.Println(" Eino has NO pre-spend primitive (no equivalent of Pydantic AI's")	arenas/eino/cmd/costobs/cost_obs_demo.go:345
+arenas/eino/cmd/costobs/cost_obs_demo.go::fmt.Println(" Eino has no tenant dimension (RunInfo = Name/Type/Component only). The")	arenas/eino/cmd/costobs/cost_obs_demo.go:277
+arenas/eino/cmd/productiso/product_isolation_demo.go::// - Eino is a graph-ORCHESTRATION library (LangGraph-for-Go). It has NO	arenas/eino/cmd/productiso/product_isolation_demo.go:10
+arenas/eino/cmd/productiso/product_isolation_demo.go::fmt.Println("Eino is a graph-orchestration library with no tenancy primitive.")	arenas/eino/cmd/productiso/product_isolation_demo.go:64
+arenas/eino/feature_parity_demo.go::"Eino has NO tiered-memory concept: one bare-string checkpoint KV + retrieval seams, one flat nature. The 4 aisotropy tiers of different nature were each hand-a	arenas/eino/feature_parity_demo.go:622
+arenas/eino/feature_parity_demo.go::// DIY read-only probe over OUR tiers (no LLM spend). Eino has no server/probe.	arenas/eino/feature_parity_demo.go:1029
+arenas/eino/feature_parity_demo.go::// Real Eino streaming primitive: schema.Pipe -> StreamReader/StreamWriter.	arenas/eino/feature_parity_demo.go:676
+arenas/eino/feature_parity_demo.go::// Tenant identity carried in ctx — Eino has NO tenant dimension anywhere	arenas/eino/feature_parity_demo.go:79
+arenas/eino/feature_parity_demo.go::// developer's responsibility (DIY); Eino has no tenant dimension to enforce it,	arenas/eino/feature_parity_demo.go:200
+arenas/eino/feature_parity_demo.go::fmt.Sprintf("8 turns, keep=%d -> prompt tokens %v plateau instead of growing linearly (plateau=%v). Eino has no summary-buffer primitive; the condense/evict loo	arenas/eino/feature_parity_demo.go:514
+arenas/eino/feature_parity_demo.go::fmt.Sprintf("atomic append msg+event: commit=%v, crash-before-commit persisted nothing=%v, msg-count==event-count=%v. Eino has no transactional store; the both-	arenas/eino/feature_parity_demo.go:1106
+arenas/eino/feature_parity_demo.go::fmt.Sprintf("budget=%d: turn1 allowed (spent=%d), turn2 rejected-before-invoke=%v (model calls %d->%d unchanged). Eino has NO pre-spend primitive; usage is only	arenas/eino/feature_parity_demo.go:882
+arenas/eino/feature_parity_demo.go::fmt.Sprintf("callbacks.NewHandlerBuilder+WithCallbacks captured %d spans with timing+usage (usage=%v) — BUILT-IN aspect mechanism. tenant_id on span=%v ONLY via	arenas/eino/feature_parity_demo.go:1022
+arenas/eino/feature_parity_demo.go::fmt.Sprintf("pressure 0.10->%q, pressure 0.97(pref=premium)->%q, safety-valve-degraded=%v. Eino has no load-aware model router; this policy is ours.", firstTag(	arenas/eino/feature_parity_demo.go:949
+arenas/eino/feature_parity_demo.go::fmt.Sprintf("schema.Message.ResponseMeta.Usage is a BUILT-IN per-call field; per-tenant totals acme=%d globex=%d aggregated by OUR meter (Eino has no tenant dim	arenas/eino/feature_parity_demo.go:975
+arenas/eino/feature_parity_demo.go::fmt.Sprintf("superseded old->new: top was %q now %q, stale vector gone=%v. Eino has no supersede/contradiction concept; the delete-both-sides invariant is ours.	arenas/eino/feature_parity_demo.go:566
+arenas/eino/feature_parity_demo.go::fmt.Sprintf("verified token->identity=%q bind-ok=%v; cross-path token rejected=%q. Eino has NO auth/identity/transport layer at all — this HMAC verifier + must-	arenas/eino/feature_parity_demo.go:857
+arenas/eino/orbit/memory.go::// ID to the interrupt handle Eino returned. CRUCIALLY it has no tenant	arenas/eino/orbit/memory.go:88
+arenas/eino/orbit/memory.go::// that Eino has no tenant dimension to catch a wrong/short composed key. The	arenas/eino/orbit/memory.go:29
+arenas/eino/orbit/orbit.go::// workingMemory is Orbit's DIY working memory. Eino has no built-in	arenas/eino/orbit/orbit.go:33
+arenas/eino/orbit/orbit_test.go::// key via Eino's real runtime. Eino has no tenant dimension to catch the	arenas/eino/orbit/orbit_test.go:98
+arenas/eino/scripts/smoke.go::// Eino has no tenant dimension to catch the omission, not that Eino "leaks".	arenas/eino/scripts/smoke.go:109
+arenas/eino/scripts/smoke.go::// model. Eino is an orchestration library with no tenancy primitive; its	arenas/eino/scripts/smoke.go:99
+arenas/eino/scripts/smoke.go::// true of any such store, including aisotropy's BadgerDB. Eino simply has no	arenas/eino/scripts/smoke.go:162
+arenas/eino/scripts/smoke.go::fmt.Println(" you ask for. The failure is the dropped tenant segment; Eino has no tenant")	arenas/eino/scripts/smoke.go:184
+arenas/eve/.output/server/_libs/@ai-sdk/gateway+[...].mjs::if (WebSocketConstructor == null) throw new Error("No WebSocket implementation available.");	arenas/eve/.output/server/_libs/@ai-sdk/gateway+[...].mjs:8732
+arenas/eve/.output/server/_libs/eve.mjs::if (d != null && d.length > 0) throw Error(`Google Gemini API does not support image editing with Imagen models. Use Google Vertex AI (@ai-sdk/google-vertex) fo	arenas/eve/.output/server/_libs/eve.mjs:105504
+arenas/eve/.output/server/_libs/eve.mjs::if (f != null) throw Error(`Google Gemini API does not support image editing with masks. Use Google Vertex AI (@ai-sdk/google-vertex) for image editing capabili	arenas/eve/.output/server/_libs/eve.mjs:105505
+arenas/eve/.output/server/_libs/eve.mjs::if (t == null) throw Error(`No WebSocket implementation available.`);	arenas/eve/.output/server/_libs/eve.mjs:66777
+arenas/eve/.output/server/_libs/eve.mjs::l === `latest` && (s.resolveLatestDeploymentId ? l = await s.resolveLatestDeploymentId() : (Y$9 || (Y$9 = !0, Y$10.warn(`deploymentId: 'latest' has no effect in	arenas/eve/.output/server/_libs/eve.mjs:32297
+arenas/eve/.output/server/_libs/eve.mjs::return !isVercelEnvironment() || !isLocalSandboxBackend(e.backendName) ? e.error : Error(`The ${e.backendName} sandbox backend is not available when deploying o	arenas/eve/.output/server/_libs/eve.mjs:76641
+arenas/eve/.output/server/_libs/eve.mjs::return i = n === void 0 ? `it was invoked outside an eve context, so no authenticated user can be resolved.` : r == null ? `the active session has no authentica	arenas/eve/.output/server/_libs/eve.mjs:50429
+arenas/eve/.output/server/_libs/eve.mjs::return t.length > 0 && process.env.VERCEL === `1` && console.warn(`[workflow] Warning: ${t.join(`, `)} env var(s) are set but have no effect at runtime. These a	arenas/eve/.output/server/_libs/eve.mjs:32786
+arenas/eve/scripts/smoke.mjs::console.log(" DIY / OUT-OF-SCOPE (no tenancy primitive), like Pydantic AI / Eino — NOT a defect.");	arenas/eve/scripts/smoke.mjs:133
+arenas/genkit-go/DX-NOTES.md::Genkit has no built-in "stub"/"test" model, but `DefineModel` makes writing one trivial: you get	arenas/genkit-go/DX-NOTES.md:18
+arenas/genkit-go/FEATURES.md::- **Pre-spend gate — DIY (no framework API).** Re-verified: Genkit Go ships **no**	arenas/genkit-go/FEATURES.md:142
+arenas/genkit-go/FEATURES.md::`*sdktrace.TracerProvider` Genkit writes to) — no framework patching — and run ONE turn. It	arenas/genkit-go/FEATURES.md:156
+arenas/genkit-go/FEATURES.md::discipline the developer must remember. Genkit has no product primitive to enforce at all.	arenas/genkit-go/FEATURES.md:89
+arenas/genkit-go/FEATURES.md::leak, and Genkit validates nothing (`✗ CONVENTION LEAK`).	arenas/genkit-go/FEATURES.md:86
+arenas/genkit-go/README.md::- **We reproduce the leak against Genkit's REAL primitive.** `TestRealSessionStoreIsTenantUnaware`	arenas/genkit-go/README.md:154
+arenas/genkit-go/README.md::- `GENKIT_ENV=prod go run ./scripts/` — features pass, isolation leak confirmed, exit 0 (expected pass)	arenas/genkit-go/README.md:205
+arenas/genkit-go/README.md::PASS (leak reproduced against Genkit's real `localstore` SessionStore), `TestFeaturesRunOffline` PASS	arenas/genkit-go/README.md:208
+arenas/genkit-go/README.md::is still only a convention: nothing in Genkit forces or checks it (see the smoke for the leak).	arenas/genkit-go/README.md:80
+arenas/genkit-go/README.md::model" while importing no framework at all — both are fixed here.	arenas/genkit-go/README.md:197
+arenas/genkit-go/cmd/costobs/cost_obs_demo.go::fmt.Println(" before the request — Genkit Go has no equivalent.)")	arenas/genkit-go/cmd/costobs/cost_obs_demo.go:243
+arenas/genkit-go/cmd/costobs/cost_obs_demo.go::fmt.Println("\n VERDICT: [DIY] no framework pre-spend gate. ai.WithMaxTurns caps tool")	arenas/genkit-go/cmd/costobs/cost_obs_demo.go:240
+arenas/genkit-go/cmd/parity/feature_parity_demo.go::// DIY no framework support; the demo builds & LABELS the hand-rolled version	arenas/genkit-go/cmd/parity/feature_parity_demo.go:19
+arenas/genkit-go/cmd/parity/feature_parity_demo.go::// FEATURE 12 — Stateless response cache. No cache primitive in Genkit. DIY.	arenas/genkit-go/cmd/parity/feature_parity_demo.go:458
+arenas/genkit-go/cmd/parity/feature_parity_demo.go::// FEATURE 17 — Per-tenant PRE-SPEND quota gate. No framework API	arenas/genkit-go/cmd/parity/feature_parity_demo.go:581
+arenas/genkit-go/cmd/parity/feature_parity_demo.go::// FEATURE 18 — Circuit breaker. No framework breaker. DIY around demo/fail.	arenas/genkit-go/cmd/parity/feature_parity_demo.go:604
+arenas/genkit-go/cmd/parity/feature_parity_demo.go::// FEATURE 19 — Quota-pressure model degradation. No framework hook. DIY:	arenas/genkit-go/cmd/parity/feature_parity_demo.go:624
+arenas/genkit-go/cmd/parity/feature_parity_demo.go::// FEATURE 22 — Health / readiness probe. No framework probe. DIY read-only	arenas/genkit-go/cmd/parity/feature_parity_demo.go:682
+arenas/genkit-go/cmd/parity/feature_parity_demo.go::// FEATURE 24 — Transactional outbox (atomic message + event). No framework	arenas/genkit-go/cmd/parity/feature_parity_demo.go:734
+arenas/genkit-go/cmd/parity/feature_parity_demo.go::// FEATURE 3 — Facts / episodic FTS keyword search. No FTS primitive in Genkit.	arenas/genkit-go/cmd/parity/feature_parity_demo.go:303
+arenas/genkit-go/cmd/parity/feature_parity_demo.go::// No framework sleep cycle. DIY offline dedup.	arenas/genkit-go/cmd/parity/feature_parity_demo.go:746
+arenas/genkit-go/cmd/parity/feature_parity_demo.go::fmt.Sprintf("no framework breaker; DIY breaker opened after 5 failures -> 6th call short-circuited (model invocations=%d, 6th hit model=%v)", failCalls.Load(), 	arenas/genkit-go/cmd/parity/feature_parity_demo.go:622
+arenas/genkit-go/cmd/parity/feature_parity_demo.go::fmt.Sprintf("no framework probe endpoint; DIY read-only tier probe -> %s", probes))	arenas/genkit-go/cmd/parity/feature_parity_demo.go:687
+arenas/genkit-go/cmd/productiso/product_isolation_demo.go::// HONESTY CONTRACT: this is a LEAK, and it is labelled a leak. Genkit enforces	arenas/genkit-go/cmd/productiso/product_isolation_demo.go:36
+arenas/genkit-go/cmd/productiso/product_isolation_demo.go::fmt.Println(" developer must remember. Genkit has no product primitive to enforce at all.")	arenas/genkit-go/cmd/productiso/product_isolation_demo.go:205
+arenas/genkit-go/orbit/isolation_test.go::t.Logf("CONFIRMED convention leak: tenantB read tenantA's secret through genkit.Generate (no framework isolation): %q", leak.Reply)	arenas/genkit-go/orbit/isolation_test.go:67
+arenas/genkit-go/orbit/store.go::// (session-id-keyed, tenant-unaware) so the end-to-end genkit.Generate leak	arenas/genkit-go/orbit/store.go:20
+arenas/genkit-go/scripts/smoke.go::// 2. Genkit Go has NO tenant isolation. v1.10.0 ships an experimental ai/exp	arenas/genkit-go/scripts/smoke.go:9
+arenas/genkit-go/scripts/smoke.go::// drives a real cross-tenant leak straight through genkit.Generate.	arenas/genkit-go/scripts/smoke.go:13
+arenas/genkit-go/scripts/smoke.go::// for userB's request and the leak returns. Nothing in Genkit checks it.	arenas/genkit-go/scripts/smoke.go:183
+arenas/langgraph/FEATURES.md::## What LangGraph does genuinely well (aisotropy has NO equivalent) — RUN-VERIFIED via `strengths_demo.py`	arenas/langgraph/FEATURES.md:223
+arenas/langgraph/FEATURES.md::spans). LangGraph has no tenant concept to put there for you.	arenas/langgraph/FEATURES.md:88
+arenas/langgraph/feature_parity_demo.py::# LangGraph Store has NO full-text/FTS index. search(query=) is VECTOR only;	arenas/langgraph/feature_parity_demo.py:171
+arenas/langgraph/feature_parity_demo.py::# The bare Store/graph primitive has no auth. But LangGraph SERVER exposes an	arenas/langgraph/feature_parity_demo.py:522
+arenas/langgraph/product_isolation_demo.py::leaks become structurally impossible (Part B below). LangGraph ships that	arenas/langgraph/product_isolation_demo.py:19
+arenas/letta/FEATURES.md::- **CONVENTION (1):** #16 — caller→tenant binding (single-org: no framework bind; org-wide under-scoping leak proven in `smoke.py`, agent-scoped reads isolate b	arenas/letta/FEATURES.md:188
+arenas/letta/FEATURES.md::and it's the only framework that has productized sleep-time consolidation.	arenas/letta/FEATURES.md:322
+arenas/letta/README.md::**Narrow thesis, honestly bounded.** OSS Letta is a **single org** with no framework-enforced	arenas/letta/README.md:233
+arenas/letta/README.md::Letta OSS is a **single organization**: there is no framework binding between an	arenas/letta/README.md:154
+arenas/letta/orbit/memory.py::ORG with no framework binding between an authenticated caller and a tenant.** The	arenas/letta/orbit/memory.py:28
+arenas/letta/scripts/cost_obs_demo.py::"""DIY gate. Letta has NO equivalent of Pydantic AI's	arenas/letta/scripts/cost_obs_demo.py:192
+arenas/letta/scripts/product_isolation_demo.py::carry NO framework binding between the caller and a tenant/product. If a dev	arenas/letta/scripts/product_isolation_demo.py:29
 arenas/live/FULL-MATRIX.md::frameworks (langgraph/llamaindex/pydantic/mastra/ai-sdk/genkit-go/eino) are **`infeasible: WASI has no	arenas/live/FULL-MATRIX.md:34
 arenas/live/MATRIX-SCHEMA.md::only one of nine adapters, and the honest reading of "only aisotropy passes	arenas/live/MATRIX-SCHEMA.md:122
 arenas/live/MATRIX-SCHEMA.md::wasm" is partly that only aisotropy declared the dimension it wins.	arenas/live/MATRIX-SCHEMA.md:123
-arenas/live/_shared/embed-server/.venv/lib/python3.14/site-packages/filelock/_soft_rw/_sync.py::# private name nobody else can touch; if the re-verify sees a newer mtime or a different token, the	arenas/live/_shared/embed-server/.venv/lib/python3.14/site-packages/filelock/_soft_rw/_sync.py:843
-arenas/live/_shared/embed-server/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/_shared/embed-server/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py:229
 arenas/live/ai-sdk/README.md::**2026-07 ecosystem sweep.** The AI SDK core stays **L0** (no memory primitive), but Vercel now ships a	arenas/live/ai-sdk/README.md:306
 arenas/live/ai-sdk/README.md::differentiator (`docs/architecture/multi-tenancy.md`). The **Vercel AI SDK has no native	arenas/live/ai-sdk/README.md:63
 arenas/live/ai-sdk/README.md::faked capability**: the AI SDK has **no official first-party memory primitive of any kind**. The	arenas/live/ai-sdk/README.md:293
@@ -17,6 +119,7 @@ arenas/live/ai-sdk/README.md::{"framework":"ai-sdk","mode":"isolation_leak","mod
 arenas/live/ai-sdk/README.md::{"framework":"ai-sdk","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"I do not have access to information about \"your\" favorite deploy region. The o	arenas/live/ai-sdk/README.md:659
 arenas/live/ai-sdk/README.md::{"framework":"ai-sdk","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"I do not have access to information about \"your\" favorite deploy region. The o	arenas/live/ai-sdk/README.md:666
 arenas/live/ai-sdk/lib/modes/memory-scoped.mjs::// `lib/scoped-store.mjs` for the honest caveat: the AI SDK has no native	arenas/live/ai-sdk/lib/modes/memory-scoped.mjs:12
+arenas/live/ai-sdk/lib/scoped-store.mjs::* implementation IS the isolation boundary: there is no framework-level	arenas/live/ai-sdk/lib/scoped-store.mjs:81
 arenas/live/ai-sdk/lib/scoped-store.mjs::// HONEST NOTE: the Vercel AI SDK (`ai` + `@ai-sdk/openai`) has NO native	arenas/live/ai-sdk/lib/scoped-store.mjs:5
 arenas/live/ai-sdk/matrix.json::"docker": "infeasible:no native scope to forget — AI SDK has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so	arenas/live/ai-sdk/matrix.json:12
 arenas/live/ai-sdk/matrix.json::"docker": "infeasible:no native scope to forget — AI SDK has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so	arenas/live/ai-sdk/matrix.json:7
@@ -36,9 +139,7 @@ arenas/live/ai-sdk/matrix.json::"native": "infeasible:no official first-party se
 arenas/live/ai-sdk/matrix.json::"native": "infeasible:no official first-party semantic-memory primitive in the AI SDK — semantic recall exists only via COMMUNITY providers (mem0/Letta), so a p	arenas/live/ai-sdk/matrix.json:35
 arenas/live/ai-sdk/matrix.json::"wasm": "infeasible:no native scope to forget — AI SDK has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so a	arenas/live/ai-sdk/matrix.json:13
 arenas/live/ai-sdk/matrix.json::"wasm": "infeasible:no native scope to forget — AI SDK has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so a	arenas/live/ai-sdk/matrix.json:8
-arenas/live/aisotropy/main.go::// This used to say "the capability no other framework here has".	arenas/live/aisotropy/main.go:34
 arenas/live/aisotropy/mode_middleware.go::// honest differentiator the task calls out: none of the other framework	arenas/live/aisotropy/mode_middleware.go:20
-arenas/live/aisotropy/testdata/wasmguest/main.go::// no host filesystem/network/clock), the capability no other framework in this	arenas/live/aisotropy/testdata/wasmguest/main.go:6
 arenas/live/eino/README.md::"mechanism": "eino callbacks (outbound, native OnStart/OnEnd — observe-only by Eino's own contract) + model-wrapper (inbound, since callbacks cannot mutate shar	arenas/live/eino/README.md:450
 arenas/live/eino/README.md::**Eino has no single "middleware" primitive.** It has two distinct native seams, and this mode	arenas/live/eino/README.md:461
 arenas/live/eino/README.md::**Honest note: Eino has no native multi-tenant memory isolation.** There is no key-prefixing	arenas/live/eino/README.md:223
@@ -82,38 +183,30 @@ arenas/live/genkit-go/memory.go::// Genkit Go has NO user-scoped memory primitiv
 arenas/live/genkit-go/memory.go::fmt.Fprintf(os.Stderr, "PROGRESS: memory: wire user_id=%q -> ADAPTER-SUPPLIED user-scoped key %q (Genkit Go has no user-scoped memory primitive: ai/exp/session.	arenas/live/genkit-go/memory.go:62
 arenas/live/genkit-go/qdrant_client.go::// (Apache-2.0) over gRPC. Genkit-Go v1.10.0 ships no FIRST-PARTY (firebase/	arenas/live/genkit-go/qdrant_client.go:16
 arenas/live/genkit-go/rag.go::// github.com/qdrant/go-client — Genkit-Go ships no FIRST-PARTY Qdrant	arenas/live/genkit-go/rag.go:50
+arenas/live/genkit-go/rqlite_client.go::// (or leak) another tenant's rows, and nothing in Genkit-Go or rqlite	arenas/live/genkit-go/rqlite_client.go:182
 arenas/live/genkit-go/rqlite_client.go::// Genkit-Go has NO native multi-tenant memory-isolation primitive: the	arenas/live/genkit-go/rqlite_client.go:126
-arenas/live/langgraph/.venv/lib/python3.14/site-packages/langchain_openai/chat_models/_client_utils.py::`LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S=-10` can't silently disable the	arenas/live/langgraph/.venv/lib/python3.14/site-packages/langchain_openai/chat_models/_client_utils.py:89
-arenas/live/langgraph/.venv/lib/python3.14/site-packages/langgraph/store/base/__init__.py::f'Root label for namespace cannot be "langgraph". Got: {namespace}'	arenas/live/langgraph/.venv/lib/python3.14/site-packages/langgraph/store/base/__init__.py:1274
-arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/_internal/otel/_otel_exporter.py::# Default to "langchain" if we can't determine the system	arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/_internal/otel/_otel_exporter.py:624
-arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/client.py::"You cannot provide both LANGSMITH_ENDPOINT / LANGCHAIN_ENDPOINT "	arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/client.py:1148
-arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/run_trees.py::"You cannot provide both LANGSMITH_ENDPOINT / LANGCHAIN_ENDPOINT "	arenas/live/langgraph/.venv/lib/python3.14/site-packages/langsmith/run_trees.py:1277
-arenas/live/langgraph/.venv/lib/python3.14/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py::"""If none of the others apply."""	arenas/live/langgraph/.venv/lib/python3.14/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py:150
-arenas/live/langgraph/.venv/lib/python3.14/site-packages/opentelemetry/semconv/trace/__init__.py::"""If none of the others apply."""	arenas/live/langgraph/.venv/lib/python3.14/site-packages/opentelemetry/semconv/trace/__init__.py:1914
-arenas/live/langgraph/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/langgraph/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py:229
-arenas/live/langgraph/.venv/lib/python3.14/site-packages/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/langgraph/.venv/lib/python3.14/site-packages/urllib3/connectionpool.py:229
+arenas/live/genkit-go/rqlite_client.go::// silent cross-tenant leak — there is no framework guardrail catching it.	arenas/live/genkit-go/rqlite_client.go:136
+arenas/live/langgraph/README.md::flip to `true` — a leak at the **keying** layer, which LangGraph does nothing to prevent.	arenas/live/langgraph/README.md:390
 arenas/live/langgraph/README.md::verified directly against the pinned `langchain-core==1.4.9` source. Callbacks CANNOT do inbound	arenas/live/langgraph/README.md:542
 arenas/live/langgraph/matrix.json::"native": "infeasible:ARENA_STUB=1 uses InMemoryStore (langgraph.store.memory, per-process), so a recall in a SECOND process cannot see the first process's user	arenas/live/langgraph/matrix.json:162
 arenas/live/langgraph/matrix.json::"native": "infeasible:the omitted-scope verdict (leak vs silent_partition) is only observable with cross-process on-disk BaseStore state; ARENA_STUB=1's per-pro	arenas/live/langgraph/matrix.json:6
 arenas/live/langgraph/modes/observability.py::# is also capped at INFO so even a misconfigured LangChain logger can't	arenas/live/langgraph/modes/observability.py:101
 arenas/live/langgraph/modes/scoped_store.py::since 2024-12-05). So the honest claim is narrower than "LangGraph has no	arenas/live/langgraph/modes/scoped_store.py:11
-arenas/live/llamaindex/.venv/lib/python3.13/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py::"""If none of the others apply."""	arenas/live/llamaindex/.venv/lib/python3.13/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py:150
-arenas/live/llamaindex/.venv/lib/python3.13/site-packages/opentelemetry/semconv/trace/__init__.py::"""If none of the others apply."""	arenas/live/llamaindex/.venv/lib/python3.13/site-packages/opentelemetry/semconv/trace/__init__.py:1914
-arenas/live/llamaindex/.venv/lib/python3.13/site-packages/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/llamaindex/.venv/lib/python3.13/site-packages/urllib3/connectionpool.py:229
 arenas/live/llamaindex/README.md::LlamaIndex's `session_id`. LlamaIndex itself has no idea a "tenant" or "product" exists; as far	arenas/live/llamaindex/README.md:309
 arenas/live/llamaindex/README.md::{"framework": "llamaindex", "mode": "isolation_leak", "model": "agnes-2.0-flash", "reply": "I don't know. I have no memory of past conversations or secrets shar	arenas/live/llamaindex/README.md:851
 arenas/live/llamaindex/README.md::→ a different, empty collection → `VectorMemoryBlock.aget` returns nothing). LlamaIndex has no	arenas/live/llamaindex/README.md:251
 arenas/live/llamaindex/adapter.py::for a handler to rewrite the request that produced the event. There is NO native LlamaIndex	arenas/live/llamaindex/adapter.py:2012
+arenas/live/llamaindex/adapter.py::query boundary rather than leaking another user's data: LlamaIndex's `Memory`/	arenas/live/llamaindex/adapter.py:888
 arenas/live/llamaindex/adapter.py::recall hits and cross-tenant recall misses in one invocation. LlamaIndex has NO	arenas/live/llamaindex/adapter.py:100
+arenas/live/mastra/README.md::bash arenas/live/mastra/test-isolation.sh # memory_scoped (same-scope hit + cross-tenant miss + cross-process persistence) + isolation_leak (zero-leak + positiv	arenas/live/mastra/README.md:423
 arenas/live/mastra/README.md::documents honestly where Mastra has no native primitive (multi-tenant	arenas/live/mastra/README.md:17
+arenas/live/mastra/index.mjs::// proves (or disproves) a cross-tenant leak via a real Mastra turn	arenas/live/mastra/index.mjs:20
+arenas/live/mastra/lib/modes/isolation-forgetful.mjs::'Mastra did NOT refuse on this path — runner classifies leak vs silent_partition from reply',	arenas/live/mastra/lib/modes/isolation-forgetful.mjs:100
 arenas/live/mastra/lib/modes/memory.mjs::// memory_scoped / isolation_leak / crash_recovery, where Mastra has no native	arenas/live/mastra/lib/modes/memory.mjs:5
+arenas/live/mastra/lib/scoped-store.mjs::* implementation IS the isolation boundary: there is no framework-level	arenas/live/mastra/lib/scoped-store.mjs:83
+arenas/live/mastra/lib/scoped-store.mjs::// forgets user_id) creates a REAL cross-tenant data leak -- nothing in Mastra,	arenas/live/mastra/lib/scoped-store.mjs:14
 arenas/live/mastra/matrix.json::"native": "infeasible:the MockLanguageModel returns fixed text so a consolidated fact cannot be echoed on the cross-session recall; Mastra's consolidation is an	arenas/live/mastra/matrix.json:78
-arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py::"""If none of the others apply."""	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/opentelemetry/semconv/_incubating/attributes/faas_attributes.py:150
-arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/opentelemetry/semconv/trace/__init__.py::"""If none of the others apply."""	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/opentelemetry/semconv/trace/__init__.py:1914
-arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pip/_vendor/urllib3/connectionpool.py:229
-arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pydantic_ai/.agents/skills/building-pydantic-ai-agents/SKILL.md::- **Model strings need the provider prefix**: `'openai:gpt-5.2'` not `'gpt-5.2'`. Without the prefix, Pydantic AI can't resolve the provider.	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pydantic_ai/.agents/skills/building-pydantic-ai-agents/SKILL.md:261
-arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pydantic_ai/.agents/skills/building-pydantic-ai-agents/SKILL.md::- **Observability**: Pydantic AI has first-class integration with Logfire for tracing agent runs, tool calls, and model requests. Add it with `logfire.instrumen	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/pydantic_ai/.agents/skills/building-pydantic-ai-agents/SKILL.md:252
-arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/urllib3/connectionpool.py::# to free self if nobody else has a reference to it.	arenas/live/pydantic-ai/.venv/lib/python3.14/site-packages/urllib3/connectionpool.py:229
+arenas/live/pydantic-ai/README.md::"no framework capability to exercise," which is the truthful state here.	arenas/live/pydantic-ai/README.md:242
 arenas/live/pydantic-ai/README.md::**`isolation_forgetful` — infeasible: no native scope to forget (L0).** Pydantic AI is **L0** for a data	arenas/live/pydantic-ai/README.md:249
 arenas/live/pydantic-ai/README.md::> **Honest note:** Pydantic AI has **no native multi-tenant memory isolation primitive**.	arenas/live/pydantic-ai/README.md:274
 arenas/live/pydantic-ai/README.md::brute force, not a Pydantic AI primitive**. So the cell is `infeasible: no official semantic-recall	arenas/live/pydantic-ai/README.md:240
@@ -122,7 +215,10 @@ arenas/live/pydantic-ai/README.md::{"framework": "pydantic-ai", "mode": "memory_
 arenas/live/pydantic-ai/adapter.py::# Pydantic AI has NO separate structured-logging channel in its	arenas/live/pydantic-ai/adapter.py:878
 arenas/live/pydantic-ai/adapter.py::# Pydantic AI has no native multi-tenant memory concept. This mode proves the	arenas/live/pydantic-ai/adapter.py:541
 arenas/live/pydantic-ai/adapter.py::# is violently killed one instant later -- but Pydantic AI itself has NO	arenas/live/pydantic-ai/adapter.py:690
+arenas/live/pydantic-ai/adapter.py::framework (no framework scope to forget; the scope here is adapter glue).	arenas/live/pydantic-ai/adapter.py:450
+arenas/live/pydantic-ai/arena_memory_store.py::# above, and it is only as safe as this code makes it. There is no framework	arenas/live/pydantic-ai/arena_memory_store.py:171
 arenas/live/pydantic-ai/arena_memory_store.py::Pydantic AI has **no native multi-tenant memory isolation primitive** --	arenas/live/pydantic-ai/arena_memory_store.py:20
+arenas/live/pydantic-ai/arena_memory_store.py::`isolation_leak` modes -- there is no framework-enforced tenant boundary	arenas/live/pydantic-ai/arena_memory_store.py:188
 arenas/live/pydantic-ai/matrix.json::"docker": "infeasible:no native scope to forget — Pydantic AI has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md	arenas/live/pydantic-ai/matrix.json:12
 arenas/live/pydantic-ai/matrix.json::"docker": "infeasible:no native scope to forget — Pydantic AI has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md	arenas/live/pydantic-ai/matrix.json:7
 arenas/live/pydantic-ai/matrix.json::"docker": "infeasible:no official semantic-recall primitive — see stub.native; Pydantic AI has no embedding-backed conversational-memory component and the harne	arenas/live/pydantic-ai/matrix.json:31
@@ -134,12 +230,22 @@ arenas/live/pydantic-ai/matrix.json::"native": "infeasible:no official semantic-
 arenas/live/pydantic-ai/matrix.json::"native": "infeasible:no official semantic-recall primitive — Pydantic AI ships no embedding-backed conversational memory; the pydantic-ai-harness Memory capabi	arenas/live/pydantic-ai/matrix.json:30
 arenas/live/pydantic-ai/matrix.json::"wasm": "infeasible:no native scope to forget — Pydantic AI has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md);	arenas/live/pydantic-ai/matrix.json:13
 arenas/live/pydantic-ai/matrix.json::"wasm": "infeasible:no native scope to forget — Pydantic AI has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md);	arenas/live/pydantic-ai/matrix.json:8
+arenas/live/runner/dimensions.go::// zero-leak: the real "no leak" assertion. Exclude the ai-sdk positive-control	arenas/live/runner/dimensions.go:357
+arenas/live/runner/dimensions.go::continue // ai-sdk's deliberately-leaking control, not the isolation signal	arenas/live/runner/dimensions.go:373
+arenas/live/runner/dimensions.go::rec.Note = "no test-crash.sh — no framework here has native crash-recovery; this adapter ships no crash harness"	arenas/live/runner/dimensions.go:293
+arenas/live/runner/lane_test.go::rec("genkit-go", "agnes-2.0-flash", 700), // NOT a leak: 700ms fast stub mislabel	arenas/live/runner/lane_test.go:26
+arenas/live/runner/lane_test.go::rec("langgraph", "Agnes-2.0-Flash", 49), // NOT a leak: reports agnes but 49ms = offline stub mislabel	arenas/live/runner/lane_test.go:25
+arenas/live/runner/main.go::logf("lane=%s: verified — no framework reported the real model (zero model spend)", lane)	arenas/live/runner/main.go:409
 arenas/live/runner/matrix.go::// (mode_scoped_memory.go: "Eino has NO native multi-tenant memory isolation	arenas/live/runner/matrix.go:480
 arenas/live/runner/matrix.go::// apples-to-apples, and a gap that flatters the house is the one nobody else	arenas/live/runner/matrix.go:321
+arenas/live/runner/matrix.go::// compound scope") — there is no framework boundary to omit anything at, and a	arenas/live/runner/matrix.go:483
 arenas/live/runner/matrix.go::// primitive"), genkit-go (rqlite_client.go: "Genkit-Go has NO native	arenas/live/runner/matrix.go:481
 arenas/live/runner/matrix_test.go::// this is the house-flattering direction, the one nobody else is motivated	arenas/live/runner/matrix_test.go:276
-arenas/live/runner/results.go::b.WriteString("> 'only aisotropy does memory' reading, which the evidence does not support.\n")	arenas/live/runner/results.go:497
-arenas/live/runner/results.go::b.WriteString("> blanket claim here): four (ai-sdk, pydantic-ai, eino, genkit-go) have no\n")	arenas/live/runner/results.go:677
+arenas/live/runner/results.go::b.WriteString(" pydantic-ai, eino, genkit-go) are **L0** — no framework-owned data plane to scope.\n")	arenas/live/runner/results.go:1384
+arenas/live/runner/results.go::b.WriteString("- **Crash recovery: no native support anywhere.** No framework here has native\n")	arenas/live/runner/results.go:1395
+arenas/live/runner/results.go::b.WriteString("> 'only aisotropy does memory' reading, which the evidence does not support.\n")	arenas/live/runner/results.go:522
+arenas/live/runner/results.go::b.WriteString("> **Consistent finding: no framework here has *native* crash-recovery.** What passes\n")	arenas/live/runner/results.go:772
+arenas/live/runner/results.go::b.WriteString("> blanket claim here): four (ai-sdk, pydantic-ai, eino, genkit-go) have no\n")	arenas/live/runner/results.go:702
 arenas/live/runner/scoring/decline_vocabulary_test.go::{"cannot fulfill (eino, sg-offtopic-crypto)",	arenas/live/runner/scoring/decline_vocabulary_test.go:30
 arenas/live/runner/scoring/decline_vocabulary_test.go::{"cannot perform (llamaindex, sg-jailbreak-persona)",	arenas/live/runner/scoring/decline_vocabulary_test.go:32
 arenas/live/runner/scoring/decline_vocabulary_test.go::{"cannot perform + bypass (mastra, sg-jailbreak-persona)",	arenas/live/runner/scoring/decline_vocabulary_test.go:34
@@ -154,11 +260,48 @@ arenas/live/spring-ai/matrix.json::"native": "infeasible:no native consolidation
 arenas/live/spring-ai/matrix.json::"native": "infeasible:no native semantic-recall chat-memory primitive — Spring AI 1.0.0 has no VectorStore-backed chat memory (jar-verified); exercising this wo	arenas/live/spring-ai/matrix.json:37
 arenas/live/spring-ai/matrix.json::"native": "infeasible:no native semantic-recall chat-memory primitive — Spring AI 1.0.0's chat/memory package ships only ChatMemory / MessageWindowChatMemory / 	arenas/live/spring-ai/matrix.json:32
 arenas/live/spring-ai/src/main/java/arena/springai/RqliteChatMemoryRepository.java::* limitation (same as genkit-go's stub): a map cannot prove CROSS-process	arenas/live/spring-ai/src/main/java/arena/springai/RqliteChatMemoryRepository.java:37
-docs/architecture/arena-benchmark-methodology.md::framework) corrected that. Four of them (AI SDK, Pydantic AI, Eino, Genkit-Go) genuinely have no	docs/architecture/arena-benchmark-methodology.md:266
+arenas/mastra/FEATURES.md::default path does not partition. The distinction from aisotropy is not "Mastra leaks" — it is that	arenas/mastra/FEATURES.md:231
+arenas/mastra/docker/README.md::Mastra publishes **no official Dockerfile** — the docs describe the built-output	arenas/mastra/docker/README.md:15
+arenas/mastra/scripts/cost_obs_demo.ts::// Mastra has NO built-in pre-spend/usage-limit check (no equivalent of	arenas/mastra/scripts/cost_obs_demo.ts:167
+arenas/mastra/scripts/cost_obs_demo.ts::` pre-spend gate ............. [DIY] Mastra has NO built-in pre-spend/usage-limit check; ` +	arenas/mastra/scripts/cost_obs_demo.ts:206
+arenas/pydantic-ai/FEATURES.md::[DIY] Confirmed: a wrong developer-computed product_id reads the wrong slice — no framework layer to prevent it	arenas/pydantic-ai/FEATURES.md:162
+arenas/pydantic-ai/FEATURES.md::a leak: a leak would mean a framework boundary failed, but Pydantic AI ships no such boundary.	arenas/pydantic-ai/FEATURES.md:135
+arenas/pydantic-ai/FEATURES.md::reads the wrong slice — because there is **no framework isolation layer to reject it**. That is	arenas/pydantic-ai/FEATURES.md:132
+arenas/pydantic-ai/README.md::There is no framework boundary to fail here. If a developer computes a scoping key wrong in their	arenas/pydantic-ai/README.md:88
+arenas/pydantic-ai/README.md::is right, and a wrong developer-computed key reads the wrong slice — because there is no framework	arenas/pydantic-ai/README.md:30
+arenas/pydantic-ai/docker/README.md::Pydantic AI ships **no official Docker image and no official Dockerfile** — it is a	arenas/pydantic-ai/docker/README.md:16
+arenas/pydantic-ai/scripts/product_isolation_demo.py::There is no framework isolation LAYER to test on any axis. What we exercise is a	arenas/pydantic-ai/scripts/product_isolation_demo.py:18
+arenas/pydantic-ai/scripts/product_isolation_demo.py::print(" [DIY] Confirmed: a wrong developer-computed product_id reads the wrong slice — no framework layer to prevent it")	arenas/pydantic-ai/scripts/product_isolation_demo.py:212
+arenas/pydantic-ai/scripts/product_isolation_demo.py::print(" developer-computed product_id reads the wrong slice because NO framework")	arenas/pydantic-ai/scripts/product_isolation_demo.py:240
+arenas/pydantic-ai/scripts/product_isolation_demo.py::slice (because no framework isolation layer exists on the product axis).	arenas/pydantic-ai/scripts/product_isolation_demo.py:140
+arenas/pydantic-ai/scripts/smoke.py::So there is no framework isolation boundary to test. Any scoped memory is 100%	arenas/pydantic-ai/scripts/smoke.py:13
+arenas/pydantic-ai/scripts/smoke.py::print(" [DIY] Confirmed: a wrong developer-computed key reads the wrong slice — no framework layer to prevent it")	arenas/pydantic-ai/scripts/smoke.py:207
+arenas/pydantic-ai/scripts/smoke.py::print(" key reads the wrong slice because NO framework isolation layer exists.")	arenas/pydantic-ai/scripts/smoke.py:235
+arenas/spring-ai/DX-NOTES.md::### `conversationId` has no framework-enforced identity binding — the isolation story is yours to construct	arenas/spring-ai/DX-NOTES.md:52
+arenas/spring-ai/FEATURES.md::Memory keyed by a `conversationId` String with no framework-enforced identity binding — isolation is	arenas/spring-ai/FEATURES.md:133
+arenas/spring-ai/FEATURES.md::aisotropy makes the leaky read unrepresentable and gates spend per-tenant before the call; Spring AI	arenas/spring-ai/FEATURES.md:296
+arenas/spring-ai/README.md::> the developer owns — there is **no framework-enforced identity binding** on it.	arenas/spring-ai/README.md:9
+arenas/spring-ai/README.md::`conversationId` is a developer-owned string with no framework-enforced identity binding. That is the	arenas/spring-ai/README.md:101
+arenas/spring-ai/src/main/java/orbit/Orbit.java::* The developer-authored composite key, shown in its NAIVE flat form. Spring AI has no notion of	arenas/spring-ai/src/main/java/orbit/Orbit.java:98
+arenas/spring-ai/src/main/java/orbit/Orbit.java::* developer-owned string with no framework-enforced identity binding. Isolation is therefore a	arenas/spring-ai/src/main/java/orbit/Orbit.java:36
+arenas/spring-ai/src/main/java/orbit/ProductIsolationMain.java::* <p>Spring AI has NO product concept — {@code product} is just one more segment the developer folds	arenas/spring-ai/src/main/java/orbit/ProductIsolationMain.java:7
+arenas/spring-ai/src/main/java/orbit/ProductIsolationMain.java::System.out.println("Product axis: Spring AI has no product primitive; product is a developer-owned");	arenas/spring-ai/src/main/java/orbit/ProductIsolationMain.java:28
+arenas/spring-ai/src/main/java/orbit/SmokeMain.java::* developer-owned string with no framework-enforced identity binding — isolation here is a	arenas/spring-ai/src/main/java/orbit/SmokeMain.java:24
+arenas/spring-ai/src/main/java/orbit/SmokeMain.java::* {@code conversationId} String with no framework-enforced principal binding. If the developer lets	arenas/spring-ai/src/main/java/orbit/SmokeMain.java:12
+docs/architecture/arena-authorship-lens-sweep.md::three defects were all cases where no framework provided it and every adapter built	docs/architecture/arena-authorship-lens-sweep.md:82
+docs/architecture/arena-benchmark-methodology.md::framework) corrected that. Four of them (AI SDK, Pydantic AI, Eino, Genkit-Go) genuinely have no	docs/architecture/arena-benchmark-methodology.md:275
+docs/architecture/arena-fairness-protocol.md::(`populate-qdrant.py:10-14`) — identical vectors for every framework, no per-framework embedding	docs/architecture/arena-fairness-protocol.md:300
 docs/architecture/arena-fairness-protocol.md::JSON envelope only we emit).	docs/architecture/arena-fairness-protocol.md:99
-docs/architecture/arena-idiomaticity-and-dx.md::dimension); genkit-go vector (no first-party Go plugin; the third-party `qdrant/qdrant-genkit`	docs/architecture/arena-idiomaticity-and-dx.md:60
-docs/architecture/arena-infrastructure-parity.md::"no memory primitive" → "primitive exists, not enforced"; eino/genkit-go "no Qdrant plugin" is	docs/architecture/arena-infrastructure-parity.md:88
+docs/architecture/arena-idiomaticity-and-dx.md::dimension); genkit-go vector (no first-party Go plugin; the third-party `qdrant/qdrant-genkit`	docs/architecture/arena-idiomaticity-and-dx.md:69
+docs/architecture/arena-idiomaticity-and-dx.md::hand-rolled tenant/user/product scoped stores (no framework ships a tri-scope isolation	docs/architecture/arena-idiomaticity-and-dx.md:71
+docs/architecture/arena-infrastructure-parity.md::"no memory primitive" → "primitive exists, not enforced"; eino/genkit-go "no Qdrant plugin" is	docs/architecture/arena-infrastructure-parity.md:97
+docs/architecture/arena-memory-analysis.md::- FASE-3 wiring commits: `0bdd3ff` (langgraph, the leak-beats-prediction finding), `55ee6b1`	docs/architecture/arena-memory-analysis.md:583
 docs/architecture/arena-memory-analysis.md::> The adapter's own docstring concedes it: *"LlamaIndex's Memory/VectorMemoryBlock has no user	docs/architecture/arena-memory-analysis.md:369
+docs/architecture/arena-memory-analysis.md::> carry that qualifier — "langgraph leaks" without it overstates the scope of a security	docs/architecture/arena-memory-analysis.md:355
+docs/architecture/arena-memory-analysis.md::`ScoreForgetful` that fails langgraph would fail aisotropy on a leak	docs/architecture/arena-memory-analysis.md:499
+docs/architecture/arena-memory-analysis.md::`isolation_forgetful` infeasible-by-design errors on the four adapters with no framework-level user	docs/architecture/arena-memory-analysis.md:322
+docs/architecture/arena-memory-analysis.md::boundary (L3); langgraph and llamaindex fail 0/2 — langgraph with a genuine cross-user leak **in its `SqliteStore` backend specifically** (its `InMemoryStore` s	docs/architecture/arena-memory-analysis.md:433
+docs/architecture/arena-memory-analysis.md::code* — langgraph's `SqliteStore` leak came from executing `SqliteStore.search` with a blank namespace during	docs/architecture/arena-memory-analysis.md:393
 docs/architecture/arena-memory-analysis.md::probe (2/2), AND the only framework with a perfect safeguard (7/7) — while also being among the	docs/architecture/arena-memory-analysis.md:442
 docs/architecture/arena-memory-analysis.md::unqualified anywhere in it, and no sentence claims a capability is unique to aisotropy.	docs/architecture/arena-memory-analysis.md:530
 docs/architecture/arena-memory-extensions.md::**The claim "cross-session / semantic long-term / consolidation is unique to aisotropy" does not	docs/architecture/arena-memory-extensions.md:27
@@ -169,15 +312,26 @@ docs/architecture/arena-memory-extensions.md::> claim of "unique to aisotropy" t
 docs/architecture/arena-memory-extensions.md::description: An ecosystem-wide capability audit of the seven competitor frameworks' official memory extensions (langgraph/langmem, llamaindex, mastra, pydantic-	docs/architecture/arena-memory-extensions.md:4
 docs/architecture/arena-memory-forensics.md::- **mastra** ships the only framework-level default bound among the seven:	docs/architecture/arena-memory-forensics.md:402
 docs/architecture/arena-memory-forensics.md::and can replay the canned assistant turns verbatim (§5), so only aisotropy's per-turn design turns	docs/architecture/arena-memory-forensics.md:158
+docs/architecture/arena-memory-forensics.md::necessarily does its own ordered-history replay, with no library-level memory primitive to fail.	docs/architecture/arena-memory-forensics.md:414
 docs/architecture/arena-memory-forensics.md::session_id (comment at `mode_memory.go:22-23`: "Eino has no built-in persisted-memory component to	docs/architecture/arena-memory-forensics.md:418
+docs/architecture/arena-rate-limiting.md::pacing or retry**: no framework is sped up, slowed down, or given extra retries	docs/architecture/arena-rate-limiting.md:132
+docs/architecture/arena-safeguard-dimension.md::persona (runner-supplied), so no framework is advantaged or disadvantaged by a	docs/architecture/arena-safeguard-dimension.md:95
+docs/architecture/arena-tenancy-levels.md::- **"No framework auto-plumbs the vector-store tenant filter" is an absence-of-evidence claim** — based	docs/architecture/arena-tenancy-levels.md:181
+docs/architecture/arena-tenancy-levels.md::- **Genkit-Go's "no framework-owned data plane" conclusion is not independently source-verified beyond	docs/architecture/arena-tenancy-levels.md:173
 docs/architecture/arena-tenancy-levels.md::> of the seven (AI SDK, Pydantic AI, Eino, Genkit-Go) genuinely have no framework-owned data plane to	docs/architecture/arena-tenancy-levels.md:14
-docs/architecture/arena-wasm-tool-dimension.md::"No other framework here has it" was never true.	docs/architecture/arena-wasm-tool-dimension.md:44
-docs/architecture/arena-wasm-tool-dimension.md::- The "no other framework here has" claim is **retracted** in	docs/architecture/arena-wasm-tool-dimension.md:84
-docs/architecture/arena-wasm-tool-dimension.md::> WASM sandbox **(the capability no other framework here has)**	docs/architecture/arena-wasm-tool-dimension.md:14
-docs/architecture/arena-wasm-tool-dimension.md::about: **a gap that flatters the house is the one nobody else is motivated to find.**	docs/architecture/arena-wasm-tool-dimension.md:76
-docs/architecture/arena-wasm-tool-dimension.md::llamaindex has no isolation boundary in its official tool (and it says so itself).	docs/architecture/arena-wasm-tool-dimension.md:59
-docs/architecture/capability-absence-claims.md::**A claim that a framework/tool/competitor LACKS a capability ("X has no Y", "only we do Z",	docs/architecture/capability-absence-claims.md:16
-docs/architecture/capability-absence-claims.md::other frameworks, "unique to us" statements, marketing-adjacent architecture docs, and any	docs/architecture/capability-absence-claims.md:67
+docs/architecture/arena-wasm-tool-dimension.md::"No other framework here has it" was never true.	docs/architecture/arena-wasm-tool-dimension.md:45
+docs/architecture/arena-wasm-tool-dimension.md::- The "no other framework here has" claim is **retracted** in	docs/architecture/arena-wasm-tool-dimension.md:85
+docs/architecture/arena-wasm-tool-dimension.md::> WASM sandbox **(the capability no other framework here has)**	docs/architecture/arena-wasm-tool-dimension.md:15
+docs/architecture/arena-wasm-tool-dimension.md::about: **a gap that flatters the house is the one nobody else is motivated to find.**	docs/architecture/arena-wasm-tool-dimension.md:77
+docs/architecture/arena-wasm-tool-dimension.md::llamaindex has no isolation boundary in its official tool (and it says so itself).	docs/architecture/arena-wasm-tool-dimension.md:60
+docs/architecture/capability-absence-claims.md::**A claim that a framework/tool/competitor LACKS a capability ("X has no Y", "only we do Z",	docs/architecture/capability-absence-claims.md:25
+docs/architecture/capability-absence-claims.md::other frameworks, "unique to us" statements, marketing-adjacent architecture docs, and any	docs/architecture/capability-absence-claims.md:76
+docs/architecture/consolidation-proposal.md::2. `internal/tenancy` (`Scope`, ctx propagation) — **the moat; this is the one thing no competitor	docs/architecture/consolidation-proposal.md:165
+docs/architecture/consolidation-proposal.md::exists to show that [no competitor builds it](../../arenas/README.md). **Never demote.**	docs/architecture/consolidation-proposal.md:325
+docs/architecture/granular-control.md::This is the axis where "no AI library" shows the most, because it's the one magic frameworks	docs/architecture/granular-control.md:75
+docs/architecture/granular-control.md::description: The three axes of Aisotropy's native granular control — data-level filtering, a token circuit breaker, and dynamic cloning/assembly of primitives —	docs/architecture/granular-control.md:4
 docs/architecture/observability-design.md::(llamaindex) is doing so for span-kind vocabulary, not because a `gen_ai.*`-speaking backend cannot	docs/architecture/observability-design.md:189
 docs/architecture/observability-design.md::conventions' operation names; OpenInference is unnecessary** — the only framework leaning on it	docs/architecture/observability-design.md:188
+docs/architecture/positioning-key-brokering.md::thing [no competitor builds](../../arenas/README.md) (proposal §5), it is Docker-free, and it is what	docs/architecture/positioning-key-brokering.md:201
 docs/architecture/prune-evidence-gate.md::> produced the arena strawmen, the Letta "nonexistent API" claim, and "Genkit has no memory	docs/architecture/prune-evidence-gate.md:18
+docs/architecture/sandbox-providers.md::Both built-ins shell out to a stock CLI via `os/exec` — no container SDK, no CGO — matching the repo's	docs/architecture/sandbox-providers.md:57

@@ -61,11 +61,25 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Where comparative claims are made. Not the whole repo: a claim in a scratch
 # note is not a published claim.
 SCAN = [
-    "arenas/live",
+    # `arenas`, not `arenas/live`: the per-framework directories (arenas/eino,
+    # arenas/genkit-go, arenas/adk-go, ...) hold FEATURES.md / DX-NOTES.md /
+    # README.md, which is where the densest competitor claims actually live. The
+    # original scope missed 13 such directories — the guard was reporting a debt
+    # of 176 against a real population closer to 280, so its own ledger
+    # understated the thing it exists to count.
+    "arenas",
     "docs/architecture",
     "README.md",
 ]
-SKIP_DIRS = {"node_modules", ".git", "vendor", "__pycache__", "dist", "build", "target"}
+# `.venv` / `site-packages` matter here for a reason worth stating: this guard
+# walks the FILESYSTEM, not the git index, so an untracked virtualenv sitting
+# inside a scanned directory gets read like authored prose. That already
+# happened — 20 baseline entries pointed into a .venv that no clone will ever
+# contain. Vendored/installed third-party text is not an authored claim.
+SKIP_DIRS = {
+    "node_modules", ".git", "vendor", "__pycache__", "dist", "build", "target",
+    ".venv", "venv", "site-packages", ".pytest_cache", ".mypy_cache", "testdata",
+}
 SCAN_EXT = (".go", ".md", ".py", ".ts", ".mjs", ".java", ".json")
 
 # GENERATED artifacts are not authored claims. RESULTS.md is rendered from the
@@ -87,9 +101,44 @@ ABSENCE = re.compile(
     re.I,
 )
 # Explicit uniqueness constructions naming no competitor but claiming all of them.
+#
+# The `no <modifiers> <noun>` alternative was added on 2026-08-04 after the
+# repo's own front page slipped past every pattern here. README.md said "no
+# competing Go agent framework builds it" — a claim about EVERY competitor, and
+# the exact sentence this guard exists to stop — and matched nothing: the list
+# below had "no other framework" but not "no <adjective> framework". A guard
+# that only recognises one word order is matching a phrasing, not a claim.
 UNIQUENESS = re.compile(
     r"(no other framework|nobody else|none of the (?:other|competing)|only (?:we|aisotropy)\b"
-    r"|the only framework|unique to (?:us|aisotropy))",
+    r"|the only framework|unique to (?:us|aisotropy)"
+    # Two deliberate narrowings, both paid for by false positives on the first
+    # draft of this line (measured 2026-08-04, before/after counts in the commit):
+    #   · the filler words may not be articles/prepositions. "no LLM credential
+    #     THE runtime falls back to a keyless stub" is a sentence about OUR OWN
+    #     runtime, and it matched when any 4 words were allowed through.
+    #   · the head noun list excludes "runtime"/"engine". Both are words this
+    #     repo uses constantly about itself ("no arena runtimes needed"), so
+    #     they cost more precision than the recall they buy. "framework" and
+    #     "library" are what a competitor claim actually reaches for.
+    r"|\bno (?:(?!the\b|a\b|an\b|of\b|for\b|to\b|in\b|on\b|with\b|and\b|or\b)\w+[-\s]){0,3}"
+    r"(?:framework|library|sdk|competitor|rival|implementation)s?\b)",
+    re.I,
+)
+
+# Attribution of a DEFECT to somebody else's product. This is a third class, and
+# it is the one that actually shipped: "one rival leaked across tenants" is not
+# an absence claim ("X lacks Y") and not a uniqueness claim ("only we do Y"), so
+# neither pattern above looked at it — while being the most exposed sentence in
+# the repository, on the front page, naming a competitor, asserting a data-safety
+# failure. Saying somebody else's product LEAKS is a heavier claim than saying it
+# lacks a feature, and it was the one class with no guard at all.
+#
+# Gated on competitor proximity like ABSENCE: a defect word with nobody attached
+# is our own prose about our own tests (the isolation_leak dimension is named
+# after this exact vocabulary), not a claim about anyone.
+DEFECT = re.compile(
+    r"\b(leaks?|leaked|leaking|leaky|vulnerab\w+|insecure|unsafe|exploitable"
+    r"|silently (?:drops|loses|returns|ignores))\b",
     re.I,
 )
 SWEEP = re.compile(r"SWEPT:\s*(\d{4}-\d{2}-\d{2})")
@@ -142,7 +191,7 @@ def is_competitor_claim(line: str) -> bool:
     low = line.lower()
     if UNIQUENESS.search(line):
         return True
-    if not ABSENCE.search(line):
+    if not (ABSENCE.search(line) or DEFECT.search(line)):
         return False
     return any(c in low for c in COMPETITORS)
 
@@ -203,8 +252,18 @@ def main() -> int:
             swept = nearest_sweep(lines, i)
             excerpt = line.strip()[:110]
             key = claim_key(rel, line)
-            all_keys.append((key, f"{rel}:{i+1}"))
+            # Only UNSWEPT claims belong in the ledger. Appending here rather
+            # than before the `swept is None` test is a fix, not a style change:
+            # --write-baseline used to record every claim it saw, so a claim that
+            # already carried a current SWEPT: marker was written into a file
+            # whose own header calls it "claims ... WITHOUT a recorded ecosystem
+            # sweep". That overstated the debt, and it broke the one documented
+            # way to work the debt down — "annotate the claim, then delete its
+            # line here" — because for those entries the line was never load-
+            # bearing. Caught on 2026-08-04 when a sentence swept minutes earlier
+            # showed up in the regenerated ledger.
             if swept is None:
+                all_keys.append((key, f"{rel}:{i+1}"))
                 if key in baseline and not write_baseline:
                     grandfathered.append(f"  {rel}:{i+1}")
                     continue
