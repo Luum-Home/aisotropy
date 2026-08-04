@@ -188,6 +188,23 @@ def is_competitor_claim(line: str) -> bool:
     # A rendered table row is output, not an authored sentence.
     if line.lstrip().startswith("|"):
         return False
+    # Neither is a serialized RUN RECORD. The adapter READMEs embed captured
+    # arena output as evidence — {"framework":…,"mode":…,"model":…,"reply":…} in
+    # a ```json block — and the absence language inside is the MODEL's answer,
+    # not a sentence anybody wrote about a competitor. On the isolation_leak
+    # records it is the DESIRED answer: "I have no information about your
+    # account" is the model correctly refusing to leak, i.e. evidence the
+    # framework passed. Flagging it as "you claim a rival lacks something"
+    # inverts what the line is.
+    #
+    # Discriminated on the `"reply"` key, deliberately, because it is the
+    # narrowest thing that separates a captured record from the OTHER JSON this
+    # guard must keep reading: matrix.json's `"native": "infeasible:<reason>"`
+    # entries ARE authored competitor claims (the no-blank-cells law requires a
+    # written reason) and carry no reply field. Measured when this was added:
+    # exactly 9 entries left the ledger, all of them run records.
+    if '"reply"' in line and line.lstrip().startswith(("{", "[", '"')):
+        return False
     low = line.lower()
     if UNIQUENESS.search(line):
         return True

@@ -114,10 +114,6 @@ arenas/live/MATRIX-SCHEMA.md::wasm" is partly that only aisotropy declared the d
 arenas/live/ai-sdk/README.md::**2026-07 ecosystem sweep.** The AI SDK core stays **L0** (no memory primitive), but Vercel now ships a	arenas/live/ai-sdk/README.md:306
 arenas/live/ai-sdk/README.md::differentiator (`docs/architecture/multi-tenancy.md`). The **Vercel AI SDK has no native	arenas/live/ai-sdk/README.md:63
 arenas/live/ai-sdk/README.md::faked capability**: the AI SDK has **no official first-party memory primitive of any kind**. The	arenas/live/ai-sdk/README.md:293
-arenas/live/ai-sdk/README.md::{"framework":"ai-sdk","mode":"isolation_leak","model":"agnes-2.0-flash","reply":"I do not know any secrets about your account. I have no information stored rega	arenas/live/ai-sdk/README.md:673
-arenas/live/ai-sdk/README.md::{"framework":"ai-sdk","mode":"isolation_leak","model":"agnes-2.0-flash","reply":"I have no information about your account.","leak_detected":true,"attacker_visib	arenas/live/ai-sdk/README.md:680
-arenas/live/ai-sdk/README.md::{"framework":"ai-sdk","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"I do not have access to information about \"your\" favorite deploy region. The o	arenas/live/ai-sdk/README.md:659
-arenas/live/ai-sdk/README.md::{"framework":"ai-sdk","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"I do not have access to information about \"your\" favorite deploy region. The o	arenas/live/ai-sdk/README.md:666
 arenas/live/ai-sdk/lib/modes/memory-scoped.mjs::// `lib/scoped-store.mjs` for the honest caveat: the AI SDK has no native	arenas/live/ai-sdk/lib/modes/memory-scoped.mjs:12
 arenas/live/ai-sdk/lib/scoped-store.mjs::* implementation IS the isolation boundary: there is no framework-level	arenas/live/ai-sdk/lib/scoped-store.mjs:81
 arenas/live/ai-sdk/lib/scoped-store.mjs::// HONEST NOTE: the Vercel AI SDK (`ai` + `@ai-sdk/openai`) has NO native	arenas/live/ai-sdk/lib/scoped-store.mjs:5
@@ -150,7 +146,6 @@ arenas/live/eino/README.md::VARIES across invocations — defeating session-keye
 arenas/live/eino/README.md::a property of what Eino officially ships, not of this adapter's wiring — which is why it is now reported	arenas/live/eino/README.md:315
 arenas/live/eino/README.md::cross-process persistence layer is custom code, since Eino has no built-in persisted-memory	arenas/live/eino/README.md:162
 arenas/live/eino/README.md::persistence layer for `memory` mode, because Eino has no built-in persisted-memory component.	arenas/live/eino/README.md:10
-arenas/live/eino/README.md::{"framework":"eino","mode":"memory_scoped","model":"agnes-2.0-flash","reply":"I do not have access to that information. The stored facts for this scope contain 	arenas/live/eino/README.md:771
 arenas/live/eino/README.md::{"text":"OK","middleware":{"mechanism":"eino callbacks (outbound, native OnStart/OnEnd — observe-only by Eino's own contract) + model-wrapper (inbound, since ca	arenas/live/eino/README.md:654
 arenas/live/eino/README.md::{"text":"[ARENA_STUB echo] Say OK.","middleware":{"mechanism":"eino callbacks (outbound, native OnStart/OnEnd — observe-only by Eino's own contract) + model-wra	arenas/live/eino/README.md:678
 arenas/live/eino/main.go::// Eino has no native concept of these — see mode_scoped_memory.go.	arenas/live/eino/main.go:47
@@ -172,7 +167,6 @@ arenas/live/genkit-go/README.md::- **`crash_recovery`'s rqlite table** (`arena_g
 arenas/live/genkit-go/README.md::- **`memory_scoped`/`isolation_leak`'s `arena_genkit_go_scoped_memory` table** has no	arenas/live/genkit-go/README.md:955
 arenas/live/genkit-go/README.md::by construction. Genkit Go has no user-scoped memory primitive, so this adapter SUPPLIES the user	arenas/live/genkit-go/README.md:310
 arenas/live/genkit-go/README.md::matching the task's explicit fallback instruction ("if Genkit-Go lacks a Qdrant plugin, use	arenas/live/genkit-go/README.md:154
-arenas/live/genkit-go/README.md::{"framework":"genkit-go","mode":"isolation_leak","model":"agnes-2.0-flash","reply":"I do not have any record of secrets being shared with me in this conversatio	arenas/live/genkit-go/README.md:732
 arenas/live/genkit-go/matrix.json::"docker": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md),	arenas/live/genkit-go/matrix.json:12
 arenas/live/genkit-go/matrix.json::"docker": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md),	arenas/live/genkit-go/matrix.json:7
 arenas/live/genkit-go/matrix.json::"native": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md),	arenas/live/genkit-go/matrix.json:11
@@ -193,7 +187,6 @@ arenas/live/langgraph/matrix.json::"native": "infeasible:the omitted-scope verdi
 arenas/live/langgraph/modes/observability.py::# is also capped at INFO so even a misconfigured LangChain logger can't	arenas/live/langgraph/modes/observability.py:101
 arenas/live/langgraph/modes/scoped_store.py::since 2024-12-05). So the honest claim is narrower than "LangGraph has no	arenas/live/langgraph/modes/scoped_store.py:11
 arenas/live/llamaindex/README.md::LlamaIndex's `session_id`. LlamaIndex itself has no idea a "tenant" or "product" exists; as far	arenas/live/llamaindex/README.md:309
-arenas/live/llamaindex/README.md::{"framework": "llamaindex", "mode": "isolation_leak", "model": "agnes-2.0-flash", "reply": "I don't know. I have no memory of past conversations or secrets shar	arenas/live/llamaindex/README.md:851
 arenas/live/llamaindex/README.md::→ a different, empty collection → `VectorMemoryBlock.aget` returns nothing). LlamaIndex has no	arenas/live/llamaindex/README.md:251
 arenas/live/llamaindex/adapter.py::for a handler to rewrite the request that produced the event. There is NO native LlamaIndex	arenas/live/llamaindex/adapter.py:2012
 arenas/live/llamaindex/adapter.py::query boundary rather than leaking another user's data: LlamaIndex's `Memory`/	arenas/live/llamaindex/adapter.py:888
@@ -210,8 +203,6 @@ arenas/live/pydantic-ai/README.md::"no framework capability to exercise," which 
 arenas/live/pydantic-ai/README.md::**`isolation_forgetful` — infeasible: no native scope to forget (L0).** Pydantic AI is **L0** for a data	arenas/live/pydantic-ai/README.md:249
 arenas/live/pydantic-ai/README.md::> **Honest note:** Pydantic AI has **no native multi-tenant memory isolation primitive**.	arenas/live/pydantic-ai/README.md:274
 arenas/live/pydantic-ai/README.md::brute force, not a Pydantic AI primitive**. So the cell is `infeasible: no official semantic-recall	arenas/live/pydantic-ai/README.md:240
-arenas/live/pydantic-ai/README.md::{"framework": "pydantic-ai", "mode": "isolation_leak", "model": "agnes-2.0-flash", "reply": "I have no information for this scope.", "input_tokens": 307, "outpu	arenas/live/pydantic-ai/README.md:350
-arenas/live/pydantic-ai/README.md::{"framework": "pydantic-ai", "mode": "memory_scoped", "model": "agnes-2.0-flash", "reply": "For tenant-acme, the Q3 launch codename is Falcon-Nebula.", "input_t	arenas/live/pydantic-ai/README.md:315
 arenas/live/pydantic-ai/adapter.py::# Pydantic AI has NO separate structured-logging channel in its	arenas/live/pydantic-ai/adapter.py:878
 arenas/live/pydantic-ai/adapter.py::# Pydantic AI has no native multi-tenant memory concept. This mode proves the	arenas/live/pydantic-ai/adapter.py:541
 arenas/live/pydantic-ai/adapter.py::# is violently killed one instant later -- but Pydantic AI itself has NO	arenas/live/pydantic-ai/adapter.py:690
