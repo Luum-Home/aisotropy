@@ -10,9 +10,23 @@ timestamp: 2026-07-14T00:00:00Z
 
 This is the **canonical status node**. When any other document (README, `index.md`, roadmap,
 a pitch) implies a capability is live, this ledger is the arbiter of whether that is true
-*today*, verified by reading the code and the test surface rather than the design docs. (Note,
-2026-07-14: there is no CI pipeline in this repo — no `.github/` — so "verified" here means the
-local test suite, `go test ./...`, not an automated gate.)
+*today*, verified by reading the code and the test surface rather than the design docs.
+
+**What "verified" means here (corrected 2026-08-04).** This paragraph used to read *"there is no CI
+pipeline in this repo — no `.github/`"*, and by 2026-08-04 that was false: `.github/workflows/ci.yml`
+exists, `CONTRIBUTING.md` points contributors at it, and it gates every push and pull request. The
+arbiter of what is real was itself contradicted by `ls` — worth recording rather than quietly
+overwriting, because it is the failure mode this whole document exists to catch, committed by this
+document.
+
+So "verified" now means an **automated gate**, not a local run: `gofmt` + `go vet` + `go build` +
+the license audit + `go test ./... -race` + a weighted coverage floor over `internal/...`,
+`aisotropy/` and `cmd/aisotropy/`; plus separate jobs for the `keybroker`-tagged surface, the
+nested modules (`arenas/*`, `examples/*`, `bench/*`, via `scripts/test-all.sh --quick`), the
+competitor-absence-claim guard, and the offline voice lane. What CI still does **not** run stays
+exactly as caveated per-row below: the `manual`-tagged lanes (live rqlite/Qdrant/sleep-cycle/
+bitrate), the Rust crates, and the standalone guards. A row whose only evidence is a `manual` lane
+is still not gate-verified, and this ledger keeps saying so.
 
 It exists because the knowledge base's own epistemic rule — *"if you haven't measured it, it's
 not a claim"* ([principles](../vision/principles.md)) — has to be enforced somewhere, and because

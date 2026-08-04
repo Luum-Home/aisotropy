@@ -272,5 +272,3 @@ The v1 trigger of ADR-0013 (2–3 real consumers) is unblocked by steps 1–3, *
 - [Competitive landscape](../research/competitive-landscape.md) — why the moat is isolation, not composition.
 - [Phase 9 — Composition surface](../roadmap/milestones.md#phase-9--composition-surface-dual-a--b) — the DoD this satisfies.
 - [Typed-tool-args SDD](../roadmap/sdd/typed-tool-args.md) — lever #1, the first deliverable.
-</content>
-</invoke>

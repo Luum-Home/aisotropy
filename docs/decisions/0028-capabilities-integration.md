@@ -249,5 +249,3 @@ sound), green and available, but off the personalized request path.
 - Wiring: [`internal/api/guard.go`](../../internal/api/guard.go) (`Guard`, `checkInput`/`checkOutput`/`annotateOutput`, `selectClient`), [`internal/api/chat.go`](../../internal/api/chat.go), [`chat_stream.go`](../../internal/api/chat_stream.go), [`chat_agent.go`](../../internal/api/chat_agent.go); construction in [`aisotropy/app.go`](../../aisotropy/app.go) (`guard`, `buildModelGateway`, `guardrailsBlockFromEnv`, `costBudgetFromEnv`)
 - Packages: [`internal/guardrails`](../../internal/guardrails), [`internal/gateway`](../../internal/gateway), [`internal/responsecache`](../../internal/responsecache); the output-judge seam [`internal/eval`](../../internal/eval) (`LLMJudge`)
 - [runtime as built](../architecture/runtime-as-built.md) (the request-lifecycle ledger updated alongside this ADR) · [`docs/architecture/reality-ledger.md`](../architecture/reality-ledger.md) (REAL/CODE-ONLY classification to update)
-</content>
-</invoke>

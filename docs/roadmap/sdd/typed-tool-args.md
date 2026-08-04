@@ -203,4 +203,3 @@ records the 0.x tool-arg evolution; and ADR-0013 open-question #1 is marked reso
 - [ADR-0013 — Public extension surface](../../decisions/0013-public-extension-surface-facade-vs-promote.md) (open-question #1 this resolves; 0.x compat policy)
 - [ADR-0002 — Anti-framework-magic](../../decisions/0002-anti-framework-magic-struct-as-contract.md) (struct-as-contract, the thesis this completes)
 - [Phase 9 — Composition surface](../milestones.md#phase-9--composition-surface-dual-a--b)
-</content>

@@ -421,5 +421,3 @@ build/verify gate, not a guideline:
 - [Phase 9 — Composition surface](../roadmap/milestones.md#phase-9--composition-surface-dual-a--b) — the DoD this satisfies.
 - [Constitutional gates](../../.claude/rules/constitutional-gates.md) — the invariants §"Constitutional invariants".
 - Implementation plan: [`0060-multi-agent-graph-orchestration-plan.md`](0060-multi-agent-graph-orchestration-plan.md).
-</content>
-</invoke>

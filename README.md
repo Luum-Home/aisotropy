@@ -17,8 +17,11 @@ Docker, Rust, or Python in the default boot** — `go get`, `go run .`, done.
 Every memory read is scoped to the tenant that owns it, *by the type system*, before it runs. The
 identity arrives once — a `TenantID`/`UserID` that enters `context.Context` at the boundary and
 scopes every tier below it — and there is **no consumer-facing way to construct a cross-tenant
-read**. That is the moat: the [arena programme](arenas/README.md) exists to show no competing Go
-agent framework builds it (one rival [leaked across tenants](arenas/genkit-go) when we reproduced it).
+read**. That is the moat: the [arena programme](arenas/README.md) measures every framework on the
+same **L0–L3 isolation ladder**, and no competing Go agent framework reaches **L3 — enforced by
+construction** (`SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md`). Reproduced
+concretely: with a hand-composed key, one rival [read another product's data back within the same
+tenant and user](arenas/genkit-go) — a convention-level (L1) boundary, not an enforced one.
 
 **This is proven, not asserted.** [`aisotropy/isolation_e2e_test.go`](aisotropy/isolation_e2e_test.go)
 is a black-box test that boots the real HTTP surface with two tenants — deliberately reusing the
@@ -307,5 +310,3 @@ cross-linked, both human- and agent-readable):
 [ADR-0080](docs/decisions/0080-project-license-apache-2.md) for why (express patent grant,
 trademark reservation, inbound-contribution terms). One exception, called out in `NOTICE`:
 `bench/rag-quality/testdata/xquad_slice.json` is CC-BY-SA-4.0.
-</content>
-</invoke>

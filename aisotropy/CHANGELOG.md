@@ -70,4 +70,3 @@ breaking change is allowed only on a minor bump, with a migration note here**
 - MCP integration is stdio-only for now (gollem also offers HTTP); no in-repo
   end-to-end test spawns a real MCP server — the adapter is unit-tested with a
   fake client, the subprocess wiring is exercised manually.
-</content>

@@ -189,5 +189,3 @@ Re-open (amend this ADR or write a new one) if **any** fire:
 - [consolidation-proposal.md](../architecture/consolidation-proposal.md) — "breadth outran depth; don't build ahead of demand," the direction this defer honors.
 - [capabilities-and-gaps.md](../architecture/capabilities-and-gaps.md) — the informal "conscious skip" this ADR formalizes.
 - [AGENTS.md](../../AGENTS.md) — the in-repo dev-time standard OpenSpec would join if trigger #1 fires.
-</content>
-</invoke>

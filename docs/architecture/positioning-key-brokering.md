@@ -337,4 +337,3 @@ its cost/benefit is the worst of the three for this decision.
 - `internal/taskagent`, `internal/sandbox` — the separable engine + isolation backend (measured §1).
 - [Arenas README](../../arenas/README.md) — the isolation moat evidence; `arenas/key-brokering/` the
   flagship demo.
-</content>

@@ -187,4 +187,3 @@ the reference/dev stack. Expect the first build to take several minutes.
 - [Distroless deployment](distroless.md) — the production single-binary image
 - [Services configuration](../../.claude/rules/services-config.md) — the env contract
 - [Competitive landscape](../research/competitive-landscape.md) — why the tiered moat matters
-</content>

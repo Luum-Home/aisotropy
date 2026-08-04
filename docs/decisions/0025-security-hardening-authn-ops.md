@@ -186,5 +186,3 @@ The review's **LOW-severity** items, recorded for honesty — **handled** vs **a
 - [threat model](../architecture/threat-model.md) (the threats this ADR closes/acknowledges) ·
   [operations runbook](../deployment/runbook.md) (secure-deployment env vars) ·
   [runtime as built](../architecture/runtime-as-built.md) (ops-gate + TLS middleware in the pipeline)
-</content>
-</invoke>

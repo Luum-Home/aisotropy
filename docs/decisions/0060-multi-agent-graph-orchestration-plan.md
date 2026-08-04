@@ -148,4 +148,3 @@ decision). The node body imports `internal/llm` (`RunToolAgent`); the scheduler 
 - Typed edges (`Edge[T]`), bounded critic-loop cycles (`WithMaxIterations`), durable/resumable graphs
   (outbox-backed), an HTTP/SSE graph route (multiplexed node events), and `WithContinueOnError`
   per-branch tolerance. Each is an open question in ADR-0060 §Open questions.
-</content>
