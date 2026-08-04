@@ -23,16 +23,22 @@
 #   (arenas/* and examples/* that are SEPARATE modules never appear here at all —
 #    the root `go test ./...` does not descend into them.)
 #
-# Also excluded: internal/semantic/qdrant.go — the ONE integration-gated file in
-# the promoted set. QdrantStore drives a live Qdrant gRPC server (a real network
-# service), so its statements are only exercised by qdrant_manual_test.go /
-# qdrant_newpaths_manual_test.go, which sit behind the `manual` build tag and run
-# only when a Qdrant instance is provisioned. It is NOT dead code — it is the
-# production semantic backend when QDRANT_HOST is set — but faking a gRPC server
-# in a unit test would exercise nothing real, so we exclude its statements from
-# the weighted floor exactly like the thin mains. The rest of internal/semantic
-# (the in-memory store, scoping, kinds, TTL/eviction, reranker, embedders,
-# factory) IS unit-tested and stays in the floor.
+# NOTHING inside the included prefixes is carved out. There used to be one
+# exclusion — internal/semantic/qdrant.go — justified on the claim that its
+# statements "never appear in a unit-test coverage.out" because QdrantStore
+# drives a live gRPC server and is reached only by the `manual`-tagged
+# qdrant_manual_test.go. Measured on 2026-08-04 against a default `go test ./...`
+# profile (no build tags, no Qdrant provisioned), that claim was false:
+# qdrant.go was at 129/142 statements = 90.8%. The non-network half — scope-key
+# derivation, payload-filter construction, error mapping — is unit-tested like
+# anything else; only the live-service branches are not.
+#
+# The carve-out was therefore removed rather than re-worded. It moved the
+# promoted-set number by 0.07pp (95.53% -> 95.46% on that same profile), which
+# buys nothing, and a gate script asserting something a one-line awk disproves
+# is worse than the 0.07pp. If a future file genuinely cannot be reached without
+# a live service, exclude it THEN — and record the measurement that shows it,
+# not the assumption.
 #
 # Usage:
 #   .github/scripts/coverage-floor.sh [coverage_profile] [floor_percent]
@@ -79,13 +85,10 @@ awk -v mod="$MODULE" -v floor="$FLOOR" '
     else if (index(file, mod "/cmd/aisotropy/") == 1) include = 1
     if (!include) next
 
-    # Integration-gated exclusion: internal/semantic/qdrant.go needs a live
-    # Qdrant gRPC server and is covered only by the `manual`-tagged
-    # qdrant_manual_test.go, so its statements never appear in a unit-test
-    # coverage.out. Excluding it keeps the floor honest — the same treatment the
-    # thin mains get — rather than letting a real-but-unexercised-in-CI file drag
-    # the promoted-set number down. (See the header of this script for details.)
-    if (index(file, mod "/internal/semantic/qdrant.go") == 1) next
+    # No per-file carve-outs. Every statement under the included prefixes counts.
+    # (The former internal/semantic/qdrant.go exclusion was removed on 2026-08-04
+    # after measuring that the default suite already covers 90.8% of it — see the
+    # header.)
 
     stmts = $(NF - 1)
     count = $NF
