@@ -177,6 +177,33 @@ func (g *Guard) annotateOutput(ctx context.Context, tenant, user, input, output,
 // floor. An unknown/unregistered preference is likewise resolved to the default
 // at Route time, so a client-supplied value can never drop the request. The
 // Gateway itself already logs the miss.
+//
+// KNOWN LIMIT — the cost budget resets, and is multiplied by replica count.
+// CostSpentUSD below is read from costmeter.Meter, which is an in-process,
+// non-durable observability aggregate (see the costmeter package doc). Two
+// consequences that gateway.CostAwarePolicy cannot see and a reader of this
+// function would not guess:
+//
+//  1. Every process restart hands each tenant a FRESH budget: the meter's map
+//     starts empty, so CostSpentUSD is 0 and the policy abstains, no matter how
+//     much that tenant spent before the restart.
+//  2. With N replicas the effective ceiling is N x BudgetUSD: each instance only
+//     knows the requests it personally served.
+//
+// So the cost budget is a best-effort shaping signal, NOT a spend cap. It is not
+// a comment awaiting a small patch: persisting the accumulator into the working
+// memory BadgerDB would fix neither problem honestly — that store is in-memory
+// unless AISOTROPY_DATA_DIR is set (so the fix would be inert in the default
+// configuration) and is embedded per-process either way (so (2) survives intact).
+// Worse, it would make the budget LOOK enforced while still being multiplied by
+// replica count, which is more dangerous than the current, visibly volatile
+// state. A real cap needs the shared durable tier the costmeter doc points at.
+// Until then, treat BudgetUSD as "shape requests down after roughly this much
+// spend, per replica, since this process started".
+//
+// The hard pre-spend control that DOES hold is the quota gate (memory.Limiter,
+// per-tenant token bucket in the same BadgerDB, checked before every LLM call on
+// every route) — bounded per request-rate rather than per dollar.
 func selectClient(ctx context.Context, gw *gateway.Gateway, fallback llm.Client, meter *costmeter.Meter, tenant, user, prompt, modelPreference string, hasImage bool) llm.Client {
 	if gw == nil {
 		return fallback

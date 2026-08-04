@@ -75,7 +75,7 @@ func newAskRouter(t *testing.T, client llm.Client, cache *responsecache.Response
 	t.Helper()
 	router := chi.NewRouter()
 	humaAPI := humachi.New(router, huma.DefaultConfig("Aisotropy-test", "0.1.0"))
-	RegisterAsk(humaAPI, client, cache, nil, nil, nil, nil, guard)
+	RegisterAsk(humaAPI, client, cache, nil, nil, nil, nil, nil, guard)
 	return router
 }
 

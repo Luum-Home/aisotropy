@@ -154,7 +154,7 @@ func askBuildOutput(reply, tenantID string, cached bool, client llm.Client) *Ask
 // (and, if BlockInjection, rejected) before it reaches the model or the cache key,
 // and the model response is inspected before it is returned/cached (or, if
 // BlockOutput, replaced with a safe refusal). A nil guard disables guardrails.
-func RegisterAsk(api huma.API, client llm.Client, cache *responsecache.ResponseCache, semStore semantic.Store, embedder semantic.Embedder, reranker semantic.Reranker, persona PersonaProvider, guard *Guard) {
+func RegisterAsk(api huma.API, client llm.Client, cache *responsecache.ResponseCache, semStore semantic.Store, embedder semantic.Embedder, reranker semantic.Reranker, persona PersonaProvider, limiter *memory.Limiter, guard *Guard) {
 	huma.Register(api, huma.Operation{
 		OperationID: "ask",
 		Method:      httpMethodPost,
@@ -172,6 +172,22 @@ func RegisterAsk(api huma.API, client llm.Client, cache *responsecache.ResponseC
 		ctx, scope, cacheScope, err := askIdentity(ctx, in)
 		if err != nil {
 			return nil, huma.Error422UnprocessableEntity("invalid tenant/user identity", err)
+		}
+
+		// Quota gate (constitutional gate: reject BEFORE spending tokens), the
+		// SAME chatCheckQuota /chat runs — one gate implementation across every
+		// LLM-serving route. It sits here, ahead of the cache lookup, and that
+		// placement is deliberate: the tempting alternative is to gate only the
+		// MISS path, on the theory that a cache hit spends nothing. That theory is
+		// false whenever the semantic cache layer is configured — its Get EMBEDS
+		// the prompt (internal/responsecache.ResponseCache.Get -> semantic.Get),
+		// which is itself a billable provider call. Gating before the lookup is
+		// therefore both the uniform placement and the spend-correct one.
+		//
+		// One bucket token per request, matching /chat and /chat/stream: the
+		// bucket's unit is REQUESTS, not provider calls.
+		if err := chatCheckQuota(ctx, limiter, in.TenantID); err != nil {
+			return nil, err
 		}
 
 		// Input guardrail (redact + detect ALWAYS; block opt-in), same posture as

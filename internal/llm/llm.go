@@ -41,13 +41,24 @@ type Usage struct {
 	// OutputTokens is the provider-reported completion/output token count.
 	OutputTokens int
 	// ReasoningTokens is the provider-reported reasoning ("thinking") token
-	// count, kept SEPARATE from OutputTokens for cost visibility (ADR-0061
-	// Piece 1b). Source varies by provider: OpenAI-compat reads
-	// completion_tokens_details.reasoning_tokens directly; Anthropic bills
-	// thinking INSIDE output_tokens and does not surface a separate streaming
-	// count here, so it stays 0 (no double count). It is 0 on every
-	// non-reasoning provider and with reasoning OFF (the default), so a
-	// text-only consumer is byte-for-byte unaffected.
+	// count, reported on its own field for cost VISIBILITY (ADR-0061 Piece 1b).
+	//
+	// INVARIANT — it is a BREAKDOWN OF OutputTokens, never an addition to it.
+	// OutputTokens always carries the provider's complete completion count and
+	// already includes these tokens:
+	//
+	//   - OpenAI-compat reads completion_tokens_details.reasoning_tokens, a
+	//     DETAIL of completion_tokens, while OutputTokens gets completion_tokens
+	//     whole (see openai_compat.go).
+	//   - Anthropic bills thinking INSIDE output_tokens and surfaces no separate
+	//     streaming count, so this stays 0 there.
+	//
+	// A consumer that ADDS this to OutputTokens double-counts — which is exactly
+	// what the cost path did until it was centralised in internal/api's
+	// turnCostUSD. Price OutputTokens; report ReasoningTokens.
+	//
+	// It is 0 on every non-reasoning provider and with reasoning OFF (the
+	// default), so a text-only consumer is byte-for-byte unaffected.
 	ReasoningTokens int
 }
 

@@ -358,10 +358,11 @@ func chatRecordTurn(ctx context.Context, wm *memory.WorkingMemory, key memory.Ke
 	// records 0 cost for that path rather than silently skipping it —
 	// the request count/attempt is still real signal for /costs.
 	if meter != nil {
-		// Reasoning tokens (ADR-0061) priced at the output rate, recorded on their
-		// own line for visibility; 0 on a non-reasoning turn (unchanged default).
-		cost := costmeter.EstimateCostUSD(usage.InputTokens, usage.OutputTokens, costInputPricePer1M, costOutputPricePer1M) +
-			costmeter.EstimateCostUSD(0, usage.ReasoningTokens, 0, costOutputPricePer1M)
+		// Pricing lives in turnCostUSD, shared with the streaming route (see
+		// stream_core.go's recordStreamCost): one home for the reasoning-token
+		// invariant, so the two routes cannot price the same turn differently.
+		// The reasoning count is still recorded on its own meter line.
+		cost := turnCostUSD(usage, costInputPricePer1M, costOutputPricePer1M)
 		meter.RecordUsage(tenantID, usage.InputTokens, usage.OutputTokens, usage.ReasoningTokens, cost)
 	}
 }

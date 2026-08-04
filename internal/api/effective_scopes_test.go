@@ -71,7 +71,7 @@ func newAgentRouter(t *testing.T, authn auth.Authenticator, exec *fakeToolCaller
 	router := chi.NewRouter()
 	api := humachi.New(router, huma.DefaultConfig("effective-scopes-test", "0.1.0"))
 	api.UseMiddleware(BindAuthMiddleware(api, authn))
-	RegisterAgent(api, exec, agentScopeRegistry(), executor, (*TypedToolExecutor)(nil), nil, noop.NewTracerProvider(), 3, nil)
+	RegisterAgent(api, exec, agentScopeRegistry(), executor, (*TypedToolExecutor)(nil), nil, noop.NewTracerProvider(), 3, nil, nil)
 	return router
 }
 

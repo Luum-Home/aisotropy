@@ -615,7 +615,7 @@ func TestChatAgent_FrictionDetectorWraps(t *testing.T) {
 	router := chi.NewRouter()
 	api := humachi.New(router, huma.DefaultConfig("agent-friction-test", "0.1.0"))
 	detector := primitives.NewFrictionDetector(primitives.NewStore())
-	RegisterAgent(api, llm.NewStubClient(), agentScopeRegistry(), DemoExecutor{}, (*TypedToolExecutor)(nil), detector, noop.NewTracerProvider(), 3, nil)
+	RegisterAgent(api, llm.NewStubClient(), agentScopeRegistry(), DemoExecutor{}, (*TypedToolExecutor)(nil), detector, noop.NewTracerProvider(), 3, nil, nil)
 
 	body, err := json.Marshal(map[string]any{"prompt": "do the thing", "product_id": "analytics-v1", "session_id": "s1", "scopes": []string{"read"}})
 	if err != nil {

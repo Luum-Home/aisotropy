@@ -1311,7 +1311,7 @@ func (a *App) Run(ctx context.Context) error {
 	// The cache is per-process and scoped by (tenant,user) in both layers, so a
 	// cross-tenant hit is structurally impossible (see internal/responsecache).
 	askCache := buildResponseCache(rt.embedder)
-	api.RegisterAsk(humaAPI, rt.client, askCache, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, rt.guard)
+	api.RegisterAsk(humaAPI, rt.client, askCache, rt.semanticStore, rt.embedder, rt.reranker, rt.persona, rt.limiter, rt.guard)
 
 	// Agentic tool-use endpoint (Phase 7): the injected executor drives real tool
 	// logic, wrapped per-request in a friction recorder.
@@ -1323,7 +1323,7 @@ func (a *App) Run(ctx context.Context) error {
 	// agent handler overlays each (tenant,user)'s friction-rewritten tool guidance
 	// onto the base tool metadata. nil-safe — with no store the behavior is
 	// byte-for-byte unchanged.
-	api.RegisterAgent(humaAPI, rt.client, rt.toolRegistry, rt.executor, typedExecutor, rt.frictionDetector, rt.tracerProvider, agentMaxSteps, rt.guard, rt.frictionDetector.Store())
+	api.RegisterAgent(humaAPI, rt.client, rt.toolRegistry, rt.executor, typedExecutor, rt.frictionDetector, rt.tracerProvider, agentMaxSteps, rt.limiter, rt.guard, rt.frictionDetector.Store())
 
 	server := &http.Server{
 		Addr:    addr,

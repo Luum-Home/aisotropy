@@ -287,7 +287,17 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 			// completed one. Returns nil (no error frame): a cancellation is not
 			// a pipeline failure, and the sink's OnDone is deliberately not
 			// called.
+			//
+			// Accounting, though, is NOT optional: the provider generated (and
+			// billed) whatever it emitted before the hang-up. The terminal usage
+			// block never arrived, so the counts are unknown — the turn is
+			// recorded as UNMETERED rather than dropped (see recordStreamTurn).
+			// Note the honest residue this leaves: for a cancelled turn the exact
+			// token count exists only at the provider, so closing the gap fully
+			// needs reconciliation against the provider's invoice, not better
+			// local bookkeeping.
 			slog.InfoContext(ctx, "chat stream cancelled", "tenant_id", in.TenantID, "user_id", in.UserID)
+			recordStreamTurn(d, in.TenantID, nil)
 			return nil
 		case tok, ok := <-tokens:
 			if !ok {
@@ -299,6 +309,11 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 				// a truncated stream for success. The partial reply is not
 				// persisted (see above). In blocking mode nothing has been
 				// flushed, so no toxic partial escaped.
+				//
+				// The tokens produced before the failure were still generated and
+				// billed, with no usage block to price them: unmetered turn, not
+				// a silent zero.
+				recordStreamTurn(d, in.TenantID, nil)
 				return tok.Err
 			}
 			if tok.Done {
@@ -324,7 +339,14 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 						}
 						if err := sink.OnToken(delivered); err != nil {
 							// Client disconnected before the buffered reply could be
-							// emitted; stop without recording cost or a done frame.
+							// emitted. Stop without a done frame — but DO record the
+							// cost. This is the most expensive terminal and the one
+							// that can be accounted with FULL fidelity: the model
+							// produced the whole reply (that is why there was
+							// something to flush) and tok.Usage — the provider's own
+							// terminal counts — is already in hand. The client not
+							// receiving the answer does not un-bill it.
+							recordStreamTurn(d, in.TenantID, tok.Usage)
 							return nil
 						}
 					}
@@ -341,8 +363,10 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 				}
 				// Per-tenant cost accounting (Phase 7 observability): record the
 				// real provider token usage carried on the terminal token, so the
-				// /costs view can show cost per token per tenant.
-				recordStreamCost(d, in.TenantID, tok.Usage)
+				// /costs view can show cost per token per tenant. A provider that
+				// surfaced no usage still gets its completed turn counted — as
+				// unmetered, not as nothing.
+				recordStreamTurn(d, in.TenantID, tok.Usage)
 				sink.OnDone(StreamFinal{Text: delivered, TenantID: in.TenantID, Usage: tok.Usage})
 				return nil
 			}
@@ -354,6 +378,9 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 				if err := sink.OnToken(tok.Text); err != nil {
 					// Client disconnected mid-write: there is no way to keep
 					// writing, so we stop. The partial reply is not persisted.
+					// The deltas already generated were billed and the terminal
+					// usage block will never be consumed: unmetered turn.
+					recordStreamTurn(d, in.TenantID, nil)
 					return nil
 				}
 			}
@@ -361,12 +388,52 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 	}
 }
 
+// recordStreamTurn is the SINGLE terminal-accounting entry point for the
+// streaming pipeline: every way StreamCore can end goes through it, so a turn the
+// provider already generated (and billed) can never leave the meter untouched.
+//
+// It exists because cost used to be recorded in exactly one place — the clean
+// `Done` branch — while a stream has FIVE terminals. The other four (client
+// cancellation, a mid-stream provider error, a failed live token write, a failed
+// buffered write in output-blocking mode) recorded nothing at all, even though
+// the provider had already produced the tokens. That is a revenue leak by
+// construction, and the buffered-write case is the most expensive one: the model
+// generated the ENTIRE reply (that is why there was something to flush) and the
+// turn was accounted as zero.
+//
+// The dispatch is deliberately narrow:
+//
+//   - usage != nil — the provider's terminal usage block was observed, so the
+//     counts are exact: record real cost (recordStreamCost).
+//   - usage == nil — the turn happened and was billed, but the terminal block
+//     never arrived, so the counts are genuinely unknowable in this process:
+//     record an UNMETERED turn (costmeter.RecordUnmetered). It counts as a
+//     request, adds no tokens and no cost, and is tallied separately so the gap
+//     is measurable against the provider's own invoice.
+//
+// Estimating tokens from the delivered text was considered and rejected: llm.Usage
+// is documented as real provider accounting, "never a proxy metric", and a
+// fabricated number in a cost meter is worse than an absent one because nothing
+// downstream can tell the two apart afterwards. See costmeter.TenantStats.
+// UnmeteredTurns.
+//
+// A nil meter records nothing, unchanged.
+func recordStreamTurn(d StreamDeps, tenantID string, usage *llm.Usage) {
+	if d.Meter == nil {
+		return
+	}
+	if usage == nil {
+		d.Meter.RecordUnmetered(tenantID)
+		return
+	}
+	recordStreamCost(d, tenantID, usage)
+}
+
 // recordStreamCost records the streaming turn's provider token usage to the
 // shared cost meter using the streaming price basis (StreamDeps.InPricePer1M/
 // OutPricePer1M, each falling back to the package default when <= 0). A nil
-// meter or nil usage records nothing — the terminal token carries usage only
-// when the provider supplied it. Factored out so the blocking and non-blocking
-// terminal branches record cost through one identical code path.
+// meter or nil usage records nothing — callers reach it through recordStreamTurn,
+// which routes the nil-usage case to the unmetered counter instead.
 func recordStreamCost(d StreamDeps, tenantID string, usage *llm.Usage) {
 	if d.Meter == nil || usage == nil {
 		return
@@ -378,10 +445,11 @@ func recordStreamCost(d StreamDeps, tenantID string, usage *llm.Usage) {
 	if d.OutPricePer1M > 0 {
 		outP = d.OutPricePer1M
 	}
-	// Reasoning tokens (ADR-0061) are priced at the output rate and recorded on
-	// their own line for visibility; 0 on a non-reasoning turn, so the estimate
-	// and the meter line are unchanged when reasoning is off.
-	cost := costmeter.EstimateCostUSD(usage.InputTokens, usage.OutputTokens, inP, outP) +
-		costmeter.EstimateCostUSD(0, usage.ReasoningTokens, 0, outP)
+	// Pricing lives in turnCostUSD, shared with the non-streaming route, so both
+	// routes price an identical turn identically and the reasoning-token
+	// invariant (reasoning is INSIDE output, never added to it) has exactly one
+	// home. The reasoning count is still recorded on its own meter line for
+	// visibility — it is just not priced twice.
+	cost := turnCostUSD(*usage, inP, outP)
 	d.Meter.RecordUsage(tenantID, usage.InputTokens, usage.OutputTokens, usage.ReasoningTokens, cost)
 }

@@ -14,6 +14,14 @@
 // best-effort observability aggregate — not as the billing system of
 // record. Durable, cross-replica accounting belongs in a networked tier
 // (e.g. the planned rqlite facts memory), per docs/architecture/overview.md.
+//
+// One live consumer is NOT purely observational and inherits both limits:
+// internal/api's selectClient feeds TenantStats.CostUSD into
+// gateway.CostAwarePolicy as the tenant's cumulative spend. Because this meter
+// is volatile and per-process, that budget resets on every restart and is
+// multiplied by the replica count — it shapes requests, it does not cap spend.
+// See selectClient's "KNOWN LIMIT" note for why persisting these totals into the
+// working-memory BadgerDB would not honestly fix either half.
 package costmeter
 
 import (
@@ -32,14 +40,35 @@ type TenantStats struct {
 	// OutputTokens is the cumulative provider-reported output/completion token count.
 	OutputTokens int64
 	// ReasoningTokens is the cumulative provider-reported reasoning ("thinking")
-	// token count (ADR-0061), kept SEPARATE from OutputTokens so a tenant's spend
-	// on hidden chain-of-thought is visible in the /costs view rather than buried
-	// inside output tokens. 0 for every non-reasoning turn (the default).
+	// token count (ADR-0061). It is a BREAKDOWN OF OutputTokens, not an addition
+	// to it: every provider that surfaces a reasoning count reports it as a
+	// subset of the completion tokens it already billed (OpenAI-compat reads it
+	// from completion_tokens_details, a detail object of completion_tokens;
+	// Anthropic bills thinking inside output_tokens and surfaces no separate
+	// count, so this stays 0). It is reported on its own line so a tenant's spend
+	// on hidden chain-of-thought is VISIBLE rather than buried — but a consumer
+	// that ADDS it to OutputTokens double-counts. 0 for every non-reasoning turn
+	// (the default).
 	ReasoningTokens int64
 	// CostUSD is the cumulative estimated cost in US dollars, as supplied by
 	// callers of Record (see EstimateCostUSD for a helper to compute it from a
 	// price table).
 	CostUSD float64
+	// UnmeteredTurns is how many of Requests were served WITHOUT any
+	// provider-reported token usage — a turn the provider billed whose counts
+	// never reached this process. It happens when the terminal usage block is
+	// never observed: the client cancelled mid-stream, the stream failed
+	// mid-flight, the peer disconnected before the reply could be written, or the
+	// provider simply reported no usage.
+	//
+	// It exists because the alternative was worse. Recording nothing made "billed
+	// but uncounted" indistinguishable from "never happened", so the gap was
+	// invisible; recording an ESTIMATE would fabricate numbers into a meter whose
+	// whole contract is real provider accounting (see llm.Usage). This counter
+	// keeps the turn visible and the counts honestly absent: Requests minus
+	// UnmeteredTurns is the metered population, and the ratio is the accounting
+	// health signal to reconcile against the provider's own invoice.
+	UnmeteredTurns int64
 }
 
 // Meter is an in-memory, per-tenant token/cost accounting layer. It is safe
@@ -101,6 +130,27 @@ func (m *Meter) RecordUsage(tenant string, inputTokens, outputTokens, reasoningT
 	stats.OutputTokens += int64(outputTokens)
 	stats.ReasoningTokens += int64(reasoningTokens)
 	stats.CostUSD += costUSD
+}
+
+// RecordUnmetered accounts one turn that the provider served and billed but for
+// which NO usage block reached this process — see TenantStats.UnmeteredTurns for
+// when that happens and why it is counted rather than estimated or dropped.
+//
+// It increments Requests and UnmeteredTurns and adds nothing to the token or
+// cost totals. That asymmetry is deliberate: the turn is real (so it counts as a
+// request), the counts are unknown (so they stay zero rather than invented), and
+// the fact that they are unknown is itself recorded (so the gap is measurable).
+func (m *Meter) RecordUnmetered(tenant string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	stats, ok := m.tenants[tenant]
+	if !ok {
+		stats = &TenantStats{TenantID: tenant}
+		m.tenants[tenant] = stats
+	}
+	stats.Requests++
+	stats.UnmeteredTurns++
 }
 
 // Stats returns tenant's accumulated totals and true if tenant has recorded

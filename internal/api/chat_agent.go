@@ -10,6 +10,7 @@ import (
 
 	"github.com/Luum-Home/aisotropy/internal/agentloop"
 	"github.com/Luum-Home/aisotropy/internal/llm"
+	"github.com/Luum-Home/aisotropy/internal/memory"
 	"github.com/Luum-Home/aisotropy/internal/primitives"
 	"github.com/Luum-Home/aisotropy/internal/tools"
 )
@@ -114,7 +115,7 @@ func (f frictionExecutor) Execute(ctx context.Context, name string, args map[str
 // LLM finally sees the improved guidance the sleep cycle produced. See
 // overlayRegistry for the literal (non-templated) overlay mechanism and its
 // strict (tenant, user) isolation.
-func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, typed *TypedToolExecutor, detector *primitives.FrictionDetector, tracer oteltrace.TracerProvider, maxSteps int, guard *Guard, store ...*primitives.Store) {
+func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, executor agentloop.ToolExecutor, typed *TypedToolExecutor, detector *primitives.FrictionDetector, tracer oteltrace.TracerProvider, maxSteps int, limiter *memory.Limiter, guard *Guard, store ...*primitives.Store) {
 	// Resolve the optional store: at most one is meaningful; a nil or omitted
 	// store leaves the read side of the loop closed-off (current behavior).
 	var primStore *primitives.Store
@@ -138,6 +139,28 @@ func RegisterAgent(api huma.API, client llm.Client, registry *tools.Registry, ex
 		}
 		if client == nil || registry == nil || executor == nil {
 			return nil, huma.Error503ServiceUnavailable("agent mode is not configured")
+		}
+
+		// Quota gate (constitutional gate: reject BEFORE spending tokens), the
+		// SAME chatCheckQuota /chat and /ask run. This route needs it MOST: one
+		// admitted request drives a loop that can make up to maxSteps billable
+		// provider calls, so an ungated /chat/agent let a throttled tenant spend
+		// maxSteps times what an ungated /chat would.
+		//
+		// It charges ONE bucket token per request, not maxSteps. The bucket's unit
+		// is requests-per-second, uniformly across every route: /chat already makes
+		// several provider calls on one token (the reflection loop's bounded
+		// retries), so charging maxSteps here would give the same bucket two
+		// different meanings depending on which route drained it — while
+		// over-charging by 3x every turn that converges in a single step. The
+		// constitutional requirement ("reject/degrade BEFORE spending tokens") is
+		// satisfied in full by rejecting before the first call. Bounding the SPEND
+		// of an admitted multi-call turn is a different control with a different
+		// unit (USD), and that is what the cost budget governs — see
+		// selectClient's gateway.CostAwarePolicy, and the honest limits recorded
+		// there.
+		if err := chatCheckQuota(ctx, limiter, in.TenantID); err != nil {
+			return nil, err
 		}
 
 		// Input guardrail (redact + detect ALWAYS; block opt-in). forwarded is

@@ -28,7 +28,7 @@ func newAgentRouterFull(t *testing.T, client llm.Client, executor agentloop.Tool
 	router := chi.NewRouter()
 	api := humachi.New(router, huma.DefaultConfig("agent-http-test", "0.1.0"))
 	api.UseMiddleware(BindAuthMiddleware(api, auth.NoAuth()))
-	RegisterAgent(api, client, agentScopeRegistry(), executor, (*TypedToolExecutor)(nil), nil, noop.NewTracerProvider(), 3, guard)
+	RegisterAgent(api, client, agentScopeRegistry(), executor, (*TypedToolExecutor)(nil), nil, noop.NewTracerProvider(), 3, nil, guard)
 	return router
 }
 

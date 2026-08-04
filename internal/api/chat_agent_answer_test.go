@@ -29,7 +29,7 @@ func newCalculatorAgentRouter(t *testing.T, tc *fakeToolCaller) http.Handler {
 	api := humachi.New(router, huma.DefaultConfig("agent-answer-test", "0.1.0"))
 	api.UseMiddleware(BindAuthMiddleware(api, auth.NoAuth()))
 	reg := tools.NewRegistry(tools.Tool{Name: "calculator", Description: "evaluate an arithmetic expression"})
-	RegisterAgent(api, tc, reg, DemoExecutor{}, (*TypedToolExecutor)(nil), nil, noop.NewTracerProvider(), 3, nil)
+	RegisterAgent(api, tc, reg, DemoExecutor{}, (*TypedToolExecutor)(nil), nil, noop.NewTracerProvider(), 3, nil, nil)
 	return router
 }
 
