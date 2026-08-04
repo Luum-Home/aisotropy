@@ -186,8 +186,38 @@ type Usage struct {
 
 Kept **separate from `OutputTokens`** for cost *visibility* (you must be able to see how much a
 tenant spent on hidden reasoning). Whether a provider double-counts (Anthropic bills thinking
-*inside* `output_tokens`; OpenAI reports reasoning as a *subset* detail of completion tokens) is
-handled in the provider mapping so the cost meter never double-charges — see 1c.
+*inside* `output_tokens`; OpenAI reports reasoning as a *subset* detail of completion tokens) must
+not reach the cost meter as a second charge.
+
+> **Corrected 2026-08-04 — this paragraph used to end "…is handled in the provider mapping so the
+> cost meter never double-charges", and it was not.** The premise above is right; the conclusion was
+> not implemented anywhere. `internal/llm/openai_compat.go` mapped `OutputTokens = completion_tokens`
+> and `ReasoningTokens = completion_tokens_details.reasoning_tokens` — the subset, verbatim, with no
+> subtraction — while both cost sites computed `Estimate(input, output) + Estimate(0, reasoning)`.
+> Every OpenAI-compatible reasoning turn was charged for its thinking twice (measured: 0.0405 against
+> a correct 0.0330 on the regression fixture, a 22.7% over-charge). Anthropic was never affected: it
+> surfaces no separate streaming count, so `ReasoningTokens` stays 0 and the thinking is priced once
+> inside `OutputTokens`.
+>
+> **The fix went into the CALCULATION, not the mapping**, which is the part of this paragraph that
+> changes. The mapping deliberately keeps `OutputTokens` as the provider's verbatim completion count,
+> because four consumers and a wire contract depend on that meaning — `internal/api/openai_compat.go`
+> re-emits it as `completion_tokens` (where the OpenAI contract we emulate REQUIRES reasoning to be
+> included), `internal/llm/otel.go` as `gen_ai.usage.output_tokens`, `internal/llm/gollem.go` as
+> `core.Usage`, and `internal/api/chat.go` as the public `output_tokens` JSON field. Subtracting at
+> the mapping would have made `OutputTokens` mean one thing here and another everywhere else.
+>
+> The arithmetic now lives in exactly one function, `turnCostUSD` in
+> [`internal/api/turn_cost.go`](../../internal/api/turn_cost.go), called by both the streaming and
+> non-streaming paths so they cannot price the same turn differently. The invariant is written there,
+> at the place where it can break, along with what to change if a provider ever reports reasoning
+> ADDITIVE to its completion count.
+>
+> **One premise this ADR asserts and neither pass verified against provider documentation:** that
+> `reasoning_tokens` is a *subset* of `completion_tokens`. The supporting evidence is in-repo and
+> indirect — the field sits under `completion_tokens_details` (a breakdown object), and our own compat
+> shim computes `TotalTokens = prompt + completion`, which only balances under the subset reading. If
+> that is ever falsified, `turnCostUSD` is the single line to change.
 
 **1c. Provider shape mapping (graceful degradation is the default).**
 
@@ -409,7 +439,7 @@ task class Z" — turning the on/off flag into an *informed* per-deployment (or 
 | **Anthropic `redacted_thinking`** (encrypted, un-inspectable) | passed back verbatim, never decoded or logged; treated as an opaque block in `ReasoningState`. |
 | **Tenant leak via a shared reasoning buffer** | `ReasoningState` is a goroutine-local value, never a shared/keyed map; enforced by a `-race` isolation test. |
 | **Reasoning accidentally logged** | joins the "content never logged" rule; grep test asserts no reasoning at any log sink. |
-| **Silent double-billing** (thinking counted in output AND reasoning) | provider mapping decides which bucket owns the tokens; `ReasoningTokens` is visibility-only for Anthropic (already in `output_tokens`), additive-source-of-truth for OpenAI detail. |
+| **Silent double-billing** (thinking counted in output AND reasoning) | **MATERIALISED, then closed (2026-08-04).** This row anticipated the risk and named the wrong owner: it says the *provider mapping* decides which bucket owns the tokens, and calls `ReasoningTokens` an "additive-source-of-truth for OpenAI detail" — it is a SUBSET of `completion_tokens`, not an addition, so pricing it as a second line over-charged every OpenAI-compatible reasoning turn by the size of its thinking (22.7% on the regression fixture). Anthropic was never affected. Closed by moving the arithmetic to `turnCostUSD` (`internal/api/turn_cost.go`), the single pricing function both routes call; the mapping keeps `OutputTokens` verbatim because four consumers and the emulated OpenAI wire contract depend on that meaning. Regression: `internal/api/turn_cost_test.go`. |
 
 ---
 

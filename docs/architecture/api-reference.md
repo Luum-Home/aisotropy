@@ -28,7 +28,7 @@ mode is set. See the [threat model](threat-model.md).
 |---|---|---|
 | `GET /healthz` | Liveness only | `200 {"status":"ok"}` — no dependency checks |
 | `GET /health` | Readiness | Parallel, read-only, `_health`-scoped probes of the facts + semantic tiers (no LLM spend). `200 {"status":"ok",checks:[…]}` when all respond, **`503 degraded`** when any fails |
-| `GET /costs` | Per-tenant cost view | JSON array of `costMeter.Snapshot()` — per-tenant token totals + estimated USD, sorted by tenant. In-process, non-durable (not a billing system of record) |
+| `GET /costs` | Per-tenant cost view | JSON array of `costMeter.Snapshot()` — per-tenant token totals + estimated USD, sorted by tenant. In-process, non-durable (not a billing system of record) — but the same meter drives the cost-budget model shaping, so "non-durable" has teeth beyond this view; see below |
 | `GET /bitrate` | Per-tenant bits-per-token ops view (Bet 6) | JSON array of per-tenant bpt summaries. **Conditionally registered**: only when `AISOTROPY_BITRATE_BIN` is set; otherwise the route does not exist (404) |
 | `GET /openapi.json` · `/openapi.yaml` · `GET /docs` | The contract itself + Stoplight docs UI | auto-generated |
 
@@ -72,13 +72,35 @@ recorded. ⚠️ The struct has **no `json` tags**, so the fields serialize unde
     "Requests": 12,
     "InputTokens": 5321,
     "OutputTokens": 987,
-    "CostUSD": 0.030766
+    "ReasoningTokens": 140,
+    "CostUSD": 0.030766,
+    "UnmeteredTurns": 1
   }
 ]
 ```
 
-`Requests`/`InputTokens`/`OutputTokens` are integers (`int64`), `CostUSD` a float. Per-process and
-in-memory only: totals reset on restart and are not aggregated across replicas.
+Every count is an `int64`; `CostUSD` is a float. Field notes, in the order they appear:
+
+- **`OutputTokens`** is the provider's complete completion count. **`ReasoningTokens`** is a
+  *breakdown inside it*, not an addition — surfaced separately so a tenant's spend on hidden
+  reasoning is visible, and deliberately **not priced a second time** (see
+  [ADR-0061](../decisions/0061-reasoning-model-support.md); the arithmetic lives in one place,
+  `internal/api/turn_cost.go`). Adding `OutputTokens + ReasoningTokens` to get a total is the exact
+  mistake that over-charged reasoning turns by 22.7% before 2026-08-04.
+- **`UnmeteredTurns`** (added 2026-08-04) is how many of `Requests` were served **without** any
+  provider usage block reaching this process — a stream cancelled, errored, or disconnected before
+  its terminal usage frame. Those turns still cost money upstream, so they are counted as requests
+  and tallied here, contributing **zero** tokens and **zero** cost rather than being estimated: a
+  fabricated number inside a cost meter is worse than an absent one, because nothing downstream can
+  later tell the two apart. `Requests - UnmeteredTurns` is the metered population, and the ratio is
+  the accounting-fidelity signal — a rising ratio means the USD figure is drifting below reality.
+
+Per-process and in-memory only: totals reset on restart and are not aggregated across replicas. That
+caveat is usually read as "the numbers are approximate", and for this endpoint it is — but the same
+meter also feeds `gateway.CostAwarePolicy`, which is **not** observational: it decides when to shape
+a tenant onto the cheap model. So the per-tenant **cost budget** inherits both limits, resetting on
+every restart and multiplying by replica count. See the
+[threat model](threat-model.md)'s gap ledger, item 3.
 
 **`GET /bitrate`** — `200` with a JSON array of `bitrate.TenantSummary`
 (`internal/bitrate/bitrate.go`), one aggregate per tenant (`[]` when no measurements exist);

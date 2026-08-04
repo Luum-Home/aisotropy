@@ -89,7 +89,7 @@ gateway/proxy. See the [operations runbook](../deployment/runbook.md) for the se
 | **T1** | **Cross-tenant data leak** (tenant A reads tenant B's memory/RAG) | a memory read/RAG query not scoped by `(tenant,user)` | `tenant_id` injected once at the Huma boundary and propagated **only** via `context.Context`; every tier read/write is scoped in the key/statement, never in an intermediate layer. Facts use the [tenant-scoped statement builder](../../internal/tenancy) where an unscoped statement is a **compile error** (ADR-0011). Qdrant filters by payload **during** the HNSW scan (not a post-filter — a post-filter is a leak). | **REAL** — enforced by the isolation constitutional gate + `scope_isolation_test.go` |
 | **T2** | **Prompt-injection → tool bypass / privilege escalation** (model coerced into calling a tool the caller's scopes don't grant) | adversarial prompt / injected content in retrieved context (the persistence side of this vector is T9) | **Governance by absence**: a non-permitted tool is never named in the prompt, AND the chosen tool name is re-validated against `Registry.Permitted(scopes)` before execution — structural, so a hallucinated/injected name **cannot** execute. Both the homegrown `agentloop` and the native Gollem path enforce it (ADR-0012). | **REAL** — `agentloop` + native path, fail-on-call executor tests |
 | **T3** | **Identity / scope forgery** (caller claims another tenant, or grants itself `write:*`) | scopes in the request body; path params | **Closed in-process WHEN an Authenticator is configured** (ADR-0024/0025): the fail-closed `BindAuthMiddleware` ([`internal/api/authn.go`](../../internal/api/authn.go)) must-agree-binds the **verified** principal to the path `(tenant, user)` (401 missing/invalid, 403 mismatch), and `effectiveScopes` gates tools on the **verified** scopes so a client cannot self-grant scopes via the body. Library users who wire nothing get **default-deny**. Residual: the shipped binary is **opt-in** — `NoAuth()` (with warning) unless `AISOTROPY_JWT_SECRET` is set. | **REAL when configured** (was the #1 aspirational gap). The stdlib HS256 verifier is hardened (min-32 secret + fail-fast/closed T12, aud/iss T11, max-TTL T13). Follow-on: RS256/JWKS |
-| **T4** | **Cost / quota exhaustion** (one tenant burns the LLM budget / DoS via token spend) | flooding the chat routes | Per-tenant token-bucket rate limit **before any LLM call** (reject/degrade, not after); circuit breaker fails fast on provider failure; quota-pressure model degradation to a cheaper model at ≥95%. | **REAL** on `/chat` + `/chat/stream`; ⚠️ **gap**: `/chat/agent` is NOT rate-limited, and the buckets + cost meter are **per-instance** (no cross-replica quota) |
+| **T4** | **Cost / quota exhaustion** (one tenant burns the LLM budget / DoS via token spend) | flooding the chat routes | Per-tenant token-bucket rate limit **before any LLM call** (reject/degrade, not after); circuit breaker fails fast on provider failure; quota-pressure model degradation to a cheaper model at ≥95%. | **REAL** on **every** LLM-spending route — `/chat`, `/chat/stream`, `/chat/agent` and `/ask` (the last two closed 2026-08-04; `/ask`'s gate sits **ahead of** the response-cache lookup, because `ResponseCache.Get` embeds the prompt and that embedding is itself a billable call). ⚠️ **residual**: the buckets and the cost meter are **per-instance**, so N replicas ≈ N× the effective per-tenant rate, and the cost budget resets on restart |
 | **T5** | **Consolidation / sleep-cycle cross-tenant surface** | the batch worker's `ExportAll` reads across tenants | The sleep-cycle `ExportAll` is a **deliberate, reviewed cross-tenant read**; dedup results are `Delete`d back **within each `(tenant,user)` scope**. It is the one place tenant data co-resides in one process buffer — flagged, not accidental. | **REAL but a reviewed exception** — dormant by default (needs `AISOTROPY_SLEEPCYCLE_BIN`) |
 | **T6** | **Secret leakage** (API keys in logs/traces/commits) | `slog` call sites, OTel spans, commits | Secrets via env only; the content-policy + secret-scanning gates block committing them; OTel captures `gen_ai.usage.*` + identity, not payload secrets. | **REAL** — constitutional gate + hooks |
 | **T7** | **Supply-chain compromise** | a malicious/typo-squatted dependency | Small surface: Go module graph + one vendored Rust crate; 100% permissive (MIT/BSD/Apache-2.0/ISC), zero copyleft (a copyleft/BUSL dep needs an ADR); digest pinning discipline. | **REAL** (structural) — far smaller attack surface than an npm/pip tree |
@@ -109,9 +109,29 @@ gateway/proxy. See the [operations runbook](../deployment/runbook.md) for the se
    startup warning) unless `AISOTROPY_JWT_SECRET` is set, so a non-local deployment that ignores the
    warning is still "correct given a trusted edge." Setting the secret (plus an ops token and TLS) is the
    top deployment-time security step; RS256/JWKS is the one named capability follow-on.
-2. **`/chat/agent` is unmetered and un-rate-limited** — a cost/DoS hole (T4).
+2. **CLOSED 2026-08-04 — `/chat/agent` and `/ask` are now gated (T4).** This entry read
+   "`/chat/agent` is unmetered and un-rate-limited", and it **under-declared the gap**: `/ask` was in
+   the same state and was never listed, while the T4 row's enumeration of gated routes read as
+   exhaustive. Both now run the same pre-LLM quota check as `/chat`. Two notes worth keeping: an
+   admitted `/chat/agent` turn can still make up to `agentMaxSteps` (3) provider calls on **one**
+   bucket token — deliberate, since the bucket's unit is requests-per-second and `/chat` already
+   makes several calls per token via the reflection loop; bounding an admitted turn's *spend* is a
+   different control with a different unit (USD). And a streaming turn that ends without a provider
+   usage block is now recorded as an **unmetered turn** rather than silently as zero (see item 3).
 3. **Rate limit + cost meter are per-instance** — a multi-replica deployment has no shared quota;
-   a tenant could exceed its bucket by fanning out across replicas (T4).
+   a tenant could exceed its bucket by fanning out across replicas (T4). **The cost meter's
+   per-instance limit is not only observational**, which the `/costs` "not a billing system of
+   record" caveat does not convey: `gateway.CostAwarePolicy` reads the meter through `selectClient`
+   ([`internal/api/guard.go`](../../internal/api/guard.go)) to decide when to shape a tenant onto the
+   cheap model, so the **cost budget** inherits both limits — it multiplies by replica count, and
+   because the meter holds no state across restarts it **resets on every restart even on a single
+   replica**. A pod that restarts three times in a day grants that tenant three full budgets. A local
+   fix is a trap and was deliberately not shipped: persisting into the working-memory BadgerDB is
+   inert in the default config (that store is in-memory unless `AISOTROPY_DATA_DIR` is set) and is
+   per-process either way, so it would make the budget *look* enforced while remaining N×. The honest
+   fix is a durable cross-replica meter. Characterisation tests pin both halves
+   (`internal/api/cost_budget_volatility_test.go`) — they pass against current behaviour by
+   construction, and exist so a durable meter has an expectation to flip.
 4. **PII redaction is reflection-path-only and email-only** (T8).
 5. **The sleep-cycle `ExportAll` is the one sanctioned cross-tenant read** (T5) — correct today, but
    any future change to it is a high-blast-radius isolation risk and must stay reviewed.
