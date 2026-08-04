@@ -54,6 +54,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import re
+import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -120,6 +121,19 @@ UNIQUENESS = re.compile(
     #     repo uses constantly about itself ("no arena runtimes needed"), so
     #     they cost more precision than the recall they buy. "framework" and
     #     "library" are what a competitor claim actually reaches for.
+    #
+    # KNOWN FALSE POSITIVE, MEASURED AND KEPT ON PURPOSE. This alternative also
+    # matches "so no framework is advantaged or disadvantaged by a persona"
+    # (docs/architecture/arena-safeguard-dimension.md) — a statement about arena
+    # FAIRNESS, not about any competitor lacking anything. It could be excluded
+    # by requiring a capability verb after the noun, and that was measured and
+    # rejected: this alternative is the ONLY thing catching 68 real claims
+    # ("Pydantic AI ... a stateless lib with no memory tier", ADK's "no
+    # framework-enforced separator", "Genkit Go ships no framework pre-spend
+    # gate"), and a verb allow-list narrow enough to drop the fairness sentence
+    # would drop some of those too. One false positive per sixty-eight findings
+    # is a rate this guard can carry; losing real competitor claims to improve
+    # it is optimising the measurement instead of the thing measured.
     r"|\bno (?:(?!the\b|a\b|an\b|of\b|for\b|to\b|in\b|on\b|with\b|and\b|or\b)\w+[-\s]){0,3}"
     r"(?:framework|library|sdk|competitor|rival|implementation)s?\b)",
     re.I,
@@ -181,7 +195,39 @@ def files() -> list[str]:
                 if fn.endswith(SCAN_EXT) and fn not in SKIP_FILES
                 and (not fn.endswith(".json") or fn == "matrix.json")
             )
-    return sorted(out)
+    return sorted(drop_git_ignored(out))
+
+
+def drop_git_ignored(paths: list[str]) -> list[str]:
+    """Remove paths git is ignoring — build output, virtualenvs, vendored bundles.
+
+    This guard walks the FILESYSTEM, not the index, which is right: a claim
+    written five minutes ago and not yet committed is exactly what a pre-push
+    gate must see. But the same walk also reads things no clone will ever
+    contain. Both have now been paid for: 20 baseline entries once pointed into
+    an untracked .venv, and `arenas/eve/.output/server/_libs/eve.mjs` — a
+    bundled third-party build artifact, ignored by arenas/eve/.gitignore — was
+    contributing "claims" nobody wrote.
+
+    The distinction that matters is IGNORED vs merely UNTRACKED, and only git
+    knows it, so ask git rather than growing a hardcoded directory list forever
+    (SKIP_DIRS stays as the offline fallback). `git check-ignore` exits 1 when
+    nothing matched, which is the normal clean case, not an error.
+    """
+    if not paths:
+        return paths
+    try:
+        proc = subprocess.run(
+            ["git", "-C", REPO, "check-ignore", "--stdin"],
+            input="\n".join(paths), capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return paths  # no git available: fall back to SKIP_DIRS alone
+    if proc.returncode not in (0, 1):
+        return paths
+    ignored = {os.path.join(REPO, p) if not os.path.isabs(p) else p
+               for p in proc.stdout.splitlines() if p.strip()}
+    return [p for p in paths if os.path.abspath(p) not in ignored]
 
 
 def is_competitor_claim(line: str) -> bool:

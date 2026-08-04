@@ -57,14 +57,6 @@ arenas/eino/scripts/smoke.go::// Eino has no tenant dimension to catch the omiss
 arenas/eino/scripts/smoke.go::// model. Eino is an orchestration library with no tenancy primitive; its	arenas/eino/scripts/smoke.go:99
 arenas/eino/scripts/smoke.go::// true of any such store, including aisotropy's BadgerDB. Eino simply has no	arenas/eino/scripts/smoke.go:162
 arenas/eino/scripts/smoke.go::fmt.Println(" you ask for. The failure is the dropped tenant segment; Eino has no tenant")	arenas/eino/scripts/smoke.go:184
-arenas/eve/.output/server/_libs/@ai-sdk/gateway+[...].mjs::if (WebSocketConstructor == null) throw new Error("No WebSocket implementation available.");	arenas/eve/.output/server/_libs/@ai-sdk/gateway+[...].mjs:8732
-arenas/eve/.output/server/_libs/eve.mjs::if (d != null && d.length > 0) throw Error(`Google Gemini API does not support image editing with Imagen models. Use Google Vertex AI (@ai-sdk/google-vertex) fo	arenas/eve/.output/server/_libs/eve.mjs:105504
-arenas/eve/.output/server/_libs/eve.mjs::if (f != null) throw Error(`Google Gemini API does not support image editing with masks. Use Google Vertex AI (@ai-sdk/google-vertex) for image editing capabili	arenas/eve/.output/server/_libs/eve.mjs:105505
-arenas/eve/.output/server/_libs/eve.mjs::if (t == null) throw Error(`No WebSocket implementation available.`);	arenas/eve/.output/server/_libs/eve.mjs:66777
-arenas/eve/.output/server/_libs/eve.mjs::l === `latest` && (s.resolveLatestDeploymentId ? l = await s.resolveLatestDeploymentId() : (Y$9 || (Y$9 = !0, Y$10.warn(`deploymentId: 'latest' has no effect in	arenas/eve/.output/server/_libs/eve.mjs:32297
-arenas/eve/.output/server/_libs/eve.mjs::return !isVercelEnvironment() || !isLocalSandboxBackend(e.backendName) ? e.error : Error(`The ${e.backendName} sandbox backend is not available when deploying o	arenas/eve/.output/server/_libs/eve.mjs:76641
-arenas/eve/.output/server/_libs/eve.mjs::return i = n === void 0 ? `it was invoked outside an eve context, so no authenticated user can be resolved.` : r == null ? `the active session has no authentica	arenas/eve/.output/server/_libs/eve.mjs:50429
-arenas/eve/.output/server/_libs/eve.mjs::return t.length > 0 && process.env.VERCEL === `1` && console.warn(`[workflow] Warning: ${t.join(`, `)} env var(s) are set but have no effect at runtime. These a	arenas/eve/.output/server/_libs/eve.mjs:32786
 arenas/eve/scripts/smoke.mjs::console.log(" DIY / OUT-OF-SCOPE (no tenancy primitive), like Pydantic AI / Eino — NOT a defect.");	arenas/eve/scripts/smoke.mjs:133
 arenas/genkit-go/DX-NOTES.md::Genkit has no built-in "stub"/"test" model, but `DefineModel` makes writing one trivial: you get	arenas/genkit-go/DX-NOTES.md:18
 arenas/genkit-go/FEATURES.md::- **Pre-spend gate — DIY (no framework API).** Re-verified: Genkit Go ships **no**	arenas/genkit-go/FEATURES.md:142
