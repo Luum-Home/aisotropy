@@ -85,7 +85,7 @@ The Apache ICLA gives the contributor a reciprocal promise anchored in ASF's non
 (*"…shall not use Your Contributions in a way that is contrary to the public benefit or inconsistent
 with its nonprofit status and bylaws…"*). The Maintainer is a natural person, not a nonprofit; the clause is inapplicable.
 
-**What we did:** replaced it with an **Outbound Commitment** (ICLA §9) — the Company undertakes that
+**What we did:** replaced it with an **Outbound Commitment** (ICLA §9) — the Maintainer undertakes that
 every accepted Contribution will remain available under Apache-2.0, a later version, or another
 OSI-approved license, surviving change of control, while §2's `sublicense` right is expressly
 preserved so a commercial tier may also include the Contribution.
@@ -96,7 +96,7 @@ preserved so a commercial tier may also include the Contribution.
    entire reason a CLA was chosen over a DCO? If not, the choice is wrong and we need to know now,
    while there are zero external contributions.
 3. Does §9 create any obligation that would obstruct a future acquisition or a source-available tier?
-4. Alternative on the table if §9 is a problem: delete it. More permissive for the Company,
+4. Alternative on the table if §9 is a problem: delete it. More permissive for the Maintainer,
    materially less attractive to contributors. **Operator's call, informed by yours.**
 
 ### Q2b — One deviation was found late, and is flagged rather than buried
@@ -125,8 +125,13 @@ Neither Apache CLA carries a governing-law clause, and we did not add one.
 
 The repository was never published under MIT. Our position: no formal act is required, the license is
 whatever `LICENSE` says at publication. Confirm — and say whether the internal record (ADR-0080) is
-sufficient evidence of the decision, or whether a board/officer resolution is wanted given the entity
-is a company.
+sufficient evidence of the decision for a **natural person** holding copyright in a personal project,
+or whether something more formal is wanted.
+
+> *This question previously ended "…or whether a board/officer resolution is wanted **given the entity
+> is a company**", 60-odd lines after Q1 records that the holder is a natural person and that "Luum"
+> was only ever the GitHub organisation. Corrected 2026-08-04: a packet whose stated purpose is to be
+> reviewable in one sitting cannot ask counsel to reason from a premise it already retracted.*
 
 ### Q5 — Is the copyright really the operator's to hold? *(the question Q1's answer creates)*
 

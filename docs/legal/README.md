@@ -39,7 +39,7 @@ to be the wrong ones.
    [packet Q3](counsel-review-packet.md), so it is not built yet. Building it before that answer
    would mean building it twice.
 3. No agreement on file → the PR is not merged, and the bot says how to sign.
-4. Agreements are stored by the Company. Public name and GitHub user appear in project history;
+4. Agreements are stored by the Maintainer. Public name and GitHub user appear in project history;
    postal address and e-mail do not.
 
 ## Why a CLA and not a DCO
@@ -51,6 +51,6 @@ reversibility, not on a forecast: **CLA → DCO can be dropped any day; DCO → 
 retroactively**, because every contribution already merged under a DCO stays non-relicensable. With
 zero external contributors, a CLA costs one signature and buys back the entire option.
 
-Note the scope, which is narrower than people assume: the Company's **own** code — all of the
-repository today — is relicensable at will regardless. A CLA only ever governs code the Company does
+Note the scope, which is narrower than people assume: the Maintainer's **own** code — all of the
+repository today — is relicensable at will regardless. A CLA only ever governs code the Maintainer does
 not own.

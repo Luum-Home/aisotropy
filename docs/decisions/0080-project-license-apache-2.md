@@ -236,7 +236,7 @@ deviation from its source. Three matter:
    OSI-approved license, surviving change of control — while §2's `sublicense` right is expressly
    preserved so a commercial tier may *also* include it. The bargain is "we may dual-license, we may
    never take it away". **This is a choice, not a derivation**, and the alternative (drop §9: more
-   permissive for the Company, materially less attractive to contributors) is recorded in the draft so
+   permissive for the Maintainer, materially less attractive to contributors) is recorded in the draft so
    it can be taken instead.
 3. **`sublicense` is untouched** in §2 — flagged explicitly in both drafts, because it is the operative
    word for this whole sub-decision and nobody should later assume it was softened.
@@ -252,7 +252,7 @@ formed later. That answer inverts **Q5**, which now asks whether any employer or
 the copyright the holder asserts publicly. The remaining load-bearing ones, **Q2** whether §9 is sound consideration and whether §2 actually delivers the commercial
 option this sub-decision was made for, **Q3** governing law plus whether a click-through CLA binds
 (which decides whether the contribution workflow is a bot or a signed PDF — hence it is not built yet),
-and **Q5** whether copyright in a repository authored entirely by one person in fact vests in the Company, which no CLA
+and **Q5** whether copyright in a repository authored entirely by one person in fact vests in that person, which no CLA
 addresses.
 
 Until that review lands, both drafts carry a **DO NOT SIGN** banner and `CONTRIBUTING.md` keeps
