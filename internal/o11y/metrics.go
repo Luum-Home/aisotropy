@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 	otelmetrichttp "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
@@ -274,5 +274,3 @@ func NewLLMMetrics(mp *MeterProvider) *LLMMetrics {
 		Duration:   NewHistogram(meter, "llm_call_duration", attrs),
 	}
 }
-
-
