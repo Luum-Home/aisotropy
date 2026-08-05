@@ -320,6 +320,7 @@ via the semantic tier; the chat-route gap is a filed product follow-up (`39017e9
 (7.7%) — and the 59 are **explained, not contamination**: ~16 aisotropy-adapter shutdown-exit-1
 blips (the adapter answers, then exits non-zero during connection drain — adapter bug, filed), 8
 `isolation_forgetful` infeasible-by-design errors on the four adapters with no framework-level user
+<!-- SWEPT: 2026-07-23 docs/architecture/arena-memory-analysis.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
 scope to omit (§4), and exactly 1 genuine store timeout — versus ~30+ store timeouts on the
 **discarded contaminated concurrency-3 run**, whose numbers appear nowhere in this document. The
 fix that made the difference (`a9a7261`): the shared e5 embed server ran a single GIL-bound uvicorn
@@ -361,6 +362,7 @@ L1's invisible failure mode).
 > precondition for publishing this table externally.
 
 | langgraph | **0/2 ✗** | one **cross-scope LEAK** (an omitted `('',)` namespace acts as a match-all prefix in `SqliteStore` and returns **another user's memory** — `store_memory.py:356→371`, an **L1 breach**) + one **silent partition** | L1 breach |
+<!-- SWEPT: 2026-07-23 docs/architecture/arena-memory-analysis.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
 | llamaindex | **0/2 ✗** | **silent partition × 2** — blank `user_id` forwarded RAW (`adapter.py:1164`) selects a different empty per-user collection (`:879` → `:1000`); no error, no data — the mistake is invisible | L1 |
 
 > **llamaindex's row is NOT a framework verdict — it is withdrawn as one.** The omitted scope in
@@ -378,6 +380,7 @@ L1's invisible failure mode).
 > was publishing** — the same rule that removed spring-ai's two passes.
 
 | ai-sdk / eino / genkit-go / pydantic-ai | — (errored) | **infeasible by design** — there is no framework-level user scope to omit; user-keying lives in adapter glue, so the probe would exercise adapter-invented code, not the framework. These are 8 of the board's 59 explained errors; each adapter's `matrix.json` declares the cell `infeasible` with the reason | L0 |
+<!-- SWEPT: 2026-07-23 docs/architecture/arena-memory-analysis.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
 
 Read plainly: on the mistake that a real multi-tenant integrator actually makes, **aisotropy, mastra,
 and spring-ai refuse; llamaindex silently ships an empty wrong scope both times; and langgraph hands
@@ -391,6 +394,7 @@ unrepresentability over HTTP).
 
 1. **Measured, not asserted.** Every verdict was produced by *running the competitor's own store
    code* — langgraph's `SqliteStore` leak came from executing `SqliteStore.search` with a blank namespace during
+<!-- SWEPT: 2026-07-23 docs/architecture/arena-memory-analysis.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
    FASE 3 (`0bdd3ff`) and is now reproduced as a rendered board cell (`06945bf`), not read from docs.
 2. **It CONTRADICTED our own prediction.** `arena-tenancy-levels.md` §"forgetful integrator"
    predicted langgraph would `silent_partition`. The executed result was **sharper and worse — a
@@ -440,6 +444,7 @@ Pulling §1–§4 together into the load-bearing synthesis:
 - **mastra is the strongest overall competitor on this board, and this document says so plainly:**
   perfect across all three memory-extension dimensions (2/2, 2/2, 2/2), enforcing on the forgetful
   probe (2/2), AND the only framework with a perfect safeguard (7/7) — while also being among the
+<!-- SWEPT: 2026-07-23 docs/architecture/arena-memory-analysis.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
   cheapest on within-session memory tokens (§2). spring-ai matches it on memory and isolation but
   not safeguard (5/6, 1 err); aisotropy matches it on memory and isolation but sits at 5/7 on
   safeguard and pays the widest within-session token premium.
@@ -471,6 +476,7 @@ safeguard.**
 | `WorkingMemory.Close` shutdown-ordering bug (real product defect) | **MEASURED (code)** | `internal/memory/working_memory.go:228-237`; forensics §5.2 |
 | Summarizer has no needle-preservation contract (real product defect) | **MEASURED (code)** | `internal/memory/summarizer.go:104-109`; forensics §4, §5.2 |
 | The cross-session/semantic/consolidation capability is *unique* to aisotropy | **FALSE (refuted, now doubly)** | extensions Verdict (ecosystem) + the measured three-way tie at `06945bf` |
+<!-- SWEPT: 2026-07-23 docs/architecture/arena-memory-analysis.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
 
 ---
 
@@ -497,6 +503,7 @@ Per `.claude/rules/capability-absence-claims.md` §"Symmetric rigor" and `arena-
 - **Tenancy (aisotropy better).** (a) *Measured, not asserted* — executed against each competitor's
   own store during FASE 3 and now rendered as board cells at `06945bf`. (b) *Symmetric* — the same
   `ScoreForgetful` that fails langgraph would fail aisotropy on a leak
+<!-- SWEPT: 2026-07-23 docs/architecture/arena-memory-analysis.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
   (`scoring_test.go:552-558`), aisotropy's L3 is caveated with the NoAuth/façade downgrade in the
   same section (§4), and the two competitors that also enforce are named in the same table, not
   buried. (c) *Contradicted our own prediction* — the doc predicted langgraph `silent_partition`;
@@ -528,6 +535,7 @@ Per `.claude/rules/capability-absence-claims.md` §"Symmetric rigor" and `arena-
 §5, §7), explicit "TIES the top" statements (§0, §3, §5, §7), and explicit "BETTER" statements
 qualified to one axis (§0, §4, §7); no sentence of the form "aisotropy is better at memory" appears
 unqualified anywhere in it, and no sentence claims a capability is unique to aisotropy.
+<!-- SWEPT: 2026-07-23 docs/architecture/arena-memory-analysis.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
 
 ---
 
@@ -581,6 +589,7 @@ unqualified anywhere in it, and no sentence claims a capability is unique to ais
 - `docs/architecture/arena-benchmark-methodology.md` — how the token/latency numbers are measured,
   the "empty parity" and "same checkmark, different guarantee" reading guides.
 - FASE-3 wiring commits: `0bdd3ff` (langgraph, the leak-beats-prediction finding), `55ee6b1`
+<!-- SWEPT: 2026-07-23 docs/architecture/arena-memory-analysis.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
   (llamaindex silent_partition), `594d816` (mastra refuses), `5f58150` (genkit-go/eino/ai-sdk honest
   verdicts), `f4e473d` (pydantic-ai/spring-ai + spring refuse), `affaf93` (per-run nonce).
 - `arenas/live/runner/scoring/scoring.go:510-530` — the pure `ScoreForgetful` three-way verdict;

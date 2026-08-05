@@ -12,6 +12,7 @@ timestamp: 2026-07-22T00:00:00Z
 > `docs/architecture/arena-benchmark-methodology.md` described the seven competitor frameworks in the
 > live arena as having "no concept of a tenant" — a blanket statement. It is **false as stated**. Four
 > of the seven (AI SDK, Pydantic AI, Eino, Genkit-Go) genuinely have no framework-owned data plane to
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
 > scope, so the claim holds for them. But LangGraph ships a hierarchical namespace-tuple `BaseStore`
 > with semantic search; Mastra ships a `(resourceId, threadId)` scoping primitive with a documented,
 > shipped-source request-context override; LlamaIndex documents a first-party multi-tenancy RAG
@@ -54,6 +55,7 @@ you for free*, not what is theoretically achievable with enough application code
 | Genkit Go | **L0** (data plane) / **L2** (identity, no data plane to apply it to) | No framework-owned data plane to scope — but flow-boundary identity IS real L2: `ContextProviders`/auth policies bind `context.auth` (e.g. a Firebase uid) at the flow boundary — https://genkit.dev/docs/auth/. The Go docs lag the JS docs, so this framework's L0-for-data-plane conclusion is an absence claim not independently source-verified beyond the docs read (see Could not establish). |
 | Spring AI | **L1** | Required `ChatMemory.CONVERSATION_ID` — throws if omitted, so the failure mode is loud rather than silent, still single-axis — https://docs.spring.io/spring-ai/reference/api/chat-memory.html ; `FilterExpression` per-query for vectors; arena adapter: `arenas/live/spring-ai/src/main/java/arena/springai/RqliteChatMemoryRepository.java`. |
 | Vector-store level (Qdrant/pgvector/Pinecone) | infra-level, not framework-level | Multi-tenancy support exists at the vector-store layer, equally available to every framework above regardless of its own ladder position. **No surveyed framework auto-plumbs the tenant filter** — every integration checked has the user construct the filter per query by hand. This is absence-of-evidence from docs plus spot checks, not an exhaustive source read of every framework's vector-store integration code. |
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
 
 **What survives across every framework surveyed:** no OSS-core path reaches L3. Every OSS-core path is
 either L1 (a parameter that partitions correctly if used correctly) or L0 (nothing at all). L2
@@ -179,6 +181,7 @@ signal is always deterministic.
 - **`eino-ext` was not exhaustively enumerated** — the eino ecosystem's extension packages beyond the
   core and `eino-examples` were not fully surveyed for a tenancy-relevant addition.
 - **"No framework auto-plumbs the vector-store tenant filter" is an absence-of-evidence claim** — based
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
   on documentation review plus spot checks of the arena's own adapters, not an exhaustive read of
   every framework's vector-store integration source.
 - **WebFetch-sourced doc summaries used in this research are model-mediated**, not verbatim quotes —

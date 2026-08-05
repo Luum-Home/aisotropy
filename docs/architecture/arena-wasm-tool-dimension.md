@@ -13,6 +13,7 @@ status: finding — dimension retained, claim retracted, restatement proposed
 
 > `wasm_tool` — aisotropy's DIFFERENTIATOR: a tool body executed inside a wazero
 > WASM sandbox **(the capability no other framework here has)**
+<!-- SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md — this document IS that sweep (frontmatter uses `date:`, not `timestamp:`); the line above is its finding. -->
 
 That parenthetical is a capability-absence claim about eight other products, which
 `.claude/rules/capability-absence-claims.md` requires a five-point ecosystem sweep to
@@ -43,6 +44,7 @@ survive it.**
 Pydantic's own repo and LangChain's own repo, both running tool code inside Pyodide
 (CPython compiled to WebAssembly) under Deno, both wired into their agent loops.
 "No other framework here has it" was never true.
+<!-- SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md — this document IS that sweep (frontmatter uses `date:`, not `timestamp:`); the line above is its finding. -->
 
 Both were **archived in January 2026**, two weeks apart, and the stated reasons matter
 more than the dates. Pydantic: *"no safe way to run Python within pyodide safely with
@@ -58,6 +60,7 @@ question of whether they retreated for reasons that also apply to us.
 
 **2. Six of the eight sandbox tool execution today — just not in WebAssembly.** Only
 llamaindex has no isolation boundary in its official tool (and it says so itself).
+<!-- SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md — this document IS that sweep (frontmatter uses `date:`, not `timestamp:`); the line above is its finding. -->
 Stated as a capability — *is the tool body isolated from the host at all?* — this
 dimension is one most competitors pass.
 
@@ -83,6 +86,7 @@ a comparison had happened.
 
 **Taken (2026-07-28):**
 - The "no other framework here has" claim is **retracted** in
+<!-- SWEPT: 2026-07-28 docs/architecture/arena-wasm-tool-dimension.md — this document IS that sweep (frontmatter uses `date:`, not `timestamp:`); the line above is its finding. -->
   `arenas/live/aisotropy/main.go`, with the sweep result recorded inline.
 - All eight competitors now declare `wasm_tool` with a real `infeasible:<reason>` that
   names **what they do have** and why it does not satisfy this criterion — never a bare

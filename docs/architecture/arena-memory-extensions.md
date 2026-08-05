@@ -12,6 +12,7 @@ timestamp: 2026-07-22T00:00:00Z
 > (rqlite/SQLite FTS5), semantic (Qdrant), and async sleep-cycle consolidation — are default-on and
 > tenant-scoped by construction (see `docs/architecture/memory-tiers.md`,
 > `docs/architecture/multi-tenancy.md`). It is tempting to describe that as "unique to us": no
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
 > competitor framework in the live arena ships a comparable tiered-memory pipeline in its own
 > adapter. But the arena's own discipline — `.claude/rules/prune-evidence-gate.md`'s "code + tests are
 > the truth, not a doc read" and `arena-full-matrix.md`'s full-cartesian-coverage law — applies just as
@@ -25,6 +26,7 @@ timestamp: 2026-07-22T00:00:00Z
 ## Verdict
 
 **The claim "cross-session / semantic long-term / consolidation is unique to aisotropy" does not
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
 survive as stated.** langgraph, llamaindex, and mastra each have an official path to all or most of
 the three capabilities, via their own core or an in-tree first-party extension. The honest reframe:
 aisotropy's differentiator is that the three tiers are **default-on and integrated** (every request
@@ -202,6 +204,7 @@ That distinction governs every row below.
   reason, NOT because "WASI has no sockets" (false since WASI 0.2, January 2024); aisotropy's
   own wasm form is its wazero tool-sandbox only, not a full networked runtime.
 - **eino × `memory_semantic_recall` + `memory_consolidation`:** `infeasible` — no official memory
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
   component exists to exercise; hand-rolling one for the test would benchmark adapter authorship, the
   exact anti-pattern `docs/architecture/arena-idiomaticity-and-dx.md` names. eino ×
   `memory_cross_session`: **run-and-fail expected** (the CheckPointStore path is executable but not
@@ -214,6 +217,7 @@ That distinction governs every row below.
   — if that search turns out to be embedding-backed, `memory_semantic_recall` flips from infeasible to
   runnable.
 - **ai-sdk × all three dimensions:** **recommendation = honest `infeasible`** — "no official memory
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
   primitive; mem0/Letta providers are community-maintained and substitute an external service for the
   framework's own capability" — **plus** a clearly-labeled, **non-competing exhibition row** with mem0
   OSS self-hosted, rendered outside the primary table, following the same secondary/opt-in pattern

@@ -156,6 +156,7 @@ wanted to hand it one. The adapter obeyed the documented, correct contract for a
 public surface. **The bad number is produced by a contract asymmetry the suite already knows about
 and names, not by an adapter defect** — every other framework in this suite accepts a message list
 and can replay the canned assistant turns verbatim (§5), so only aisotropy's per-turn design turns
+<!-- SWEPT: 2026-07-21 docs/architecture/arena-memory-forensics.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
 "canned assistant line" into "silently discarded input, replaced by whatever the model actually says
 this time." Discarding it is correct per the adapter's contract; the model then treating the missing
 context as license to try to actually perform the booking is the behavior under test — and it is
@@ -400,6 +401,7 @@ every turn:
   adapter configured `token_limit=8000` against a workload of roughly 1-2k tokens per task, so the
   flush logic never actually fires in this suite; the budget machinery exists and is unused here.
 - **mastra** ships the only framework-level default bound among the seven:
+<!-- SWEPT: 2026-07-21 docs/architecture/arena-memory-forensics.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
   `memoryDefaultOptions = { lastMessages: 10, semanticRecall: false, ... }`, compiled into
   `arenas/live/mastra/node_modules/@mastra/core/dist/chunk-77JDY5O7.js:7526-7527` from the package's
   `MastraMemory` base class (`threadConfig = { ...memoryDefaultOptions }` at
@@ -416,6 +418,7 @@ every turn:
   session-keyed `MemoryStore`, so this is "not used in this dimension", not "does not exist"); its adapter's `runMemory`
   (`arenas/live/eino/mode_memory.go:24-75`) hand-rolls a SQLite-backed history store keyed by
   session_id (comment at `mode_memory.go:22-23`: "Eino has no built-in persisted-memory component to
+<!-- SWEPT: 2026-07-21 docs/architecture/arena-memory-forensics.md — this document IS that sweep; the line above is a finding of it, not a claim awaiting one. -->
   drive natively") and replays `priorTurns` plus the current invocation's messages verbatim
   (`mode_memory.go:43-48`) — including any canned assistant lines the invocation carries, since
   nothing in the adapter filters by role the way aisotropy's `userMessages` does.
