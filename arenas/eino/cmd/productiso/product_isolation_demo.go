@@ -8,7 +8,12 @@
 //
 // The honest framing (matches FEATURES.md):
 //   - Eino is a graph-ORCHESTRATION library (LangGraph-for-Go). It has NO
-//     tenancy/memory-isolation primitive — same as LangGraph or Pydantic AI.
+//     tenancy/memory-isolation primitive on the data plane — same category as
+//     Pydantic AI (L0). LangGraph is one rung up at L1: its BaseStore does give
+//     a real hierarchical namespace parameter, just not an enforced one.
+//     SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
+//     Was: "same as LangGraph or Pydantic AI" — the cited sweep puts those two
+//     on different rungs, so they are not the same category as each other.
 //   - compose.CheckPointStore is `Get/Set(ctx, id string)`: a human-in-the-loop
 //     interrupt/resume KV, NOT a memory tier. product_id is not a dimension the
 //     framework knows about — only a substring the developer concatenates.

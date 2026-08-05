@@ -547,9 +547,23 @@ func areaAuth(ctx context.Context, app *orbit.Orbit) {
 	hdr("AREA 4 — AUTH / IDENTITY BINDING")
 	_ = ctx
 
-	// FEATURE 16 — Bearer token -> identity. Genkit core (ai/genkit packages)
-	// binds NO identity: there is no auth middleware, no principal, no
-	// tenant/user on the request. DIY: a hand-rolled bearer->identity check.
+	// FEATURE 16 — Bearer token -> identity. Genkit DOES ship a request-boundary
+	// auth seam: core.ContextProvider + genkit.WithContextProviders run per
+	// request at the server edge and an error there rejects the request
+	// (core/context.go:53-55, genkit/servers.go:45,70 at v1.10.0) — the L2 that
+	// docs/architecture/arena-tenancy-levels.md credits it. What it does NOT have
+	// is a typed principal (ActionContext is an untyped map[string]any) or any
+	// framework-enforced binding of that identity to a tenant/user on the DATA
+	// plane, which is where the isolation question actually lives. DIY below: a
+	// hand-rolled bearer->identity check.
+	//
+	// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
+	// Was: "Genkit core (ai/genkit packages) binds NO identity: there is no auth
+	// middleware, no principal, no tenant/user on the request." The first clause
+	// was false against source. It was also invisible to the absence-claim guard
+	// — "binds NO identity" matches none of its patterns — so nothing would ever
+	// have flagged it; it surfaced only because an agent read the sweep against
+	// the prose rather than against the ledger.
 	tokens := map[string]struct{ tenant, user string }{
 		"tok-acme-alice": {"acme", "alice"},
 	}

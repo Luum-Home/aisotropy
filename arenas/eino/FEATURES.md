@@ -22,7 +22,17 @@ Everything below was checked against the real source in the module cache
 - **Finding:** the persistence key is a single developer-supplied string. No tenant/user dimension
   exists anywhere in the interface, and there is **no default implementation**. Per-node state
   (`WithGenLocalState`) carries only the fields the developer declares. Eino is an orchestration
-  library with no tenancy primitive — the same category as LangGraph or Pydantic AI.
+  library with no tenancy primitive on the data plane — the same category as **Pydantic AI**
+  (L0 in [`arena-tenancy-levels.md`](../../docs/architecture/arena-tenancy-levels.md)).
+  **LangGraph is one rung up, at L1:** its `BaseStore` does give a real hierarchical namespace
+  parameter — it is just not enforced, so passing it wrong reads another scope silently.
+  <!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md -->
+  <!-- Was: "the same category as LangGraph or Pydantic AI". The very sweep this cites puts
+       LangGraph at L1 and Pydantic AI at L0, so the two are not the same category as each
+       other, and Eino is not the same category as LangGraph. Flattening L1 to L0 is the
+       error the L0-L3 ladder was built to stop — capability-absence-claims.md calls it
+       overstating the gap. Invisible to the guard: the sentence carries no absence verb
+       the patterns recognise. -->
 - **Proof (exercised):** `orbit/memory.go` builds a real interrupt/checkpoint graph; `TestIsolationSharedIDCollapses`
   seeds tenant A under `"shared-session"` and shows that when tenant B composes the same bare ID the
   keys collapse and the store returns the seeded value — driven by Eino's real runtime. This is what

@@ -231,6 +231,89 @@ def files() -> list[str]:
     return sorted(drop_git_ignored(out))
 
 
+# Sentences this guard MUST see, and sentences it MUST NOT. Every entry is a
+# real defect it once had, kept as a fixture so the pattern edits that fixed them
+# cannot be undone silently.
+#
+# WHY THIS EXISTS AT ALL. On 2026-08-04 three separate blind spots were found in
+# one afternoon — a missing word boundary, three missing absence verbs, and five
+# arena frameworks absent from COMPETITORS. Not one was found by this guard. All
+# three surfaced because people read the ecosystem sweeps against the PROSE
+# instead of against the ledger, and then noticed the ledger disagreed. That is
+# the structural problem these fixtures only partly close: a guard's own output
+# can never reveal what its patterns cannot match, so every count it has ever
+# printed was a count of what it could see. Fixtures pin the failures we KNOW
+# about. They cannot find the fourth blind spot — only reading can.
+DETECT_FIXTURES = [
+    # (sentence, must_be_detected, why)
+    ("Eino has no tenant dimension", True, "plain absence + competitor"),
+    ("Pydantic AI ships no memory or multi-tenancy layer", True,
+     "'ships no' — the verb gap that hid a wrong claim until 2026-08-04"),
+    ("ADK Go exposes NO pre-spend quota primitive", True,
+     "'exposes no' + adk-go, which was missing from COMPETITORS"),
+    ("Letta has no framework binding between an authenticated caller and a tenant", True,
+     "letta was missing from COMPETITORS"),
+    ("no competing Go agent framework builds it", True,
+     "the front-page uniqueness construction that shipped unseen"),
+    ("one rival leaked across tenants when we reproduced it", False,
+     "DEFECT needs a competitor name nearby; unnamed prose is our own"),
+    ("Eino natively supports streaming via schema.StreamReader", False,
+     "'Ei|no native|ly' — the missing word boundary inverted this into an absence claim"),
+    ("the Eino streaming primitive is schema.Pipe", False,
+     "'Ei|no streaming primitive|' — same inversion"),
+    ('{"framework":"ai-sdk","model":"x","reply":"I have no information about your account."}', False,
+     "captured run record: the absence language is the MODEL's answer, and a passing one"),
+    # Pinned as True on purpose. This sentence is about arena FAIRNESS, not about
+    # any competitor lacking anything — a genuine false positive, and one that was
+    # measured and ACCEPTED rather than fixed: the `no <modifiers> framework`
+    # alternative that catches it is the only thing catching 68 real claims, and
+    # every narrowing tight enough to drop it dropped some of those too. Encoding
+    # the decision rather than the wish, so that a future narrowing flips this
+    # fixture and has to argue with the trade-off instead of silently taking it.
+    ("so no framework is advantaged or disadvantaged by a persona", True,
+     "accepted false positive: 1 per 68 real findings, see the UNIQUENESS comment"),
+]
+
+
+def self_check() -> list[str]:
+    """Fail closed on the two blind-spot classes that CAN be mechanised.
+
+    Returns a list of problems; empty means the guard is fit to run. Callers
+    treat a non-empty result as exit 2 (cannot evaluate), never as a pass — a
+    guard that cannot vouch for its own coverage must not be read as absolution.
+    """
+    problems = []
+
+    for sentence, want, why in DETECT_FIXTURES:
+        if is_competitor_claim(sentence) != want:
+            verb = "missed" if want else "false-positived on"
+            problems.append(f"pattern regression: {verb} {sentence!r} ({why})")
+
+    # Every arena adapter directory needs a COMPETITORS entry, or its absence
+    # claims are invisible. This is exactly how adk-go, letta, cloudflare-agents,
+    # dify and eve went unseen: the ledger read 3, 7 and 2 entries for the first
+    # three, not because less was claimed about them but because ABSENCE only
+    # fires near a name it knows.
+    not_frameworks = {"live", "runner", "_shared", "aisotropy", "key-brokering",
+                      "flue", "models", "scripts", "tasks", "docker", "orbit"}
+    seen = set()
+    for root in (os.path.join(REPO, "arenas"), os.path.join(REPO, "arenas", "live")):
+        if not os.path.isdir(root):
+            continue
+        for d in os.listdir(root):
+            if d in not_frameworks or d.startswith(".") or not os.path.isdir(os.path.join(root, d)):
+                continue
+            seen.add(d)
+    known = [c.replace(" ", "-") for c in COMPETITORS]
+    for d in sorted(seen):
+        if not any(k in d or d in k for k in known):
+            problems.append(
+                f"coverage gap: arenas/{d}/ is an adapter with no COMPETITORS entry — "
+                f"every absence claim about it is invisible to this guard"
+            )
+    return problems
+
+
 def drop_git_ignored(paths: list[str]) -> list[str]:
     """Remove paths git is ignoring — build output, virtualenvs, vendored bundles.
 
@@ -322,6 +405,19 @@ def claim_key(rel: str, line: str) -> str:
 
 def main() -> int:
     write_baseline = "--write-baseline" in sys.argv
+
+    # Before reporting on anybody else's claims, check our own instrument. Runs
+    # on every invocation rather than behind a flag: a self-check nobody
+    # remembers to pass is the same shape as the ecosystem sweep this guard
+    # exists to enforce — a rule that was right and that nothing ran.
+    problems = self_check()
+    if problems:
+        print("SELF-CHECK FAILED — this guard cannot vouch for its own coverage,", file=sys.stderr)
+        print("so its verdict is NOT a pass. Fix these before trusting any count:\n", file=sys.stderr)
+        for p in problems:
+            print(f"  · {p}", file=sys.stderr)
+        return 2
+
     paths = files()
     if not paths:
         print("error: nothing to scan — the guard could not evaluate anything, "
