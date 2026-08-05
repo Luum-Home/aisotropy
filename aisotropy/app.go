@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -358,13 +359,19 @@ func WithCostPricing(inPer1M, outPer1M float64) Option {
 // lifecycle handles (close, guarded by closeOnce for idempotency).
 type appRuntime struct {
 	// Chat pipeline (the ChatDeps Turn builds; Register also consumes these).
-	client        llm.Client // protectedClient: the circuit-broken chat client
-	wm            *memory.WorkingMemory
-	factsStore    facts.Store
-	limiter       *memory.Limiter
-	toolRegistry  *tools.Registry
-	persona       api.PersonaProvider
-	costMeter     *costmeter.Meter
+	client       llm.Client // protectedClient: the circuit-broken chat client
+	wm           *memory.WorkingMemory
+	factsStore   facts.Store
+	limiter      *memory.Limiter
+	toolRegistry *tools.Registry
+	persona      api.PersonaProvider
+	costMeter    *costmeter.Meter
+	// replicas is the DECLARED fleet size (AISOTROPY_REPLICAS, default 1). One
+	// declaration, two consumers: it splits the per-tenant quota bucket across
+	// the processes that share it (memory.NewLimiterForReplicas) and it tells
+	// App.EraseSubject how much of the fleet its process-local working-memory
+	// erase did NOT reach (EraseReport.Complete). Declared, never observed.
+	replicas      int
 	gateway       *gateway.Gateway
 	guard         *api.Guard
 	semanticStore semantic.Store
@@ -709,11 +716,21 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	// Per-tenant rate limiting (Phase 7 / constitutional gate). An explicit
 	// WithRateLimit wins; otherwise AISOTROPY_RATE_PER_SEC / AISOTROPY_BURST
 	// override the built-in defaults.
+	// AISOTROPY_REPLICAS then splits that fleet-wide budget across the processes
+	// actually serving it: without it every replica hands out the full bucket and
+	// a tenant gets N times its quota (see memory.NewLimiterForReplicas).
 	ratePerSec, burst := a.ratePerSec, a.burst
 	if !a.rateLimitSet {
 		ratePerSec, burst = ratePerSecFromEnv(), burstFromEnv()
 	}
-	rateLimiter := wm.NewLimiter(ratePerSec, burst)
+	replicas := replicasFromEnv()
+	rateLimiter := wm.NewLimiterForReplicas(ratePerSec, burst, replicas)
+	if replicas > 1 {
+		slog.Info("per-tenant quota split across the declared fleet",
+			"replicas", replicas,
+			"fleet_rate_per_sec", ratePerSec, "fleet_burst", burst,
+			"per_replica_rate_per_sec", ratePerSec/float64(replicas))
+	}
 
 	// Connect any MCP servers (ADR-0016 lever #2: polyglot tool execution):
 	// discover each server's tools and merge them into the consumer's toolset +
@@ -851,7 +868,31 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	}
 
 	// Per-tenant cost meter, exposed at GET /costs (the route is wired in Run).
-	costMeter := costmeter.New()
+	//
+	// It is NOT only observability: internal/api's selectClient feeds
+	// TenantStats.CostUSD into gateway.CostAwarePolicy as the tenant's cumulative
+	// spend, so a volatile meter means every restart hands each tenant a fresh
+	// budget. The totals therefore live in the working-memory BadgerDB under
+	// their own key namespace — durable when AISOTROPY_DATA_DIR is set.
+	//
+	// When it is NOT set that store is in-memory, and costmeter refuses to attach
+	// rather than write into something that dies with the process (an inert fix
+	// that looks applied is worse than none). That case is announced here, at
+	// boot, naming the variable that fixes it — the operator otherwise finds out
+	// from a budget that never triggers.
+	costMeter, err := costmeter.NewPersistent(ctx, wm.NewKV(costTotalsKeyPrefix), 0)
+	if err != nil {
+		// The only failure mode is a durable store that cannot be READ, and
+		// booting past it would silently zero every tenant's spend. Stop the
+		// workers already launched above before giving up on the runtime.
+		stopWorker()
+		return nil, fmt.Errorf("cost meter: %w", err)
+	}
+	if costMeter.Durable() {
+		slog.Info("per-tenant cost totals are durable; the cost budget survives restarts", "key_prefix", costTotalsKeyPrefix)
+	} else {
+		slog.Warn("per-tenant cost totals are IN-MEMORY: they reset on every restart, and so does the cost-budget routing threshold that reads them — set AISOTROPY_DATA_DIR to persist them")
+	}
 
 	// Bitrate (Bet 6): when the store is enabled, schedule the offline measurement
 	// (the /bitrate ops route is wired in Run). The coordinator hydrates each
@@ -993,6 +1034,7 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 		toolRegistry:      toolRegistry,
 		persona:           persona,
 		costMeter:         costMeter,
+		replicas:          replicas,
 		gateway:           modelGateway,
 		guard:             guard,
 		semanticStore:     semanticStore,
@@ -1019,6 +1061,11 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 		// forever — on timeout we close best-effort, exactly as before this join.
 		waitWorkers(shutdownCtx, &workerWG)
 		closeMCP()
+		// Persist the cost totals BEFORE the store they are written into closes;
+		// this is the flush that saves the last write-behind interval of spend.
+		if cerr := costMeter.Close(shutdownCtx); cerr != nil { //nolint:contextcheck // shutdownCtx deliberately gives the final flush its own bounded deadline, like the tracer shutdown below
+			slog.Error("cost meter final flush failed; the persisted totals are behind the live ones", "err", cerr)
+		}
 		if cerr := wm.Close(); cerr != nil {
 			slog.Error("working memory close failed", "err", cerr)
 		}
@@ -1554,6 +1601,35 @@ func burstFromEnv() float64 {
 		slog.Warn("invalid AISOTROPY_BURST; using default", "value", v, "default", defaultBurst)
 	}
 	return defaultBurst
+}
+
+// costTotalsKeyPrefix namespaces the per-tenant cost accumulator inside the
+// working-memory BadgerDB. It must not collide with that store's own key spaces
+// ("chat:", "summary:", "seq:", "outbox:pending:", "quota:").
+const costTotalsKeyPrefix = "cost:totals:"
+
+// replicasFromEnv parses AISOTROPY_REPLICAS (the number of aisotropyd processes
+// serving this deployment) so the per-tenant token bucket can be divided across
+// the fleet instead of being handed out in full by every replica — see
+// memory.NewLimiterForReplicas for what that division approximates and what it
+// gives up. Unset, unparsable, or < 1 means 1 (single process), which leaves the
+// limiter's rate/burst exactly as configured.
+//
+// It is DECLARED, not discovered: nothing here observes the real fleet size, so
+// a deployment that scales without updating this env var over-grants (scaled up)
+// or over-throttles (scaled down) proportionally. Wire it to the same value as
+// the deployment's replica count.
+func replicasFromEnv() int {
+	v := os.Getenv("AISOTROPY_REPLICAS")
+	if v == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		slog.Warn("invalid AISOTROPY_REPLICAS; treating this deployment as a single replica", "value", v)
+		return 1
+	}
+	return n
 }
 
 // openBitrateStore builds the Bet 6 bpt store: on-disk SQLite under

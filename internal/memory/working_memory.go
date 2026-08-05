@@ -661,15 +661,44 @@ func (w *WorkingMemory) Recent(ctx context.Context, key Key, n int) ([]Message, 
 
 // Summary returns key's condensed "session state" summary, or "" if no
 // condensation has happened yet for this session.
+//
+// It is the LOSSY convenience wrapper over LookupSummary: it collapses "no
+// summary is stored" and "the stored summary is empty" into the same ("", nil).
+// A caller that needs to tell those apart — anything that would otherwise answer
+// as if the session had no history — must use LookupSummary (and, for the
+// stronger question "was this session ever written at all?", SessionExists).
 func (w *WorkingMemory) Summary(ctx context.Context, key Key) (string, error) {
+	summary, _, err := w.LookupSummary(ctx, key)
+	return summary, err
+}
+
+// LookupSummary returns key's condensed "session state" summary and whether one
+// is actually STORED for this session.
+//
+// found is the whole point. A missing summary key is a legitimate, expected
+// state — a session on its first turns has had no condensation yet — so it is
+// not an error and must not be reported as one. But it is NOT the same fact as
+// "the summary is empty", and Summary's single ("", nil) return made the two
+// indistinguishable: a mis-mounted AISOTROPY_DATA_DIR, a store opened against
+// the wrong directory, or a partially wiped session all read exactly like a
+// brand-new conversation, and hydration answered with no history and no signal
+// that anything was missing.
+//
+// The split is: this accessor reports the FACT (stored / not stored); the caller
+// owns the EXPECTATION (did I have reason to believe there was history here?).
+// Pair it with SessionExists, which answers the expectation half from the store.
+func (w *WorkingMemory) LookupSummary(ctx context.Context, key Key) (string, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if err := key.Validate(); err != nil {
-		return "", err
+		return "", false, err
 	}
 
-	var summary string
+	var (
+		summary string
+		found   bool
+	)
 	err := w.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(key.summaryKey())
 		if errors.Is(err, badger.ErrKeyNotFound) {
@@ -678,15 +707,91 @@ func (w *WorkingMemory) Summary(ctx context.Context, key Key) (string, error) {
 		if err != nil {
 			return err
 		}
+		found = true
 		return item.Value(func(val []byte) error {
 			summary = string(val)
 			return nil
 		})
 	})
 	if err != nil {
-		return "", fmt.Errorf("memory: read summary: %w", err)
+		return "", false, fmt.Errorf("memory: read summary: %w", err)
 	}
-	return summary, nil
+	return summary, found, nil
+}
+
+// SessionExists reports whether this session was EVER written to — that is,
+// whether its sequence counter is present. Append allocates that counter on the
+// first turn and never removes it (condensation prunes messages, not the
+// counter; only EraseSubject deletes it along with everything else under the
+// subject prefix), so it is the durable "this session is known" marker.
+//
+// It exists so a caller can distinguish the two readings of an empty hydration:
+//
+//	false — the session has no history YET (first turn). Legitimate; not an error.
+//	true  — the session is known but nothing came back. Something that was
+//	        written is not readable: the wrong data directory, a store opened
+//	        empty, or a partial wipe. That is a defect, and the caller should say
+//	        so rather than answer as if the user had never spoken.
+//
+// It is one point-get, and callers only need it on the empty-hydration path.
+func (w *WorkingMemory) SessionExists(ctx context.Context, key Key) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := key.Validate(); err != nil {
+		return false, err
+	}
+
+	exists := false
+	err := w.db.View(func(txn *badger.Txn) error {
+		_, err := txn.Get(key.seqKey())
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		exists = true
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("memory: probe session existence: %w", err)
+	}
+	return exists, nil
+}
+
+// ReportEmptyHydration is the diagnostic a caller runs when it hydrated this
+// session and got NOTHING — no stored summary and no recent messages — to find
+// out which of the two very different situations it is in, and to make the bad
+// one visible. It reports true when the emptiness is ANOMALOUS.
+//
+// The old behaviour was that both situations produced the same silence: the
+// summary read swallowed badger.ErrKeyNotFound into ("", nil) and the recent
+// read returned an empty slice, so a first turn and a store that lost the
+// session were byte-identical to the caller. A mis-mounted AISOTROPY_DATA_DIR or
+// a store opened against the wrong directory therefore degraded into "the bot
+// answers as if it had no history", with no error, no log, and nobody the wiser.
+//
+// It is advisory and never fails the request: the caller has already served its
+// reads, and a probe that cannot answer must not turn a working turn into an
+// error. A probe failure is itself logged and reported as non-anomalous (it is
+// not evidence of loss), so this can be called unconditionally on the empty
+// path.
+func (w *WorkingMemory) ReportEmptyHydration(ctx context.Context, key Key) bool {
+	exists, err := w.SessionExists(ctx, key)
+	if err != nil {
+		slog.WarnContext(ctx, "working memory: could not probe whether this session has history; hydration emptiness is unexplained",
+			"tenant", key.Tenant, "user", key.User, "session", key.Session, "err", err)
+		return false
+	}
+	if !exists {
+		// The legitimate case: nothing was ever written under this session key.
+		// A first turn is not a defect and is not logged at WARN.
+		return false
+	}
+	slog.WarnContext(ctx, "working memory: session is known but hydrated EMPTY — history was written and is not readable back (check AISOTROPY_DATA_DIR, store identity, and whether this process opened the same directory that served the earlier turns)",
+		"tenant", key.Tenant, "user", key.User, "session", key.Session)
+	return true
 }
 
 // activeKeys returns every message key currently under the active-buffer

@@ -2,22 +2,31 @@ package api
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/Luum-Home/aisotropy/internal/costmeter"
 	"github.com/Luum-Home/aisotropy/internal/gateway"
 	"github.com/Luum-Home/aisotropy/internal/llm"
+	"github.com/Luum-Home/aisotropy/internal/memory"
 )
 
-// CHARACTERIZATION, not a fix. These tests pin a KNOWN, UNFIXED limit so it stays
-// visible and cannot be silently re-assumed away: the cost budget that
-// gateway.CostAwarePolicy enforces is read from the in-process costmeter, so it
-// resets on every restart and is multiplied by the replica count. They pass
-// against the current code by construction — they exist to make the defect
-// executable and to give a future durable meter a test to flip, not to prove a
-// change. See selectClient's "KNOWN LIMIT" note for why a bounded local fix
-// (persisting into the working-memory BadgerDB) would not honestly close either
-// half of the problem.
+// CHARACTERIZATION of what the cost budget does and does not guarantee. The
+// budget gateway.CostAwarePolicy enforces is read from costmeter through
+// selectClient, so it is only ever as good as that meter's memory.
+//
+// Half of what this file used to pin is now FIXED. costmeter.NewPersistent
+// loads and persists the per-tenant totals (aisotropyd wires it over the
+// working-memory BadgerDB), so a restart no longer resets the budget when a
+// durable store is configured — TestCostBudget_SurvivesRestartWithDurableMeter
+// is the flipped expectation the old note asked for. What is NOT fixed, and
+// stays pinned here, is the replica multiplication: each process keeps its own
+// store, so N replicas still grant N x BudgetUSD.
+//
+// The volatile constructor (costmeter.New) keeps the old behaviour, and the
+// tests below that use it remain true statements about IT — including the
+// zero-config default, where the working-memory store is in-memory and
+// costmeter deliberately refuses to attach rather than pretend to persist.
 
 // budgetGateway builds a gateway whose only rule is a cost budget: under budget
 // it resolves to the default target, over budget it shapes to the cheap one.
@@ -55,9 +64,11 @@ func TestCostBudget_ShapesDownOnceSpendCrosses(t *testing.T) {
 	}
 }
 
-// TestCostBudget_ResetsWithTheProcess pins limit (1): a restarted process hands
-// the tenant a fresh budget. A new Meter IS the restart — the meter holds no
-// state across process restarts, so a fresh one is exactly what boot produces.
+// TestCostBudget_ResetsWithTheProcess pins what a VOLATILE meter still does: a
+// restarted process hands the tenant a fresh budget. A new Meter IS the restart.
+// This is the zero-config default (no AISOTROPY_DATA_DIR, nothing durable to
+// persist into), so the behaviour is still reachable and still worth pinning —
+// but it is no longer the only option; see the durable case below.
 func TestCostBudget_ResetsWithTheProcess(t *testing.T) {
 	gw := budgetGateway(t, 1.0)
 	fallback := tokenClient{name: "fallback", token: "FALLBACK"}
@@ -68,12 +79,50 @@ func TestCostBudget_ResetsWithTheProcess(t *testing.T) {
 		t.Fatalf("pre-restart routing = %q, want cheap (the tenant is over budget)", got.Name())
 	}
 
-	afterRestart := costmeter.New() // the process came back up
+	afterRestart := costmeter.New() // the process came back up, with nothing to reload
 	got := selectClient(context.Background(), gw, fallback, afterRestart, "acme", "alice", "hi", "", false)
 	if got.Name() != "premium" {
-		t.Fatalf("post-restart routing = %q; this test documents the KNOWN limit that it is %q — "+
-			"if the meter became durable, flip this expectation and delete the KNOWN LIMIT note on selectClient",
-			got.Name(), "premium")
+		t.Fatalf("post-restart routing = %q, want %q: a VOLATILE meter has no memory of the spend, "+
+			"so the budget abstains", got.Name(), "premium")
+	}
+}
+
+// TestCostBudget_SurvivesRestartWithDurableMeter is the flip: with a durable
+// store behind the meter, the tenant that blew its budget is STILL over budget
+// after the process comes back, so the routing decision holds instead of
+// resetting. This is the request-path proof of the persistence fix — the
+// accounting matters here because it changes which model the next turn hits.
+func TestCostBudget_SurvivesRestartWithDurableMeter(t *testing.T) {
+	ctx := context.Background()
+	gw := budgetGateway(t, 1.0)
+	fallback := tokenClient{name: "fallback", token: "FALLBACK"}
+
+	wm, err := memory.Open(filepath.Join(t.TempDir(), "wm"), 10, memory.NoopSummarizer{})
+	if err != nil {
+		t.Fatalf("open working memory: %v", err)
+	}
+	defer func() { _ = wm.Close() }()
+	kv := wm.NewKV("cost:totals:")
+
+	beforeRestart, err := costmeter.NewPersistent(ctx, kv, 0)
+	if err != nil {
+		t.Fatalf("NewPersistent: %v", err)
+	}
+	beforeRestart.RecordUsage("acme", 0, 0, 0, 5.0) // well past the $1 budget
+	if got := selectClient(ctx, gw, fallback, beforeRestart, "acme", "alice", "hi", "", false); got.Name() != "cheap" {
+		t.Fatalf("pre-restart routing = %q, want cheap (the tenant is over budget)", got.Name())
+	}
+	if err := beforeRestart.Close(ctx); err != nil { // graceful shutdown flushes
+		t.Fatalf("Close: %v", err)
+	}
+
+	afterRestart, err := costmeter.NewPersistent(ctx, kv, 0)
+	if err != nil {
+		t.Fatalf("NewPersistent after restart: %v", err)
+	}
+	defer func() { _ = afterRestart.Close(ctx) }()
+	if got := selectClient(ctx, gw, fallback, afterRestart, "acme", "alice", "hi", "", false); got.Name() != "cheap" {
+		t.Fatalf("post-restart routing = %q, want cheap: the restarted process handed the tenant a fresh budget", got.Name())
 	}
 }
 

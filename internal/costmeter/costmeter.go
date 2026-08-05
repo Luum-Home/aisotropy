@@ -7,24 +7,30 @@
 // a dashboard or observability endpoint can answer "how much has tenant X
 // spent" without re-deriving it from raw traces on every request.
 //
-// Meter is per-process (embedded in the aisotropyd binary), not a shared or
-// durable store: it holds no state across process restarts and is not
-// synchronized across replicas. In a multi-replica deployment each instance
-// only knows about the requests it personally served. Treat it as a live,
-// best-effort observability aggregate — not as the billing system of
-// record. Durable, cross-replica accounting belongs in a networked tier
-// (e.g. the planned rqlite facts memory), per docs/architecture/overview.md.
+// Meter is per-process (embedded in the aisotropyd binary). It is NOT
+// synchronized across replicas: each instance only knows about the requests it
+// personally served, so it is a live, best-effort aggregate — not the billing
+// system of record.
 //
-// One live consumer is NOT purely observational and inherits both limits:
-// internal/api's selectClient feeds TenantStats.CostUSD into
-// gateway.CostAwarePolicy as the tenant's cumulative spend. Because this meter
-// is volatile and per-process, that budget resets on every restart and is
-// multiplied by the replica count — it shapes requests, it does not cap spend.
-// See selectClient's "KNOWN LIMIT" note for why persisting these totals into the
-// working-memory BadgerDB would not honestly fix either half.
+// DURABILITY (persist.go). New returns the volatile Meter; NewPersistent loads
+// the totals from a durable store at boot and writes them back behind the
+// request path, so a restart no longer starts every tenant from zero. That
+// matters beyond the dashboard: internal/api's selectClient feeds
+// TenantStats.CostUSD into gateway.CostAwarePolicy as the tenant's cumulative
+// spend, so a volatile meter is a cost budget that resets with the process — a
+// pod restarting three times hands the tenant three budgets. aisotropyd wires
+// the persistent form over the working-memory BadgerDB.
+//
+// What is closed and what is not: restart-reset is CLOSED when a durable store
+// is configured (AISOTROPY_DATA_DIR); replica-multiplication is NOT — with N
+// replicas the effective ceiling is still N x BudgetUSD, because each process
+// keeps its own store. The budget shapes requests; it does not cap spend. An
+// undurable store is refused rather than written to, so the guarantee is never
+// claimed where it does not hold (see NewPersistent).
 package costmeter
 
 import (
+	"math"
 	"sort"
 	"sync"
 )
@@ -71,13 +77,24 @@ type TenantStats struct {
 	UnmeteredTurns int64
 }
 
-// Meter is an in-memory, per-tenant token/cost accounting layer. It is safe
-// for concurrent use by multiple goroutines.
+// Meter is a per-tenant token/cost accounting layer. It is safe for concurrent
+// use by multiple goroutines.
 //
-// The zero value is not usable; construct a Meter with New.
+// New returns the in-process, volatile Meter. NewPersistent returns one whose
+// totals are loaded from — and written back to — a durable store, so a restart
+// does not hand every tenant a fresh cost budget; see persist.go. The zero value
+// is not usable; construct a Meter with New or NewPersistent.
 type Meter struct {
 	mu      sync.RWMutex
 	tenants map[string]*TenantStats
+
+	// Durability (persist.go). All nil/zero on a volatile Meter, in which case
+	// every persistence path below is a no-op.
+	kv           KV                      // nil => volatile
+	dirty        map[string]*TenantStats // tenants changed since the last successful flush (value: the totals the flush encodes)
+	stopFlush    chan struct{}           // closed by Close to stop the write-behind goroutine
+	flushDone    chan struct{}           // closed by the write-behind goroutine on exit
+	lastFlushErr error                   // most recent background flush failure, if any
 }
 
 // New returns a ready-to-use Meter.
@@ -114,7 +131,13 @@ func (m *Meter) RecordUsage(tenant string, inputTokens, outputTokens, reasoningT
 	if reasoningTokens < 0 {
 		reasoningTokens = 0
 	}
-	if costUSD < 0 {
+	// Clamp on BOTH sides of "not a usable number": negative (a buggy upstream
+	// report must never decrement a tenant's totals) and non-finite. A +Inf or
+	// NaN cost is absorbing — every later addition stays +Inf/NaN, so one bad
+	// report would permanently destroy that tenant's accounting AND make its
+	// totals unencodable, which would silently stop the durable meter from ever
+	// persisting that tenant again (encoding/json rejects non-finite floats).
+	if costUSD < 0 || math.IsNaN(costUSD) || math.IsInf(costUSD, 0) {
 		costUSD = 0
 	}
 	m.mu.Lock()
@@ -130,6 +153,7 @@ func (m *Meter) RecordUsage(tenant string, inputTokens, outputTokens, reasoningT
 	stats.OutputTokens += int64(outputTokens)
 	stats.ReasoningTokens += int64(reasoningTokens)
 	stats.CostUSD += costUSD
+	m.markDirty(tenant, stats)
 }
 
 // RecordUnmetered accounts one turn that the provider served and billed but for
@@ -151,6 +175,7 @@ func (m *Meter) RecordUnmetered(tenant string) {
 	}
 	stats.Requests++
 	stats.UnmeteredTurns++
+	m.markDirty(tenant, stats)
 }
 
 // Stats returns tenant's accumulated totals and true if tenant has recorded

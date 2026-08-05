@@ -178,32 +178,35 @@ func (g *Guard) annotateOutput(ctx context.Context, tenant, user, input, output,
 // at Route time, so a client-supplied value can never drop the request. The
 // Gateway itself already logs the miss.
 //
-// KNOWN LIMIT — the cost budget resets, and is multiplied by replica count.
-// CostSpentUSD below is read from costmeter.Meter, which is an in-process,
-// non-durable observability aggregate (see the costmeter package doc). Two
-// consequences that gateway.CostAwarePolicy cannot see and a reader of this
-// function would not guess:
+// KNOWN LIMIT — the cost budget is per replica. CostSpentUSD below is read from
+// costmeter.Meter. Two consequences that gateway.CostAwarePolicy cannot see and
+// a reader of this function would not guess:
 //
-//  1. Every process restart hands each tenant a FRESH budget: the meter's map
-//     starts empty, so CostSpentUSD is 0 and the policy abstains, no matter how
-//     much that tenant spent before the restart.
-//  2. With N replicas the effective ceiling is N x BudgetUSD: each instance only
-//     knows the requests it personally served.
+//  1. RESTART RESET — FIXED, when a durable store is configured. The meter now
+//     loads its per-tenant totals at boot and writes them back behind the
+//     request path (costmeter.NewPersistent, over the working-memory BadgerDB).
+//     It resets only where there is nothing to persist into: with no
+//     AISOTROPY_DATA_DIR that store is in-memory, and costmeter then REFUSES to
+//     attach rather than write into something that dies with the process —
+//     Meter.Durable() reports which case a deployment is in, and aisotropyd logs
+//     it loudly at boot. So the pre-fix behaviour survives only in the
+//     zero-config default, where it is stated rather than hidden.
+//  2. REPLICA MULTIPLICATION — NOT fixed. With N replicas the effective ceiling
+//     is still N x BudgetUSD: each process keeps its own store (BadgerDB holds
+//     an exclusive directory lock, so they cannot share one) and only knows the
+//     requests it personally served. Closing this needs either the budget
+//     divided by the declared replica count (the approach memory.Limiter takes
+//     for the quota bucket) or the accumulator moved to the shared networked
+//     tier.
 //
-// So the cost budget is a best-effort shaping signal, NOT a spend cap. It is not
-// a comment awaiting a small patch: persisting the accumulator into the working
-// memory BadgerDB would fix neither problem honestly — that store is in-memory
-// unless AISOTROPY_DATA_DIR is set (so the fix would be inert in the default
-// configuration) and is embedded per-process either way (so (2) survives intact).
-// Worse, it would make the budget LOOK enforced while still being multiplied by
-// replica count, which is more dangerous than the current, visibly volatile
-// state. A real cap needs the shared durable tier the costmeter doc points at.
-// Until then, treat BudgetUSD as "shape requests down after roughly this much
-// spend, per replica, since this process started".
+// So the cost budget remains a shaping signal, NOT a spend cap: read BudgetUSD
+// as "shape requests down after roughly this much spend, per replica".
 //
 // The hard pre-spend control that DOES hold is the quota gate (memory.Limiter,
 // per-tenant token bucket in the same BadgerDB, checked before every LLM call on
-// every route) — bounded per request-rate rather than per dollar.
+// every route), and its fleet story is handled by dividing rate and burst across
+// the declared replica count — see memory.NewLimiterForReplicas. It is bounded
+// per request-rate rather than per dollar.
 func selectClient(ctx context.Context, gw *gateway.Gateway, fallback llm.Client, meter *costmeter.Meter, tenant, user, prompt, modelPreference string, hasImage bool) llm.Client {
 	if gw == nil {
 		return fallback

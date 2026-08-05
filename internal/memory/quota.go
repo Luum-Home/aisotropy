@@ -20,8 +20,15 @@ import (
 // detection to serialize the check-and-deduct. Instead the Limiter holds a
 // per-tenant in-process mutex around each bucket update: correct for the
 // embedded, per-instance store (every request for a tenant in this process goes
-// through it), and different tenants proceed concurrently. Shared quota across
-// replicas would move this state to the networked tier — out of scope here.
+// through it), and different tenants proceed concurrently.
+//
+// Across replicas the bucket is NOT shared: each process owns its own embedded
+// store. NewLimiterForReplicas divides the fleet-wide rate/burst by the declared
+// replica count so the fleet honours the configured quota without putting a
+// network round trip on the pre-LLM gate; read its doc for exactly what that
+// approximation gives up. A truly shared bucket still belongs in the networked
+// tier — the seam for it is Limiter itself (swap the badger-backed
+// check-and-deduct, keep Allow's signature).
 
 const quotaPrefix = "quota:"
 
@@ -40,9 +47,57 @@ type Limiter struct {
 
 // NewLimiter returns a token-bucket Limiter over this WorkingMemory's BadgerDB.
 // ratePerSec is the sustained request rate; burst is the bucket capacity.
+//
+// The rate and burst are this PROCESS's bucket. In a multi-replica deployment
+// use NewLimiterForReplicas so the fleet, not each replica, honours them.
 func (w *WorkingMemory) NewLimiter(ratePerSec, burst float64) *Limiter {
+	return w.NewLimiterForReplicas(ratePerSec, burst, 1)
+}
+
+// NewLimiterForReplicas returns a token-bucket Limiter whose per-process rate
+// and burst are the FLEET-wide ratePerSec/burst divided by replicas — the
+// static-division approximation to a shared quota.
+//
+// Why divide instead of sharing a bucket. Each replica owns its own embedded
+// BadgerDB, so N replicas running NewLimiter(rate, burst) grant a tenant N x
+// rate and N x burst: the constitutional pre-spend gate is silently N times
+// looser than configured. A genuinely shared bucket needs a networked store on
+// the request path — a round trip before every LLM call, on the hot path, for a
+// decision that is already an approximation. Dividing keeps Allow at its
+// measured ~7.7µs (quota_bench_test.go) and costs zero network calls.
+//
+// WHAT THIS APPROXIMATION LOSES, exactly:
+//
+//  1. SUSTAINED RATE is correct only under even distribution. The fleet refills
+//     at ratePerSec in aggregate, but each replica refills at ratePerSec/N
+//     independently. A tenant whose traffic lands entirely on one replica (a
+//     sticky/hashing load balancer, a small fleet, an unlucky burst) is limited
+//     to 1/N of its intended rate — this fails CLOSED (over-throttling), which
+//     is the safe direction for a spend gate but is real under-service.
+//  2. BURST is per replica. A tenant spreading requests across all N replicas
+//     can still take burst/N tokens from each, so the fleet-wide instantaneous
+//     burst is roughly the configured burst — but they arrive as N separate
+//     bursts rather than one, so a downstream provider sees a spikier shape.
+//  3. The bucket floor is NOT conservative. burst never drops below 1 token
+//     (a replica that cannot serve a single request is useless), so a fleet
+//     with replicas > burst grants up to N tokens instantaneously instead of
+//     burst. Configure burst >= replicas to stay inside the intent.
+//  4. UNUSED CAPACITY DOES NOT MOVE. An idle replica's tokens are not lent to a
+//     saturated one; the fleet can deny a tenant while holding spare capacity.
+//  5. Replica count is DECLARED, not observed. Scale up without updating it and
+//     the fleet over-grants proportionally; scale down and it over-throttles.
+//     Wire it to the same source of truth as the deployment's replica count.
+//
+// replicas <= 1 (the default, and any invalid value) leaves rate and burst
+// exactly as given, so a single-process deployment is unchanged.
+func (w *WorkingMemory) NewLimiterForReplicas(ratePerSec, burst float64, replicas int) *Limiter {
 	if ratePerSec < 0 {
 		ratePerSec = 0
+	}
+	if replicas > 1 {
+		n := float64(replicas)
+		ratePerSec /= n
+		burst /= n
 	}
 	if burst < 1 {
 		burst = 1

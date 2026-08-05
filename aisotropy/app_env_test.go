@@ -102,3 +102,32 @@ func TestWithRateLimitMarksExplicit(t *testing.T) {
 		t.Error("WithRateLimit must set rateLimitSet so env vars do not override explicit values")
 	}
 }
+
+// TestReplicasFromEnv pins the declared fleet size, which two separate controls
+// read: the per-tenant quota split (memory.NewLimiterForReplicas) and the
+// erasure receipt's completeness claim (EraseReport.Complete). Every unusable
+// value falls back to 1 — a single process — because that is the only assumption
+// that cannot make either control claim MORE than it delivers: a fleet declared
+// too small splits the quota too little (visible over-admission) rather than
+// declaring an erasure complete when it was not.
+func TestReplicasFromEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  string
+		want int
+	}{
+		{"unset means a single process", "", 1},
+		{"parses a fleet size", "6", 6},
+		{"garbage falls back to 1", "three", 1},
+		{"zero falls back to 1", "0", 1},
+		{"negative falls back to 1", "-4", 1},
+		{"float falls back to 1", "2.5", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AISOTROPY_REPLICAS", tc.env)
+			if got := replicasFromEnv(); got != tc.want {
+				t.Errorf("replicasFromEnv() with %q = %d, want %d", tc.env, got, tc.want)
+			}
+		})
+	}
+}

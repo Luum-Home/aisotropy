@@ -370,7 +370,13 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 	// (leakage). Real request handlers always pass a non-nil wm.
 	if wm != nil {
 		tiers = append(tiers, func() {
-			s, serr := wm.Summary(ctx, key)
+			// LookupSummary, not Summary: a missing summary key is expected on a
+			// session's first turns, but it is NOT the same fact as an empty
+			// summary, and the old accessor collapsed both into ("", nil). Paired
+			// with an empty recent buffer below, that silence is exactly what a
+			// mis-mounted AISOTROPY_DATA_DIR looks like — the bot answers with no
+			// history and nothing anywhere says so.
+			s, found, serr := wm.LookupSummary(ctx, key)
 			if serr != nil {
 				wmErr = fmt.Errorf("read working-memory summary: %w", serr)
 				return
@@ -381,6 +387,12 @@ func hydrateSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store fa
 				return
 			}
 			summary, recent = s, r
+			if !found && len(r) == 0 {
+				// Nothing came back. Ask the store which of the two it is: a first
+				// turn (silent, legitimate) or a session that WAS written and is no
+				// longer readable (WARN). Advisory only — it never fails the turn.
+				wm.ReportEmptyHydration(ctx, key)
+			}
 		})
 	}
 
