@@ -108,10 +108,29 @@ that weakens it breaks a property the port depends on.
 
 ## What is NOT decided
 
-- **The store interface.** A `WorkingStore` that speaks `memory.Key` and never a bare `string` is the
-  shape that keeps isolation at L3; one that takes a composed string key demotes it to convention,
-  which would trade the project's central claim for an operational convenience. The signature is the
-  decision, and it is not made here.
+- ~~**The store interface.** A `WorkingStore` that speaks `memory.Key` and never a bare `string` is
+  the shape that keeps isolation at L3; one that takes a composed string key demotes it to
+  convention.~~
+
+  **Superseded 2026-08-05 — that was backwards, and the repository already had the right answer.**
+  `internal/facts/backend.go` and `internal/semantic/backend.go` (ADR-0034, Tier-2 open core) settled
+  this shape: the driver is deliberately **tenant-UNAWARE** and takes an **opaque `ns string`**, while
+  isolation is supplied by a **sealed decorator** whose namespace derivation (`namespaceFor`) is
+  *unexported*. Its own doc comment states the property: "a community backend can never see or choose
+  the tenant, so a buggy backend cannot widen a search past its namespace."
+
+  An interface speaking `memory.Key` would hand every backend the tenant identity — strictly worse.
+  L3 is preserved *because* the driver receives a string it did not compose and cannot decode, not in
+  spite of it. So the open question is not "which type does the signature take" but the narrower
+  "which operations does the working tier need", and the shape is copied rather than invented:
+  `WorkingBackend` mirrors `DocBackend`, with the sealed decorator living in `internal/memory` and a
+  conformance suite alongside `plugintest.RunDocBackendSuite` — which already includes an
+  isolation-seal proof, so the seal is tested by an existing harness rather than a new one.
+
+  Recorded as a correction rather than edited away, because the error is instructive: this ADR
+  reasoned from first principles about a property the codebase had already solved twice, which is the
+  failure [dependency-reuse-first](../architecture/dependency-reuse-first.md) names — applied here to
+  our own prior art rather than to a third-party library.
 - **Whether quota and working memory share a backend.** They need not: the decision above already
   puts them on different tiers, and this ADR does not require rqlite to serve both.
 - **Multi-node commit cost.** The floor is measured; the production number is not.
