@@ -28,6 +28,11 @@
 #                               docs-only push; do not skip it after touching
 #                               aisotropy/'s public surface, which is precisely
 #                               what silently rots the nested modules.
+#   8. capability-claims guard — re-derives the volatile claims of
+#                               capabilities-and-gaps.md from the code and fails
+#                               on drift (SKIP_GAP_CLAIMS=1). Registry-driven
+#                               (manifests/capability-claims.yaml, tracked), so
+#                               unlike the rule files it works in a clone.
 #
 # Reference every stage's script as "$REPO_ROOT/scripts/…", never
 # "$(dirname "$0")/…": git invokes this through the .git/hooks/pre-push symlink,
@@ -209,6 +214,43 @@ else
     }
   else
     echo "pre-push-gate: scripts/test-all.sh missing or not executable — skipping stage 7" >&2
+  fi
+fi
+
+# ---- stage 8: capability-claims drift ---------------------------------------
+# Re-derives the volatile, mechanically checkable claims of
+# docs/architecture/capabilities-and-gaps.md FROM THE CODE and fails when the
+# document disagrees. The registry (manifests/capability-claims.yaml) is tracked,
+# so this works in any clone — which matters, because the rule files under
+# .claude/rules/ and .agent-tooling/rules/ are NOT tracked and do not travel.
+#
+# Like stages 6 and 7 before today, this guard already existed and nothing ran
+# it. It was written after two build dispatches were burned on work that already
+# existed (the runtime config file and the Helm chart, both shipped BEFORE the
+# doc that called them gaps), and a re-verification found 5 of 12 dispatched
+# claims wrong or materially overstated. A doc that dispatches work and rots
+# silently is the failure; a guard nobody runs is the same failure one level up.
+#
+# Cheap: no build, no network, no model. Exit 2 = could not evaluate, which is
+# not a pass.
+if [ "${SKIP_GAP_CLAIMS:-0}" = "1" ]; then
+  echo "pre-push-gate: stage 8/8 capability-claims guard SKIPPED (SKIP_GAP_CLAIMS=1)"
+else
+  if [ -f "$REPO_ROOT/scripts/gap-claims-guard.sh" ]; then
+    echo "pre-push-gate: stage 8/8 capability-claims drift ..."
+    rc=0
+    bash "$REPO_ROOT/scripts/gap-claims-guard.sh" >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 2 ]; then
+      echo "pre-push-gate: capability-claims guard could not evaluate — NOT a pass." >&2
+      exit 2
+    fi
+    [ "$rc" -eq 0 ] || {
+      echo "pre-push-gate: BLOCKED by the capability-claims guard (exit $rc) — a doc claim no longer matches the code." >&2
+      bash "$REPO_ROOT/scripts/gap-claims-guard.sh" >&2
+      exit "$rc"
+    }
+  else
+    echo "pre-push-gate: scripts/gap-claims-guard.sh missing — skipping stage 8" >&2
   fi
 fi
 

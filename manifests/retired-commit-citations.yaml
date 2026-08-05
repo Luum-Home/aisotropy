@@ -242,3 +242,26 @@ external:
       - docs/06-Daily/reports/voicebox-spike-2026-07-27.md: 1
       - docs/decisions/index.md: 1
     context: "**aisotropy HEAD:** `8c407b8`. **voicebox:** `external/voicebox` @ `539325c`, tag `v0.2.12`"
+
+  # Two hashes in langgenius/dify, cited by the 2026-08-04 ecosystem sweep of that
+  # framework. Neither is an aisotropy commit and neither can resolve here — the
+  # citation guard flagged both correctly, which is the guard working, not a false
+  # positive. Declared external rather than retired: they are live commits in
+  # somebody else's repository, and the resolves_in command is how a reviewer
+  # checks the claim instead of taking the sweep's word for it.
+  - id: 4213e6b1
+    repo: langgenius/dify (upstream, not vendored here)
+    resolves_in: "git ls-remote https://github.com/langgenius/dify | grep 4213e6b1  # or: gh api repos/langgenius/dify/commits/4213e6b1"
+    occurrences: 3
+    files:
+      - arenas/dify/FEATURES.md: 3
+    context: "Dify HEAD on 2026-08-04 (release 1.16.1) — the tree the isolation and RLS claims were re-verified against: Conversation/Message carry no tenant_id, zero CREATE POLICY, 480 hand-written tenant_id predicates against 0 global guards."
+  - id: 1aea3460af1d
+    repo: langgenius/dify (upstream, not vendored here)
+    resolves_in: "git ls-remote https://github.com/langgenius/dify | grep 1aea3460af1d  # or: gh api repos/langgenius/dify/commits/1aea3460af1d"
+    occurrences: 3
+    files:
+      - arenas/dify/README.md: 1
+      - arenas/dify/FEATURES.md: 1
+      - arenas/dify/DX-NOTES.md: 1
+    context: "The Dify commit the arena originally read (2026-07-16). Load-bearing for a correction, not just provenance: the sweep found api/models/agent.py present in THIS commit at 25,829 bytes, which refutes the arena's own 'the schema has exactly two boundaries' claim — it was false the day it was written, against the tree it was written from."
