@@ -110,6 +110,8 @@ render minimal          || RENDER_FAILED=1
 render persistence      --set persistence.enabled=true || RENDER_FAILED=1
 render networked        --set tiers.networked.enabled=true || RENDER_FAILED=1
 render autoscaling      --set autoscaling.enabled=true || RENDER_FAILED=1
+render affinity         --set replicaCount=3 --set sessionAffinity.enabled=true \
+                        --set ingress.enabled=true || RENDER_FAILED=1
 render existing-secret  --set auth.existingSecret=aisotropy-secrets || RENDER_FAILED=1
 render sentinel         --set auth.jwtSecret="$SENTINEL" || RENDER_FAILED=1
 render prod             -f "$CHART/values-prod.yaml" \
@@ -161,6 +163,21 @@ neg_render() {
 }
 neg_render no-auth-verifier "no JWT verifier" --set allowNoAuth=false
 neg_render short-jwt-secret "at least 32 bytes" --set auth.jwtSecret=tooshort
+# Persistence pins the deployment to ONE pod: the working-memory BadgerDB takes
+# an exclusive directory lock (badger.Open, internal/memory/working_memory.go)
+# and every pod mounts the same ReadWriteOnce PVC, so replica #2 cannot start.
+# Both paths to >1 replica must be refused — the fixed count and the HPA
+# ceiling, which is the one an operator reaches by accident.
+neg_render persistence-multi-replica "cannot boot" \
+  --set persistence.enabled=true --set replicaCount=2
+neg_render persistence-hpa-ceiling "cannot boot" \
+  --set persistence.enabled=true --set autoscaling.enabled=true --set autoscaling.maxReplicas=3
+# Affinity is only translated for ingress-nginx. Emitting an nginx annotation
+# for another controller would look configured and do nothing.
+neg_render affinity-unknown-controller "is not implemented" \
+  --set sessionAffinity.enabled=true --set sessionAffinity.controller=traefik
+neg_render affinity-empty-hash "requires sessionAffinity.hashBy" \
+  --set sessionAffinity.enabled=true --set sessionAffinity.hashBy=
 echo
 
 # --- 4. Assertions over the rendered YAML -----------------------------------
@@ -336,6 +353,31 @@ check(dep is not None and "replicas" in dep.get("spec", {}),
       "minimal: Deployment sets replicas (no HPA)")
 check(not [x for x in profiles.get("minimal", []) if x.get("kind") == "HorizontalPodAutoscaler"],
       "minimal: no HPA rendered by default")
+
+# --- A8b: session affinity actually reaches the Ingress ---------------------
+# tenant_id/user_id are path params on every conversational route, so hashing
+# the request URI pins a user to the replica holding their working memory. The
+# annotation is the whole mechanism: if it does not land on the Ingress object,
+# the values flag is decoration and multi-replica silently serves cold context.
+ing = [x for x in profiles.get("affinity", []) if x.get("kind") == "Ingress"]
+check(len(ing) == 1, "affinity: Ingress rendered", f"got {len(ing)}")
+if ing:
+    ann = ing[0].get("metadata", {}).get("annotations") or {}
+    check(ann.get("nginx.ingress.kubernetes.io/upstream-hash-by") == "$request_uri",
+          "affinity: upstream-hash-by annotation present on the Ingress", f"got {ann}")
+check(not [x for x in profiles.get("minimal", []) if x.get("kind") == "Ingress"],
+      "minimal: affinity off by default (no Ingress, no hash annotation)")
+
+# --- A8c: persistence forces Recreate, never RollingUpdate ------------------
+# A rolling update starts the replacement pod before the old one releases the
+# BadgerDB lock, so the rollout stalls on a CrashLoop instead of completing.
+dep = app_deploy(profiles.get("persistence", []))
+check(dep is not None and dep.get("spec", {}).get("strategy", {}).get("type") == "Recreate",
+      "persistence: Deployment uses the Recreate strategy",
+      f"got {dep.get('spec', {}).get('strategy') if dep else None}")
+dep = app_deploy(profiles.get("minimal", []))
+check(dep is not None and "strategy" not in dep.get("spec", {}),
+      "minimal: no strategy override (default RollingUpdate)")
 
 # --- A9: pod hardening survives every posture ------------------------------
 for name, docs in profiles.items():

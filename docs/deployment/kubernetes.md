@@ -143,6 +143,14 @@ helm ... --set persistence.enabled=true --set persistence.size=1Gi
 
 Kustomize: uncomment the `persistence` component in `deploy/k8s/base/kustomization.yaml`.
 
+**Single replica only.** The working-memory BadgerDB takes an exclusive directory lock
+(`badger.Open`, `internal/memory/working_memory.go`) and every pod mounts the same
+ReadWriteOnce PVC, so a second pod cannot start. The chart **refuses to render**
+`persistence.enabled` with `replicaCount > 1` or `autoscaling.maxReplicas > 1`, and
+switches the Deployment to the `Recreate` update strategy so a rolling update does not
+stall waiting for a lock the outgoing pod still holds. To scale out, turn persistence
+off and see [the runbook's deployment postures](runbook.md#1-deployment-postures-what-each-one-guarantees-and-what-it-costs).
+
 ---
 
 ## 3. The networked-tiers overlay (the moat)
@@ -342,8 +350,8 @@ Almost everything that can be wrong with a Kubernetes manifest is visible in the
 scripts/k8s-chart-guard.sh            # add --explain to see every assertion
 ```
 
-No cluster, no `docker build`, no network, no image pull. It renders **10 postures**
-— seven `helm template` shapes (minimal, persistence, networked, autoscaling,
+No cluster, no `docker build`, no network, no image pull. It renders **11 postures**
+— eight `helm template` shapes (minimal, persistence, networked, autoscaling, affinity,
 existing-secret, sentinel, prod) and three `kubectl kustomize` shapes (base and both
 overlays) — then runs the **same assertions over both surfaces**, which is what stops
 the hand-maintained chart and Kustomize base from drifting apart:
@@ -356,10 +364,19 @@ the hand-maintained chart and Kustomize base from drifting apart:
 - resource requests + memory limits on every container; image tag never `latest`
 - with autoscaling on: exactly one HPA, `scaleTargetRef` matches, Deployment omits
   `replicas`; with it off: `replicas` set and no HPA
+- with `sessionAffinity.enabled`: the `upstream-hash-by` annotation actually lands on
+  the rendered Ingress (the annotation *is* the mechanism — if it does not land, the
+  flag is decoration and multi-replica silently serves cold context); with it off, no
+  Ingress and no hash annotation
+- with `persistence.enabled`: the Deployment uses `strategy: Recreate`; without it, no
+  strategy override
 - pod hardening (`runAsNonRoot`, no privilege escalation, read-only root, `drop: [ALL]`)
   survives every posture
-- **negative tests**: the chart must *refuse* `allowNoAuth=false` with no JWT verifier,
-  and a sub-32-byte HS256 secret
+- **negative tests** — the chart must *refuse*: `allowNoAuth=false` with no JWT
+  verifier; a sub-32-byte HS256 secret; `persistence.enabled` with `replicaCount > 1`
+  **and** with `autoscaling.maxReplicas > 1` (the ceiling an operator reaches by
+  accident); `sessionAffinity.controller` set to a dialect the chart does not translate;
+  and an empty `sessionAffinity.hashBy`, which would disable hashing silently
 
 Exit codes follow the repo guard convention: **0** ok, **1** findings, **2** error.
 

@@ -2,8 +2,31 @@ Aisotropy is installed as release "{{ .Release.Name }}" in namespace "{{ .Releas
 
 Deployment shape:
   - Memory tiers: {{ if .Values.tiers.networked.enabled }}NETWORKED (rqlite facts + Qdrant semantic){{ else }}IN-PROCESS (minimal — no external services){{ end }}
-  - Persistence:  {{ if .Values.persistence.enabled }}ON ({{ .Values.persistence.size }} @ {{ .Values.persistence.mountPath }}){{ else }}OFF (stateless, in-memory){{ end }}
+  - Persistence:  {{ if .Values.persistence.enabled }}ON ({{ .Values.persistence.size }} @ {{ .Values.persistence.mountPath }}){{ else }}OFF (in-process only — working memory lost on restart){{ end }}
   - Auth:         {{ if or .Values.auth.jwtSecret .Values.auth.existingSecret }}JWT (HS256){{ else }}NoAuth (INSECURE — local only; set auth.jwtSecret for anything reachable){{ end }}
+  - Replicas:     {{ if .Values.autoscaling.enabled }}HPA {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }}{{ else }}{{ .Values.replicaCount }} (fixed){{ end }}
+  - Affinity:     {{ if .Values.sessionAffinity.enabled }}ON (upstream-hash-by {{ .Values.sessionAffinity.hashBy }}){{ else }}OFF{{ end }}
+
+{{- $replicas := .Values.replicaCount }}
+{{- if .Values.autoscaling.enabled }}{{ $replicas = .Values.autoscaling.maxReplicas }}{{ end }}
+{{- if and (gt (int $replicas) 1) (not .Values.sessionAffinity.enabled) }}
+
+WARNING: {{ int $replicas }} replicas with session affinity OFF. Working memory is
+per-process (embedded BadgerDB, internal/memory) — a request that lands on a
+replica which never served that user gets NO conversation history and answers
+from a cold context. That is a wrong answer, not an error: the client sees no
+signal. Set --set sessionAffinity.enabled=true (needs ingress.enabled and an
+ingress-nginx controller) or run one replica. See values.yaml for what affinity
+does and does not cover.
+{{- end }}
+{{- if and .Values.sessionAffinity.enabled (not .Values.ingress.enabled) }}
+
+WARNING: sessionAffinity.enabled but ingress.enabled is false — no Ingress was
+rendered, so the setting is INERT. If another ingress fronts this Service, add
+the annotation there yourself:
+
+  {{ include "aisotropy.sessionAffinityAnnotations" . }}
+{{- end }}
 
 Reach the API (port-forward):
 

@@ -1,3 +1,4 @@
+{{- include "aisotropy.validate" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -9,6 +10,15 @@ spec:
   # Omitted when autoscaling.enabled: the HPA owns the replica count, and a
   # templated `replicas` would reset it to replicaCount on every helm upgrade.
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  {{- if .Values.persistence.enabled }}
+  # Recreate, not RollingUpdate: a rolling update starts the replacement pod
+  # BEFORE terminating the old one (default maxSurge), and the replacement
+  # cannot take the exclusive BadgerDB directory lock the running pod still
+  # holds — the rollout stalls on a CrashLoop instead of completing. Recreate
+  # trades a short downtime window for an upgrade that actually finishes.
+  strategy:
+    type: Recreate
   {{- end }}
   selector:
     matchLabels:

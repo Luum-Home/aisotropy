@@ -1,15 +1,24 @@
 {{- if .Values.ingress.enabled }}
 {{- $fullName := include "aisotropy.fullname" . -}}
 {{- $svcPort := .Values.service.port -}}
+{{- $affinity := include "aisotropy.sessionAffinityAnnotations" . -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ $fullName }}
   labels:
     {{- include "aisotropy.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- if or .Values.ingress.annotations $affinity }}
   annotations:
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with $affinity }}
+    # Session affinity (sessionAffinity.enabled): hash the request URI so the
+    # same tenant/user path lands on the same replica. See values.yaml for what
+    # this does and does NOT guarantee.
+    {{- . | nindent 4 }}
+    {{- end }}
   {{- end }}
 spec:
   {{- if .Values.ingress.className }}

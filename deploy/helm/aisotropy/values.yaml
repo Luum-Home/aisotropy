@@ -5,6 +5,10 @@
 # semantic). No rqlite, no Qdrant, no persistence, no ingress. Flip the toggles
 # below to grow into the networked-tier deployment.
 
+# Number of aisotropyd pods. Read the "Horizontal scaling: what each posture
+# costs" note under `autoscaling` BEFORE raising this — working memory lives
+# inside each process, and with persistence.enabled a second replica cannot
+# start at all (the chart refuses to render that combination).
 replicaCount: 1
 
 image:
@@ -150,7 +154,16 @@ tiers:
 
 # ---------------------------------------------------------------------------
 # On-disk mode for aisotropyd's OWN working memory (AISOTROPY_DATA_DIR). OFF by
-# default -> fully in-memory, stateless pod.
+# default -> fully in-memory pod.
+#
+# SINGLE REPLICA ONLY. The embedded BadgerDB takes an exclusive directory lock
+# (badger.Open in internal/memory/working_memory.go) and every pod mounts the
+# SAME ReadWriteOnce PVC, so a second pod either cannot attach the volume or
+# crash-loops on the lock. The chart hard-fails `persistence.enabled` together
+# with replicaCount > 1 (or autoscaling.maxReplicas > 1) instead of rendering a
+# manifest that cannot boot. For the same reason the Deployment switches to the
+# `Recreate` update strategy when persistence is on: a rolling update would
+# start the replacement pod before releasing the lock and stall the rollout.
 # ---------------------------------------------------------------------------
 persistence:
   enabled: false
@@ -171,6 +184,62 @@ ingress:
           pathType: Prefix
   tls: []
 
+# ---------------------------------------------------------------------------
+# Session affinity at the ingress — OFF by default (enabling it changes how an
+# existing ingress load-balances, so it is opt-in and never a silent upgrade).
+#
+# WHY IT WORKS WITHOUT TOUCHING CODE: tenant_id and user_id are PATH params on
+# every conversational route — /v1/tenant/{tenant_id}/user/{user_id}/chat,
+# .../chat/stream, .../chat/agent, .../ask (internal/api/chat.go:112-113 and
+# siblings, pattern ^[a-zA-Z0-9_-]{1,64}$). An ingress that hashes the request
+# URI therefore pins a user to a replica with no code change and no break in
+# the OpenAPI contract. session_id, by contrast, travels in the BODY
+# (internal/api/chat.go:68), so per-session affinity is not reachable this way.
+#
+# WHAT IT BUYS: with persistence OFF and N replicas, a user keeps landing on
+# the pod that holds their working memory instead of answering from a cold
+# context.
+#
+# WHAT IT DOES NOT BUY — read this before relying on it:
+#   - Granularity is per (URI, user), NOT per user. ingress-nginx documents
+#     upstream-hash-by as taking "the nginx variable, text value or any
+#     combination thereof", with $request_uri as the example; nginx regex
+#     captures ($1/$2) are NOT documented for this annotation, so the
+#     tenant/user segment cannot be isolated from the annotation alone. A
+#     client that mixes routes inside one conversation (POST .../chat and then
+#     .../chat/stream) hashes to two different replicas. No v1 route takes a
+#     query string, so $request_uri is at least stable per route here.
+#   - /v1/chat/completions (OpenAI-compat, ADR-0066) carries NO tenant/user in
+#     the path — identity comes from the bearer token. Every request to that
+#     route hashes to the SAME replica. Do not enable affinity and expect it
+#     to spread.
+#   - A pod that dies takes its users' working memory with it. Affinity turns
+#     that into a cold start on the replacement, not a wrong answer — it is
+#     not high availability.
+#   - Quota buckets and the /costs meter stay per-process regardless (see
+#     `autoscaling` below and docs/deployment/runbook.md §1).
+#   - It does nothing for persistence.enabled: that combination fails to boot,
+#     it does not mis-route.
+#
+# Annotation names and accepted values verified against the ingress-nginx
+# annotation reference:
+#   https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/
+#
+# Rendered only onto THIS chart's Ingress (ingress.enabled). If aisotropyd is
+# fronted by an ingress you manage elsewhere, copy the annotation out of
+# `helm template ... --set sessionAffinity.enabled=true` — with ingress.enabled
+# false the setting has nowhere to land and NOTES.txt says so.
+# ---------------------------------------------------------------------------
+sessionAffinity:
+  enabled: false
+  # Annotation dialect. Only "nginx" (ingress-nginx) is translated; any other
+  # value fails the render rather than emitting an annotation no controller
+  # honours. Traefik and HAProxy express affinity differently and are NOT
+  # translated here — set ingress.annotations by hand for those.
+  controller: nginx
+  # The nginx variable to hash on. "$request_uri" is the documented example.
+  hashBy: "$request_uri"
+
 resources:
   requests:
     cpu: 50m
@@ -189,9 +258,34 @@ resources:
 # REQUEST, so the chart hard-fails without one; (b) metrics-server running in
 # the cluster (kind/k3d do NOT ship it by default; k3s does).
 #
-# aisotropyd is stateless in the minimal (in-process, no-persistence) posture,
-# so horizontal scaling is safe there. With persistence.enabled the pods share
-# ONE ReadWriteOnce PVC — do not scale past 1 replica in that shape.
+# HORIZONTAL SCALING: WHAT EACH POSTURE COSTS
+#
+# aisotropyd is NOT stateless. Working memory (chat turns + summary buffer),
+# the quota token-buckets and the cost meter all live INSIDE the process, in an
+# embedded BadgerDB (internal/memory, wired in aisotropy/app.go). There is no
+# shared backend for any of them. Two postures, two different failures:
+#
+#   persistence.enabled: false  (the default)
+#     N replicas START fine — but each pod holds its own working memory. A
+#     request that lands on a replica which never served that user finds NO
+#     conversation history and answers from a cold context. That is a WRONG
+#     ANSWER, not an error: nothing is logged as a failure and the client gets
+#     no signal. This is the posture this chart used to call "safe".
+#     -> Mitigated (not fixed) by sessionAffinity above: same user, same
+#        replica, as long as the client stays on one route.
+#
+#   persistence.enabled: true
+#     The SECOND replica never starts. Every pod mounts the same ReadWriteOnce
+#     PVC and BadgerDB takes an exclusive directory lock (badger.Open in
+#     internal/memory/working_memory.go), so pod #2 fails to attach the volume
+#     (multi-attach) or crash-loops on the lock. The chart REFUSES to render
+#     this combination — a template that will not render beats a CrashLoop.
+#     -> sessionAffinity does not help here at all.
+#
+# In EVERY posture, per-tenant quota and /costs stay per-process: with N
+# replicas each tenant effectively gets N times its configured rate, and
+# /costs reports only what that one replica served. Affinity does not fix that
+# either. See docs/deployment/runbook.md §1.
 # ---------------------------------------------------------------------------
 autoscaling:
   enabled: false

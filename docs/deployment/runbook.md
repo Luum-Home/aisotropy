@@ -1,8 +1,8 @@
 ---
 type: How-To
 title: Operations runbook — running aisotropyd in production
-description: Operator-facing runbook for the aisotropyd binary — the single-process state caveat (per-replica quota buckets and cost meter), Kubernetes probe mapping for /healthz and /health, what AISOTROPY_DATA_DIR does and does not persist, how the runtime degrades (429 pre-spend, circuit breaker, embedder teardown-on-fault, dormant sleep cycle), and the ops-critical env vars. Every claim carries a code pointer.
-tags: [deployment, runbook, operations, kubernetes, probes, persistence, quota, degradation]
+description: Operator-facing runbook for the aisotropyd binary — the three deployment postures and what each costs (one replica; N replicas without persistence, which serve cold context silently; N replicas with persistence, which cannot boot), ingress session affinity by path tenant_id/user_id and the four things it does not fix, Kubernetes probe mapping for /healthz and /health, what AISOTROPY_DATA_DIR does and does not persist, how the runtime degrades (429 pre-spend, circuit breaker, embedder teardown-on-fault, dormant sleep cycle), and the ops-critical env vars. Every claim carries a code pointer.
+tags: [deployment, runbook, operations, kubernetes, probes, persistence, quota, degradation, scaling, session-affinity]
 timestamp: 2026-07-14T00:00:00Z
 ---
 
@@ -15,28 +15,91 @@ authoritative env-var table and the full "what actually boots" ledger live in
 [runtime-as-built.md](../architecture/runtime-as-built.md); this runbook covers the
 operational consequences.
 
-## 1. Single-process state: do not scale horizontally (yet)
+## 1. Deployment postures: what each one guarantees, and what it costs
 
-Two enforcement/observability mechanisms are **per-process**, held inside the embedded
-working-memory BadgerDB or in plain process memory. Running N replicas behind a load
-balancer silently multiplies quotas and fragments cost visibility.
+aisotropyd is **not stateless**. Three things live inside the process with no shared
+backend: the working memory (chat turns + summary buffer) in an embedded BadgerDB, the
+per-tenant quota token-buckets in that same BadgerDB, and the cost meter in a plain map.
 
 | State | Where it lives | Multi-replica consequence |
 |---|---|---|
+| Working memory (chat turns, summary buffer) | Embedded BadgerDB, one instance per process (`internal/memory`, opened in `aisotropy/app.go`) | A request served by a replica that never saw this user finds **no history** and answers from a cold context. No error, no log line, no signal to the client — a wrong answer, not a failure. |
 | Quota token-bucket (per tenant) | BadgerDB under the `quota:` key prefix, embedded in each process (`internal/memory/quota.go`) | Each replica holds its own bucket. N replicas ≈ N× the effective per-tenant rate/burst. The package doc is explicit: "Shared quota across replicas would move this state to the networked tier — out of scope here." |
 | Cost meter (`GET /costs`) | In-memory map, no persistence (`internal/costmeter`) | Each replica reports only the requests it personally served; totals reset on restart. The package doc says it plainly: "not synchronized across replicas … not the billing system of record." |
 
-Safe patterns until a shared store lands:
+### The three postures
 
-- **Run a single replica** (the measured footprint makes this viable: ~31 MB binary,
-  ~30 MB idle RSS, ~85 ms startup — see [distroless.md](distroless.md)).
-- **Shard tenants across single-replica instances**: `AISOTROPY_DEDICATED_TENANTS`
-  (`aisotropy/app.go`, ADR-0007) routes a tenant's facts/semantic tiers to dedicated
-  resources, but note it does **not** shard the rate limiter — isolation of quota state
-  comes from each shard being its own process, not from the routing policy.
-- If you must run N replicas of the same shard, dividing the configured rate by N is
-  only an approximation (per-tenant traffic is rarely balanced) and `/costs` must be
-  summed across replicas by your observability layer. Treat both as degraded modes.
+**A — One replica (the default, and the only posture with no caveat on history).**
+`replicaCount: 1`, persistence on or off. The measured footprint makes this viable
+well past a toy load: ~31 MB binary, ~30 MB idle RSS, ~85 ms startup
+([distroless.md](distroless.md)). Everything below is a trade against this baseline.
+
+**B — N replicas, `persistence.enabled: false`.** The pods start and serve. What breaks
+is *correctness of recall*: working memory is per-pod, so a user bounced to a different
+replica mid-conversation gets a cold context. Until 2026-08 the Helm chart called this
+posture "safe" because the pods are interchangeable at the process level; they are not
+interchangeable at the *data* level, and that is the posture that serves wrong answers.
+Mitigate with affinity (below) — mitigate, not fix.
+
+**C — N replicas, `persistence.enabled: true`.** Does not exist. Every pod mounts the
+same ReadWriteOnce PVC and BadgerDB takes an exclusive directory lock (`badger.Open`,
+`internal/memory/working_memory.go`), so replica #2 either fails to attach the volume
+(multi-attach) or crash-loops on the lock. This is a **loud** failure, unlike B. The
+Helm chart now refuses to render it (`replicaCount > 1` or `autoscaling.maxReplicas > 1`
+together with `persistence.enabled`), and sets `strategy: Recreate` when persistence is
+on so a rolling update does not stall on a lock the outgoing pod still holds.
+
+### Session affinity: what it fixes in posture B
+
+`tenant_id` and `user_id` are **path** params on every conversational route —
+`/v1/tenant/{tenant_id}/user/{user_id}/chat`, `.../chat/stream`, `.../chat/agent`,
+`.../ask` (`internal/api/chat.go:112-113` and siblings). An ingress that hashes the
+request URI therefore pins a user to one replica with **no code change** and no break
+in the OpenAPI contract:
+
+```bash
+helm ... --set replicaCount=3 --set ingress.enabled=true --set sessionAffinity.enabled=true
+```
+
+renders `nginx.ingress.kubernetes.io/upstream-hash-by: "$request_uri"` onto the Ingress.
+Annotation name and accepted values are from the
+[ingress-nginx annotation reference](https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/),
+which documents the value as "the nginx variable, text value or any combination
+thereof". Only the ingress-nginx dialect is translated; the chart fails the render for
+any other `sessionAffinity.controller` rather than emitting an annotation nobody honours.
+
+**What affinity does NOT fix — all of it still true with the flag on:**
+
+- **Granularity is per (URI, user), not per user.** nginx regex captures (`$1`/`$2`) are
+  not documented for `upstream-hash-by`, so the tenant/user path segment cannot be
+  isolated from the annotation alone. A client that mixes routes inside one
+  conversation (`POST .../chat` then `.../chat/stream`) hashes to two replicas and gets
+  the cold context anyway. No `/v1` route takes a query string, so `$request_uri` is at
+  least stable per route.
+- **`session_id` cannot drive affinity at all** — it travels in the request **body**
+  (`internal/api/chat.go:68`), and an ingress cannot hash on it without parsing the body.
+  Affinity is per user, never per session.
+- **`/v1/chat/completions` (OpenAI-compat, ADR-0066) has no tenant/user in the path** —
+  identity comes from the bearer token. Every request to that route hashes to the *same*
+  replica. Do not enable affinity and expect that route to spread load.
+- **A pod that dies takes its users' working memory with it.** The replacement starts
+  cold. Affinity converts "wrong answer from a random replica" into "cold start after a
+  pod loss" — better, but it is not high availability.
+- **Quota and the cost meter stay per-process.** With N replicas each tenant still gets
+  roughly N× its configured rate, and `/costs` still reports only one replica's traffic.
+  Affinity does not touch this: it routes a *user* consistently, while the quota bucket
+  is keyed per *tenant*, and one tenant's users hash across every replica. Work to move
+  this to a shared tier is in flight; treat it as an open limitation, not as solved.
+
+### Still-supported alternative: shard instead of scale
+
+`AISOTROPY_DEDICATED_TENANTS` (`aisotropy/app.go`, ADR-0007) routes a tenant's
+facts/semantic tiers to dedicated resources. It does **not** shard the rate limiter —
+quota isolation comes from each shard being its own single-replica process, not from
+the routing policy. If you run N replicas of the same shard anyway, dividing the
+configured rate by N is only an approximation (per-tenant traffic is rarely balanced)
+and `/costs` must be summed across replicas by your observability layer. Both are
+degraded modes.
 
 ## 2. Kubernetes probe mapping
 
@@ -64,7 +127,12 @@ kind: Deployment
 metadata:
   name: aisotropyd
 spec:
-  replicas: 1          # see section 1 — quota and cost state are per-process
+  replicas: 1          # see section 1 — with the data volume below, a SECOND
+                       # replica cannot start (exclusive BadgerDB lock on the
+                       # shared RWO PVC). Drop the volume before scaling out.
+  strategy:
+    type: Recreate     # a rolling update would start the replacement pod before
+                       # the outgoing one releases the BadgerDB lock, and stall
   selector:
     matchLabels:
       app: aisotropyd
