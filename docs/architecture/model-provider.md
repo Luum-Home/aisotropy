@@ -72,6 +72,39 @@ is only needed if you use that vendor's SDK directly.
 before 2026-07-27 was measured on **`agnes-2.0-flash`**, and the boards say so.
 See the provenance rule below — those labels are never rewritten.
 
+### Currently configured, and how to find out rather than assume
+
+Verified 2026-08-05 by running the pre-flight probe in
+[the agnes quota runbook](arena-agnes-quota-runbook.md) §Step 0 — one call, 291 tokens:
+
+| | observed |
+|---|---|
+| `OPENAI_BASE_URL` | `https://apihub.agnes-ai.com/v1` |
+| `OPENAI_MODEL` | `agnes-2.0-flash` |
+| Quota that day | **available** (HTTP 200) |
+| Shape | a **reasoning** model: the response carries `reasoning_content` and `usage.completion_tokens_details` |
+| Token accounting | `prompt 286 + completion 5 = total 291` — reasoning is produced *inside* the completion count, not added to it |
+
+That last row is not trivia. It is first-hand evidence for the invariant
+[ADR-0061](../decisions/0061-reasoning-model-support.md) asserts and that
+`internal/api/turn_cost.go` prices on: reasoning tokens are a **subset** of completion tokens. Pricing
+them as a separate line double-charged every reasoning turn until 2026-08-04. One probe is a sample
+and not a vendor guarantee — but it is more than the comment that stood there before.
+
+> **Read this before telling anyone the quota is exhausted.** The free-tier quota is a *state you
+> check*, not a property you inherit. Several documents in this repository mention quota exhaustion
+> in the past tense — the runbook opens "written after a session that exhausted the free-tier
+> quota", `FULL-MATRIX.md`'s `candidate` exception names "a real-lane cell needing the provider while
+> the free-tier quota is exhausted", and `RESULTS.md` headers count billable round-trips. Every one
+> of those is a true statement about a past event, and every one of them reads to a fresh reader as
+> a description of now.
+>
+> It happened on 2026-08-05: a session declared the arena re-run "blocked on credits" three times,
+> having absorbed the constraint from these documents and never run the probe. The probe took one
+> call and returned 200. The block was invented. **The cost of checking is 291 tokens; the cost of
+> assuming was an item sitting closed-as-blocked in a status report.** Same failure shape as a stale
+> rule file: documentation of a past state, unmarked, promoted to present by every reader after.
+
 ## Acknowledgements
 
 This project's benchmarks consume a real, paid-for-by-someone inference service.
