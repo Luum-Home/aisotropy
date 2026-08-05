@@ -60,6 +60,9 @@ scoreboard.
   runner construction (`runner.Config.AppName` → `r.appName`; `runner.Run(ctx,
   userID, sessionID, …)` never takes an `appName`), so it is a native,
   non-droppable-per-request key component. `userID`/`sessionID` are per-request.
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md — the "no
+     framework-enforced separator" claim below. HOLDS for session.Service (v2.0.0 + v2.1.0,
+     no first-party Go extension adds an axis), NARROWER than stated: see the sweep. -->
 - **The real story — 4 axes onto 3 slots:** aisotropy binds four axes
   (`tenant_id, user_id, session_id, product_id`) from `context.Context`. ADK has
   three native slots. A competent developer binds any one axis to `appName` by

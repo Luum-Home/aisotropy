@@ -2,6 +2,13 @@
 Multi-PRODUCT isolation asserted as executable tests (the 4th scope axis).
 Finding: Dify has no product_id anywhere; a 'product' is app_id convention or an
 unbound tag, and the RAG plane has no product boundary at all.
+
+SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
+  Verified at langgenius/dify HEAD 4213e6b1: `grep -rn "product_id" api/` returns 7 hits,
+  all of them ProviderOrder.payment_product_id (a billing SKU) or its tests/migration.
+  Dataset/DocumentSegment carry tenant_id and no product/app/agent column.
+  Note (same sweep): aisotropy does NOT enforce a product axis either — product_id is a
+  persona selector, not part of memory.Key or any Scope. This is a shared gap.
 """
 
 from __future__ import annotations

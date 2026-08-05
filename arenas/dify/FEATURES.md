@@ -25,6 +25,9 @@ timestamp: 2026-07-16T00:00:00Z
 > developer's* omission of the ownership gate against the transcribed contract; it is
 > the standard shared-schema-no-RLS tradeoff, **not** proof that Dify's own code leaks.
 
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
+     Isolation rows re-verified against langgenius/dify HEAD 4213e6b1 (2026-08-04). -->
+
 ## Coverage classes
 
 **BUILT-IN** (framework provides it) · **CONVENTION** (possible but developer-enforced,
@@ -121,14 +124,28 @@ single zero-config binary.
 
 ## Multi-PRODUCT isolation — the 4th scope axis (RUN-VERIFIED: the axis is UNMODELED)
 
-aisotropy scopes every read/write by four keys `(tenant_id, user_id, session_id,
-product_id)` via `context.Context`. Dify's schema has exactly **two** boundaries —
-workspace (`tenant_id`, LICENSE §1a "one tenant == one workspace") and app
-(`app_id`). **There is no `product_id` column anywhere in `api/models`** (structurally
-re-verified against live Dify: `account.py` and `model.py` carry no such column). This
-isn't a "leak" so much as a **missing axis** — Dify simply does not model a fourth
-product boundary, so there is nothing to enforce and the tenant-correct read still
-crosses products.
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
+     CORRECTED by that sweep, in BOTH directions:
+     (a) "Dify's schema has exactly two boundaries" was false, and was already false at the
+         commit this arena read — agent_workspaces / agent_workspace_bindings /
+         agent_drive_files are real sub-tenant scope keys (api/models/agent.py:464,502,568),
+         and api/models/agent.py existed at 1aea3460af1d (25,829 bytes).
+     (b) "aisotropy scopes every read/write by four keys" was false about US: memory.Key is
+         {Tenant, User, Session} (internal/memory/key.go:87), every Scope is {tenant, user},
+         and ProductID is a persona selector (internal/api/ask.go:49) that reaches no store.
+     What survives, verified at HEAD 4213e6b1: no product_id scope column exists, and the
+     RAG plane carries no product/app/agent column. -->
+
+Neither framework enforces a product boundary. Dify's schema models no product axis:
+**there is no `product_id` scope column anywhere in `api/models`** — the only
+`payment_product_id` is a billing SKU on `ProviderOrder` (`provider.py:224`). What it does
+model is the workspace (`tenant_id`, LICENSE §1a "one tenant == one workspace"), the app
+(`app_id`) and, since the 2026-05/06 agent migrations, the agent and its working workspace
+(`agent_workspaces`, `agent_drive_files`, keyed `(tenant_id, agent_id, …)`) — none of them
+a customer-facing product. This isn't a "leak" so much as a **missing axis**: there is
+nothing to enforce, so the tenant-correct read still crosses products. aisotropy is at the
+same level here — `product_id` selects a persona prompt, it is not part of any storage key
+— which is why this row is a shared gap, not a differentiator.
 
 Run:
 ```bash
@@ -153,15 +170,23 @@ Result: no product boundary exists to enforce — same tenant+user, wrong produc
   reads the marker (a MISSING AXIS, not a Dify defect — no product_id anywhere).
 ```
 
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md -->
+
 `test_no_product_id_column_exists` asserts structurally that **no** Orbit/Dify
 model carries a `product_id` column. The RAG plane (`Dataset`/`DocumentSegment`)
-has `tenant_id` but no product/app column, so a shared-tenant knowledge base has
+has `tenant_id` but no product/app/agent column (`dataset.py:180`, `dataset.py:919`,
+both re-verified at HEAD 4213e6b1), so a shared-tenant knowledge base has
 **no product boundary at all** — the correct Dify-scoped read still crosses it.
 
-- **AISOTROPY COMPARISON:** `product_id` rides `context.Context` in the `Scope`
-  value-object like tenant/user, enforced per-statement — the cross-product read
-  is **unrepresentable**. Class here: **CONVENTION** (and, for the RAG plane,
-  arguably NOT-POSSIBLE without inventing a column).
+- **AISOTROPY COMPARISON — no advantage on this row.** `product_id` in aisotropy is a
+  persona/prompt selector (`internal/api/ask.go:49`: "selects the persona base prompt"),
+  not a scope component: `memory.Key` is `{Tenant, User, Session}`
+  (`internal/memory/key.go:87`) and every `Scope` value object is `{tenant, user}`
+  (`internal/tenancy/scope.go:72`, `internal/semantic/semantic.go:58`,
+  `internal/facts/facts.go:54`). The cross-product read is **not** enforced on either
+  side. Class here for Dify: **CONVENTION**; class for aisotropy on this axis: the same
+  **L0** — an unmodelled boundary. What aisotropy does enforce by construction is
+  `(tenant, user, session)`.
 
 ## Dependency license posture — SOURCE-DECLARED (+ the governing finding)
 

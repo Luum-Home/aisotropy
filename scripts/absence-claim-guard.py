@@ -190,6 +190,28 @@ DEFECT = re.compile(
 )
 SWEEP = re.compile(r"SWEPT:\s*(\d{4}-\d{2}-\d{2})")
 
+# Markdown emphasis, stripped before pattern matching — see is_competitor_claim.
+_EMPHASIS = re.compile(r"[*_`]+")
+
+# Competitor names matched on WORD BOUNDARIES, not as bare substrings.
+#
+# Added 2026-08-04, hours after "eve" was added to COMPETITORS, and by then it
+# had already inflated the ledger: a plain `name in line` test fires "eve" inside
+# d|eve|loper, |eve|ry and l|eve|l, so 22 of the 44 letta/adk-go/cloudflare
+# entries were nothing but that. Identical in shape to the missing \b that made
+# "Ei|no native|ly" read as an absence claim — found the same day, in the same
+# file, and STILL reintroduced, because the fix went in as a list membership test
+# rather than as a boundary-aware match.
+#
+# Worth stating plainly: the self-check fixtures added earlier today did not
+# catch this. They pin the failures already known. A new blind spot introduced by
+# a fix to an old one is exactly the case they cannot cover, and it took a person
+# reading the ledger's contents to notice.
+_COMPETITOR_RE = re.compile(
+    r"(?<![\w-])(?:" + "|".join(re.escape(c) for c in sorted(COMPETITORS, key=len, reverse=True)) + r")(?![\w-])",
+    re.I,
+)
+
 PROXIMITY_LINES = 12
 MAX_SWEEP_AGE_DAYS = 180
 
@@ -272,6 +294,16 @@ DETECT_FIXTURES = [
     # fixture and has to argue with the trade-off instead of silently taking it.
     ("so no framework is advantaged or disadvantaged by a persona", True,
      "accepted false positive: 1 per 68 real findings, see the UNIQUENESS comment"),
+    # --- the three found on 2026-08-04 by reading the ledger's CONTENTS, after
+    #     the fixtures above already existed and passed. Kept together as the
+    #     standing evidence that this list cannot find the next one.
+    ("the developer has no scoping primitive here", False,
+     "'d|eve|loper' — COMPETITORS matched as a bare substring; 22 ledger entries were only this"),
+    ("every framework here has no tenant column", False, "'|eve|ry' — same substring bug"),
+    ("this level has no validation", False, "'l|eve|l' — same substring bug"),
+    ("eve has no tenant primitive", True, "the real name still has to match"),
+    ("it is the **only** framework that ships this", True,
+     "markdown emphasis broke the UNIQUENESS literal — the more emphatic the claim, the less visible"),
 ]
 
 
@@ -347,9 +379,18 @@ def drop_git_ignored(paths: list[str]) -> list[str]:
 
 
 def is_competitor_claim(line: str) -> bool:
-    # A rendered table row is output, not an authored sentence.
-    if line.lstrip().startswith("|"):
-        return False
+    # Table rows USED to be skipped here, on the grounds that "a rendered table
+    # row is output, not an authored sentence". That was aimed at RESULTS.md,
+    # which is generated — and RESULTS.md is already in SKIP_FILES, so the skip
+    # bought nothing there while excluding the hand-written comparison matrices
+    # in README.md, FEATURES.md, COST-OBS.md and ARENA-SPEC-v2.md. That is the
+    # densest concentration of competitor claims in the repository and the arena's
+    # entire public claim surface: 48 rows, invisible.
+    #
+    # It is also where the worst claim of 2026-08-04 was hiding — ARENA-SPEC-v2's
+    # row 4.7 scoring aisotropy REAL (by-construction) on a "4th scope axis" that
+    # tenancy.Scope has no field for. The one row where we rank ourselves above
+    # every competitor at once, in the one place the guard could not look.
     # Neither is a serialized RUN RECORD. The adapter READMEs embed captured
     # arena output as evidence — {"framework":…,"mode":…,"model":…,"reply":…} in
     # a ```json block — and the absence language inside is the MODEL's answer,
@@ -367,12 +408,17 @@ def is_competitor_claim(line: str) -> bool:
     # exactly 9 entries left the ledger, all of them run records.
     if '"reply"' in line and line.lstrip().startswith(("{", "[", '"')):
         return False
+    # Strip markdown emphasis before matching. "the **only** framework" is the
+    # same claim as "the only framework", and UNIQUENESS matched only the second
+    # — so a claim went invisible by being typeset for emphasis, which is to say
+    # the more emphatic a sentence was, the less likely this guard was to see it.
+    line = _EMPHASIS.sub("", line)
     low = line.lower()
     if UNIQUENESS.search(line):
         return True
     if not (ABSENCE.search(line) or DEFECT.search(line)):
         return False
-    return any(c in low for c in COMPETITORS)
+    return bool(_COMPETITOR_RE.search(low))
 
 
 def nearest_sweep(lines: list[str], idx: int) -> str | None:

@@ -24,6 +24,17 @@ const ProductMarker = "px-secret-4417"
 // no framework-enforced separator. THAT axis — and only that one — is developer
 // discipline and drop-vulnerable.
 //
+// SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md — verdict HOLDS,
+// NARROWER. session.Service is three plain unvalidated strings in v2.0.0 and v2.1.0 (no
+// Validate on the identity slots, zero occurrences of "tenant"), and no first-party Go
+// extension adds an axis or a separator. Narrower on two counts: ADK DOES enforce reserved
+// separators elsewhere — validateCustomRunID rejects '/' and '@' with ErrInvalidRunID
+// (workflow/dynamic_scheduler.go:495-507), validateFileName rejects path separators
+// (artifact/service.go:108-120) — so the absence is specific to identity; and outside
+// session.Service the hand-fold is not the only route, since Vertex AI Memory Bank takes an
+// N-key `scope map[string]string` with exact-match retrieval over all keys, which ADK Go's
+// binding collapses to a single {"user_id": …} (memory/vertexai/vertexai_client.go:137).
+//
 // This matrix shows the strongest choice for the PRODUCT axis:
 //
 //  1. STRONGEST config — one runner per product with appName = product. ADK
@@ -44,6 +55,12 @@ const ProductMarker = "px-secret-4417"
 // Symmetric point: had the developer spent appName on TENANT instead (see
 // RunMatrix), PRODUCT would be the residual. Exactly one of {tenant, product}
 // always lacks a native slot; the developer chooses which.
+//
+// SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md — the arity holds for
+// ADK Go (three slots in v2.0.0 and v2.1.0; the module proxy lists only `adk` and `adk/v2`,
+// so no first-party extension adds a fourth). The surface that removes the fold entirely —
+// Memory Bank's N-key scope map — sits in the platform tier and is not reachable through
+// ADK Go's session.Service/memory.Service.
 func RunProductMatrix(ctx context.Context) (*Report, error) {
 	rep := &Report{}
 

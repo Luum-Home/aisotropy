@@ -18,11 +18,19 @@
 //     * naive  key `${t}:${u}` (product segment dropped) collides them
 //   This is the same-key/wrong-key developer bug that is TRUE OF ANY key-value
 //   store — including aisotropy's own BadgerDB if a dev drops a scope segment.
-//   It is not something eve "fails" to validate; eve has no tenancy primitive to
-//   validate against. A competent dev uses the composite key (or binds identity
-//   at the channel) and it partitions fine. What aisotropy adds on ITS narrow
-//   axis is that `product_id` rides context.Context inside an unforgeable Scope,
-//   so the naive read is unrepresentable rather than merely discouraged.
+//   It is not something eve "fails" to validate. SWEPT: 2026-08-04
+//   docs/architecture/arena-sweep-eve-2026-08-04.md — the sentence that used to
+//   follow ("eve has no tenancy primitive to validate against") is FALSE. eve DOES
+//   have one: `ctx.session.auth.current.attributes.tenantId`, and its own
+//   docs/patterns/multi-tenant-memory.md ships a `requireTenantCaller(ctx)` that
+//   THROWS when it is missing. eve does not ENFORCE it — that is the real gap, and
+//   it is a much narrower one. A competent dev uses the composite key derived from
+//   verified session auth (eve's prescribed path) and it partitions fine.
+//   SYMMETRIC RIGOR: the old claim that aisotropy's `product_id` "rides
+//   context.Context inside an unforgeable Scope" was ALSO false — tenancy.Scope is
+//   {tenant, user} (internal/tenancy/scope.go:72-76) and the key is
+//   tenant:user:session; product_id is a body-supplied persona selector. Neither
+//   system has a product-axis primitive.
 //
 // Contract: prints PASS/FAIL lines; exits 0 when the demonstration completes
 // (the positive control, the correct-key partition, and the naive-key collision
@@ -90,7 +98,9 @@ async function main() {
   const hello = await run("hello Orbit");
   assert("runtime.turn", /Orbit here/.test(hello), JSON.stringify(hello).slice(0, 80));
 
-  console.log("\n## DIY memory partitioning — the (tenant,user,product) axis eve does not have\n");
+  // SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md — heading text
+  // corrected: eve HAS an identity axis (ctx.session.auth); it lacks the memory tier.
+  console.log("\n## DIY memory partitioning — the memory tier eve does not have\n");
 
   const secX = marker("checkoutSecret");
   const secB = marker("billingSecret");
@@ -112,7 +122,9 @@ async function main() {
 
   // THE NAIVE-KEY COLLISION: a key builder that drops the product segment. This
   // is the same-key/wrong-key developer bug of ANY string-keyed KV (incl.
-  // aisotropy's BadgerDB) — not an eve defect; eve has no tenancy axis to bind.
+  // aisotropy's BadgerDB) — not an eve defect; eve ships no memory tier to bind
+  // the key for you. SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md
+  // (was "eve has no tenancy axis to bind" — false; the axis is ctx.session.auth).
   // Seed under product=checkout with the naive key (key becomes acme:alice)...
   await run(`MEM: REMEMBER mode=naive t=acme u=alice p=checkout secret=${secNaive}`);
   // ...then RECALL under a DIFFERENT product=billing with the same naive builder.
@@ -124,16 +136,26 @@ async function main() {
     collisions++;
     console.log("      ^ Expected: the naive key `${t}:${u}` drops product, so two products share");
     console.log("        one slot. Same-key/wrong-key dev bug, true of ANY KV incl. BadgerDB — the");
-    console.log("        correct composite key above partitions fine. eve has no tenancy axis by design.");
+    // SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md
+    console.log("        correct composite key above partitions fine. eve ships no memory tier —");
+    console.log("        but it DOES have the identity axis (ctx.session.auth) this key should use.");
   }
 
   console.log("\n## Summary");
   console.log(`checks=${checks}  naive_key_collisions=${collisions}  (expected: 1 — the documented DIY footgun)`);
-  console.log("verdict: eve is session-scoped by design; multi-tenant (tenant,user,product) memory is");
-  console.log("         DIY / OUT-OF-SCOPE (no tenancy primitive), like Pydantic AI / Eino — NOT a defect.");
-  console.log("         Session-to-session isolation IS by-construction (runtime-owned sessionId); the");
-  console.log("         correct composite key partitions products. aisotropy's narrow add: product_id");
-  console.log("         rides context.Context in an unforgeable Scope, so the naive read cannot compile.");
+  // SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md — the previous verdict
+  // ("no tenancy primitive", "aisotropy's product_id rides an unforgeable Scope") was wrong on
+  // BOTH sides; see the header block for the corrected reading and the file:line evidence.
+  console.log("verdict: eve is session-scoped by design and ships NO long-term memory tier, so the");
+  console.log("         store above is DIY (or one of the gallery integrations: Mem0, Hindsight,");
+  console.log("         Upstash AgentKit). eve is NOT L0 on tenancy: ctx.session.auth.current carries");
+  console.log("         a verified principal + attributes bag, and eve's own docs/patterns/");
+  console.log("         multi-tenant-memory.md prescribes requireTenantCaller(ctx), which THROWS.");
+  console.log("         The gap is enforcement, not concept. Session-to-session isolation IS");
+  console.log("         by-construction (runtime-owned sessionId). aisotropy's narrow add is on");
+  console.log("         TENANT/USER only: tenancy.Scope{tenant,user} is unconstructable outside");
+  console.log("         FromContext. On the PRODUCT axis aisotropy has no primitive either —");
+  console.log("         product_id is a body-supplied persona selector, not a memory-key segment.");
 }
 
 main().then(

@@ -51,6 +51,10 @@ func main() {
 	fmt.Println("keep it and the key isolates; drop it and two tenants collide. A")
 	fmt.Println("deployment that spends appName on tenant makes tenant native instead")
 	fmt.Println("(then product is the residual — see cmd/productiso). Exactly one of")
+	// SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md — the three-slot
+	// arity holds for ADK Go in v2.0.0 and v2.1.0, and no first-party Go extension adds a
+	// fourth axis. Memory Bank's N-key scope map would remove the fold, but ADK Go's binding
+	// does not expose it.
 	fmt.Println("{tenant, product} lacks a native slot; the developer chooses which.")
 	fmt.Println(strings.Repeat("-", 62))
 

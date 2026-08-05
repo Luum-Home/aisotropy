@@ -6,6 +6,13 @@
 
 ## What is real here vs. what is source-analysis (read this first)
 
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
+     Five-point sweep at HEAD 4213e6b1: sdks/ ships nodejs + php REST clients and points at
+     java/go/ruby REST clients; plugins run out-of-process via dify-plugin-daemon; PyPI
+     dify-client 0.1.10 is REST, last released 2023-11-15; dify-sdk-go is archived. HEAD does
+     carry an in-repo dify-agent (Python, v1.16.1) + dify-agent-runtime (Go), but dify-agent is
+     NOT on PyPI (404) and is a FastAPI/gRPC/e2b service, not an embeddable Dify. -->
+
 Dify has **no in-process / embeddable Python library**. It is a **server platform**:
 the API (Flask), a Celery worker, the web console, Postgres, Redis, a code-execution
 sandbox, and a vector DB — all separate containers. The only way to run an Orbit
@@ -127,6 +134,13 @@ stronger on this one isolation-and-sovereignty axis. Both statements are true.
 
 ## Isolation model
 
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
+     Re-verified against langgenius/dify HEAD 4213e6b1 (2026-08-04): Conversation
+     (model.py:1162) and Message (model.py:1535) still carry app_id and no tenant_id;
+     App.tenant_id at model.py:421; 0 real RLS (the 2 grep hits for CREATE POLICY are
+     Python comments about billing); 480 hand-written `tenant_id ==` predicates in
+     api/services/ against 0 global query guards. -->
+
 **Convention — shared-schema `tenant_id` discriminator column, enforced 100% in
 application code.** This is the *standard shared-schema multi-tenant tradeoff*, not a
 Dify defect: correct when the developer writes the ownership gate, cross-reads when
@@ -148,6 +162,8 @@ Dify's multi-tenancy is the classic single-database, shared-schema pattern:
   upstream tenant gate (`app_model` is tenant-resolved first). A *developer* who
   holds an `app_id` and skips that gate reads across tenants — so the failure mode
   lives in the naive caller's omission, not in Dify's own service code.
+
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md -->
 
 ```python
 # The correct read and the leak are one clause apart (Dify's real query shapes):
@@ -238,6 +254,8 @@ Dify's **own ORM (SQLAlchemy 2.0)** in `orbit/`, exercised over in-memory SQLite
 simulation **boots and passes in a clean, keyless, network-free container** (`--network
 none`, non-root UID, no API key). It does **NOT** run real Dify.
 
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md -->
+
 **Real Dify is out of scope offline, on purpose.** Dify has **no in-process/embeddable
 Python library**; it is a **multi-container server platform** (Flask API + Celery worker
 + web console + Postgres + Redis + a code sandbox + a vector DB) that only runs an agent
@@ -258,6 +276,8 @@ up or fake the platform, and **SKIPS cleanly (exit 0)** when Docker is unavailab
 
 ## Adversarial isolation result
 
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md -->
+
 **Shared-schema convention, honestly bounded — a reproduced developer-bug, not a Dify
 defect.** Multi-tenancy is a shared-schema `tenant_id` column enforced by hand-written
 SQLAlchemy `.where()`; there is no RLS or schema isolation, and `Conversation`/`Message`
@@ -270,8 +290,20 @@ Separately, there is **no product axis at all** — `product_id` exists nowhere 
 `api/models`, so the fourth scope boundary is simply unmodeled, and even the tenant-correct
 RAG read crosses products (`scripts/product_isolation_demo.py`).
 
-**vs. aisotropy:** aisotropy binds all four scope axes `(tenant, user, session, product)`
-from `context.Context` at the request boundary, enforced per-statement — the unscoped read
-is *unrepresentable*, and there is no ungated primitive to reach for. Dify wins on product
-breadth; aisotropy wins on isolation-by-construction and a license with no multi-tenant
-field-of-use limit. Both are true.
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
+     CORRECTED by that sweep (symmetric rigor). This paragraph used to claim aisotropy binds
+     "all four scope axes (tenant, user, session, product)". It does not: memory.Key is
+     {Tenant, User, Session} (internal/memory/key.go:87) and every Scope value object is
+     {tenant, user} (internal/tenancy/scope.go:72, internal/semantic/semantic.go:58,
+     internal/facts/facts.go:54). ProductID is a persona/prompt selector
+     (internal/api/ask.go:49) and reaches no store as a predicate — so on the product axis
+     aisotropy is L0, exactly where this arena places Dify. -->
+
+**vs. aisotropy:** aisotropy binds `(tenant, user, session)` from `context.Context` at the
+request boundary, enforced per-statement — the unscoped read is *unrepresentable*, not
+merely avoidable, and there is no ungated primitive to reach for. On the **product** axis,
+however, aisotropy is at Dify's level: `product_id` is a persona selector
+(`internal/api/ask.go:49`), not part of any storage key, so the cross-product read is not
+enforced here either. Dify wins on product breadth; aisotropy wins on
+tenant/user/session isolation-by-construction and a license with no multi-tenant
+field-of-use limit. All three are true.

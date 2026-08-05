@@ -151,11 +151,22 @@ Source: `node_modules/eve/docs/concepts/{execution-model-and-durability,sessions
 (Exact per-class membership is listed on each row above; the counts round the two "7-incl" edge rows.)
 eve's strengths cluster in **durable execution, the agent loop, streaming/cancel, health, and the
 provider seam** — the "durable backend agent" runtime story. Its "gaps" against the aisotropy axes —
-**no memory tiers, no tenant/user/product scope, no pre-spend governance** — are mostly **out of
+**no memory tiers, no tenant-scoped data plane, no pre-spend governance** — are mostly **out of
 scope by design**, not shortcomings: eve is a session-scoped durable runtime, not a multi-tenant
-memory substrate.
+memory substrate. <!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md — was
+"no tenant/user/product scope"; corrected, eve's identity scope IS native on `ctx.session.auth`.
+The absent thing is the tenant-scoped DATA PLANE, not the scope itself. -->
+Caveat added by the 2026-08-04 sweep: eve's *identity* scope is native and verified — the row above
+measures the absence of a **memory tier**, not the absence of a tenant concept.
 
-## Run-verified DIY memory partitioning (the 4th axis eve does not have)
+## Run-verified DIY memory partitioning (the memory *tier* eve does not have)
+
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md — heading previously read
+     "(the 4th axis eve does not have)". Corrected: eve HAS a native identity axis
+     (`ctx.session.auth.current`, `node_modules/eve/dist/src/channel/types.d.ts:60-67`) and ships
+     three first-party `docs/patterns/multi-tenant-*.md` guides. What it lacks is a tenant-aware
+     memory subsystem — its own docs' phrasing. Findings doc has the five-point sweep. -->
+
 
 Executed against the real booted server (`node scripts/smoke.mjs`, host `127.0.0.1:4117`, eve@0.24.6,
 Node 24.10.0, 2026-07-17):
@@ -175,6 +186,12 @@ PASS  naive_key.product_collision  — recall(product=billing) hit product=check
 
 checks=6  naive_key_collisions=1  (expected: 1 — the documented DIY footgun)
 ```
+
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md -->
+> **Verbatim 2026-07-17 run output, left unedited on purpose.** Its two "eve has no tenancy axis"
+> sentences are now known to be wrong — eve's identity axis is native (`ctx.session.auth`); the gap
+> is the *memory tier*. `scripts/smoke.mjs` was corrected on 2026-08-04, so a re-run prints
+> different text than this paste. Sweep: `docs/architecture/arena-sweep-eve-2026-08-04.md`.
 
 **Reading:** the correct composite key `${t}:${u}:${p}` partitions products (own-secret recall
 PASSes; the cross-product read returns each product's *own* secret) — this is the competent-dev

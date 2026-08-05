@@ -203,6 +203,15 @@ runnerY.Reply(ctx, "acme|alice", "s1", "recall?")  // clean miss — different a
 But three native slots cannot cover four axes: **exactly one axis** has no slot
 of its own and must be concatenated into `userID` (no framework-enforced
 separator). THAT axis is the developer-discipline, drop-vulnerable residual:
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md — verdict HOLDS,
+     NARROWER. `session.Service` is three plain unvalidated strings in v2.0.0 and v2.1.0,
+     with no first-party Go extension adding an axis. But ADK does enforce reserved
+     separators on other surfaces (WithRunID rejects '/' and '@'; artifact filenames reject
+     path separators) — the absence is specific to the identity slots. And the hand-fold is
+     not the only way to compose a 4th axis outside session.Service: Vertex AI Memory Bank
+     takes an N-key `scope map[string]string` (exact match over all keys, no concatenation),
+     and Google's own prescribed multi-tenancy answer is one Cloud project per tenant with
+     PAB Policy + VPC-SC. Neither is reachable through ADK Go. -->
 
 ```go
 // With appName spent on product (or on the app), tenant rides in userID.
@@ -217,6 +226,11 @@ residual. Exactly one of {tenant, product} always lacks a native slot; the
 developer picks which. The leak is a **chosen-mapping residual**, not an ADK
 inability to isolate — the correct path isolates cleanly (`TestCompositeKeyIsolates`,
 and the `appName=product` construction miss in `TestProductAppNameIsolatesByConstruction`).
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md — "exactly one of
+     {tenant, product} lacks a native slot" holds for ADK Go: three slots in v2.0.0 and
+     v2.1.0, and no first-party Go extension adds a fourth (proxy lists only `adk` and
+     `adk/v2`). The N-key scope that would remove the fold exists one tier up, in Vertex AI
+     Memory Bank, and ADK Go's binding does not expose it. -->
 
 Contrast `adk-python` bug `google/adk-python#1641`: even with composite PKs, the
 events sub-query **omitted the `user_id` filter**, a real cross-user disclosure

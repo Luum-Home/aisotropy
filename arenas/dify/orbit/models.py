@@ -2,6 +2,12 @@
 Orbit data model — a FAITHFUL, SOURCE-GROUNDED transcription of Dify's real
 multi-tenant schema, using Dify's real ORM (SQLAlchemy 2.0).
 
+SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
+  Re-verified at langgenius/dify HEAD 4213e6b1 (2026-08-04): Conversation
+  (model.py:1162) and Message (model.py:1535) still carry app_id and NO tenant_id;
+  App.tenant_id at model.py:421; Dataset/DocumentSegment tenant_id still at
+  dataset.py:180 / :919. Still a multi-container platform with no embeddable library.
+
 This is a *labelled behavioral simulation* of Dify's persistence layer. It is NOT
 a running Dify server (Dify is a Flask + Celery + Postgres + Redis platform that
 cannot boot in this offline env — see README). Every table / column below is a

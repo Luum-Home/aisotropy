@@ -81,6 +81,10 @@ def list_segments_scoped(s: Session, current_tenant_id: str) -> list[DocumentSeg
     )
 
 
+# SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
+#   HEAD 4213e6b1: 480 hand-written `tenant_id ==` predicates in api/services/, 0 global
+#   query guards (no with_loader_criteria, no scoped session, no PG current_setting), and
+#   0 real RLS (the 2 CREATE POLICY grep hits are Python comments about billing).
 # ── The LEAKY reads (the naive developer's omission, not Dify's own code) ──────
 # These reproduce what a careless caller writes: they DROP the ownership gate that
 # Dify's real services keep. This is the standard shared-schema-no-RLS failure mode

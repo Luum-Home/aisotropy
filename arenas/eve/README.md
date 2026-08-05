@@ -40,7 +40,16 @@ contract is stable: `POST /eve/v1/session`, `GET /eve/v1/session/:id/stream` (ND
 `POST /eve/v1/session/:id/cancel`, `GET /eve/v1/health`, `GET /eve/v1/info`.
 
 This arena's agent is **Orbit**, a support chatbot with one memory tool (`orbit_memory`) used to
-show the honest **DIY** path for the (tenant, user, product) axis — the axis eve does not have.
+show the honest **DIY** path for long-term memory — the **tenant-aware memory subsystem** eve does
+not have (its own docs' words). Note the identity axis itself is native: see "Isolation model".
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md — earlier wording said "the
+     (tenant, user, product) axis eve does not have", which conflated an absent memory tier with an
+     absent identity axis. eve HAS the identity axis (`ctx.session.auth`); it lacks the memory tier. -->
+
+> **Sweep note (2026-08-04).** Every "eve has no tenancy axis" sentence in this arena was
+> re-checked against eve's own shipped source and docs and **corrected**; the run pastes below are
+> preserved verbatim as the historical 2026-07-17 artifact and are annotated where their wording is
+> now known to be wrong. Findings: `docs/architecture/arena-sweep-eve-2026-08-04.md`.
 
 ## Requirements & setup
 
@@ -157,14 +166,32 @@ PASS  naive_key.product_collision  — recall(product=billing) hit product=check
 checks=6  naive_key_collisions=1  (expected: 1 — the documented DIY footgun)
 ```
 
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md -->
+> **The paste above is the verbatim 2026-07-17 run and is left unedited on purpose** — rewriting
+> recorded output would fabricate evidence. Two of its own sentences are now known to be wrong:
+> "the (tenant,user,product) axis eve does not have" and "eve has no tenancy axis by design". eve
+> has a native identity axis (`ctx.session.auth`, `dist/src/channel/types.d.ts:60-67`); what it
+> lacks is a tenant-aware *memory subsystem*. `scripts/smoke.mjs` was corrected on 2026-08-04, so a
+> **re-run prints different text than this paste** — that divergence is expected until someone
+> re-runs the arena on Node 24. See `docs/architecture/arena-sweep-eve-2026-08-04.md`.
+
 The three memory checks are all **expected outcomes**: the correct composite key partitions
 products (positive control + cross-product both PASS), and the naive key collides them. The
 collision does **not** exit non-zero — it is the documented DIY footgun, not a framework failure.
 
-## Isolation model — session-scoped by construction; multi-tenant memory is DIY / out-of-scope
+## Isolation model — identity is native and verified; the *memory tier* is the missing piece
 
-eve is a **session-scoped durable runtime**. It has real isolation boundaries — they are simply
-*not* a multi-tenant memory scope, because eve has no such axis by design:
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md — this whole section was
+     rewritten by the five-point sweep. The earlier revision claimed eve "has no tenancy axis" and
+     that "there is nothing for eve to validate"; both are FALSE. eve carries a verified caller
+     identity on `ctx.session.auth.current` (`node_modules/eve/dist/src/channel/types.d.ts:60-67`)
+     and ships THREE first-party `docs/patterns/multi-tenant-*.md` guides — including one whose
+     `requireTenantCaller(ctx)` throws on an unauthenticated tenant. All of it was on disk in this
+     very checkout while the earlier text was being written. -->
+
+eve is a **session-scoped durable runtime with a native, verified caller identity**. What it does
+not have is a *memory tier* to apply that identity to — its own words, verbatim: "eve does not have
+a tenant-aware memory subsystem" (`node_modules/eve/docs/patterns/multi-tenant-memory.md:6`):
 
 - **Session ↔ session: by construction.** `sessionId` is runtime-owned; a session's durable state
   (`defineState`) is session-scoped; only one continuation token owns a session; subagents get their
@@ -172,21 +199,46 @@ eve is a **session-scoped durable runtime**. It has real isolation boundaries �
 - **Channel auth: fail-closed, by construction.** Routes reject unauthenticated traffic (401
   default), verify signatures in constant time, and warn against trusting body-supplied identity —
   a stronger front door than most arenas.
-- **Tenant / user / product memory: DIY / OUT-OF-SCOPE (by design, not a defect).** There is **no**
-  `tenant_id`/`user_id`/`product_id` anywhere in the runtime — the same posture as **Pydantic AI**
-  (stateless lib) and **Eino** (orchestration lib): no tenancy tier by design. Cross-session,
-  per-customer, per-product memory is a **developer-built store keyed by a string the developer
-  computes** (`agent/tools/orbit_memory.ts`). There is nothing for eve to validate — it has no
-  tenancy primitive to validate against.
+- **Caller identity: NATIVE and runtime-owned (this is the correction).** `ctx.session.auth.current`
+  is a framework-owned `SessionAuthContext` — `principalId`, `principalType`, `issuer`, `subject`
+  and an open `attributes` bag (`dist/src/channel/types.d.ts:60-67`, `dist/src/context/keys.d.ts:20-22`,
+  `dist/src/runtime/sessions/auth.d.ts:13`). The model cannot write it; only a channel's `AuthFn`
+  can. eve's own `docs/patterns/multi-tenant-auth.md:17` instructs you to put a string `tenantId`
+  in that bag, and the Teams channel already does exactly this unprompted, emitting
+  `attributes.tenant_id` and `principalId = teams:<tenantId>:<userId>`
+  (`dist/src/public/channels/teams/defaults.js`). So a tenant axis **exists** in the runtime.
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md -->
+- **Memory tier: genuinely absent — that is the real gap.** eve has no framework-owned data plane
+  to scope, so long-term memory is a developer-built (or gallery-integrated) store. But eve does
+  **not** leave you to invent the discipline: `docs/patterns/multi-tenant-memory.md` prescribes
+  `requireTenantCaller(ctx)`, which **throws** unless `auth.current.principalType === "user"` and
+  `attributes.tenantId` is a string. There *is* something for eve to validate against — it simply
+  does not enforce it for you.
 
 The naive-key **collision** shown above is the classic **same-key / wrong-key developer bug** that
 is **true of *any* key-value store — including aisotropy's own BadgerDB** if a dev drops a scope
-segment. It is a tautology of DIY keys, not an eve failing; the correct composite key
-(`${t}:${u}:${p}`) partitions products fine, and a competent dev writes that (or, better, derives
-the key from the channel-verified identity rather than from tool args). Where aisotropy differs on
-*its* narrow axis: `product_id` rides `context.Context` inside an unforgeable value-object `Scope`,
-so the naive read is **unrepresentable** rather than merely discouraged — construction vs. developer
-discipline. That is one axis of difference, not a verdict that eve is insecure.
+segment. Two honest corrections the 2026-08-04 sweep forced here. **(1)** This arena's
+`orbit_memory` takes the tenant/user/product **from tool arguments**, which is precisely what eve's
+own documentation forbids — "Never accept a tenant or user id from the model. Read both from
+verified session context" (`docs/patterns/multi-tenant-memory.md:26`). The footgun demonstrated is
+one eve's docs already close; the demo departed from the prescribed pattern to build it. **(2)** The
+comparison sentence that used to stand here claimed aisotropy's `product_id` "rides
+`context.Context` inside an unforgeable `Scope`, so the naive read is unrepresentable." **That was
+false, and false in our own favour.** aisotropy's unforgeable `tenancy.Scope` holds `{tenant, user}`
+only (`internal/tenancy/scope.go:72-76`) and its working-memory key is `tenant:user:session`
+(`internal/memory/key.go:87-91`); `product_id` is a **request-body persona selector**
+(`aisotropy/turn.go:40-42`, `aisotropy/config.go:52-56`) that reaches no storage key at all. On the
+*product* axis specifically, **neither system has a primitive.** The real aisotropy difference is
+narrower and still true: on **tenant/user**, identity is bound once at the HTTP edge and the storage
+key is unconstructable outside `tenancy.FromContext` — construction vs. prescribed discipline. That
+is one axis of difference, not a verdict that eve is insecure.
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-eve-2026-08-04.md -->
+
+Placed on the arena's own **L0–L3 ladder** (`docs/architecture/arena-tenancy-levels.md`): eve is
+**L2 on identity** (bound once at the channel, fail-closed, model cannot forge it) and **L0 on the
+memory data plane** (there is none to scope) — structurally the same split the ladder already
+records for Genkit Go. aisotropy is **L3 on storage** downstream of an identity that is **L2 at the
+HTTP edge with auth configured, L1 in NoAuth mode**, and **caller-trusted at the library facade**.
 
 ## What eve does genuinely well (steelman)
 

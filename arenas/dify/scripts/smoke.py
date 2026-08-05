@@ -17,6 +17,10 @@ reconstructed from the genuine Dify source (see orbit/models.py, orbit/store.py
 for the exact file:line anchors). If DIFY_API_URL + DIFY_API_KEY are set, we
 additionally attempt a REAL read-only ping and report it honestly.
 
+SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md — the shared-schema
+claim below re-verified at langgenius/dify HEAD 4213e6b1 (Conversation/Message have no
+tenant_id; 0 RLS; 480 hand-written tenant predicates against 0 global guards).
+
 What this is NOT: proof that "Dify leaks." The leaky paths below are the *naive
 developer's* omission of the ownership gate — the same same-key/wrong-key bug you'd
 hit building this on any shared-schema store with no RLS (a bare SQL table, or
@@ -100,6 +104,7 @@ def run_matrix() -> tuple[bool, list[str]]:
         details.append("  OK  Identity bind: globex cannot resolve acme's app via the tenant gate")
         print("  OK  Identity->tenant bind holds (globex can't own acme's app)")
 
+    # SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
     # ── 3. Leaky path A: conversations by app_id WITHOUT the ownership gate ──
     print()
     print("[dify] Leaky path A — list conversations by app_id, skipping resolve_app_owned():")
@@ -119,6 +124,7 @@ def run_matrix() -> tuple[bool, list[str]]:
         print("  LEAK raw conversation-by-id returned acme's row with no tenant check")
         leaked = True
 
+    # SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
     # ── 5. Leaky path C: RAG segment scan with the .where(tenant_id) forgotten ──
     print("[dify] Leaky path C — DocumentSegment scan with the tenant filter omitted:")
     all_segs = store.list_segments_UNSCOPED(s)

@@ -18,6 +18,8 @@ into Dify's own ORM (SQLAlchemy 2.0) — over in-memory SQLite, keyless and netw
 <https://github.com/langgenius/dify/blob/main/docker/docker-compose.yaml>
 (guide: <https://docs.dify.ai/en/self-host/deploy/quick-start/docker-compose>).
 
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md -->
+
 Dify's **official** deployment is a **multi-service Docker Compose stack**
 (`docker compose up -d` from `dify/docker`), roughly nine containers: `api` (Flask),
 `worker` (Celery), `web`, `db` (Postgres), `redis`, `sandbox`, `ssrf_proxy`, `nginx`,

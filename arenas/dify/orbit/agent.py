@@ -1,6 +1,15 @@
 """
 Orbit chatbot skeleton for Dify.
 
+SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
+  Five-point sweep at langgenius/dify HEAD 4213e6b1: sdks/ ships nodejs + php REST
+  clients and points at java/go/ruby REST clients; plugins run out-of-process via
+  dify-plugin-daemon (subprocess/TCP/Lambda); PyPI dify-client 0.1.10 is REST and last
+  released 2023-11-15; langgenius/dify-sdk-go is archived. HEAD does now carry an
+  in-repo dify-agent (Python, v1.16.1) + dify-agent-runtime (Go) — but dify-agent is
+  NOT on PyPI (404) and is a FastAPI/gRPC/e2b service with its own Dockerfile, not an
+  embeddable Dify. The claim below stands.
+
 HONESTY BANNER: no chat turn actually runs here. Dify has no in-process library;
 the ONLY way to run an Orbit agent is to POST to a live Dify server's REST API
 (`POST {base_url}/chat-messages`) with a per-app API key. That server needs

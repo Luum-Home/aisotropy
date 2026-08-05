@@ -2,16 +2,29 @@
 """
 Multi-PRODUCT isolation — the 4th scope axis — for Dify (SOURCE-GROUNDED).
 
-aisotropy scopes every memory read/write by FOUR keys
-`(tenant_id, user_id, session_id, product_id)`, bound once and carried via
-context.Context. The isolation smoke already showed Dify's tenant axis is
-app-layer convention. This closes the PRODUCT axis.
+SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
+  CORRECTED by that sweep, both ways. (a) This header used to claim aisotropy scopes by
+  FOUR keys including product_id — it does not: memory.Key is {Tenant, User, Session}
+  (internal/memory/key.go:87), every Scope is {tenant, user}, and ProductID is a persona
+  selector (internal/api/ask.go:49) that reaches no store as a predicate. (b) It used to
+  say Dify's schema has "exactly two boundaries" — false, and already false at the commit
+  this arena read: api/models/agent.py existed at 1aea3460af1d and carries
+  agent_workspaces / agent_workspace_bindings / agent_drive_files. What survives, verified
+  at HEAD 4213e6b1, is that NO product scope column exists on either side.
 
-Finding: **Dify has no product concept at all.** The schema (verified) has
-exactly two boundaries — workspace (`tenant_id`, LICENSE §1a "one tenant == one
-workspace") and application (`app_id`). There is no `product_id` column anywhere
-in api/models. A builder who needs "one tenant+user, many products" has two
-options, both convention:
+aisotropy scopes every memory read/write by `(tenant_id, user_id, session_id)`, bound
+once and carried via context.Context; `product_id` is a persona selector, NOT a fourth
+scope key. The isolation smoke already showed Dify's tenant axis is app-layer
+convention. This closes the PRODUCT axis — on which NEITHER framework enforces anything.
+
+Finding: **Dify models no product boundary.** There is no `product_id` scope column
+anywhere in api/models (the sole `payment_product_id` is a billing SKU on
+`ProviderOrder`). The boundaries it does model are the workspace (`tenant_id`, LICENSE
+§1a "one tenant == one workspace"), the application (`app_id`) and, since the 2026-05/06
+agent migrations, the agent and its working workspace (`agent_workspaces`,
+`agent_drive_files`) — none of them a customer-facing product. A builder who needs
+"one tenant+user, many products" has two options inside a workspace, both convention
+(a third, one workspace per product, is the vendor's Enterprise-licensed answer):
   (a) product == App inside the workspace  -> product isolation rides app_id,
       the SAME leaky convention as tenants; and the RAG plane (Dataset /
       DocumentSegment) carries tenant_id but NO app/product column, so a
@@ -68,6 +81,9 @@ def run() -> bool:
         print("  FAIL Positive control failed — aborting.")
         return False
 
+    # SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md
+    #   Dataset/DocumentSegment still carry tenant_id and no product/app/agent column at
+    #   HEAD 4213e6b1 (dataset.py:180, dataset.py:919) — the leaks below still hold.
     # Leak #1 — the RAG plane has no product/app boundary. 'analytics' reads the
     # tenant's segments (the only available scope is tenant_id) and gets checkout's.
     print("[dify] Leak #1 — RAG segments scoped by tenant only (no product/app column exists):")
@@ -98,9 +114,14 @@ def run() -> bool:
         print("  NO product_id anywhere, so 'product' can only be app_id convention (the same")
         print("  shared-schema gate a dev may drop) or an unbound tag. The RAG/knowledge plane")
         print("  has no product column at all, so even the tenant-CORRECT read crosses products.")
-    print("  vs. aisotropy: product_id rides ctx in the Scope value-object like tenant/user —")
-    print("  enforced per-statement; the cross-product read is unrepresentable. (A framework")
-    print("  without the axis isn't 'buggy' — it just doesn't model this fourth boundary.)")
+    # SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md — the three lines
+    # below used to claim product_id rides aisotropy's Scope value object. It does not
+    # (memory.Key is {Tenant,User,Session}; Scope is {tenant,user}; ProductID selects a
+    # persona prompt), so this is a shared gap, not a differentiator.
+    print("  vs. aisotropy: NO advantage on this axis — aisotropy's Scope is (tenant, user)")
+    print("  and its memory key (tenant, user, session); product_id only selects a persona")
+    print("  prompt, so the cross-product read is unenforced on BOTH sides. (A framework")
+    print("  without the axis isn't 'buggy' — neither of these models this fourth boundary.)")
     return leaked
 
 

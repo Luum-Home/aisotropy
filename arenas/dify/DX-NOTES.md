@@ -16,6 +16,8 @@ timestamp: 2026-07-16T00:00:00Z
 
 ## The headline before anything else: the license
 
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md -->
+
 Dify is the only framework in this arena set whose **own license blocks Orbit's
 use case outright**. The modified Apache-2.0 §1a forbids using the source "to
 operate a multi-tenant environment" without a commercial license, and it defines a
@@ -73,13 +75,27 @@ second, mainstream, camp — the tradeoff every widely-deployed shared-schema pl
 makes for operational simplicity.
 
 ### There is no product axis
-The schema has exactly two boundaries: workspace (`tenant_id`) and app (`app_id`).
-There is **no `product_id` anywhere**. A builder who needs "one tenant + user, many
-products" must either model each product as an App (product isolation then rides the
-same leaky `app_id` convention) or as an unbound tag, and the RAG plane
-(`Dataset`/`DocumentSegment`) has no product/app column at all, so a shared-tenant
-knowledge base has no product boundary whatsoever. `test_no_product_id_column_exists`
-asserts this structurally.
+
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-dify-2026-08-04.md -->
+
+<!-- CORRECTED 2026-08-04 by the sweep above: this section used to say "the schema has
+     exactly two boundaries". That count was wrong, and it was already wrong at the commit
+     this arena read — api/models/agent.py existed at 1aea3460af1d (25,829 bytes, GitHub
+     contents API) and carries agent_workspaces / agent_workspace_bindings / agent_drive_files,
+     which are real sub-tenant scope keys. What survives is the narrower, verified claim. -->
+
+The schema does not model a product axis: there is **no `product_id` scope column
+anywhere** in `api/models` (the sole `payment_product_id` is a billing SKU on
+`ProviderOrder`, `api/models/provider.py:224`). The boundaries it *does* model are the
+workspace (`tenant_id`), the app (`app_id`) and — since the 2026-05/06 agent migrations —
+the agent and its working workspace (`agent_workspaces`, `agent_drive_files`, keyed
+`(tenant_id, agent_id, …)`, `api/models/agent.py:464,502,568`); none of those is a
+customer-facing product. A builder who needs "one tenant + user, many products" must
+either model each product as an App (product isolation then rides the same leaky `app_id`
+convention), as an unbound tag, or — the vendor's own answer — as a whole extra workspace,
+which is Enterprise-licensed. The RAG plane (`Dataset`/`DocumentSegment`) has no
+product/app/agent column at all, so a shared-tenant knowledge base has no product boundary
+whatsoever. `test_no_product_id_column_exists` asserts this structurally.
 
 ### It's a multi-container platform, not a binary
 Running Dify means api + Celery worker + web console + Postgres + Redis + a
