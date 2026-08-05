@@ -161,7 +161,7 @@ timestamp: 2026-07-15T00:00:00Z
 - **Status:** No isolation layer (DIY / out-of-scope) — `product_id` is just another
   developer-computed deps key, same as `tenant_id`
 - **RUN-VERIFIED** (`scripts/product_isolation_demo.py`, pydantic-ai 2.10.0, offline `TestModel`,
-  exit 0): aisotropy scopes memory by the 4-tuple `(tenant_id, user_id, session_id, product_id)`;
+  exit 0): aisotropy scopes memory by the 4-tuple `(tenant_id, user_id, session_id)`;
   the isolation-model smoke covered tenant/user/session, so this demo adds the **product** axis and
   shows the same structural truth one axis deeper.
   - **(a) Positive control — PASS.** Seeded `tenantA/userA/PRODUCT-X` with a random marker; the
@@ -187,7 +187,7 @@ timestamp: 2026-07-15T00:00:00Z
     with no memory or multi-tenancy layer. It is a dict key you chose to put in the lookup tuple, so
     a wrong key returns the wrong slice — exactly like any KV store. This is DIY/out-of-scope, not a
     framework defect.
-- **AISOTROPY COMPARISON:** aisotropy binds all four axes at the Huma handler boundary and propagates
+- **AISOTROPY COMPARISON:** aisotropy binds three axes at the Huma handler boundary and propagates
   them via `context.Context` — a wrong product_id can't be silently substituted downstream because
   no read is issued without the ctx-scoped key, so its **default** path is already scoped.
 

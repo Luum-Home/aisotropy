@@ -24,7 +24,7 @@ The honest thesis is narrower than "the framework leaks":
     equivalent as plain app code any dev can add on top of the OSS store.
 
 Where aisotropy actually differs:
-  aisotropy binds all 4 axes (tenant_id, user_id, session_id, product_id) from
+  aisotropy binds 3 axes (tenant_id, user_id, session_id) from
   the verified identity via context.Context BY DEFAULT, as an unforgeable Scope
   value object with unexported fields. LangGraph gives you the tools (deep
   namespaces + the auth handler) but you must WIRE them. aisotropy's own raw

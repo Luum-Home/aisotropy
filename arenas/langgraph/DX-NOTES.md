@@ -50,7 +50,7 @@ the authenticated caller. Combined with deep namespaces `(org, user, product)`, 
 identity-bound store facade (plain app code, no server needed) closes both the tenant-axis and
 product-axis leaks on the OSS store.
 
-The honest, narrower difference: aisotropy binds all four axes
+The honest, narrower difference: aisotropy binds three axes
 (`tenant_id`, `user_id`, `session_id`, `product_id`) from the verified identity via
 `context.Context` **by default**, as a `Scope{}` value object with unexported fields — a
 wrong/forgotten key is unrepresentable. LangGraph gives you the same capability but you must wire
@@ -96,7 +96,7 @@ authorization layer for multi-tenant isolation, and can tolerate a SaaS observab
 the auth handler) and self-hosted observability with no SaaS path.
 
 **vs. aisotropy:** LangGraph wins on ecosystem and time-to-prototype; aisotropy wins on
-isolation-**by-default** (the Scope value object binds all four axes automatically and cannot carry
+isolation-**by-default** (the Scope value object binds three axes automatically and cannot carry
 a wrong key), self-hosted observability, and long-term maintainability. The trade is: ecosystem
 breadth with isolation-you-wire + a paid observability path vs. isolation-wired-by-default +
 self-hosted sovereignty. Both enforce isolation at the application boundary; the difference is

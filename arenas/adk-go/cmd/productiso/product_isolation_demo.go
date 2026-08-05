@@ -4,7 +4,9 @@
 //
 //	go run ./cmd/productiso
 //
-// It maps aisotropy's 4 scope axes (tenant, user, session, product) onto ADK
+// It maps the 4 axes this demo scopes by (tenant, user, session, product) onto ADK
+// — note aisotropy itself binds THREE (tenant/user/session); product is a
+// body-supplied persona selector here too. Corrected 2026-08-04.
 // Go's 3 native key slots (appName, userID, sessionID). The STRONGEST ADK config
 // gives the product axis its own native slot — one runner per product with
 // appName=product, bound at runner construction and un-droppable per request —
@@ -29,7 +31,8 @@ func main() {
 	fmt.Println(line)
 	fmt.Println("Real framework: real llmagent + real runner + real session.Service")
 	fmt.Println("Model: offline FakeModel (implements model.LLM) — no API key")
-	fmt.Println("aisotropy binds 4 axes (tenant, user, session, PRODUCT) from ctx.")
+	fmt.Println("aisotropy binds 3 axes (tenant, user, session) from ctx; PRODUCT is a")
+	fmt.Println("body-supplied persona selector on both runtimes (corrected 2026-08-04).")
 	fmt.Println("ADK has 3 native slots (appName, userID, sessionID). STRONGEST config:")
 	fmt.Println("appName=product (one runner/product) makes the product axis native.")
 	fmt.Println()

@@ -12,14 +12,16 @@ import (
 // in a DIFFERENT product's response, that is a cross-PRODUCT read.
 const ProductMarker = "px-secret-4417"
 
-// RunProductMatrix maps aisotropy's 4 scope axes onto ADK Go's 3 native key
+// RunProductMatrix maps this demo's 4 axes onto ADK Go's 3 native key
 // slots and shows both the STRONGEST honest ADK config and the one residual
 // that survives it.
 //
 // aisotropy scopes memory by the composite (tenant_id, user_id, session_id,
-// product_id) — four axes, all bound from context.Context. ADK Go's
+// product_id) — but aisotropy itself binds THREE from context.Context
+// (tenant/user/session); product_id is a body-supplied persona selector.
+// Corrected 2026-08-04. ADK Go's
 // session.Service exposes exactly THREE native key slots: (appName, userID,
-// sessionID). Mapping four axes onto three slots means exactly one axis has no
+// sessionID). Composing a fourth axis by hand means exactly one axis has no
 // native slot of its own and must be concatenated into one of the three, with
 // no framework-enforced separator. THAT axis — and only that one — is developer
 // discipline and drop-vulnerable.

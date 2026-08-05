@@ -172,7 +172,8 @@ sovereignty. Different tools for different jobs.
 - Isolation is opt-in wiring, not a default. On the raw `Store`, namespace depth is developer
   convention — a shallow-prefix `Store.search()` scans across tenants (a dev bug the primitive
   doesn't catch). The fix exists and works — deep namespaces + an `@auth.on.store()` handler —
-  but you must remember to wire it. aisotropy binds all 4 axes from `context.Context` by default,
+  but you must remember to wire it. aisotropy binds its 3 axes from `context.Context` by default
+  (corrected 2026-08-04 — `product_id` is a persona selector, in no key and no filter),
   as an unforgeable Scope value object, so a wrong/forgotten key is unrepresentable.
 - LangSmith (production tracing/persistence) is paid — the free tier is limited, full features
   are Enterprise-gated. This is a sovereignty concern for regulated deployments.

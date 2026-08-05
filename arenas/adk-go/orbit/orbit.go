@@ -8,10 +8,16 @@
 // slots, with appName bound at runner construction (see New/NewWithModel). A
 // deployment can bind any axis to appName by running one runner per value of it
 // (e.g. one runner per product, or per tenant); that axis is then native and
-// non-droppable per request. aisotropy binds four axes (tenant, user, session,
-// product) from context.Context. Mapping four axes onto three native slots
-// leaves exactly one axis without a slot of its own — it rides in userID by
-// convention, and that one is the drop-vulnerable residual. Which axis is
+// non-droppable per request. aisotropy binds three axes (tenant, user, session)
+// from context.Context — the same arity ADK offers, which is the correction of
+// 2026-08-04: the "four axes onto three slots" framing rested on counting
+// product_id as one of ours, and it is not (it is a body-supplied persona
+// selector, in no key and no filter; see docs/architecture/multi-tenancy.md).
+// The real difference is not how many slots each holds but that ADK's are
+// unvalidated strings while aisotropy's are checked against reserved characters
+// before they reach the key space. A developer who needs a fourth axis composes
+// it by hand on either — it rides in userID here, and that one is the
+// drop-vulnerable residual on both sides. Which axis is
 // residual is the developer's choice; see isolation.go (tenant residual) and
 // product_isolation.go (product made native, tenant residual).
 package orbit

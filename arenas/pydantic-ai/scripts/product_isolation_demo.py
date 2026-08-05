@@ -2,7 +2,7 @@
 """
 Multi-PRODUCT scoping demo for Pydantic AI v2 — the 3rd BYO-key axis.
 
-aisotropy scopes memory by FOUR keys: (tenant_id, user_id, session_id, product_id).
+aisotropy scopes memory by FOUR keys: (tenant_id, user_id, session_id).
 The isolation-model smoke (scripts/smoke.py) exercised tenant/user/session. This
 demo adds `product_id` and shows the same structural truth one axis deeper:
 
@@ -33,7 +33,7 @@ What this demonstrates:
      developer computed productX in deps (stale/copy-pasted/cached deps, a one-line
      typo). Same tenant, same user, WRONG product -> reads productX's slice. The
      framework has no product concept to reject it — a plain dict returns whatever
-     key it is handed. aisotropy binds all four axes at the request boundary and
+     key it is handed. aisotropy binds three axes at the request boundary and
      propagates them via context.Context, so its DEFAULT read path is already scoped.
 """
 
@@ -62,7 +62,7 @@ def random_marker(prefix: str) -> str:
 class Deps:
     """Developer-constructed DI context — FOUR axes, all of them BYO keys.
 
-    The lookup key is the 4-tuple (tenant_id, user_id, session_id, product_id).
+    The lookup key is the 4-tuple (tenant_id, user_id, session_id).
     `product_id` is no more privileged than `tenant_id`: the framework does not
     validate ANY of them against a caller, because it has no auth or tenant/
     product model. The developer owns every one of these fields — this is
@@ -72,13 +72,13 @@ class Deps:
     user_id: str
     session_id: str
     product_id: str
-    # BYO per-(tenant,user,session,product) memory store (the framework ships none).
+    # BYO per-(tenant_id, user_id, session_id) memory store (the framework ships none).
     memory: dict = field(default_factory=dict)
 
 
 def populate_memory(deps: Deps, tenant: str, user: str, session: str, product: str, message: str):
     """Store a message in the DIY 4-axis-scoped store (exact-key)."""
-    deps.memory.setdefault((tenant, user, session, product), []).append(message)
+    deps.memory.setdefault((tenant_id, user_id, session_id), []).append(message)
 
 
 def get_recent_messages(deps: Deps, limit: int = 5) -> list[str]:

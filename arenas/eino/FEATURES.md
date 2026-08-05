@@ -222,7 +222,7 @@ exactly where the DIY burden falls.
 
 # GAP 1 (RUN-VERIFIED) — multi-PRODUCT isolation, the 3rd axis — **NOT-POSSIBLE (by framework)**
 
-aisotropy scopes every memory read/write by the tuple **(tenant_id, user_id, session_id, product_id)**.
+aisotropy scopes every memory read/write by the tuple **(tenant_id, user_id, session_id)**.
 The earlier isolation proof only exercised tenant/user; **product_id was never tested**. It is the same
 story one axis over — and this closes it, by RUNNING against the real Eino v0.9.12 checkpoint runtime.
 
@@ -247,7 +247,7 @@ story one axis over — and this closes it, by RUNNING against the real Eino v0.
   Correct keying isolates (A); a dropped segment collapses two products onto one key (B). Identical story to
   the tenant/user axis already shown; the extra key buys zero framework enforcement (it is a DIY
   classification, not an Eino bug).
-- **AISOTROPY:** all four axes (tenant/user/session/product) are composed from ctx by construction, so a
+- **AISOTROPY:** its three axes (tenant_id, user_id, session_id) are composed from ctx by construction, so a
   wrong/short key is unrepresentable. No string-keyed store can catch a bad composed key after the fact;
   aisotropy's edge is that the developer never hand-composes it.
 

@@ -120,7 +120,8 @@ runtime** — a *different* niche. They overlap on exactly one axis (isolation-b
   for the end-to-end leak path — identical semantics. Durable execution is a **third-party** plugin
   (`genkitx-temporal`).
 - **AISOTROPY:** BadgerDB working memory by default (µs, in-process), doubling as the outbox — and
-  bound to `(tenant, user, session, product)` from ctx by construction.
+  bound to `(tenant, user, session)` from ctx by construction — three axes, not four; `product_id`
+  is a persona selector in no key and no filter (corrected 2026-08-04).
 
 ### 6. Semantic memory (vectors) — DIY
 - **Mechanism:** Genkit ships retriever/indexer *interfaces* and plugins (e.g. pgvector), but no

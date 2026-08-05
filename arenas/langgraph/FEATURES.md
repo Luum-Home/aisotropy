@@ -104,7 +104,7 @@ timestamp: 2026-07-15T00:00:00Z
   `@auth.on.store()` handler (importable from `langgraph_sdk`, runs on every store op) rewrite/
   assert the namespace to the authenticated caller, making cross-tenant reads structurally
   impossible. Verified in `scripts/smoke.py` PART B via an identity-bound store facade.
-- **AISOTROPY COMPARISON:** aisotropy binds all four axes from the verified identity via
+- **AISOTROPY COMPARISON:** aisotropy binds three axes from the verified identity via
   `context.Context` **by default**, as a `Scope{}` value object with unexported fields — a
   wrong/forgotten key is unrepresentable. LangGraph gives you the same capability but you must
   wire the auth handler. aisotropy's own raw stores also depend on its Scope/handler layer;
@@ -113,8 +113,8 @@ timestamp: 2026-07-15T00:00:00Z
 
 ### Multi-PRODUCT isolation (3rd axis) — RUN-VERIFIED via `product_isolation_demo.py`
 Run: `.venv/bin/python product_isolation_demo.py` (exit 0; OFFLINE, no LLM). Verified against
-langgraph 1.2.9. aisotropy scopes memory by a **4-axis `Scope` value object**
-`(tenant_id, user_id, session_id, product_id)`, all bound to the verified identity at the
+langgraph 1.2.9. aisotropy scopes memory by a **3-axis `Scope` value object** (corrected 2026-08-04)
+`(tenant_id, user_id, session_id)`, all bound to the verified identity at the
 handler boundary and carried via `context.Context`. This demo isolates the **product_id** axis,
 under both the naive raw-store posture and the correct identity-bound posture.
 
@@ -252,7 +252,7 @@ namespace depth is developer convention. Production observability (LangSmith) is
 which is a genuine sovereignty concern.
 
 **vs. aisotropy:** LangGraph wins on ecosystem and checkpointing maturity; aisotropy wins on
-isolation-**by-default** (the Scope value object binds all four axes automatically and cannot carry
+isolation-**by-default** (the Scope value object binds three axes automatically and cannot carry
 a wrong/forgotten key), cost governance, self-hosted observability, and sovereignty. Both enforce
 isolation at the application boundary — the difference is whether it is on by default and
 unforgeable, not whether one framework can be made secure and the other cannot. The trade is:

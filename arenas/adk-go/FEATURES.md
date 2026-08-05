@@ -49,7 +49,7 @@ below (#1/#1b) is *narrow*; these are the counterweight.
 **AISOTROPY COMPARISON (honest):** ADK wins on multi-agent orchestration
 (sub-agents, `transfer_to_agent`, A2A, workflow graph) and ties on gen_ai OTel.
 aisotropy is a single-runtime with a different narrow edge — isolation-by-default
-(all four scope axes bound from `context.Context` as an unforgeable `Scope`).
+(its three scope axes bound from `context.Context` as an unforgeable `Scope`; corrected 2026-08-04 — the fourth, `product_id`, rides no key).
 Delegation vs. isolation-by-construction are different tools, not the same
 scoreboard.
 
@@ -63,13 +63,21 @@ scoreboard.
 <!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md — the "no
      framework-enforced separator" claim below. HOLDS for session.Service (v2.0.0 + v2.1.0,
      no first-party Go extension adds an axis), NARROWER than stated: see the sweep. -->
-- **The real story — 4 axes onto 3 slots:** aisotropy binds four axes
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md -->
+<!-- The "four axes" premise this section rested on is false about US, not about ADK.
+     memory.Key validates {Tenant,User,Session}; tenancy.Scope carries {tenant,user};
+     product_id is a body-supplied persona selector in no key and no filter. Same arity as
+     ADK. The real difference is slot QUALITY — ours are validated against reserved
+     characters before reaching the key space, ADK's are unvalidated strings. Found
+     independently by the adk-go, eve and dify sweeps on 2026-08-04. -->
+- **The real story — validation, not arity:** aisotropy binds three axes
   (`tenant_id, user_id, session_id, product_id`) from `context.Context`. ADK has
   three native slots. A competent developer binds any one axis to `appName` by
   running one runner per value of it (one runner per tenant, or per product),
   making that axis native and non-droppable. But three slots cannot cover four
   axes: exactly one axis has no slot of its own, must be concatenated into
   `userID` with no framework-enforced separator, and is the developer-discipline,
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md docs/architecture/arena-sweep-eve-2026-08-04.md docs/architecture/arena-sweep-dify-2026-08-04.md — corrected wording; the three sweeps are the evidence for it. -->
   drop-vulnerable residual. This is proven both ways in `orbit/isolation.go`
   (`appName`=app, tenant residual → `TestResidualAxisDropLeaks` in
   `product_isolation_test.go`) and `orbit/product_isolation.go` (`appName`=product,
@@ -79,7 +87,7 @@ scoreboard.
   (`TestCompositeKeyIsolates`); drop it and two tenants collide on the same
   `(appName, userID, sessionID)` session — a genuine same-session read. It is the
   cost of composing a 4th axis by hand, on exactly one axis at a time.
-- **AISOTROPY COMPARISON:** aisotropy carries all four axes in `context.Context`
+- **AISOTROPY COMPARISON:** aisotropy carries its three axes in `context.Context`
   and scopes every memory read per-key — no axis is left to hand-composition, so
   the drop is unrepresentable. ADK gives you three native slots and you compose
   the fourth. `adk-python#1641` (a sub-query that dropped the `user_id` filter)
@@ -96,7 +104,7 @@ scoreboard.
 (`go test ./orbit`, ok) against the real runner + `session.Service`.
 
 - **The axis:** aisotropy scopes memory by the composite
-  `(tenant_id, user_id, session_id, product_id)`. `product_id` is the axis a
+  `(tenant_id, user_id, session_id)`. `product_id` is the axis a
   single tenant+user uses to keep two of *their own* products' memory apart.
 - **STRONGEST ADK config — `appName = product`, one runner per product.** Because
   `appName` is bound at runner construction and is never a per-request argument,
@@ -118,7 +126,7 @@ scoreboard.
   is symmetric: spend `appName` on tenant instead and PRODUCT becomes the
   residual. Exactly one of {tenant, product} always lacks a native slot; the
   developer picks which.
-- **AISOTROPY COMPARISON:** aisotropy binds all four axes from `context.Context`,
+- **AISOTROPY COMPARISON:** aisotropy binds three axes from `context.Context`,
   so neither tenant nor product is ever hand-composed and no axis is drop-prone.
   ADK gives three native slots (one bindable to product via `appName`) and leaves
   the fourth to the developer.

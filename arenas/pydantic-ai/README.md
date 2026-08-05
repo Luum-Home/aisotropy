@@ -97,7 +97,7 @@ difference is **who owns key computation**: here it is entirely the developer.
      at L0 on the L0-L3 ladder (nothing in its data plane represents a tenant or scope). -->
 
 
-**aisotropy's differentiator:** it computes and binds all four axes
+**aisotropy's differentiator:** it computes and binds three axes
 (`tenant_id`/`user_id`/`session_id`/`product_id`) at the request boundary and propagates them via
 `context.Context`, so the **default** read path is already scoped — no unscoped read can be issued.
 
@@ -200,5 +200,5 @@ library works" check, unrelated to the store-scoping question.
 **Honest headline:** this is an out-of-scope / DIY classification (isolation is 100%
 developer-managed), **not** a defect in Pydantic AI. The classification the feature matrix already
 states — memory = DIY/NOT-POSSIBLE, isolation = no layer — is correct. aisotropy's differentiator
-is that it binds all four axes at the request boundary and propagates them via `context.Context`,
+is that it binds three axes at the request boundary and propagates them via `context.Context`,
 so the **default** path is scoped.

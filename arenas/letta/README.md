@@ -241,6 +241,7 @@ pattern avoids the org-wide footguns (`scripts/product_isolation_demo.py`,
 `tests/test_product_isolation.py`) — the residual gap is that binding is single-org and
 app-level (map verified caller → `agent_id`), not framework-level.
 
-**vs. aisotropy:** aisotropy binds all four scope axes `(tenant, user, session, product)`
+**vs. aisotropy:** aisotropy binds three scope axes `(tenant, user, session)` — corrected 2026-08-04;
+`product_id` is a body-supplied persona selector, in no key and no filter —
 from `context.Context` at the request boundary by default, enforced per-statement — the
 unscoped read is *unrepresentable* and there is no org-wide primitive to fall back to.

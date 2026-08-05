@@ -9,7 +9,7 @@
 > engine, A2A + MCP + OTel. Session/state scoping is a composite
 > `(appName, userID, sessionID)` key — **three native slots**, with `appName`
 > bound at runner construction. aisotropy binds **four** axes from
-> `context.Context`; the arena's thesis is that mapping four axes onto three
+> `context.Context`; the arena's thesis WAS that mapping four axes onto three
 > native slots leaves exactly one axis to hand-composition.
 
 ## What is real here
@@ -172,7 +172,7 @@ docker build -f docker/Dockerfile -t adk-go-arena:smoke .
 docker run --rm -p 4114:4114 adk-go-arena:smoke
 ```
 
-## Isolation model — three native slots, four axes, one residual
+## Isolation model — three native slots, and the same arity on both sides
 
 **Real composite-key construction; the honest gap is arity, not scoping.**
 
@@ -200,7 +200,9 @@ runnerX.Reply(ctx, "acme|alice", "s1", "MEMO: secret")
 runnerY.Reply(ctx, "acme|alice", "s1", "recall?")  // clean miss — different appName
 ```
 
-But three native slots cannot cover four axes: **exactly one axis** has no slot
+The framing below counted four axes on the aisotropy side; the 2026-08-04 sweeps found only three
+(`product_id` rides no key). A developer wanting a fourth composes it by hand on EITHER runtime:
+**exactly one axis** then has no slot
 of its own and must be concatenated into `userID` (no framework-enforced
 separator). THAT axis is the developer-discipline, drop-vulnerable residual:
 <!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md — verdict HOLDS,

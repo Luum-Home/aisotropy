@@ -240,7 +240,7 @@ the pinned 2.0.0 API and prints the observed result:
   minimal chat classpath — covered source-verified in `FEATURES.md` 1.4, not executed here.
 
 **Where aisotropy differs vs. where Spring AI is strong.** aisotropy differs on isolation-by-default
-(all four scope axes bound from `context.Context` as an unforgeable `Scope`), per-tenant pre-spend
+(its three scope axes bound from `context.Context` as an unforgeable `Scope`; corrected 2026-08-04), per-tenant pre-spend
 governance, and a Go single-binary footprint. Spring AI wins the **mature JVM ecosystem** (Spring
 Security, Actuator, Micrometer, `@Transactional` all one dependency away), is **fully permissive and
 self-hostable** with no SaaS gate anywhere, and — uniquely among the arenas — its transaction model
