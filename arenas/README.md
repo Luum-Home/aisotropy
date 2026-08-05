@@ -1,7 +1,7 @@
 ---
 type: Survey
 title: "Adversarial isolation matrix — 12 arenas (Pydantic AI, Mastra, LangGraph, Eino, ADK Go, Genkit Go, Letta, Dify, Cloudflare Agents, Spring AI, Flue, eve) + adjacent sandcastle"
-description: A fair, two-sided comparison. aisotropy's narrower thesis — tenant isolation BY DEFAULT via an unforgeable 4-axis Scope wired from context.Context — is ONE axis where it differs. The cross-scope read each arena's smoke exercises is a same-key/wrong-key developer bug (true of any KV store, including aisotropy's own BadgerDB), reproduced against each competitor's weakest config; a competent dev avoids it with the framework's proper primitive, shown here at equal weight. Every arena also carries a run-verified "what this framework is genuinely great at" section. 12 arenas across 5 languages, plus an honest adjacent note on sandcastle.
+description: A fair, two-sided comparison. aisotropy's narrower thesis — tenant isolation BY DEFAULT via an unforgeable 3-axis Scope (tenant/user/session) wired from context.Context — is ONE axis where it differs. (Corrected 2026-08-04: this said 4-axis, counting product_id, which rides no key and no filter.) The cross-scope read each arena's smoke exercises is a same-key/wrong-key developer bug (true of any KV store, including aisotropy's own BadgerDB), reproduced against each competitor's weakest config; a competent dev avoids it with the framework's proper primitive, shown here at equal weight. Every arena also carries a run-verified "what this framework is genuinely great at" section. 12 arenas across 5 languages, plus an honest adjacent note on sandcastle.
 tags: [arenas, isolation, adversarial, steelman, pydantic-ai, mastra, langgraph, eino, adk-go, genkit-go, letta, dify, cloudflare-agents, spring-ai, flue, eve, competitive]
 timestamp: 2026-07-15T00:00:00Z
 ---
@@ -9,8 +9,8 @@ timestamp: 2026-07-15T00:00:00Z
 # Arenas — Adversarial isolation comparison
 
 > **Goal:** A fair, two-sided comparison. aisotropy's real differentiator is *narrow*: tenant
-> isolation is enforced **by default** via an unforgeable 4-axis `Scope`
-> (`tenant/user/session/product`) wired from `context.Context`, so no request-path code can issue an
+> isolation is enforced **by default** via an unforgeable 3-axis `Scope`
+> (`tenant/user/session`) wired from `context.Context`, so no request-path code can issue an
 > unscoped read. The cross-scope "leak" each arena's smoke exercises is a **same-key / wrong-key
 > developer bug** — the property of *any* KV store with no auth layer, including aisotropy's own
 > BadgerDB — reproduced against each competitor's *weakest* config; a competent developer avoids it
@@ -52,7 +52,8 @@ paid/proprietary product) · `NOT-POSSIBLE` (framework cannot provide it by cons
 | # | Feature | Pydantic AI (Py) | Mastra (TS) | LangGraph (Py) | Eino (Go) | ADK Go (Go) | Genkit Go (Go) | Letta (Py) | **aisotropy (Go+Rust)** |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | **Multi-tenant isolation** | DIY / out-of-scope — stateless lib, no memory tier by design (not a defect) | CONVENTION — `resourceId`/`threadId` + 2 more levers (isolable by a competent dev) | CONVENTION — deep namespaces + `@auth.on.store()` identity binding (naive shallow prefix is a dev bug) | **NOT-POSSIBLE** — no tenancy tier by design (orchestration lib, like Pydantic AI); footgun ≠ bug | CONVENTION — composite `(app,user,session)`; `app_name` native non-droppable slot + auth callbacks | CONVENTION — experimental `ai/exp` `SessionStore` (session-keyed, tenant-unaware) | CONVENTION org-wide / **BUILT-IN by `agent_id`** (one-agent-per-principal isolates by construction) | **BY CONSTRUCTION** — ctx + per-statement/key scoping (isolation *by default*) |
-| 1b | **Multi-product isolation** (4th scope axis, run-verified ▶) | DIY / out-of-scope — `product_id` is one more dev-computed key, no memory tier | CONVENTION — competent dev isolates via composite `resourceId` or `semanticRecall.filter`; naive tag path is a no-op | CONVENTION — deep namespace + `@auth.on.store()` prevents the cross-read; shallow prefix is a dev bug | CONVENTION — correct key isolates; a dropped segment collapses two products (same as any string-keyed KV) | **PARTIAL** — `app_name = product` (one runner/product) makes it native + non-droppable; one residual axis rides `userID` | CONVENTION — experimental `SessionStore` is session-keyed; product folded in by dev | CONVENTION org-wide / **BUILT-IN by `agent_id`** — competent dev avoids 3 of 4 old "leaks" | **BY CONSTRUCTION** — `product_id` rides ctx in `Scope` like tenant/user |
+| 1b | **Multi-product isolation** (4th scope axis, run-verified ▶) | DIY / out-of-scope — `product_id` is one more dev-computed key, no memory tier | CONVENTION — competent dev isolates via composite `resourceId` or `semanticRecall.filter`; naive tag path is a no-op | CONVENTION — deep namespace + `@auth.on.store()` prevents the cross-read; shallow prefix is a dev bug | CONVENTION — correct key isolates; a dropped segment collapses two products (same as any string-keyed KV) | **PARTIAL** — `app_name = product` (one runner/product) makes it native + non-droppable; one residual axis rides `userID` | CONVENTION — experimental `SessionStore` is session-keyed; product folded in by dev | CONVENTION org-wide / **BUILT-IN by `agent_id`** — competent dev avoids 3 of 4 old "leaks" | **CONVENTION** — same rung as the rest. `product_id` does NOT ride `Scope`: it is a persona selector arriving in the request body and reaching no store as a predicate (`internal/llm/otel.go` says so outright). Corrected 2026-08-04 — see `docs/architecture/arena-sweep-{adk-go,eve,dify}-2026-08-04.md` |
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md docs/architecture/arena-sweep-eve-2026-08-04.md docs/architecture/arena-sweep-dify-2026-08-04.md — corrected wording; the three sweeps are the evidence for it. -->
 | 2 | Structured output + retry | BUILT-IN — fail-closed `raise ModelRetry` | BUILT-IN — AI-SDK v5 | BUILT-IN — `OutputFixingParser` | PARTIAL — parser only, no repair loop | BUILT-IN — `OutputSchema` node validation | BUILT-IN — `GenerateData[T]`, no repair loop | BUILT-IN — `response_format` json_schema, no repair loop | BUILT-IN — Gollem reflection (fail-closed) |
 | 3 | Tools | BUILT-IN — function tools | BUILT-IN — native tool calling | BUILT-IN — graph nodes | BUILT-IN — `InferTool` + ReAct | BUILT-IN — `tool.Tool` (+MCP/A2A native) | BUILT-IN — `DefineTool` | BUILT-IN — LLM tool calls | BUILT-IN — `WithTypedTool[T]` (scope-gated) |
 | 4 | Streaming (SSE) | BUILT-IN — `AsyncAgent.stream` | BUILT-IN — `ai_sdk` | BUILT-IN — callback handler | BUILT-IN — `StreamReader` | BUILT-IN — `StreamingModeSSE` | BUILT-IN — `WithStreaming` | BUILT-IN — `stream=True` | BUILT-IN — Huma SSE + `ctx` cancel |
@@ -74,8 +75,11 @@ that it binds **no tenant** and does not bind identity to an authenticated calle
 **Rows 1b and 10b are run-verified (▶).** Each arena's product-isolation demo and license scan were
 *executed offline* (fake model / real installed dependency tree), all exit 0; per-arena evidence and
 pasted tool output live in each arena's `FEATURES.md`. Row 1b closes the multi-product gap: the
-matrix originally tested only tenant/user, and aisotropy scopes by four axes
-`(tenant_id, user_id, session_id, product_id)`. Row 10b scans the real dep tree with
+matrix originally tested only tenant/user. **Correction (2026-08-04):** this sentence used to claim
+aisotropy scopes by four axes, naming `product_id` as the fourth. It scopes by three —
+`(tenant_id, user_id, session_id)` — and `product_id` is in no key and no filter, so row 1b compares
+everyone on an axis on which no framework in the matrix, including this one, has a primitive. Row 10b scans the real dep tree with
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-adk-go-2026-08-04.md docs/architecture/arena-sweep-eve-2026-08-04.md docs/architecture/arena-sweep-dify-2026-08-04.md — corrected wording; the three sweeps are the evidence for it. -->
 `pip-licenses`/`license-checker`/`go-licenses`.
 
 ## The 5 new entrants (v2 expansion)
@@ -90,7 +94,7 @@ labelled behavioral smoke). The isolation-axis summary (full 43-row matrix in
 | # | Feature | Dify (Py, src) | Cloudflare Agents (TS/Workers, ▶) | Spring AI (JVM, ▶) | Flue (TS, ▶) | eve (TS, ▶) | **aisotropy** |
 |---|---|---|---|---|---|---|---|
 | 1 | **Multi-tenant isolation** | CONVENTION — shared-schema `tenant_id` discriminator, hand-written `.where()`, **no RLS**; `Conversation` has no `tenant_id` | **BUILT-IN storage boundary by construction** (one DO = one separate SQLite; cross-object read unrepresentable) — *but the name-mapping is CONVENTION and the runtime is RENTED* | CONVENTION — opaque `conversationId` bound to nothing; `findConversationIds()` returns every tenant's ids | CONVENTION — one opaque instance-`id`; per-instance stream isolated by-construction, tenant/user/product folded in; Flue authenticates nothing | CONVENTION — **no tenant/user/product concept**; session-scoped; per-(t,u,p) memory is a dev-built key | **BY CONSTRUCTION** — ctx + per-statement/key scoping |
-| 1b | **Multi-product isolation** (4th axis, ▶) | CONVENTION — **no `product_id` column exists**; "product" = `app_id` convention or unbound tag (leak run-reproduced, src ORM) | CONVENTION — drop the product name segment → two products share ONE SQLite (leak proven in workerd) | CONVENTION — cross-product leaks incl. a **delimiter-injection collision** on the flat key | CONVENTION — cross-product leak one token apart (routed billing convo to analytics id) | CONVENTION — leaky key `${t}:${u}` returns wrong product's secret (`proven_cross_product_leaks=1`) | **BY CONSTRUCTION** — `product_id` rides ctx in `Scope` |
+| 1b | **Multi-product isolation** (4th axis, ▶) | CONVENTION — **no `product_id` column exists**; "product" = `app_id` convention or unbound tag (leak run-reproduced, src ORM) | CONVENTION — drop the product name segment → two products share ONE SQLite (leak proven in workerd) | CONVENTION — cross-product leaks incl. a **delimiter-injection collision** on the flat key | CONVENTION — cross-product leak one token apart (routed billing convo to analytics id) | CONVENTION — leaky key `${t}:${u}` returns wrong product's secret (`proven_cross_product_leaks=1`) | **CONVENTION** — `product_id` is a body-supplied persona selector, in no key and no filter. Corrected 2026-08-04 |
 | 5 | Working memory | BUILT-IN (src) — SQL conversation/message history (server SQL, not µs) | BUILT-IN — in-process per-DO SQLite (hydrated:2 ▶) | BUILT-IN — `MessageWindowChatMemory` (▶) | PARTIAL — durable canonical conversation stream (crash-safe ▶) | BUILT-IN — session-scoped KV + history (▶) | BUILT-IN — BadgerDB (µs) |
 | 6 | Semantic memory (vectors) | BUILT-IN (src) — per-dataset vector store | DIY — Vectorize/AutoRAG rented, not in-tree | PARTIAL — `VectorStore` (separate module, src) | DIY — no vector/RAG tier | DIY — no vector tier | BUILT-IN — in-process cosine; Qdrant code-only |
 | 7 | Facts memory (journal) | DIY (src) — no FTS facts journal | DIY — FTS5 present in DO SQLite, journal is BYO | DIY — no FTS/facts tier | DIY — durable db is not a facts journal | DIY — no FTS tier | BUILT-IN — SQLite+FTS5 |
@@ -185,9 +189,10 @@ primitive.
 - **ADK Go** — `CONVENTION` with real construction across **three native slots**. `session.Service`
   keys by composite `(appName, userID, sessionID)`; `appName` is bound at runner construction and is
   **never a per-request argument**, so a competent developer makes any one axis native and
-  non-droppable by running one runner per value of it (e.g. `appName=product`). Three slots can't
-  cover four axes, so exactly one axis rides `userID` by convention and is the drop-vulnerable
-  residual — the honest cost of composing a 4th axis by hand. Note the symmetry: aisotropy **itself**
+  non-droppable by running one runner per value of it (e.g. `appName=product`). ADK's three slots
+  are the same arity aisotropy binds — the 2026-08-04 sweeps found our own "four axes" premise
+  false — so the honest difference is not how many axes each holds but that ADK's are unvalidated
+  strings while aisotropy's are checked against reserved characters before they reach the key space. Note the symmetry: aisotropy **itself**
   trusts the path `tenant_id` in its default NoAuth mode (ADR-0024), and ADK offers `BeforeAgent`/
   `BeforeModel` auth **callbacks** to bind identity (arena feature 16 is `PARTIAL`, not
   `NOT-POSSIBLE`). **The one place ADK ties aisotropy** is observability — real OTel `gen_ai.*`
@@ -265,7 +270,7 @@ these — they are real, and they are the framework's to keep.
 
 aisotropy keeps two honest concessions here: **ADK Go ties on OTel `gen_ai`**, and **Letta validates
 the memory-OS thesis** (isomorphic tiers + productized sleep-time). aisotropy's own credible edge is
-the *combination*: isolation by default (unforgeable 4-axis `Scope` wired from ctx), governance
+the *combination*: isolation by default (unforgeable 3-axis `Scope` wired from ctx), governance
 defaults (per-tenant pre-spend gate, breaker, cost meter), and 100% permissive self-hostable
 sovereignty — a sovereign multi-tenant runtime, not the best tool on any single axis above.
 
