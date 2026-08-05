@@ -101,13 +101,27 @@ buffer, a cache, or an agent session between two different tenants — is exactl
 difficult: every storage key (cache, session, buffer) carries the composite prefix
 
 ```
-tenant_id:product_id:session_id
+tenant:{tenant_id}:user:{user_id}:session:{session_id}
 ```
 
-(in BadgerDB, see [working memory](../components/badgerdb-working-memory.md#data-model--keys),
-the concrete as-built form is `tenant:{tenant_id}:user:{user_id}:session:{session_id}` per
-`internal/memory/key.go`; `product_id` applies when the same tenant operates multiple
-products/modules on the same framework). The composite key serves a dual purpose: it
+That is the literal output of `Key.prefix()` in `internal/memory/key.go` — three axes, each
+validated by `ValidateIdentityComponent` against reserved characters before the key can reach the
+key space.
+
+> **Corrected 2026-08-04.** This block used to read `tenant_id:product_id:session_id`, which was
+> wrong twice: it omitted `user_id`, which IS an axis, and it named `product_id`, which is not.
+> A parenthetical below it then claimed "`product_id` applies when the same tenant operates
+> multiple products/modules" — also false. `product_id` appears in **no** key and **no** filter in
+> `internal/memory`, `internal/tenancy`, `internal/facts` or `internal/semantic`; it is a persona
+> selector arriving in the request body (`aisotropy/turn.go`), and `internal/llm/otel.go` says
+> outright that it "is not yet threaded through this seam". On the product axis aisotropy is L0.
+>
+> This was not a typo in one file. The same four-axis premise is what the arena programme scored
+> itself on, and it took three independent ecosystem sweeps — adk-go, eve and dify, each arriving
+> by a different route on 2026-08-04 — to surface it, because every document that could have
+> caught it was repeating the same claim. See `docs/architecture/arena-sweep-{adk-go,eve,dify}-2026-08-04.md`.
+
+The composite key serves a dual purpose: it
 isolates *and* documents the scope of each piece of data in the identifier itself, without relying
 on whoever reads the data to remember to apply the correct filter.
 
