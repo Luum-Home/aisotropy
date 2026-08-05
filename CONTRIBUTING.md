@@ -112,6 +112,30 @@ Multi-tenancy is a hard invariant, not a feature flag:
 If your change touches tenant isolation, the memory tiers, or the LLM call path,
 expect extra scrutiny and include a test that proves the boundary holds.
 
+### Where code goes
+
+The layout is load-bearing, not taste. Putting a thing in the wrong layer is how the isolation
+invariant above gets bypassed by accident:
+
+| Path | What belongs there | What does not |
+|---|---|---|
+| `cmd/aisotropyd/` | The binary entrypoint. A thin (~100-line) consumer of the `aisotropy` builder. | **No business logic.** If you are writing behaviour here, it belongs in `aisotropy/` or `internal/`. |
+| `aisotropy/` | The public, importable surface — the builder, its options, the façade types third parties consume. | Anything you are not prepared to keep stable. This package is somebody else's dependency. |
+| `internal/api/` | Huma contracts and handlers. The Go struct is the single source of truth: it drives HTTP validation **and** the generated OpenAPI schema. | Hand-written schema, or validation that duplicates what the struct already declares. |
+| `internal/tenancy/` | The scoped statement builder. | Nothing else — and note that *nothing outside it* may write raw SQL. That is checkable in one grep and the count is zero. |
+| `internal/memory` · `facts` · `semantic` | The tiers, each scoped by construction. | Any read or write that takes a tenant id as a plain argument instead of deriving it from the scope. |
+| `internal/llm/` | Provider clients and the decorators over them (retry, OTel, middleware). | Provider-specific behaviour leaking upward — the rest of the runtime talks to the interface. |
+
+Two conventions that are easy to miss and expensive to undo: **tenant identity is propagated by
+`context.Context` from the handler downward** — never re-derived, never passed alongside as a
+parameter someone can forget — and **a tenant id that arrives from the model** (as a tool argument,
+say) is not identity, it is input.
+
+For what the system *is* rather than where its code lives, read
+[architecture overview](docs/architecture/overview.md) and, when the two disagree,
+[runtime as built](docs/architecture/runtime-as-built.md) — the latter follows the code and flags the
+gap, and is the arbiter.
+
 ### Dependency & license policy
 
 The stack is deliberately **100% permissive (MIT / BSD / Apache-2.0 / ISC)**. Do not add a dependency

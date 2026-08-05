@@ -46,6 +46,22 @@ manifest and **fails the arena report if any cell is left `pending`** (a blank) 
 machine-checked, not eyeballed. `RESULTS.md` renders the matrix so a gap is visible, with each
 infeasible cell showing its reason inline.
 
+**The one honest exception — `"candidate": true`:** a WIP adapter whose incompleteness is blocked
+on something *external* to the code (a `real`-lane cell needing the provider while the free-tier
+quota is exhausted, or a `docker`/native-image build not yet run) may carry a top-level
+`"candidate": true`. A candidate is **excluded from the `pending`-gate**, but this is NOT the
+silent gap the law forbids: the runner logs every candidate loudly and `RESULTS.md` labels its
+cells `CANDIDATE`, never `pass`. This preserves the law's INTENT (no *silent* coverage claim)
+while letting a genuine WIP land instead of forcing either a **faked `pass`** (a lie) or **dropping
+the adapter** (hides real work). Clear the flag once every cell is a real result. See
+[`MATRIX-SCHEMA.md`](MATRIX-SCHEMA.md) §`candidate`.
+
+> **Reconciled 2026-08-05.** The paragraph above lived only in the agent-facing projection at
+> `.claude/rules/arena-full-matrix.md`, which is gitignored and therefore reaches no clone. That is
+> the worst half to lose: without it the law reads as absolute, and an adapter blocked on an
+> exhausted provider quota has exactly two ways out, both bad — fake a `pass`, or drop the adapter
+> and hide real work. The escape hatch IS the honesty mechanism, so it belongs where the law is.
+
 ## What an agent MUST do when it touches the arena
 
 When building or modifying ANY arena artifact (a new dimension, a new adapter, a fix):
