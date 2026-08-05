@@ -237,7 +237,18 @@ Not faint praise — these are real, and several beat aisotropy on their own axi
   tiers behind a value-object `Scope`; Cloudflare deletes the shared store entirely. **[RAN]**
 - **A real in-process SQLite per object, with FTS5.** `this.sql` is a full SQLite embedded in
   the DO (µs, zero network); the FTS5 probe returned a live match — so a keyword facts journal
-  lives *inside* the object (something LangGraph cannot do at all). **[RAN]**
+  lives *inside the per-entity object*. LangGraph runs in-process SQLite too (`SqliteSaver`,
+  `SqliteStore`), but its locality is per-OS-process, not per-conversation, and its server tier
+  requires external Postgres+Redis — so it has no addressable object to put the journal *in*.
+  **[RAN — the FTS5 probe; the LangGraph comparison is source-verified, not run]**
+  <!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-langgraph-state-locality-2026-08-04.md -->
+  <!-- Was: "something LangGraph cannot do at all. [RAN]". Both halves were wrong.
+       LangGraph ships SqliteSaver/SqliteStore/InMemorySaver natively (release 2026-07-30),
+       and this repo's own arenas/live/langgraph/modes/common.py opens an in-process
+       SqliteSaver — our adapter ran what this line called impossible. And the [RAN]
+       marker covered a comparison that was never executed: what ran was the FTS5 probe
+       on this side. The marker now says which half ran, because a "measured" stamp over
+       an unmeasured claim corrupts the convention the arena uses to separate the two. -->
 - **Best offline-fidelity test story in the field.** `@cloudflare/vitest-pool-workers` runs
   tests **inside real `workerd`** with real DOs and real SQLite — what runs in the test is the
   production runtime, no mocks, no cloud, no key. **[RAN, 10/10]**

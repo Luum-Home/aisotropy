@@ -185,7 +185,22 @@ CONVENTION 1 · NOT-POSSIBLE 1.
 - **DIY (8):** #6, #10, #12, #13, #17, #18, #19, #23 — the whole governance
   surface (pre-spend gate, circuit breaker, degradation, scope-gated tools,
   reflection repair loop, response cache, eval) + composite memory scoring.
-- **CONVENTION (1):** #16 — caller→tenant binding (single-org: no framework bind; org-wide under-scoping leak proven in `smoke.py`, agent-scoped reads isolate by `agent_id`).
+- **CONVENTION (1):** #16 — caller→tenant binding. The core DOES carry organisations and filters
+  every query by `organization_id` (`apply_access_predicate` in `sqlalchemy_base.py`), so this is
+  not a missing boundary; what is developer-passed is the ACTOR — the `user_id` header is validated
+  for format only and OSS auth is a shared password, so the credential→tenant bind is app-level, a
+  vendor-prescribed pattern. The org-wide under-scoping scenario is **modelled offline** in
+  `scripts/smoke.py` against `orbit/memory.py`, our own reconstruction of the data plane — **not
+  reproduced against a running Letta server**. Agent-scoped reads isolate by `agent_id`.
+  <!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-letta-2026-08-04.md -->
+  <!-- Was: "single-org: no framework bind; org-wide under-scoping leak PROVEN in smoke.py".
+       Two defects. "Single organization" is false against the core, which ships orgs and
+       admin routes. And "proven" attributed a defect to somebody else's product on evidence
+       that does not touch it: smoke.py's own docstring says "we do not fake a connection"
+       and that the filter semantics are "reconstructed" — and the reconstruction models the
+       org filter wrong, which is the whole point at issue. Honest at the source, over-claimed
+       one layer up; the same compression failure as the [RAN] marker in
+       arenas/cloudflare-agents/ and the front page's "leaked across tenants" (fixed 1a15a7b). -->
 - **NOT-POSSIBLE (1):** #24 — transactional outbox.
 
 **The gap in one line:** Letta MATCHES aisotropy on memory tiers (its home turf —
@@ -319,7 +334,18 @@ tree is literally 100% MIT/Apache, both clear the permissive-only hard gate.
 
 Letta is the **closest conceptual neighbor** to aisotropy. Its memory hierarchy
 (Core/Recall/Archival) is nearly isomorphic to aisotropy's (BadgerDB/SQLite+FTS5/Qdrant),
-and it's the only framework that has productized sleep-time consolidation.
+and it is the only framework here whose **core** ships productized sleep-time consolidation.
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-letta-2026-08-04.md -->
+<!-- Was: "the only framework that has productized sleep-time consolidation" — an
+     exclusivity claim, which needs every OTHER framework swept, not Letta. It falls to
+     langmem (first-party LangChain, in this arena): ReflectionExecutor(after_seconds=…)
+     with a debounce whose docs say "wait for conversation activity to settle", plus
+     merge/summarize/prune. mem0 defaults to async_mode=True. And by symmetric rigor it
+     falls to us too — internal/sleepcycle/ and crates/sleep-cycle/ exist. Narrowed to
+     "core", which is true and is the distinction that was actually meant. The honest
+     counter-argument, recorded rather than hidden: langmem sits at 0.0.30 with no
+     release since 2025-10-27, so maturity is where the original claim had a case —
+     which is why this sentence now says what was checked instead of "the only one". -->
 
 But Letta is Python, LLM-self-managed memory (probabilistic vs aisotropy's deterministic),
 server-side durable objects, and convention-based multi-tenancy. It validates the

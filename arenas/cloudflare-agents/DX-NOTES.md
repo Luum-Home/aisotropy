@@ -25,8 +25,15 @@ exist. That is a real architectural advantage, not a marketing line.
 Tagged-template SQL with typed rows (`this.sql<User>\`SELECT ...\``) is clean, and the DO's
 SQLite is a full SQLite — my FTS5 probe returned a live match
 (`{"ok":true,"hit":"production uses aws lambda"}`). So you can build a keyword facts journal
-*inside* the object, which LangGraph literally cannot do. Working memory hydration "just
-works": turn 2 saw `hydrated:2` with zero wiring.
+*inside the object* — and the distinctive part is the *object*, not the SQLite: LangGraph ships
+in-process SQLite as well, but per process rather than per conversation, and its deployed
+platform tier externalises state to Postgres+Redis, so there is no single, runtime-routed
+instance that owns its own database. Working memory hydration "just works": turn 2 saw
+`hydrated:2` with zero wiring.
+<!-- SWEPT: 2026-08-04 docs/architecture/arena-sweep-langgraph-state-locality-2026-08-04.md -->
+<!-- Was: "which LangGraph literally cannot do" — false against source (SqliteSaver,
+     SqliteStore, InMemorySaver, all native). The real difference is per-entity vs
+     per-process locality, which is narrower and holds. -->
 
 ### Offline, real-runtime testing is first-class
 `@cloudflare/vitest-pool-workers` runs your tests **inside real `workerd`**, with real Durable

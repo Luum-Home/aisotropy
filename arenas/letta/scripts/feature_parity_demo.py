@@ -638,10 +638,22 @@ def main() -> int:
     print()
     print("HEADLINE: Letta is the memory-OS competitor and it SHOWS — BUILT-IN across")
     print("  the memory tiers (Core/Recall/Archival, RAG, ingestion, BYO embedder) AND")
-    print("  the only arena with productized sleep-time consolidation. Where it DIFFERS")
+    # SWEPT: 2026-08-04 docs/architecture/arena-sweep-letta-2026-08-04.md
+    # Two corrections in the block below, both over-claims found by that sweep:
+    #  · "the only arena with productized sleep-time consolidation" -> langmem
+    #    (first-party LangChain, in this arena) ships ReflectionExecutor with a
+    #    debounce whose docs say "wait for conversation activity to settle";
+    #    mem0 defaults to async_mode. Letta is the only one whose CORE ships it.
+    #  · "leak proven in smoke.py" -> smoke.py runs offline against orbit/memory.py,
+    #    our own reconstruction; its docstring says "we do not fake a connection".
+    #    A defect attributed to somebody else's product needs evidence that touches
+    #    their product. "Modelled offline" is what actually happened.
+    print("  the only arena whose CORE ships productized sleep-time consolidation")
+    print("  (langmem ships it as a first-party LangChain extension). Where it DIFFERS")
     print("  from aisotropy: governance is DIY (pre-spend gate, circuit breaker,")
     print("  degradation, scope-gated tools, reflection loop, response cache, eval),")
-    print("  isolation/auth is CONVENTION (no must-agree bind, leak proven in smoke.py),")
+    print("  isolation/auth is CONVENTION (no must-agree bind; org-wide under-scoping")
+    print("  modelled offline in smoke.py, not reproduced against a live server),")
     print("  memory scoring is similarity-only, and a transactional outbox is")
     print("  NOT-POSSIBLE. Memory tiers: 3 (LLM-self-managed, probabilistic) vs")
     print("  aisotropy's 4 (runtime-hydrated, deterministic, isolation-by-construction).")
