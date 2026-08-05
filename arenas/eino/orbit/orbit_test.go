@@ -98,6 +98,7 @@ func TestIsolationCorrectPathNoLeak(t *testing.T) {
 // key via Eino's real runtime. Eino has no tenant dimension to catch the
 // omission, so this collapse is the EXPECTED outcome for feature #1 — the same
 // behavior any string-keyed KV exhibits, not an Eino defect.
+// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 func TestIsolationSharedIDCollapses(t *testing.T) {
 	ctx := context.Background()
 	h, err := NewIsolationHarness(ctx)

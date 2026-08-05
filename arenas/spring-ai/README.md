@@ -12,6 +12,12 @@
 > aisotropy's isolation-by-default. On the axes Spring AI is built for (JVM ecosystem, maturity,
 > self-hostable license) it is genuinely strong and aisotropy does not compete.
 
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — Spring AI graded **L1**:
+     `ChatMemory.CONVERSATION_ID` is required and throws when omitted (loud, not silent), and the
+     primitive is single-axis. L1 is precisely "partitions if the caller passes it correctly",
+     i.e. the identity binding is the developer's to build — which is what this claim says. -->
+
+
 ## What is real here (read this first)
 
 This is a **REAL integration**, not a source-only analysis. Orbit is compiled and run against the
@@ -101,6 +107,10 @@ inside the container.
 `conversationId` is a developer-owned string with no framework-enforced identity binding. That is the
 honest, narrow point — and it cuts both ways: composed naively it cross-reads, composed correctly it
 isolates by construction. The demos run *both*.
+
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Spring AI = L1, single-axis
+     required `conversationId`; L2 identity binding is what it does NOT reach). -->
+
 
 Spring AI's memory contract (verified via `javap` against the 2.0.0 jars):
 

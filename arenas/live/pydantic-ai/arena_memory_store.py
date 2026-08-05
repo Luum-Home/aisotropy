@@ -18,6 +18,8 @@ native `ModelRequest`/`ModelResponse` history, not a hand-rolled re-encoding.
 IMPORTANT (read before touching `scope_key` / the scoped-fact functions):
 
 Pydantic AI has **no native multi-tenant memory isolation primitive** --
+SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (framework matrix
+places Pydantic AI at L0) --
 `message_history` above is keyed by a single opaque `session_id` and nothing
 in the framework understands "tenant" or "user" or enforces that one
 session's data cannot bleed into another's query. The `scope_key()` /
@@ -171,6 +173,7 @@ def save_history_json(session_id: str, history_json: bytes) -> None:
 # above, and it is only as safe as this code makes it. There is no framework
 # guardrail that would catch a broken key -- get the separator or the
 # component order wrong and two different tenants silently share a row.
+# SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Pydantic AI = L0)
 
 _SCOPE_SEP = "\x1f"  # ASCII unit separator: chosen specifically because it is
 # not a character any caller-supplied tenant_id/user_id/product_id/session_id
@@ -186,7 +189,8 @@ def scope_key(tenant_id: str, user_id: str, product_id: str, session_id: str | N
 
     This is the ENTIRE isolation mechanism for the `memory_scoped` /
     `isolation_leak` modes -- there is no framework-enforced tenant boundary
-    underneath it. Every caller MUST supply tenant_id; omitting it (or
+    underneath it (SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md,
+    Pydantic AI = L0). Every caller MUST supply tenant_id; omitting it (or
     passing the wrong one) is indistinguishable, to this store, from an
     intentional cross-tenant query.
     """

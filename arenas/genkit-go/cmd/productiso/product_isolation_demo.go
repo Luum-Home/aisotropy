@@ -35,6 +35,8 @@
 //
 // HONESTY CONTRACT: this is a LEAK, and it is labelled a leak. Genkit enforces
 // nothing on the product axis — there is no product primitive to enforce with.
+// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (L0 on the
+// data-plane rung: no framework-owned scope of any axis).
 // The only thing standing between products is developer discipline, and the
 // demo shows exactly what happens the moment that discipline slips.
 package main
@@ -202,6 +204,7 @@ func main() {
 	fmt.Println("vs. aisotropy: product_id rides in context.Context alongside tenant/user/session")
 	fmt.Println("   and is bound into the memory Scope by construction. A cross-product read is")
 	fmt.Println("   unrepresentable (Scope{} has unexported fields) — not a discipline the")
+	// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 	fmt.Println("   developer must remember. Genkit has no product primitive to enforce at all.")
 	fmt.Println(strings.Repeat("=", 68))
 

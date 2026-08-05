@@ -64,6 +64,7 @@ func TestIsolationLeak(t *testing.T) {
 	if !strings.Contains(leak.Reply, secret) {
 		t.Fatalf("expected the documented convention leak, but tenantB did NOT see tenantA's secret; got %q", leak.Reply)
 	}
+	// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 	t.Logf("CONFIRMED convention leak: tenantB read tenantA's secret through genkit.Generate (no framework isolation): %q", leak.Reply)
 }
 

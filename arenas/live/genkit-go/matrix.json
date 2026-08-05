@@ -3,14 +3,14 @@
   "dimensions": {
     "isolation_forgetful": {
       "stub": {
-        "native": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
-        "docker": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
-        "wasm": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework"
+        "native": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md",
+        "docker": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md",
+        "wasm": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md"
       },
       "real": {
-        "native": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
-        "docker": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework",
-        "wasm": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework"
+        "native": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md",
+        "docker": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md",
+        "wasm": "infeasible:no native scope to forget — Genkit Go has no framework-owned data-plane scope primitive (L0 in docs/architecture/arena-tenancy-levels.md), so an omitted-scope read would exercise only adapter-invented code, not the framework SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md"
       }
     },
     "memory_cross_session": {

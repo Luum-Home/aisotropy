@@ -2,6 +2,7 @@
 // service (the same infra `lib/rqlite.mjs` / `lib/modes/memory.mjs` already
 // use) -- backing the `memory_scoped` and `isolation_leak` modes.
 //
+// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (AI SDK = L0)
 // HONEST NOTE: the Vercel AI SDK (`ai` + `@ai-sdk/openai`) has NO native
 // concept of multi-tenant memory isolation. There is no "scope" primitive
 // anywhere in the SDK -- `generateText()` just takes `messages`. Every
@@ -80,6 +81,8 @@ export async function writeScopedFact(rqliteUrl, scope, fact) {
  * columns are always included in the WHERE clause. This function's
  * implementation IS the isolation boundary: there is no framework-level
  * enforcement behind it, only this explicit AND chain.
+ *
+ * SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (AI SDK = L0)
  */
 export async function recallScopedFacts(rqliteUrl, scope) {
   const result = await rqliteQuery(rqliteUrl, [

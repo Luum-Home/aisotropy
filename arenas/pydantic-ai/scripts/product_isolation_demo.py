@@ -15,6 +15,9 @@ demo adds `product_id` and shows the same structural truth one axis deeper:
   store returns another product's slice — exactly like tenant_id, because both
   are the same kind of thing: a BYO key, not a framework-enforced boundary.
 
+SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (framework matrix
+places Pydantic AI at L0 on the L0-L3 ladder).
+
 There is no framework isolation LAYER to test on any axis. What we exercise is a
 plain-Python dict keyed by the 4-tuple — the arena's own store, which is both the
 boundary and the only thing that can compute the key wrong. This is an
@@ -138,6 +141,8 @@ def test_product_isolation():
     passed == True means: the DIY 4-axis store partitions when the product key is
     right, AND a wrong developer-computed product_id reads the wrong product's
     slice (because no framework isolation layer exists on the product axis).
+
+    SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Pydantic AI = L0)
     """
     details = []
 
@@ -209,6 +214,7 @@ def test_product_isolation():
         details.append("        Root cause: deps.product_id is developer-constructed DI, bound to nothing by the framework.")
         details.append("        product_id is JUST ANOTHER dict key — same as any KV store. aisotropy binds all four")
         details.append("        axes at the request boundary + propagates via context.Context, so its DEFAULT read is scoped.")
+        # SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Pydantic AI = L0)
         print("  [DIY] Confirmed: a wrong developer-computed product_id reads the wrong slice — no framework layer to prevent it")
     else:
         details.append("  [FAIL] Expected the wrong product_id to read productX's slice — the DIY store did not behave like a plain dict")
@@ -237,6 +243,7 @@ if __name__ == "__main__":
     if passed:
         print("\nResult: PASS")
         print("  The DIY 4-axis store partitions when the product key is right; a wrong")
+        # SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Pydantic AI = L0)
         print("  developer-computed product_id reads the wrong slice because NO framework")
         print("  isolation layer exists on any axis.")
         print("  Finding: Pydantic AI enforces NOTHING on product_id — it is a developer-")

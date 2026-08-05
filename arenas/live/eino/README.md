@@ -8,6 +8,7 @@ streaming) — the only places this adapter reaches outside Eino are (a) the rea
 call, because the `eino-ext` Qdrant retriever component hardcodes a payload key this arena's
 collection doesn't use (explained in [RAG mode](#rag-mode) below), and (b) the on-disk SQLite
 persistence layer for `memory` mode, because Eino has no built-in persisted-memory component.
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md -->
 
 This is separate from `arenas/eino/` (the stub-model feature-parity arena) and extends the
 original single-shot `arenas/live/eino/` adapter (`qa` mode below is that adapter, unchanged)
@@ -161,6 +162,7 @@ two-process proof.
 The chat call itself still goes through Eino's native `ChatModel.Generate` — only the
 cross-process persistence layer is custom code, since Eino has no built-in persisted-memory
 component to drive natively.
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md -->
 
 DB path: `EINO_ARENA_MEMORY_DB` (default `.data/memory.db`, relative to this directory since
 `run.sh` already `cd`s here; the Docker image sets it to the absolute `/data/memory.db`, see
@@ -220,6 +222,7 @@ overrides it to an isolated temp file per run so the scenario never touches the 
 
 ### Multi-tenant scoped memory (`memory_scoped`, `isolation_leak` modes)
 
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md -->
 **Honest note: Eino has no native multi-tenant memory isolation.** There is no key-prefixing
 primitive, no payload filter, nothing in Eino's component model that scopes stored state by
 tenant/user/product. Both modes below hand-roll a compound scope key —
@@ -288,6 +291,7 @@ VARIES across invocations — defeating session-keyed transcript replay by const
 user-scoped (indeed no official persisted) memory component, so this adapter SUPPLIES the user axis
 itself (keying `user:<user_id>`) and the matrix cell declares that provenance rather than passing
 silently.
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md -->
 
 This adapter previously kept the store `session_id`-keyed and let the probe FAIL, reading the fairness
 protocol as forbidding a synthesized user key. That reading was inverted — §4 exists to stop an adapter
@@ -304,6 +308,7 @@ v0.9.13 on pkg.go.dev.
 | `memory_semantic_recall` | **infeasible** | NONE — no semantic-memory component in Eino core; ranked recall would be adapter-invented. | Matrix: `infeasible` all lanes. |
 | `memory_consolidation` | **infeasible** | NONE — no fact-extraction/consolidation component in Eino core. | Matrix: `infeasible` all lanes. |
 
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md -->
 Ecosystem sweep basis: `docs/architecture/arena-memory-extensions.md` §1. Eino's `.cn` docs were
 DNS-unreachable during the research (open question #4); the pkg.go.dev `adk` API surface (no
 memory-store types) is the substitute evidence.

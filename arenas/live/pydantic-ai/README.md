@@ -240,6 +240,9 @@ pass only by brute-force replaying all ~40 turns for the model to search — whi
 brute force, not a Pydantic AI primitive**. So the cell is `infeasible: no official semantic-recall
 primitive`, the same run-and-fail-vs-infeasible rule the doc applies to eino/genkit-go: `infeasible` is for
 "no framework capability to exercise," which is the truthful state here.
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md — §1 matrix: pydantic-ai
+     semantic long-term = NONE official; §1.1 re-sweep: native memory NONE (harness issue #30),
+     third-party only (Hindsight / Neo4j Agent Memory / MemU). -->
 
 **`memory_consolidation` — infeasible.** Neither Pydantic AI core nor the harness ships a
 fact-extraction / background-consolidation memory component (memory-extensions doc §1:
@@ -254,6 +257,8 @@ adapter's own code, not the framework, which is precisely why the arena's fairne
 `infeasible` for this dimension (there is no *framework* scope to forget). Marking it `infeasible` — instead
 of contriving an adapter-level "leak" or "refuse" — is the anti-strawman choice: aisotropy's own
 construction-enforced refusal is NOT credited here to a competitor that structurally lacks the concept.
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — framework matrix: Pydantic AI = L0
+     (message_history is a plain parameter; persistence is entirely the caller's responsibility). -->
 
 **2026-07 ecosystem sweep.** Native memory remains **NONE** for Pydantic AI: the open issue
 [pydantic/pydantic-ai-harness#30](https://github.com/pydantic/pydantic-ai-harness/issues/30) (2026-03) still
@@ -272,6 +277,7 @@ leak into another's context, which is aisotropy's own core differentiator. This 
 `memory` mode's single-key design cannot exercise at all.
 
 > **Honest note:** Pydantic AI has **no native multi-tenant memory isolation primitive**.
+> <!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — framework matrix: Pydantic AI = L0. -->
 > `message_history` is a flat, opaque blob keyed however the caller likes — the framework has no
 > concept of "tenant" or "user" or "product" and enforces nothing about which caller can read
 > which blob. Everything in this mode is a **hand-rolled compound-scope key**

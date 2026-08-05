@@ -107,6 +107,8 @@ func part1Chatbot(ctx context.Context) bool {
 //  4. Footgun path: keying by a bare session ID (no tenant) collapses A and B
 //     onto one key. This is what any string-keyed KV does — the point is that
 //     Eino has no tenant dimension to catch the omission, not that Eino "leaks".
+//
+// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 func part2Isolation(ctx context.Context) bool {
 	fmt.Println("[Part 2] Isolation matrix vs Eino's real CheckPointStore")
 	fmt.Println(strings.Repeat("-", 64))
@@ -161,6 +163,7 @@ func part2Isolation(ctx context.Context) bool {
 	// onto one key. A string-keyed KV then returns whatever was stored there —
 	// true of any such store, including aisotropy's BadgerDB. Eino simply has no
 	// tenant dimension to notice the omission.
+	// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 	hCollapse, err := orbit.NewIsolationHarness(ctx)
 	if err != nil {
 		fmt.Println("  ✗ harness build failed:", err)
@@ -183,6 +186,7 @@ func part2Isolation(ctx context.Context) bool {
 		fmt.Println("     Not an Eino bug — a string-keyed KV returns what was stored under the key")
 		fmt.Println("     you ask for. The failure is the dropped tenant segment; Eino has no tenant")
 		fmt.Println("     dimension to catch it. aisotropy composes the key from ctx so this can't happen.")
+		// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 	} else {
 		fmt.Printf("  (no collapse this run: hit=%v got=%q)\n", hit, got)
 	}

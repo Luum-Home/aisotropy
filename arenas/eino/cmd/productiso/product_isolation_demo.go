@@ -61,6 +61,7 @@ func main() {
 	fmt.Println("Eino — GAP 1: multi-PRODUCT isolation (3rd axis) on the REAL runtime")
 	fmt.Println(line)
 	fmt.Println("aisotropy scopes memory by (tenant, user, session, PRODUCT).")
+	// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 	fmt.Println("Eino is a graph-orchestration library with no tenancy primitive.")
 	fmt.Println("compose.CheckPointStore keys on ONE developer string (an interrupt/resume")
 	fmt.Println("KV, not a memory tier) — product_id is not a dimension the framework knows")

@@ -50,6 +50,8 @@ build one honestly.
 ## The painful
 
 ### `conversationId` has no framework-enforced identity binding — the isolation story is yours to construct
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Spring AI = L1: required,
+     throwing, single-axis `conversationId`; identity binding is the developer's layer). -->
 This is the crux, stated fairly. The memory contract is keyed by a `String conversationId`
 (`ChatMemory.get(String)`) that the developer owns; nothing in the framework binds it to an
 authenticated principal. That cuts both ways, and I ran both:

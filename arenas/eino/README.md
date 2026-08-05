@@ -40,6 +40,7 @@ offline, exit 0:
 
 **Run:** `go run ./cmd/strengths` (from `eino/`) — exits 0.
 
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md -->
 This does not soften the de-strawman finding — Eino still has no tenancy/memory-isolation axis (see
 below). The two sit side by side: **Eino is great at type-safe streaming graph orchestration; it
 simply doesn't play in the isolation-by-default space** that aisotropy is built around.
@@ -135,6 +136,7 @@ because Eino has no tenant dimension to notice a dropped segment — scoping is 
 key-composition. aisotropy's edge is upstream: it composes the scope key from `context.Context` by
 construction, so a wrong/short key is unrepresentable. See `scripts/smoke.go` Part 2 and
 `orbit/orbit_test.go` (`TestIsolationSharedIDCollapses`).
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md -->
 
 Additionally, Eino's per-node graph state is developer-defined (`WithGenLocalState`) and carries no
 built-in tenant scoping primitive — you get exactly the fields you declare, keyed by exactly the

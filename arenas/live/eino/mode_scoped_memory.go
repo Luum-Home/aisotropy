@@ -24,6 +24,8 @@ import (
 // prove — with a real agnes recall turn — that the hand-rolled key actually
 // isolates tenants.
 //
+// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
+//
 // This is a deliberate, documented dev responsibility: if whoever builds on
 // Eino computes this key wrong (e.g. forgets to fold tenant_id into it, or
 // swaps the argument order), the mistake is silent at compile time and shows

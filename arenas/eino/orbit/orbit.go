@@ -35,6 +35,7 @@ type Orbit struct {
 	// A wrong/short key here silently reads another scope's notes — the crux of
 	// FEATURES.md. That is true of any string-keyed map; the point is the
 	// developer, not the framework, is responsible for composing the key.
+	// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 	workingMemory map[string][]string
 }
 

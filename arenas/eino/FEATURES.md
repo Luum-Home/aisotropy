@@ -232,6 +232,7 @@ story one axis over — and this closes it, by RUNNING against the real Eino v0.
     queried key, exactly as any such store does (including aisotropy's BadgerDB). Direct store probe:
     keyspace is `[acme:alice:s-42]` — a bare `[]string`, **no product_id column/tag/filter anywhere** in
     `Get/Set(ctx, id string)`, so Eino has no dimension to catch the dropped segment.
+    <!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md -->
 - **Verdict:** `product_id` is **CONVENTION-ONLY** — a developer substring the framework binds to nothing.
   Correct keying isolates (A); a dropped segment collapses two products onto one key (B). Identical story to
   the tenant/user axis already shown; the extra key buys zero framework enforcement (it is a DIY

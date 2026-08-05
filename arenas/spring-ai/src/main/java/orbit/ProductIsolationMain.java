@@ -16,6 +16,10 @@ package orbit;
  */
 public final class ProductIsolationMain {
 
+    // SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — Spring AI = L1 and the matrix
+    // row records the scoping primitive as SINGLE-axis (one required conversationId), so a product
+    // dimension is the developer's key composition (covers the javadoc above).
+
     static final String X_SECRET = "PRODUCT-X-secret-roadmap-Q3";
 
     public static void main(String[] args) {
@@ -25,6 +29,8 @@ public final class ProductIsolationMain {
         ok &= partB_structuredKey();
 
         System.out.println();
+        // SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Spring AI = L1, single-axis
+        // required conversationId — no second, product-shaped axis in the memory primitive).
         System.out.println("Product axis: Spring AI has no product primitive; product is a developer-owned");
         System.out.println("segment of the conversationId. A structured, identity-derived key (Part B) isolates");
         System.out.println("products cleanly; the Part A failures are key-composition bugs the developer owns,");

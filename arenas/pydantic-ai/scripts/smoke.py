@@ -10,6 +10,9 @@ docs: https://ai.pydantic.dev/dependencies/, https://ai.pydantic.dev/message-his
 DEVELOPER constructs and the framework threads through tools untouched. It is
 bound to nothing — no principal, no auth, no tenant concept.
 
+SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (framework matrix
+places Pydantic AI at L0 on the L0-L3 ladder).
+
 So there is no framework isolation boundary to test. Any scoped memory is 100%
 BYO: your own dict / Redis / DB, keyed by a key YOU compute. This script makes
 that concrete. The "store" here is a 15-line plain-Python dict keyed by
@@ -204,6 +207,7 @@ def test_isolation():
         details.append("        Root cause: deps is developer-constructed DI; the framework binds no axis to any caller.")
         details.append("        Same as any KV store. aisotropy's differentiator: it computes+binds the key at the")
         details.append("        request boundary and propagates via context.Context, so its DEFAULT read is scoped.")
+        # SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Pydantic AI = L0)
         print("  [DIY] Confirmed: a wrong developer-computed key reads the wrong slice — no framework layer to prevent it")
     else:
         details.append("  [FAIL] Expected the wrong key to read tenantA's slice — the DIY store did not behave like a plain dict")
@@ -232,6 +236,7 @@ if __name__ == "__main__":
     if passed:
         print("\nResult: PASS")
         print("  The DIY store partitions when the key is right; a wrong developer-computed")
+        # SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Pydantic AI = L0)
         print("  key reads the wrong slice because NO framework isolation layer exists.")
         print("  Classification: Pydantic AI is a stateless agent library that ships no")
         print("           memory or multi-tenancy layer. Isolation is 100% BYO/developer-")

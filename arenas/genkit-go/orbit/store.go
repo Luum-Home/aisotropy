@@ -16,6 +16,8 @@ import (
 // tenant/user/product binding (its SessionSnapshot/SessionState carry only a
 // SessionID field) — it provides PERSISTENCE, not ISOLATION.
 //
+// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
+//
 // This type is a deliberately minimal DIY stand-in with IDENTICAL semantics
 // (session-id-keyed, tenant-unaware) so the end-to-end genkit.Generate leak
 // path stays small and legible. The leak is NOT an artifact of the stand-in:

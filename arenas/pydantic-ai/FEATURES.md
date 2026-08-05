@@ -122,8 +122,23 @@ timestamp: 2026-07-15T00:00:00Z
 
 ### Multi-tenant isolation
 - **Status:** No isolation layer (DIY / out-of-scope) — not a defect
-- **Pattern:** Pydantic AI is a **stateless agent library** that ships no memory or multi-tenancy
-  layer by design ("Agents are stateless and designed to be global"). `deps` is pure dependency
+- **Pattern:** Pydantic AI's **core** is a stateless agent library that ships no memory or
+  multi-tenancy layer by design ("Agents are stateless and designed to be global"). Ecosystem-wide
+  the memory half is narrower than that: cross-session memory is an **OFFICIAL-EXTENSION** — the
+  `Memory` capability of pydantic-ai-harness (persistent namespaced notebook, bounded prompt
+  injection, on-demand search), plus Step Persistence — while semantic recall and consolidation
+  are NONE-official. This adapter pins 2.10/2.12, which predate the harness, so what it exercises
+  is the core. The multi-tenancy half stands at every level checked: no principal, no auth, no
+  tenant concept anywhere.
+  <!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md -->
+  <!-- Was: "a stateless agent library that ships no memory or multi-tenancy layer". The
+       multi-tenancy half was right; the memory half was a CORE-ONLY reading published as an
+       ecosystem verdict, and arena-memory-extensions.md:45 — this repo's own dated sweep —
+       contradicts it with three vendor URLs. Worth noting how this one surfaced: the
+       absence-claim guard never flagged it. Its ABSENCE pattern knows "has no" and "have no"
+       but not "ships no", so the sentence was both wrong and invisible. Found by an agent
+       reading the sweep against the prose rather than against the ledger. -->
+  `deps` is pure dependency
   injection — a developer-constructed object bound to nothing (no principal, no auth, no tenant
   concept). Scoping is a BYO store keyed by a key you compute; `tenant_id` on `RunContext[deps]`
   is just one such developer-computed field.
@@ -133,6 +148,10 @@ timestamp: 2026-07-15T00:00:00Z
   plain-dict behavior (true of any KV store, including aisotropy's BadgerDB), exercised against the
   arena's own 15-line dict — the framework is not in that path. This is a DIY classification, not
   a leak: a leak would mean a framework boundary failed, but Pydantic AI ships no such boundary.
+  <!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — framework matrix places
+       Pydantic AI at L0: message_history is a plain parameter, persistence is entirely the
+       caller's responsibility; nothing in the data plane represents a tenant or scope. -->
+
 - **AISOTROPY COMPARISON:** aisotropy binds all axes at the Huma handler boundary and propagates
   them via `context.Context` + per-statement/key scoping + a constitutional gate — so the
   **default** read path is already scoped and no code path can issue an unscoped read. Pydantic AI
@@ -161,6 +180,8 @@ timestamp: 2026-07-15T00:00:00Z
       SAME tenant, SAME user — only the product key differs.
       [DIY] Confirmed: a wrong developer-computed product_id reads the wrong slice — no framework layer to prevent it
     ```
+    <!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — framework matrix places
+         Pydantic AI at L0, which holds on every axis, product included. -->
   - **Root cause:** `product_id` is no more privileged than `tenant_id` — the framework binds it to
     nothing (no principal, no API surface, no auth), because Pydantic AI is a stateless agent library
     with no memory or multi-tenancy layer. It is a dict key you chose to put in the lookup tuple, so

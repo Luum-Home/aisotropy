@@ -123,8 +123,11 @@ func (c *rqliteClient) loadTurns(ctx context.Context, sessionID string) ([]turn,
 
 // ---- Scoped (multi-tenant) memory table — memory_scoped / isolation_leak ----
 //
-// Genkit-Go has NO native multi-tenant memory-isolation primitive: the
-// framework's own state hooks (this file, memory.go) are keyed however the
+// Genkit-Go has NO native multi-tenant memory-isolation primitive (L0 on the
+// data-plane rung of the L0–L3 ladder; its flow-boundary identity is a
+// separate, real L2 — this claim is about the data plane only).
+// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
+// The framework's own state hooks (this file, memory.go) are keyed however the
 // caller chooses. The "memory" mode above keys by session_id ALONE — it
 // proves cross-process persistence but not tenant isolation. This table
 // hand-rolls a COMPOUND scope key (tenant_id, user_id, product_id,
@@ -180,7 +183,9 @@ func (c *rqliteClient) writeScopedFact(ctx context.Context, tenantID, userID, pr
 // WHERE clause filters on all four columns in the query itself — this IS the
 // isolation boundary: a scope that omits or gets tenant_id wrong will read
 // (or leak) another tenant's rows, and nothing in Genkit-Go or rqlite
-// prevents that by construction. The caller (this adapter) is fully
+// prevents that by construction (Genkit Go is L0 on the data-plane rung).
+// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
+// The caller (this adapter) is fully
 // responsible for supplying every scope column on every read and write.
 func (c *rqliteClient) recallScopedFacts(ctx context.Context, tenantID, userID, productID, sessionID string) ([]string, error) {
 	if c.stub {

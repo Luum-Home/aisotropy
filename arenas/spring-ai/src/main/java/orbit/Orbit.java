@@ -40,6 +40,10 @@ import org.springframework.ai.chat.prompt.Prompt;
  * (conversationId derived from a verified principal, read through an identity-binding facade) the
  * cross-read is unrepresentable (Part B). {@link #convId} shows the naive flat join; the demos
  * show both postures.
+ *
+ * <p>SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — Spring AI graded L1 there
+ * (required, throwing, single-axis {@code conversationId}); L1 is exactly "partitions if passed
+ * correctly", so the identity binding is the developer's layer, not the framework's.
  */
 public final class Orbit {
 
@@ -102,6 +106,9 @@ public final class Orbit {
      * bug 2). A structured/escaped key derived from a verified identity ({@code ProductIsolationMain}
      * Part B, {@code SmokeMain} Part B) removes that; the flat join here is deliberately the weak
      * form so the demos can contrast it with the correct one.
+     *
+     * <p>SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Spring AI = L1, and the
+     * matrix row records the primitive as SINGLE-axis — one opaque conversationId, not four).
      */
     public static String convId(String tenant, String user, String product, String session) {
         return tenant + "|" + user + "|" + product + "|" + session;

@@ -84,6 +84,8 @@ runtime** — a *different* niche. They overlap on exactly one axis (isolation-b
   Scenario 2 shows that folding product into the key *isolates* — but purely by convention:
   mis-passing the product string (`orbit-crm`'s key on an `orbit-helpdesk` request) re-opens the
   leak, and Genkit validates nothing (`✗ CONVENTION LEAK`).
+  <!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Genkit Go = L0 on the
+       data-plane rung: no framework-owned scope, so no product axis to enforce) -->
 - **AISOTROPY:** `product_id` rides in `context.Context` alongside tenant/user/session and is
   bound into the memory `Scope` by construction — a cross-product read is unrepresentable, not a
   discipline the developer must remember. Genkit has no product primitive to enforce at all.

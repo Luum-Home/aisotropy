@@ -79,6 +79,9 @@ curl -sN -X POST localhost:4116/v1/tenant/acme/user/alice/chat/stream \
 The live server namespaces the store key as `tenant:user:session` — the *correct* convention. It
 is still only a convention: nothing in Genkit forces or checks it (see the smoke for the leak).
 
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Genkit Go = L0 on the
+     data-plane rung: no framework-owned scope for the key convention to be checked against) -->
+
 ## Containerized smoke (Docker)
 
 Proves the real Genkit build boots and isolates **as a production container**, not just as a local
@@ -151,6 +154,8 @@ session id share memory. There is still **no** public `Session`-scoped-by-tenant
 - **JS-vs-Go asymmetry (honest):** Genkit-**JS** has shipped `ai.chat()` / `Session` / `SessionStore`
   for longer and more stably; Genkit-**Go** reached rough parity only via this July-2026
   preview/beta surface, which is gated behind `requireExperimental` and explicitly "may change."
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md (genkit-go's session surface
+     is NATIVE-PREVIEW and keyed by session id — the missing tenant axis this test drives) -->
 - **We reproduce the leak against Genkit's REAL primitive.** `TestRealSessionStoreIsTenantUnaware`
   (`orbit/isolation_test.go`) drives `localstore.NewInMemorySessionStore` directly — no DIY store in
   the path — and shows a tenantB read of a shared session id returns tenantA's messages verbatim,

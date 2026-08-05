@@ -65,6 +65,9 @@ primitive for multi-tenant memory isolation** — `generateText()`/`streamText()
 `messages` array; there is no "scope," "tenant," or "namespace" concept anywhere in `ai` or
 `@ai-sdk/openai`.
 
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — AI SDK (Vercel) graded **L0**
+     ("no framework data plane to scope") in the per-framework tenancy matrix. -->
+
 `memory_scoped` and `isolation_leak` below **hand-roll** a compound scope key
 (`tenant_id`, `user_id`, `product_id`, `session_id`) over the same real rqlite table shape
 `memory` mode uses (see `lib/scoped-store.mjs`), and every isolation guarantee comes from
@@ -296,6 +299,10 @@ adapter-invented store is legitimate to demonstrate session persistence, but wir
 cross-session/semantic/consolidation probe would benchmark adapter glue, not the framework, so those
 cells are declared `infeasible` rather than run against invented code. Pinned version: **`ai`
 v7.0.31**, **`@ai-sdk/openai` v4.0.16** (`package.json`).
+
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md — ai-sdk row: NONE first-party
+     on all three memory capabilities; §1.1 re-sweep records the PRESCRIBED-PATTERN vendor doc and
+     the mem0/Letta COMMUNITY providers. Covers both this verdict and the sweep note below. -->
 
 | Dimension | Verdict | Framework primitive (maturity) | Matrix cell |
 |---|---|---|---|

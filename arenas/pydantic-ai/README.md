@@ -28,7 +28,10 @@ The smoke test runs a fully offline isolation-model exercise (no LLM API key nee
 deterministically, that Pydantic AI ships no memory or multi-tenancy layer: scoping happens in a
 BYO dict keyed by a developer-computed key. The exact-key store partitions correctly when the key
 is right, and a wrong developer-computed key reads the wrong slice — because there is no framework
-isolation layer to prevent it (the framework has no tenant/product concept). It additionally
+isolation layer to prevent it (the framework has no tenant/product concept).
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — framework matrix places Pydantic AI
+     at L0: message_history is a plain parameter, persistence is entirely the caller's responsibility. -->
+It additionally
 constructs a Pydantic AI `Agent` backed by `TestModel` to confirm the installed DI +
 structured-output wiring boots. Exits 0 when the positive control and the correct-scoping control
 pass. This is a DIY/out-of-scope classification for the framework, not a leak in it.
@@ -89,6 +92,10 @@ There is no framework boundary to fail here. If a developer computes a scoping k
 own store, the framework has no concept of tenant/user/product to object — a plain dict returns
 whatever key it is handed, exactly like any KV store (including aisotropy's BadgerDB). The
 difference is **who owns key computation**: here it is entirely the developer.
+
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — framework matrix places Pydantic AI
+     at L0 on the L0-L3 ladder (nothing in its data plane represents a tenant or scope). -->
+
 
 **aisotropy's differentiator:** it computes and binds all four axes
 (`tenant_id`/`user_id`/`session_id`/`product_id`) at the request boundary and propagates them via

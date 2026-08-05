@@ -11,6 +11,7 @@
 // that EXACT scope, and is invisible under a different scope. See
 // `lib/scoped-store.mjs` for the honest caveat: the AI SDK has no native
 // primitive for any of this -- it is entirely hand-rolled here.
+// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (AI SDK = L0)
 //
 // Single invocation proves all three legs in one real agnes turn:
 //   1. WRITE  `fact` under the primary (tenant_id,user_id,product_id,session_id)

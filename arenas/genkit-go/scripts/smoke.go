@@ -6,7 +6,10 @@
 //
 //  1. The Orbit chatbot is a genuine Genkit build: dotprompt, structured output
 //     (GenerateData), and tool-calling all execute through the real pipeline.
-//  2. Genkit Go has NO tenant isolation. v1.10.0 ships an experimental ai/exp
+//  2. Genkit Go has NO tenant isolation in its DATA PLANE (L0 on the L0–L3
+//     ladder; its flow-boundary identity is a separate, real L2).
+//     SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
+//     v1.10.0 ships an experimental ai/exp
 //     session-memory primitive (localstore SessionStore), but it is keyed by a
 //     developer-chosen session id with no tenant binding — persistence, not
 //     isolation. Multi-tenancy is developer-passed, so a wrong session key
@@ -181,6 +184,7 @@ func testIsolation(ctx context.Context, app *orbit.Orbit) (bool, []string) {
 
 	// ...and it is still only a convention: mis-pass tenantA's id into the key
 	// for userB's request and the leak returns. Nothing in Genkit checks it.
+	// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 	fmt.Println("\n[isolation] The convention leak — mis-passed tenant id in the key:")
 	misKey := "orgA:u1:s1" // developer accidentally reuses orgA's key for an orgB request
 	misOut, _ := app.Chat(ctx, orbit.ChatInput{

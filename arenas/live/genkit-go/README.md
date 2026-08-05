@@ -255,6 +255,9 @@ and `test-crash.sh` is the executable proof, not a doc claim:
 
 ### `memory_scoped` / `isolation_leak` — hand-rolled multi-tenant scope, and the honest note
 
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Genkit Go = L0 on the
+     data-plane rung; its flow-boundary identity is a separate, real L2 — the claim below is
+     about the data plane only) -->
 **Genkit (Go) has no native multi-tenant memory-isolation primitive.** There is no scoped
 store, no tenant-aware retriever contract, nothing in the framework that stops one tenant's
 conversation state from being read back under a different tenant's request. The plain `memory`
@@ -307,6 +310,8 @@ recall should make a reply-level leak impossible by construction — see `test-i
 These runner-internal dimensions (`docs/architecture/arena-memory-extensions.md`) arrive on the
 wire as ordinary `memory` turns plus a second scope axis, `user_id`, which the runner HOLDS constant
 while VARYING `session_id` across invocations — a probe that defeats session-keyed transcript replay
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md (genkit-go session surface
+     labelled NATIVE-PREVIEW and SESSION-scoped — persistence without a user axis) -->
 by construction. Genkit Go has no user-scoped memory primitive, so this adapter SUPPLIES the user
 axis itself (keying `user:<user_id>`) and the matrix cell declares that provenance rather than
 passing silently.

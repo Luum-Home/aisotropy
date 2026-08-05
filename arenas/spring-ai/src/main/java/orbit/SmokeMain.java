@@ -20,6 +20,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * cross-tenant read is a clean miss by construction. This is plain application code — the same
  * boundary aisotropy ships by default as an unforgeable Scope.
  *
+ * <p>SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md — Spring AI graded L1 (required,
+ * throwing, single-axis {@code conversationId}); L1 means "partitions if passed correctly", so the
+ * principal binding is the developer's layer. Covers both paragraphs of this javadoc.
+ *
  * <p>The honest, narrower point that remains true: Spring AI's {@code conversationId} is a
  * developer-owned string with no framework-enforced identity binding — isolation here is a
  * convention the developer must construct, not a default the framework guarantees.

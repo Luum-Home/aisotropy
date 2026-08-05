@@ -448,6 +448,10 @@ def _memory_store_key(payload: dict, session_id: str) -> str:
     user-keying itself lives in THIS adapter, not in a Pydantic AI scope
     primitive -- which is exactly why `isolation_forgetful` is infeasible for this
     framework (no framework scope to forget; the scope here is adapter glue).
+
+    SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
+    (framework matrix: Pydantic AI = L0 -- message_history is a plain parameter,
+    persistence is entirely the caller's responsibility.)
     """
     user_id = payload.get("user_id")
     if user_id:
@@ -539,6 +543,7 @@ def _sum_tokens(pairs: list[tuple[int, int]]) -> tuple[int, int]:
 # mode: memory_scoped -- hand-rolled COMPOUND-SCOPE fact store, isolation
 #
 # Pydantic AI has no native multi-tenant memory concept. This mode proves the
+# SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Pydantic AI = L0)
 # hand-rolled scope_key() convention in arena_memory_store.py works both
 # ways: (1) a fact written under (tenant_id, user_id, product_id[, session_id])
 # is recalled back under the SAME scope, and (2) the SAME query under a

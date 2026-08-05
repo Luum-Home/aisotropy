@@ -28,6 +28,7 @@ import (
 // what any string-keyed KV does (including aisotropy's BadgerDB); the point is
 // that Eino has no tenant dimension to catch a wrong/short composed key. The
 // round-trip below is driven by Eino's real runtime, not by our test harness.
+// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 
 func init() {
 	// Eino serializes checkpoint state via a registered type. Register Orbit's
@@ -87,6 +88,7 @@ type IsolationHarness struct {
 	// interruptIDs models a server's session bookkeeping: it maps a checkpoint
 	// ID to the interrupt handle Eino returned. CRUCIALLY it has no tenant
 	// dimension either — a shared session ID gives a shared interrupt handle.
+	// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 	interruptIDs map[string]string
 }
 

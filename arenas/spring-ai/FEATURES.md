@@ -130,6 +130,8 @@ No cost/capability router. You pick the `ChatModel` bean (multiple can coexist).
 ## Area 4 — Isolation & auth (the crux)
 
 ### 4.1 Multi-tenant isolation BY CONSTRUCTION — **CONVENTION** · RAN
+<!-- SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md (Spring AI = L1: required,
+     throwing, single-axis `conversationId`; identity binding is the developer's layer). -->
 Memory keyed by a `conversationId` String with no framework-enforced identity binding — isolation is
 a convention the developer constructs, not a framework default. **Executed, two-sided** (`SmokeMain`):
 *Part A* (naive convention) reproduces the developer bug — a globex caller reusing acme's key reads

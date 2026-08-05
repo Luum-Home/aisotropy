@@ -90,15 +90,48 @@ SCAN_EXT = (".go", ".md", ".py", ".ts", ".mjs", ".java", ".json")
 # precision failure that let the wasm_tool claim hide in plain sight.
 SKIP_FILES = {"RESULTS.md", "RESULTS.records.jsonl"}
 
+# ABSENCE fires only near one of these names, so a framework missing from this
+# list has its absence claims silently unseen. Five arena frameworks were missing
+# on 2026-08-04 — adk-go, letta, cloudflare-agents, dify, eve — which is why the
+# ledger showed adk-go 3 entries, letta 7 and cloudflare 2 against eino's 62: not
+# because less was claimed about them, but because only their UNIQUENESS-shaped
+# sentences ("the only framework that...") were ever visible. "ADK Go exposes NO
+# pre-spend quota primitive" matched nothing.
+#
+# Keep this in step with the arena directories. The check is one line:
+#   ls -d arenas/*/ arenas/live/*/ | ... | grep -v -f <(this list)
+# A new adapter that lands without an entry here is a new blind spot, and it will
+# not announce itself — the guard will simply keep reporting clean about it.
 COMPETITORS = [
     "langgraph", "llamaindex", "pydantic-ai", "pydantic ai", "mastra", "ai-sdk",
     "ai sdk", "genkit", "eino", "spring-ai", "spring ai", "langchain", "vercel",
+    "adk-go", "adk go", "letta", "cloudflare-agents", "cloudflare agents",
+    "durable object", "dify", "eve",
 ]
 
 # Absence verbs. Kept tight on purpose -- see the module docstring.
+#
+# THE LEADING \b ON EVERY `no` IS LOad-BEARING, and it was missing. "Eino" ends
+# in "no", so `no (?:official|native|first-party)` matched inside "Ei|no native|ly
+# supports streaming" and `no \w+ primitive` matched inside "the Ei|no streaming
+# primitive| is schema.Pipe". Three sentences saying Eino HAS something were
+# filed as claims that it LACKS something — a perfect inversion, and 5 of the 62
+# eino ledger entries were pure artifact of it. Any competitor whose name ends in
+# those two letters would have hit the same thing.
+#
+# The `ships?|provides?|offers?|exposes?|carries|includes?` alternative was added
+# 2026-08-04 for the opposite failure: a FALSE NEGATIVE. arenas/pydantic-ai/
+# FEATURES.md said Pydantic AI "ships no memory or multi-tenancy layer" — wrong
+# (our own arena-memory-extensions.md marks its cross-session memory an
+# OFFICIAL-EXTENSION with three vendor URLs) and invisible, because this pattern
+# knew "has no" and "have no" but not "ships no". Measured before landing: 26
+# real competitor claims currently unseen, against one or two false positives.
+# A claim this guard cannot see is worse than one it reports noisily.
 ABSENCE = re.compile(
-    r"(has no\b|have no\b|lacks?\b|no \w+ primitive|cannot\b|can't\b|does not (?:have|offer|ship|support)"
-    r"|do not (?:have|offer|ship|support)|is not (?:able|capable)|no (?:official|native|first-party))",
+    r"(\bhas no\b|\bhave no\b|\blacks?\b|\bno \w+ primitive\b|\bcannot\b|\bcan't\b"
+    r"|\bdoes not (?:have|offer|ship|support)|\bdo not (?:have|offer|ship|support)"
+    r"|\bis not (?:able|capable)|\bno (?:official|native|first-party)\b"
+    r"|\b(?:ships?|provides?|offers?|exposes?|carries|includes?)\s+no\b)",
     re.I,
 )
 # Explicit uniqueness constructions naming no competitor but claiming all of them.

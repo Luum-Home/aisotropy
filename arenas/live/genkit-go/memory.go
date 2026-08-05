@@ -31,7 +31,11 @@ func runMemory(rc *runCtx, out *arenaOutput) error {
 	// memory_consolidation — docs/architecture/arena-memory-extensions.md) arrive
 	// on the wire as ordinary `memory` turns plus a SECOND scope axis, user_id,
 	// which the runner HOLDS constant while VARYING session_id across invocations.
-	// Genkit Go has NO user-scoped memory primitive — re-verified in source
+	// Genkit Go has NO user-scoped memory primitive — the ecosystem sweep labels
+	// its session surface NATIVE-PREVIEW and SESSION-scoped (Agents API preview,
+	// 2026-07), i.e. persistence without a user axis, not "no memory".
+	// SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md
+	// Re-verified in source
 	// against genkit go@v1.10.0, because the citation this comment used to carry
 	// (`core/x/session`) does not exist in that version. The real surface is
 	// ai/exp/session.go: `SessionStore[State]` = SnapshotReader + SnapshotWriter,
@@ -56,6 +60,7 @@ func runMemory(rc *runCtx, out *arenaOutput) error {
 	// The axis is now supplied here, uniformly with those three, and the matrix
 	// cell carries `pass:<provenance>` naming it ADAPTER-SUPPLIED. The framework
 	// finding survives as a visible label instead of a silent fail.
+	// SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md
 	scopeKey := rc.in.SessionID
 	if uid := strings.TrimSpace(rc.in.UserID); uid != "" {
 		scopeKey = "user:" + uid

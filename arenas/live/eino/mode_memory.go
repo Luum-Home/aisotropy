@@ -44,6 +44,8 @@ func runMemory(ctx context.Context, env *arenaEnv, in adapterInput, out *adapter
 	// interface; nothing outside _test.go in eino@v0.9.12 mentions UserID; and
 	// its MemoryStore lives only in eino-examples.
 	//
+	// SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md
+	//
 	// This adapter USED to stop there: it kept the store session-keyed and let
 	// the cross-session probe run-and-fail, on the reading that synthesizing a
 	// user axis would be a hand-rolled strawman the fairness protocol forbids.
@@ -67,6 +69,7 @@ func runMemory(ctx context.Context, env *arenaEnv, in adapterInput, out *adapter
 	scopeKey := in.SessionID
 	if uid := strings.TrimSpace(in.UserID); uid != "" {
 		scopeKey = "user:" + uid
+		// SWEPT: 2026-07-22 docs/architecture/arena-memory-extensions.md
 		fmt.Fprintf(os.Stderr, "PROGRESS: memory: wire user_id=%q -> ADAPTER-SUPPLIED user-scoped key %q (Eino has no user-scoped memory primitive: adk CheckPointStore is session/interrupt-keyed, internal/core/interrupt.go). Cross-session recall for this user is app-level replay, not a framework guarantee\n", uid, scopeKey)
 	}
 

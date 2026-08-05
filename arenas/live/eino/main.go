@@ -45,6 +45,7 @@ type adapterInput struct {
 
 	// memory_scoped / isolation_leak: hand-rolled compound multi-tenant scope.
 	// Eino has no native concept of these — see mode_scoped_memory.go.
+	// SWEPT: 2026-07-22 docs/architecture/arena-tenancy-levels.md
 	TenantID  string `json:"tenant_id"`  // required
 	UserID    string `json:"user_id"`    // required
 	ProductID string `json:"product_id"` // required
