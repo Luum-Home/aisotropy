@@ -74,8 +74,34 @@ See the provenance rule below — those labels are never rewritten.
 
 ### Currently configured, and how to find out rather than assume
 
-Verified 2026-08-05 by running the pre-flight probe in
-[the agnes quota runbook](arena-agnes-quota-runbook.md) §Step 0 — one call, 291 tokens:
+**Run this before repeating anything below as current state.** Three commands, one
+of which costs 291 tokens; the rest are free. The table under them is a *reading*,
+not the state:
+
+```bash
+# which provider is actually selected right now (prints no secret)
+set -a; source .env 2>/dev/null; set +a
+echo "${OPENAI_BASE_URL:-https://api.openai.com/v1} ${OPENAI_MODEL:-unset}"
+
+# is the quota available right now — the runbook's §Step 0, ~291 tokens
+curl -s -o /tmp/probe.json -w "HTTP %{http_code}\n" --max-time 40 \
+  -X POST "${OPENAI_BASE_URL}/chat/completions" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" -H "Content-Type: application/json" \
+  -d "{\"model\":\"$OPENAI_MODEL\",\"max_tokens\":5,\"messages\":[{\"role\":\"user\",\"content\":\"Reply OK\"}]}"
+# 200 -> available.  429 -> exhausted or rate-limited; do NOT launch a sweep.
+
+# the real lane ALSO needs these, or RAG cells fail and each retry still spends a call
+curl -s -o /dev/null -w "qdrant %{http_code}\n" --max-time 5 http://localhost:6333/healthz
+curl -s -o /dev/null -w "rqlite %{http_code}\n" --max-time 5 http://localhost:4001/status
+curl -s -o /dev/null -w "e5     %{http_code}\n" --max-time 5 http://127.0.0.1:8899/health
+```
+
+The fuller procedure — cost tiers, flags, anti-patterns — is
+[the agnes quota runbook](arena-agnes-quota-runbook.md). Treat it as *how to run a
+sweep*, not as a description of today.
+
+What the commands returned on **2026-08-05**, recorded as a dated reading and not as
+a property:
 
 | | observed |
 |---|---|
