@@ -141,6 +141,49 @@ func TestOutbox_AttemptCountIsPersisted(t *testing.T) {
 	}
 }
 
+// TestOutbox_RequeueReplaysParkedEventsOnceTheSinkRecovers closes the loop.
+// Parking preserves the event; without a way back it preserves it uselessly,
+// which is loss on a longer timescale.
+func TestOutbox_RequeueReplaysParkedEventsOnceTheSinkRecovers(t *testing.T) {
+	wm := newOutboxTestWM(t, 2)
+	enqueueOne(t, wm, "evt-5")
+
+	broken := &flakySink{failUntil: neverSucceeds}
+	for pass := 1; pass <= 2; pass++ {
+		if _, err := wm.RecoverOutbox(context.Background(), broken); err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+	}
+	if _, dead := counts(t, wm); dead != 1 {
+		t.Fatalf("expected the event to be parked first, dead=%d", dead)
+	}
+
+	n, err := wm.RequeueDeadOutbox(context.Background())
+	if err != nil {
+		t.Fatalf("RequeueDeadOutbox: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("requeued = %d, want 1", n)
+	}
+	// Exactly one prefix holds it: an interrupted or sloppy move could leave it
+	// in both (a duplicate consolidation) or neither (the loss parking prevents).
+	pending, dead := counts(t, wm)
+	if pending != 1 || dead != 0 {
+		t.Fatalf("after requeue pending=%d dead=%d, want 1 and 0", pending, dead)
+	}
+
+	// The budget must be fresh, or the replay parks again on its first hiccup.
+	healthy := &flakySink{failUntil: 1}
+	for pass := 1; pass <= 2; pass++ {
+		if _, err := wm.RecoverOutbox(context.Background(), healthy); err != nil {
+			t.Fatalf("replay pass %d: %v", pass, err)
+		}
+	}
+	if pending, dead := counts(t, wm); pending != 0 || dead != 0 {
+		t.Errorf("the requeued event should have consolidated; pending=%d dead=%d", pending, dead)
+	}
+}
+
 // TestOutbox_ParkedEventKeepsItsContent: parking is not deletion. The turn is
 // still recoverable, which is the whole reason the event is moved rather than
 // dropped.

@@ -82,6 +82,64 @@ func TestIngestFailureLeavesEarlierDocumentsIntact(t *testing.T) {
 	}
 }
 
+// failOnUpsertStore fails Upsert for one document id and passes everything else
+// through, so a test can make PHASE 2 fail — which no embedder can do, since the
+// embedder has finished by then.
+type failOnUpsertStore struct {
+	Store
+	failFor string
+	err     error
+}
+
+func (s failOnUpsertStore) Upsert(ctx context.Context, sc Scope, points []Point) error {
+	for _, p := range points {
+		if p.Source == s.failFor {
+			return s.err
+		}
+	}
+	return s.Store.Upsert(ctx, sc, points)
+}
+
+// TestIngestUpsertFailureDoesNotDestroyTheRestOfTheBatch covers the window the
+// first version of this fix left open.
+//
+// Reordering the phases stopped an EMBEDDER failure from destroying the batch,
+// but kept the original shape of phase 2: delete every document, then one Upsert
+// for all of them. So the batch-wide blast radius survived on the other side —
+// a single failing Upsert dropped every document in the call, each already
+// deleted. Delete and upsert are now paired per document, and the only thing a
+// phase-2 failure can damage is the document being replaced at that moment.
+func TestIngestUpsertFailureDoesNotDestroyTheRestOfTheBatch(t *testing.T) {
+	ctx := context.Background()
+	sc := Scope{tenant: "acme", user: "alice"}
+	emb := countMismatchEmbedder{dim: 8}
+	base := NewInMemoryStore(8)
+
+	docs := []Document{
+		{ID: "first", Content: "the earlier document, replaced successfully"},
+		{ID: "second", Content: "the later document, whose upsert will fail"},
+	}
+	if _, err := Ingest(ctx, base, emb, sc, DefaultChunkOptions(), docs); err != nil {
+		t.Fatalf("baseline Ingest: %v", err)
+	}
+	before := countPoints(t, base, sc, emb, "first")
+	if before == 0 {
+		t.Fatal("baseline stored no chunks for \"first\"")
+	}
+
+	boom := errors.New("vector store rejected the write")
+	store := failOnUpsertStore{Store: base, failFor: "second", err: boom}
+	if _, err := Ingest(ctx, store, emb, sc, DefaultChunkOptions(), docs); !errors.Is(err, boom) {
+		t.Fatalf("expected the upsert failure to surface, got %v", err)
+	}
+
+	if after := countPoints(t, base, sc, emb, "first"); after != before {
+		t.Errorf("a failed upsert on \"second\" destroyed \"first\": %d chunks before, %d after. "+
+			"Delete and upsert must be paired per document so one failure cannot empty the batch.",
+			before, after)
+	}
+}
+
 // TestIngestFailureLeavesTheFailingDocumentIntact is the single-document case:
 // the old content is the only content there is, so deleting it before knowing a
 // replacement can be produced trades a stale answer for no answer at all.

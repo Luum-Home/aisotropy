@@ -388,6 +388,60 @@ func (w *WorkingMemory) forEachDeadOutbox(fn func(OutboxEvent)) error {
 	return w.forEachOutbox(outboxDeadPrefix, fn)
 }
 
+// RequeueDeadOutbox moves every parked event back to the pending prefix with a
+// fresh attempt budget, and returns how many were requeued.
+//
+// This is the other half of parking, and without it the dead-letter prefix is a
+// place data goes to be preserved and never used again — which is only a slower
+// kind of loss. The operator's actual situation is "the sink was misconfigured
+// for an hour, fix it, replay what piled up", and that needs one call rather
+// than a hand-written BadgerDB script.
+//
+// Deliberately MANUAL. Nothing calls this on a timer, because an automatic
+// requeue would restore the unbounded retry through the back door: an event the
+// sink can never accept would cycle pending → dead → pending forever, and the
+// bound would exist only on paper. Requeueing is a decision that something
+// changed, and only an operator knows that.
+//
+// Attempts and LastError are cleared: the count answers "how many tries since
+// someone last decided this was worth retrying", and a stale count would park
+// the event again on its first failure.
+func (w *WorkingMemory) RequeueDeadOutbox(ctx context.Context) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	var parked []OutboxEvent
+	if err := w.forEachDeadOutbox(func(e OutboxEvent) { parked = append(parked, e) }); err != nil {
+		return 0, err
+	}
+
+	requeued := 0
+	for _, e := range parked {
+		if err := ctx.Err(); err != nil {
+			return requeued, err
+		}
+		dead := deadOutboxKey(e)
+		e.Attempts = 0
+		e.LastError = ""
+		// One transaction per event: the pending write and the dead delete commit
+		// together, so an interrupted requeue leaves each event in exactly one of
+		// the two prefixes — never in both (a duplicate) and never in neither.
+		if err := w.db.Update(func(txn *badger.Txn) error {
+			if err := enqueueOutbox(txn, e); err != nil {
+				return err
+			}
+			return txn.Delete(dead)
+		}); err != nil {
+			return requeued, fmt.Errorf("memory: requeue dead outbox event %q: %w", e.ID, err)
+		}
+		requeued++
+	}
+	if requeued > 0 {
+		slog.InfoContext(ctx, "memory: dead-letter outbox events requeued", "count", requeued)
+	}
+	return requeued, nil
+}
+
 // SetMaxOutboxAttempts overrides how many failed deliveries an event tolerates
 // before it is parked. Non-positive restores the default.
 func (w *WorkingMemory) SetMaxOutboxAttempts(n int) {

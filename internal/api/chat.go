@@ -371,9 +371,29 @@ func chatReflect(ctx context.Context, client llm.Client, system string, in *Chat
 // meter. finalReply is the text actually returned to the client — so when the
 // output guardrail replaced a flagged response with a refusal, the refusal (not
 // the flagged text) is what persists in memory.
+//
+// This one LOGS AND CONTINUES, and the asymmetry with chatPersistUserTurn — which
+// aborts the turn — is deliberate rather than an oversight the fix missed.
+//
+// Aborting is cheap before the model call and worthless after it. By the time
+// this runs the tokens are spent and a valid reply is in hand; returning an error
+// would throw away an answer the tenant already paid for and still not persist
+// anything. Nor is the damage symmetric. Losing the USER turn leaves an assistant
+// reply with no prompt in front of it — a transcript describing a conversation
+// that never happened, which every later turn then hydrates. Losing the ASSISTANT
+// turn leaves a prompt with no reply: incomplete, but well-formed and true, and
+// the worst it produces downstream is the model answering the same question
+// twice. The user turn's outbox event is already committed either way, so
+// consolidation into the facts and semantic tiers is unaffected.
+//
+// What it must not be is invisible, which is why the failure is ERROR with the
+// identity needed to find the session. Surfacing it to the client was considered
+// and rejected: it would mean an additive field on the response contract to
+// report a degradation the client cannot act on.
 func chatRecordTurn(ctx context.Context, wm *memory.WorkingMemory, key memory.Key, tenantID, finalReply string, usage llm.Usage, meter *costmeter.Meter) {
 	if err := wm.Append(ctx, key, memory.Message{Role: roleAssistant, Content: finalReply}); err != nil {
-		slog.ErrorContext(ctx, "failed to append assistant message to working memory", "err", err)
+		slog.ErrorContext(ctx, "assistant reply returned but not persisted; this session's transcript is now incomplete",
+			"tenant_id", key.Tenant, "user_id", key.User, "session_id", key.Session, "err", err)
 	}
 
 	// Unify cost accounting onto the shared meter (same price basis

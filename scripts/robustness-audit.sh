@@ -384,9 +384,9 @@ else
   exit 2
 fi
 
-static_signal DESTRUCTIVE_REINGEST 'store.DeleteBySource(ctx, sc, KindDocument, doc.ID)' internal/semantic/ingest.go
+static_signal DESTRUCTIVE_REINGEST 'store.DeleteBySource(ctx, sc, KindDocument, p.doc.ID)' internal/semantic/ingest.go
 static_signal REINGEST_EMBED 'vecs, err := EmbedPassage(ctx, emb, chunks)' internal/semantic/ingest.go
-delete_line=$(grep -nF 'store.DeleteBySource(ctx, sc, KindDocument, doc.ID)' internal/semantic/ingest.go | sed -n '1s/:.*//p')
+delete_line=$(grep -nF 'store.DeleteBySource(ctx, sc, KindDocument, p.doc.ID)' internal/semantic/ingest.go | sed -n '1s/:.*//p')
 delete_line_status=$?
 embed_line=$(grep -nF 'vecs, err := EmbedPassage(ctx, emb, chunks)' internal/semantic/ingest.go | sed -n '1s/:.*//p')
 embed_line_status=$?
@@ -410,7 +410,16 @@ else
   # This does NOT loosen the check: the blocker branch above is untouched, and
   # restoring the destructive order still trips it.
   info "REINGEST_ORDER embedding precedes deletion; a failed re-ingest leaves the prior version in place"
-  info "REINGEST_ATOMICITY delete-then-upsert is still two calls with no Store transaction — a failure between them loses that document's chunks"
+  # The order alone was not enough. The first fix kept delete-all-then-one-Upsert,
+  # so a single failing Upsert still emptied every document in the batch — the
+  # same batch-wide blast radius, entered from the other side. Require the pair.
+  reingest_paired=$(grep -cF 'if err := store.Upsert(ctx, sc, p.points)' internal/semantic/ingest.go)
+  if [ "$reingest_paired" -lt 1 ]
+  then
+    blocker "REINGEST_BATCH_UPSERT delete and upsert are not paired per document; one failing upsert can empty the whole batch"
+  fi
+  info "REINGEST_ATOMICITY delete+upsert are paired PER DOCUMENT, so a phase-2 failure can only damage the document being replaced — not the batch"
+  info "REINGEST_RESIDUAL structural, not deferred: the pair is two calls and Qdrant offers no multi-point transaction to expose, so a process death between them loses one document until it is re-ingested"
 fi
 
 static_signal CHAT_RETURNS_OUTPUT 'return chatBuildOutput(finalReply, in.TenantID, active, usage), nil' internal/api/core.go
@@ -435,7 +444,7 @@ then
 elif [ "$persist_returns" -ge 1 ] && [ "$persist_aborts" -ge 1 ] && [ "$stream_aborts" -ge 2 ]
 then
   info "PERSIST_FAIL_CLOSED a failed user-turn write aborts both chat paths before the model call"
-  info "PERSIST_RECORD_TURN the ASSISTANT turn (chatRecordTurn) is still log-and-continue — a reply can be answered and not remembered"
+  info "PERSIST_RECORD_TURN the ASSISTANT turn logs and continues BY DESIGN: post-spend, and a prompt without a reply is incomplete where a reply without a prompt is corrupt (rationale in chatRecordTurn)"
 else
   echo "robustness-audit: cannot determine the user-turn persistence failure policy" >&2
   exit 2
@@ -466,7 +475,7 @@ outbox_parks=$(grep -cF 'txn.Set(deadOutboxKey(e), payload)' internal/memory/out
 if [ "$outbox_attempt_field" -ge 1 ] && [ "$outbox_bound" -ge 1 ] && [ "$outbox_parks" -ge 1 ]
 then
   info "OUTBOX_RETRY_BOUNDED an event that keeps failing is parked in the dead-letter prefix after its attempt budget, not retried forever"
-  info "OUTBOX_DEAD_LETTER_UNDRAINED parked events are preserved and countable (DeadOutboxCount) but nothing re-drains them — recovery is an operator action, not automatic"
+  info "OUTBOX_DEAD_LETTER_REPLAYABLE parked events are countable (DeadOutboxCount) and replayable (RequeueDeadOutbox), deliberately by operator action — an automatic requeue would restore the unbounded retry through the back door"
 elif [ "$outbox_attempt_field" -eq 0 ] && [ "$outbox_bound" -eq 0 ] && [ "$outbox_parks" -eq 0 ]
 then
   blocker "OUTBOX_UNBOUNDED_RETRY retry continues and OutboxEvent has no attempt field in this bounded source review"

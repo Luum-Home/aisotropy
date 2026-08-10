@@ -125,10 +125,14 @@ If Qdrant or rqlite fail (timeout, service down, network partition, Raft leader 
   `outbox:dead:{tenant}:{ts}:{id}`, logged at ERROR with its identity, and counted by
   `DeadOutboxCount()`. **Parked is not deleted:** the turn is still there, with its content, its
   tenant, and the error that stopped it. Tune with `SetMaxOutboxAttempts`.
-  <br>The residual, stated rather than left to be discovered: **nothing re-drains the dead-letter
-  prefix.** A parked event is preserved and visible, and returning it to `outbox:pending:` is an
-  operator action. A non-zero `DeadOutboxCount` is consolidation a tenant did not get, and belongs
-  on a dashboard rather than in a log nobody reads.
+  <br>Replay is `RequeueDeadOutbox(ctx)`: it moves every parked event back to `outbox:pending:` with
+  a cleared attempt budget, one transaction per event, so an interrupted requeue leaves each event
+  in exactly one prefix — never duplicated, never dropped. It is **deliberately manual**, and that is
+  the interesting part: an automatic requeue on a timer would restore the unbounded retry through the
+  back door, cycling an impossible event pending → dead → pending forever with the bound existing
+  only on paper. Requeueing asserts that something changed, and only an operator knows that.
+  <br>A non-zero `DeadOutboxCount()` is consolidation a tenant did not get. It belongs on a dashboard
+  rather than in a log nobody reads.
 - A partial failure (Qdrant OK, rqlite down, or vice versa) does **not** delete the key: the
   criterion is success on **both** sinks. The next attempt may write again to the sink that had
   already succeeded — hence idempotency is mandatory, not an optimization.

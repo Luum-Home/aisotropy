@@ -7,7 +7,25 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
+
+// scannerTestTimeout is the deadline every ModelScanner test sets explicitly,
+// and the reason is worth more than the constant.
+//
+// Leaving Timeout unset inherits defaultScannerTimeout — 5s, sized for a real ML
+// classification, not for the trivial sh scripts these tests spawn while a full
+// parallel sweep competes for the machine. TestModelScannerReadResultSkipsBlank-
+// AndWrongIDRows lost that race repeatedly under scripts/test-all.sh while
+// passing in isolation, and it reported an assertion about row parsing when what
+// had happened was "worker exit: signal: killed" at exactly 5.00s.
+//
+// The tests below are the more dangerous half. They assert the fail-OPEN zero
+// verdict, so a timeout SATISFIES them: under the same load they do not go red,
+// they go green without the worker having run at all. That is a gate that stops
+// looking and still reports a pass, and nothing in the output says so. A minute
+// is long enough that only a genuine hang trips it.
+const scannerTestTimeout = time.Minute
 
 // needleScanner is a deterministic in-process InputScanner used to prove the R4
 // seam WITHOUT a model download or a subprocess: it flags any text containing
@@ -166,7 +184,7 @@ done < "$in" > "$out"
 
 func TestModelScannerSubprocessRoundTrip(t *testing.T) {
 	bin := writeFakeGuardrailBin(t, 0.87, "injection", true, 0)
-	sc, err := NewModelScanner(ModelScannerConfig{BinPath: bin, ModelDir: t.TempDir()})
+	sc, err := NewModelScanner(ModelScannerConfig{BinPath: bin, ModelDir: t.TempDir(), Timeout: scannerTestTimeout})
 	if err != nil {
 		t.Fatalf("NewModelScanner: %v", err)
 	}
@@ -184,7 +202,7 @@ func TestModelScannerSubprocessRoundTrip(t *testing.T) {
 
 func TestModelScannerBelowThresholdNotSuspicious(t *testing.T) {
 	bin := writeFakeGuardrailBin(t, 0.30, "injection", false, 0)
-	sc, _ := NewModelScanner(ModelScannerConfig{BinPath: bin, ModelDir: t.TempDir()})
+	sc, _ := NewModelScanner(ModelScannerConfig{BinPath: bin, ModelDir: t.TempDir(), Timeout: scannerTestTimeout})
 	v := sc.Inspect("hola, como estas hoy?")
 	if v.Suspicious {
 		t.Errorf("worker score 0.30 < 0.5 must not be Suspicious, got %+v", v)
@@ -199,7 +217,7 @@ func TestModelScannerBelowThresholdNotSuspicious(t *testing.T) {
 
 func TestModelScannerFailsOpenOnNonZeroExit(t *testing.T) {
 	bin := writeFakeGuardrailBin(t, 0.9, "injection", true, 3) // Rust panic surfaces as non-zero exit
-	sc, _ := NewModelScanner(ModelScannerConfig{BinPath: bin, ModelDir: t.TempDir()})
+	sc, _ := NewModelScanner(ModelScannerConfig{BinPath: bin, ModelDir: t.TempDir(), Timeout: scannerTestTimeout})
 	v := sc.Inspect("anything")
 	if v.Suspicious || v.Score != 0 || len(v.Signals) != 0 {
 		t.Errorf("a worker crash must fail OPEN to the zero verdict, got %+v", v)
@@ -207,7 +225,7 @@ func TestModelScannerFailsOpenOnNonZeroExit(t *testing.T) {
 }
 
 func TestModelScannerFailsOpenOnMissingBinary(t *testing.T) {
-	sc, _ := NewModelScanner(ModelScannerConfig{BinPath: "/nonexistent/guardrail-model", ModelDir: t.TempDir()})
+	sc, _ := NewModelScanner(ModelScannerConfig{BinPath: "/nonexistent/guardrail-model", ModelDir: t.TempDir(), Timeout: scannerTestTimeout})
 	v := sc.Inspect("anything")
 	if v.Suspicious || v.Score != 0 {
 		t.Errorf("missing binary must fail OPEN, got %+v", v)
@@ -218,7 +236,7 @@ func TestModelScannerEmptyTextNoSpawn(t *testing.T) {
 	// A binary that would fail if ever executed; empty text must short-circuit
 	// before any spawn.
 	bin := writeFakeGuardrailBin(t, 0.9, "injection", true, 99)
-	sc, _ := NewModelScanner(ModelScannerConfig{BinPath: bin, ModelDir: t.TempDir()})
+	sc, _ := NewModelScanner(ModelScannerConfig{BinPath: bin, ModelDir: t.TempDir(), Timeout: scannerTestTimeout})
 	v := sc.Inspect("")
 	if v.Suspicious || v.Score != 0 || len(v.Signals) != 0 {
 		t.Errorf("empty text must yield the zero verdict without spawning, got %+v", v)

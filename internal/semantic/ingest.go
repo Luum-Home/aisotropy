@@ -131,7 +131,14 @@ func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts Chunk
 	}
 
 	now := time.Now().UTC()
-	var points []Point
+	// prepared is one document's finished points, held until phase 2. Keeping
+	// them PER DOCUMENT rather than in one flat slice is what bounds the blast
+	// radius of a phase-2 failure to the document that failed (see phase 2).
+	type prepared struct {
+		doc    Document
+		points []Point
+	}
+	var ready []prepared
 
 	// PHASE 1 — every fallible step, and NOTHING that mutates the store.
 	//
@@ -150,6 +157,7 @@ func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts Chunk
 			// No chunks to write, but the document still gets its delete in
 			// phase 2: shrinking to zero is a legitimate shrink, and skipping
 			// it here would leave the previous version orphaned.
+			ready = append(ready, prepared{doc: doc})
 			continue
 		}
 		// Passage role: stored KindDocument chunks carry the e5 "passage: "
@@ -162,8 +170,9 @@ func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts Chunk
 		if len(vecs) != len(chunks) {
 			return 0, fmt.Errorf("semantic: embedder returned %d vectors for %d chunks of document %q", len(vecs), len(chunks), doc.ID)
 		}
+		docPoints := make([]Point, 0, len(chunks))
 		for i, chunk := range chunks {
-			points = append(points, Point{
+			docPoints = append(docPoints, Point{
 				ID:         PointID(sc, KindDocument, fmt.Sprintf("%s#%d", doc.ID, i)),
 				TenantID:   sc.Tenant(),
 				UserID:     sc.User(),
@@ -176,6 +185,7 @@ func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts Chunk
 				CreatedAt:  now,
 			})
 		}
+		ready = append(ready, prepared{doc: doc, points: docPoints})
 	}
 	// PHASE 2 — mutate. Everything that could fail has already succeeded, so
 	// reaching here means the replacement content exists in memory.
@@ -186,23 +196,34 @@ func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts Chunk
 	// longer prior version (the gap ADR-0018 flagged). It runs for EVERY doc in
 	// the batch, including ones that produced no chunks.
 	//
-	// HONEST LIMIT: delete-then-upsert is two calls, and Store exposes no
-	// transaction. A failure BETWEEN them still loses that document's chunks.
-	// This ordering does not make ingestion atomic — it removes the far larger
-	// window in which a slow, network-dependent embedder could fail long after
-	// the data was already gone, and it stops one bad document taking its whole
-	// batch with it. Closing the remaining gap needs a transactional Store,
-	// which is the same constraint ADR-0081 records for the working tier.
-	for _, doc := range docs {
-		if _, err := store.DeleteBySource(ctx, sc, KindDocument, doc.ID); err != nil {
-			return 0, fmt.Errorf("semantic: delete stale chunks for document %q: %w", doc.ID, err)
+	// The delete and the upsert are PAIRED PER DOCUMENT, and that pairing is the
+	// point. The first version of this fix reordered the phases but kept the
+	// original shape — delete every document, then one Upsert for the whole
+	// batch — which left the batch-wide window intact from the other side: a
+	// single failing Upsert dropped every document in the call, all of them
+	// already deleted. Ordering the phases fixed the embedder failure and not
+	// this one. Pairing them bounds the damage of any phase-2 failure to the one
+	// document being replaced at that moment.
+	//
+	// HONEST LIMIT, and it is genuinely structural rather than deferred work:
+	// delete-then-upsert is two calls, and Store exposes no transaction because
+	// its backends do not offer one — Qdrant has no multi-point transaction to
+	// expose. So a process death BETWEEN a document's delete and its upsert
+	// still loses that document's chunks. What is gone is the batch-wide blast
+	// radius and the long, network-dependent embedding window; what remains is a
+	// gap of two adjacent calls on one document, which a re-ingest repairs.
+	written := 0
+	for _, p := range ready {
+		if _, err := store.DeleteBySource(ctx, sc, KindDocument, p.doc.ID); err != nil {
+			return 0, fmt.Errorf("semantic: delete stale chunks for document %q: %w", p.doc.ID, err)
 		}
+		if len(p.points) == 0 {
+			continue // shrink-to-zero: the delete above was the whole update
+		}
+		if err := store.Upsert(ctx, sc, p.points); err != nil {
+			return 0, fmt.Errorf("semantic: upsert ingested chunks for document %q: %w", p.doc.ID, err)
+		}
+		written += len(p.points)
 	}
-	if len(points) == 0 {
-		return 0, nil
-	}
-	if err := store.Upsert(ctx, sc, points); err != nil {
-		return 0, fmt.Errorf("semantic: upsert ingested chunks: %w", err)
-	}
-	return len(points), nil
+	return written, nil
 }
