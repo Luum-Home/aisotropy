@@ -360,8 +360,29 @@ else
   blocker "LICENSE_HASH_MISMATCH expected canonical Apache-2.0 digest"
 fi
 
-static_signal JWKS_STALE_REFRESH "if err := s.refreshLocked(ctx, now)${semicolon} err != nil && s.keys == nil {" internal/auth/jwt_rs256.go
-blocker "JWKS_STALE_CACHE refresh failure with an existing key set is not rejected by this branch"
+# How long may a cached JWKS key set outlive a failing refresh?
+#
+# Both shapes recognised, for the reason spelled out at PERSIST_AND_CONTINUE
+# below: a static_signal on the vulnerable line alone exits 2 the moment the
+# defect is fixed, and "cannot evaluate" is not a verdict.
+#
+# unbounded: the refresh error is discarded whenever a cache exists, so a key the
+# IdP rotated out keeps verifying for as long as the endpoint stays broken.
+jwks_unbounded=$(grep -cF "if err := s.refreshLocked(ctx, now)${semicolon} err != nil && s.keys == nil {" internal/auth/jwt_rs256.go)
+# bounded: past ttl+maxStale the cache is dropped and lookups reject.
+jwks_bounded=$(grep -cF 'if s.keys != nil && now.Sub(s.fetchedAt) >= s.ttl+s.maxStale {' internal/auth/jwt_rs256.go)
+jwks_drops=$(grep -cF 'JWKS cache is stale beyond the grace window' internal/auth/jwt_rs256.go)
+if [ "$jwks_unbounded" -ge 1 ]
+then
+  blocker "JWKS_STALE_CACHE refresh failure with an existing key set is not rejected by this branch"
+elif [ "$jwks_bounded" -ge 1 ] && [ "$jwks_drops" -ge 1 ]
+then
+  info "JWKS_STALE_BOUNDED a failing refresh serves the cache only inside ttl+maxStale, then drops it and rejects"
+  info "JWKS_REVOCATION_WINDOW a rotated-out key still verifies for up to ttl+maxStale (5m+30m on the defaults) — bounded, not zero"
+else
+  echo "robustness-audit: cannot determine the JWKS stale-cache policy" >&2
+  exit 2
+fi
 
 static_signal DESTRUCTIVE_REINGEST 'store.DeleteBySource(ctx, sc, KindDocument, doc.ID)' internal/semantic/ingest.go
 static_signal REINGEST_EMBED 'vecs, err := EmbedPassage(ctx, emb, chunks)' internal/semantic/ingest.go

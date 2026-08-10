@@ -106,6 +106,10 @@ type mutableJWKS struct {
 	mu   sync.Mutex
 	body []byte
 	hits int
+	// failing makes the endpoint answer 503, modelling an IdP that is
+	// unreachable rather than one that rotated its keys. Requests are still
+	// counted, so a test can assert that a failing endpoint is not hammered.
+	failing bool
 }
 
 func (m *mutableJWKS) set(body []byte) {
@@ -120,11 +124,22 @@ func (m *mutableJWKS) count() int {
 	return m.hits
 }
 
+func (m *mutableJWKS) setFailing(failing bool) {
+	m.mu.Lock()
+	m.failing = failing
+	m.mu.Unlock()
+}
+
 func (m *mutableJWKS) serveHTTP(w http.ResponseWriter, _ *http.Request) {
 	m.mu.Lock()
 	m.hits++
 	body := m.body
+	failing := m.failing
 	m.mu.Unlock()
+	if failing {
+		http.Error(w, "jwks unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(body)
 }

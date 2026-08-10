@@ -115,10 +115,21 @@ aspirational) and the [data model](data-model.md) / [API reference](api-referenc
 > table, all stdlib-only and default-safe: (1) **JWKS key rotation is proven end-to-end** over the shipped
 > `jwksSource` — a rotated-in signing key is picked up via the bounded unknown-`kid` refetch, a rotated
 > whole set is refreshed at the TTL boundary, and an unknown-`kid` burst is throttled to one fetch per
-> window (the throttle bounds failures too, since `refreshLocked` stamps `lastFetch` even on failure)
-> ([`internal/auth/jwt_rs256.go`](../../internal/auth/jwt_rs256.go),
+> window ([`internal/auth/jwt_rs256.go`](../../internal/auth/jwt_rs256.go),
 > [`jwt_rs256_test.go`](../../internal/auth/jwt_rs256_test.go)); nothing in the key-handling code changed —
-> this adds the tested property. (2) **`ChatRequest.images`** — an **additive `omitempty`** `[]string`
+> this adds the tested property.
+>
+> **Corrected and extended 2026-08-10.** This entry used to add that "the throttle bounds failures too,
+> since `refreshLocked` stamps `lastFetch` even on failure". That was broader than the code: `lastFetch`
+> gated only the unknown-`kid` refetch, so a **TTL-expired** cache re-attempted the fetch on *every*
+> request while the IdP was down — one upstream call per request, precisely when it could least be
+> afforded. Worse, the refresh error was discarded whenever any cached set existed, so a key the IdP had
+> **rotated out** kept verifying tokens for as long as the endpoint stayed broken, silently. Both are now
+> closed: a **bounded staleness window** (`WithJWKSMaxStaleness`, default 30m on top of the 5m TTL) serves
+> the cache through a blip and then drops it and rejects, and a failing refresh is retried no more than
+> once per `minRefetch` — gated on the last **failure**, never the last attempt, so a healthy endpoint past
+> its TTL still refreshes immediately (`jwks_staleness_test.go`). The residual, stated rather than implied:
+> a rotated-out key remains valid for up to **ttl+maxStale** — bounded, not zero. (2) **`ChatRequest.images`** — an **additive `omitempty`** `[]string`
 > presence signal (existing clients byte-for-byte unaffected, ADR-0002 held) — activates the gateway's
 > previously-inert capability **`ImageRule`**: `len(images) > 0 → gateway.Request.HasImage`, routed to the
 > **`AISOTROPY_VISION_MODEL`** target (new env var; empty → primary, so routing is unchanged when unset).

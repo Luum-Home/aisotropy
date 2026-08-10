@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"strings"
@@ -114,6 +115,16 @@ const (
 	defaultJWKSCacheTTL         = 5 * time.Minute
 	defaultJWKSMinRefetchWindow = 1 * time.Minute
 	maxJWKSResponseBytes        = 1 << 20 // 1 MiB
+	// defaultJWKSMaxStaleness bounds how far PAST the TTL a cached key set may
+	// still be served while refreshes keep failing. It is the answer to a
+	// question with two bad extremes: fail closed the instant a refresh fails and
+	// one blip at the IdP takes down every authenticated request; serve the
+	// cached set with no bound and a key rotated out — possibly BECAUSE it was
+	// compromised — stays valid for as long as the endpoint stays broken, which
+	// can be forever. 30 minutes rides out a real outage and caps the window in
+	// which a withdrawn key still verifies at ttl+maxStale (35 minutes on the
+	// defaults). Tune with WithJWKSMaxStaleness.
+	defaultJWKSMaxStaleness = 30 * time.Minute
 )
 
 // JWKSOption tunes the JWKS key source built by WithJWKS.
@@ -137,6 +148,19 @@ func WithJWKSMinRefetchInterval(d time.Duration) JWKSOption {
 	return func(s *jwksSource) {
 		if d > 0 {
 			s.minRefetch = d
+		}
+	}
+}
+
+// WithJWKSMaxStaleness bounds how long past the cache TTL a key set may still be
+// served while refreshes fail. Once fetchedAt is older than ttl+maxStaleness the
+// cache is dropped and lookups reject, so an IdP that stays unreachable cannot
+// keep a rotated-out key verifying indefinitely. Non-positive values are ignored
+// (the default is kept); there is deliberately no "unbounded" setting.
+func WithJWKSMaxStaleness(d time.Duration) JWKSOption {
+	return func(s *jwksSource) {
+		if d > 0 {
+			s.maxStale = d
 		}
 	}
 }
@@ -168,12 +192,18 @@ type jwksSource struct {
 	httpClient *http.Client
 	ttl        time.Duration
 	minRefetch time.Duration
+	maxStale   time.Duration
 	now        func() time.Time
 
 	mu        sync.Mutex
 	keys      map[string]*rsa.PublicKey // kid -> public key; nil until first fetch
 	fetchedAt time.Time                 // when keys was last successfully populated
 	lastFetch time.Time                 // when a network fetch was last attempted
+	// lastFailure is when a fetch last FAILED, zero once one succeeds. It gates
+	// the retry throttle on the TTL path, which must not be gated by lastFetch:
+	// that would delay picking up a rotated key set from a perfectly healthy
+	// endpoint.
+	lastFailure time.Time
 }
 
 func newJWKSSource(url string, opts ...JWKSOption) *jwksSource {
@@ -182,6 +212,7 @@ func newJWKSSource(url string, opts ...JWKSOption) *jwksSource {
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 		ttl:        defaultJWKSCacheTTL,
 		minRefetch: defaultJWKSMinRefetchWindow,
+		maxStale:   defaultJWKSMaxStaleness,
 		now:        time.Now,
 	}
 	for _, o := range opts {
@@ -200,9 +231,44 @@ func (s *jwksSource) keyForKid(ctx context.Context, kid string) (*rsa.PublicKey,
 
 	now := s.now()
 	if s.keys == nil || now.Sub(s.fetchedAt) >= s.ttl {
-		if err := s.refreshLocked(ctx, now); err != nil && s.keys == nil {
-			// No usable cache and the fetch failed: reject (do NOT fall open).
-			return nil, err
+		// Do not storm an endpoint that is already failing: when the PREVIOUS
+		// attempt failed and a usable cache is still in hand, wait out minRefetch
+		// before trying again.
+		//
+		// The gate is on the last FAILURE, not the last attempt. Throttling every
+		// refresh here would silently redefine the TTL: a healthy endpoint past
+		// its TTL must refresh on the next lookup, or a rotated key set is not
+		// picked up until minRefetch also elapses. That regression is real — it
+		// broke TestJWTBearer_JWKS_TTLExpiryRefetch, which configures a long
+		// minRefetch precisely to isolate the TTL path from the unknown-kid one.
+		throttled := s.keys != nil && !s.lastFailure.IsZero() && now.Sub(s.lastFailure) < s.minRefetch
+		if !throttled {
+			if err := s.refreshLocked(ctx, now); err != nil {
+				if s.keys == nil {
+					// No usable cache and the fetch failed: reject (do NOT fall open).
+					return nil, err
+				}
+				// A cache exists. Serving it is the right call for a blip and the
+				// wrong one for an outage, which is what the staleness bound below
+				// decides. Log either way: this used to be silent, so an IdP that
+				// had been unreachable for hours looked exactly like one that was
+				// healthy.
+				slog.WarnContext(ctx, "auth: JWKS refresh failed; serving the cached key set",
+					"err", err,
+					"cache_age", now.Sub(s.fetchedAt).String(),
+					"max_age", (s.ttl + s.maxStale).String(),
+				)
+			}
+		}
+		// Bounded staleness. Past ttl+maxStale the cached set stops being a
+		// tolerable substitute for a fresh one: a key the IdP rotated out —
+		// possibly BECAUSE it was compromised — would otherwise keep verifying
+		// tokens for as long as the endpoint stayed broken. Dropping the cache
+		// (rather than only rejecting) also lets the next request retry
+		// immediately, so recovery is not delayed by the throttle above.
+		if s.keys != nil && now.Sub(s.fetchedAt) >= s.ttl+s.maxStale {
+			s.keys = nil
+			return nil, fmt.Errorf("%w: JWKS cache is stale beyond the grace window and the key set cannot be refreshed", ErrUnauthenticated)
 		}
 	}
 
@@ -232,11 +298,13 @@ func (s *jwksSource) refreshLocked(ctx context.Context, now time.Time) error {
 	s.lastFetch = now
 	keys, err := s.fetch(ctx)
 	if err != nil {
+		s.lastFailure = now
 		// The error carries no key material — only the transport/parse cause.
 		return fmt.Errorf("%w: JWKS fetch failed: %v", ErrUnauthenticated, err)
 	}
 	s.keys = keys
 	s.fetchedAt = now
+	s.lastFailure = time.Time{}
 	return nil
 }
 
