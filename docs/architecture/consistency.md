@@ -111,6 +111,24 @@ If Qdrant or rqlite fail (timeout, service down, network partition, Raft leader 
   backoff** (`outboxInitialBackoff` → `outboxMaxBackoff`, 200ms → 30s) is reserved for store-level
   errors — a BadgerDB read/delete failure — not for downstream sink failures. See `RunOutboxWorker`
   in `internal/memory/outbox.go`.)*
+
+  **Amended 2026-08-10 — there IS now a cap, and the sentence above needs its emphasis read
+  precisely.** What it rules out is a cap that **silently discards**, and that remains ruled out.
+  What it did not distinguish is the case the philosophy has no answer for: a sink that will *never*
+  accept a particular event — malformed content, a payload the extractor rejects, a tier that is
+  permanently gone. "Eventually, even if late" is not a description of that event; it is retried on
+  every pass forever, converging on nothing, while the pending set only grows and no signal
+  anywhere says why.
+  <br>Each failure now increments a **persisted** `OutboxEvent.Attempts` (persisted because a bound
+  that resets on every restart bounds nothing) alongside `LastError`. After
+  `defaultMaxOutboxAttempts` (10) the event is **moved** — in one transaction — to
+  `outbox:dead:{tenant}:{ts}:{id}`, logged at ERROR with its identity, and counted by
+  `DeadOutboxCount()`. **Parked is not deleted:** the turn is still there, with its content, its
+  tenant, and the error that stopped it. Tune with `SetMaxOutboxAttempts`.
+  <br>The residual, stated rather than left to be discovered: **nothing re-drains the dead-letter
+  prefix.** A parked event is preserved and visible, and returning it to `outbox:pending:` is an
+  operator action. A non-zero `DeadOutboxCount` is consolidation a tenant did not get, and belongs
+  on a dashboard rather than in a log nobody reads.
 - A partial failure (Qdrant OK, rqlite down, or vice versa) does **not** delete the key: the
   criterion is success on **both** sinks. The next attempt may write again to the sink that had
   already succeeded — hence idempotency is mandatory, not an optimization.

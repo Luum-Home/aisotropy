@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -22,10 +23,25 @@ import (
 
 const outboxPrefix = "outbox:pending:"
 
+// outboxDeadPrefix holds events that exhausted their attempts. They are MOVED
+// here, never deleted: an event the sink could not consolidate is still a real
+// turn a tenant said, and discarding it would lose data quietly — the one
+// outcome the outbox exists to prevent. Parked events stop consuming a drain
+// pass and become visible via DeadOutboxCount.
+const outboxDeadPrefix = "outbox:dead:"
+
 const (
 	outboxInitialBackoff = 200 * time.Millisecond
 	outboxMaxBackoff     = 30 * time.Second
 	outboxDefaultPoll    = 1 * time.Second
+	// defaultMaxOutboxAttempts bounds retries per event. Without a bound, an
+	// event the sink can never consolidate — malformed content, a payload the
+	// extractor rejects, a permanently absent tier — is retried on every pass
+	// forever: unbounded work that never converges, and a pending set that only
+	// grows. At the default 1s poll, 10 attempts is roughly ten seconds of
+	// transient-failure tolerance before the event is parked, while the worker's
+	// own backoff covers longer store-level outages.
+	defaultMaxOutboxAttempts = 10
 )
 
 // OutboxEvent is a pending consolidation intent. It carries the text to
@@ -44,6 +60,16 @@ type OutboxEvent struct {
 	// enough for the facts extractor and the embedder.
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
+	// Attempts counts how many times a sink has been asked to consolidate this
+	// event and refused. It is persisted on each failure so the count survives a
+	// restart — a bound that resets on every crash bounds nothing. Events written
+	// before this field existed decode as 0, which is the correct starting point.
+	Attempts int `json:"attempts,omitempty"`
+	// LastError is the most recent sink failure, kept so a parked event can be
+	// diagnosed without reproducing the outage that parked it. It holds the error
+	// text only; the event's Content is already alongside it, and no new tenant
+	// data is introduced by this field.
+	LastError string `json:"last_error,omitempty"`
 }
 
 // NewOutboxEvent builds an event for a turn. The id is derived from the message
@@ -67,6 +93,13 @@ func NewOutboxEvent(key Key, messageRef, content string, at time.Time) OutboxEve
 // orders events roughly by arrival.
 func outboxKey(e OutboxEvent) []byte {
 	return fmt.Appendf(nil, "%s%s:%020d:%s", outboxPrefix, e.Tenant, e.CreatedAt.UnixNano(), e.ID)
+}
+
+// deadOutboxKey mirrors outboxKey under the dead-letter prefix, so a parked
+// event keeps its tenant grouping and creation ordering and can be located by
+// the same (tenant, time, id) coordinates it had while pending.
+func deadOutboxKey(e OutboxEvent) []byte {
+	return fmt.Appendf(nil, "%s%s:%020d:%s", outboxDeadPrefix, e.Tenant, e.CreatedAt.UnixNano(), e.ID)
 }
 
 // enqueueOutbox writes the event within the caller's transaction, so it commits
@@ -242,7 +275,12 @@ func (w *WorkingMemory) drainOutboxOnce(ctx context.Context, sink ConsolidationS
 		}
 		if err := sink.Consolidate(ctx, p.event); err != nil {
 			// Leave the event for a later attempt; do not fail the whole pass —
-			// other events may still be consolidable.
+			// other events may still be consolidable. But COUNT the attempt, and
+			// park the event once it has exhausted its budget: retrying an event
+			// the sink will never accept is unbounded work that never converges.
+			if perr := w.recordOutboxFailure(p.key, p.event, err); perr != nil {
+				return processed, perr
+			}
 			continue
 		}
 		if err := w.db.Update(func(txn *badger.Txn) error { return txn.Delete(p.key) }); err != nil {
@@ -251,6 +289,111 @@ func (w *WorkingMemory) drainOutboxOnce(ctx context.Context, sink ConsolidationS
 		processed++
 	}
 	return processed, nil
+}
+
+// recordOutboxFailure persists one failed delivery attempt for event e. Below
+// the attempt budget it rewrites the event in place with the incremented count;
+// at or above it, the event is MOVED to the dead-letter prefix in a single
+// transaction — written there before (and atomically with) its removal from
+// pending, so no crash window can drop it.
+func (w *WorkingMemory) recordOutboxFailure(key []byte, e OutboxEvent, cause error) error {
+	e.Attempts++
+	e.LastError = cause.Error()
+
+	maxAttempts := w.maxOutboxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = defaultMaxOutboxAttempts
+	}
+
+	if e.Attempts < maxAttempts {
+		return w.db.Update(func(txn *badger.Txn) error {
+			payload, err := json.Marshal(e)
+			if err != nil {
+				return fmt.Errorf("memory: encode outbox event: %w", err)
+			}
+			return txn.Set(key, payload)
+		})
+	}
+
+	err := w.db.Update(func(txn *badger.Txn) error {
+		payload, err := json.Marshal(e)
+		if err != nil {
+			return fmt.Errorf("memory: encode dead outbox event: %w", err)
+		}
+		if err := txn.Set(deadOutboxKey(e), payload); err != nil {
+			return err
+		}
+		return txn.Delete(key)
+	})
+	if err != nil {
+		return fmt.Errorf("memory: park exhausted outbox event: %w", err)
+	}
+	// Loud, and with the identity needed to find it — but never the content,
+	// which is tenant data and already persisted where it belongs.
+	slog.Error("memory: outbox event parked after exhausting its attempts",
+		"event_id", e.ID,
+		"tenant", e.Tenant,
+		"user", e.User,
+		"session", e.Session,
+		"attempts", e.Attempts,
+		"last_error", e.LastError,
+	)
+	return nil
+}
+
+// DeadOutboxCount returns how many events have been parked after exhausting
+// their delivery attempts. A non-zero value is consolidation the tenant did not
+// get: it belongs on a dashboard, not in a log nobody reads. Mirrors
+// PendingOutboxCount.
+func (w *WorkingMemory) DeadOutboxCount() (int, error) {
+	n := 0
+	err := w.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		prefix := []byte(outboxDeadPrefix)
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			n++
+		}
+		return nil
+	})
+	return n, err
+}
+
+// forEachOutbox decodes every event under prefix and hands it to fn. Separate
+// from the *OutboxCount helpers on purpose: those skip value prefetch because
+// they only count, while this one pays for the decode.
+func (w *WorkingMemory) forEachOutbox(prefix string, fn func(OutboxEvent)) error {
+	return w.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		p := []byte(prefix)
+		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
+			var e OutboxEvent
+			if err := it.Item().Value(func(v []byte) error { return json.Unmarshal(v, &e) }); err != nil {
+				return fmt.Errorf("memory: decode outbox event: %w", err)
+			}
+			fn(e)
+		}
+		return nil
+	})
+}
+
+func (w *WorkingMemory) forEachPendingOutbox(fn func(OutboxEvent)) error {
+	return w.forEachOutbox(outboxPrefix, fn)
+}
+
+func (w *WorkingMemory) forEachDeadOutbox(fn func(OutboxEvent)) error {
+	return w.forEachOutbox(outboxDeadPrefix, fn)
+}
+
+// SetMaxOutboxAttempts overrides how many failed deliveries an event tolerates
+// before it is parked. Non-positive restores the default.
+func (w *WorkingMemory) SetMaxOutboxAttempts(n int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.maxOutboxAttempts = n
 }
 
 // minDuration returns the smaller of a and b.

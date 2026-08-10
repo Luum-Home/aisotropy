@@ -455,18 +455,24 @@ then
   echo "robustness-audit: cannot inspect OutboxEvent fields" >&2
   exit 2
 fi
-if printf '%s\n' "$outbox_fields" | grep -E '^[[:space:]]*(Attempt|Retry|MaxAttempts)[[:space:]]'
+outbox_attempt_field=$(printf '%s\n' "$outbox_fields" | grep -cE '^[[:space:]]*(Attempts?|Retries|Retry|MaxAttempts)[[:space:]]')
+# A counter field was never the property that matters — an event can carry an
+# attempt count and still be retried forever. What the blocker actually asks for
+# is a TERMINAL policy, and "terminal" must not mean "deleted": dropping an
+# exhausted event would trade an unbounded retry for silent data loss, which is
+# the failure the outbox exists to prevent. So require the bound AND the park.
+outbox_bound=$(grep -cF 'if e.Attempts < maxAttempts {' internal/memory/outbox.go)
+outbox_parks=$(grep -cF 'txn.Set(deadOutboxKey(e), payload)' internal/memory/outbox.go)
+if [ "$outbox_attempt_field" -ge 1 ] && [ "$outbox_bound" -ge 1 ] && [ "$outbox_parks" -ge 1 ]
 then
-  review "OUTBOX_RETRY OutboxEvent has retry metadata and needs terminal-policy review"
+  info "OUTBOX_RETRY_BOUNDED an event that keeps failing is parked in the dead-letter prefix after its attempt budget, not retried forever"
+  info "OUTBOX_DEAD_LETTER_UNDRAINED parked events are preserved and countable (DeadOutboxCount) but nothing re-drains them — recovery is an operator action, not automatic"
+elif [ "$outbox_attempt_field" -eq 0 ] && [ "$outbox_bound" -eq 0 ] && [ "$outbox_parks" -eq 0 ]
+then
+  blocker "OUTBOX_UNBOUNDED_RETRY retry continues and OutboxEvent has no attempt field in this bounded source review"
 else
-  outbox_field_status=$?
-  if [ "$outbox_field_status" -eq 1 ]
-  then
-    blocker "OUTBOX_UNBOUNDED_RETRY retry continues and OutboxEvent has no attempt field in this bounded source review"
-  else
-    echo "robustness-audit: cannot inspect OutboxEvent retry fields" >&2
-    exit 2
-  fi
+  echo "robustness-audit: OutboxEvent retry policy is half-present and cannot be classified" >&2
+  exit 2
 fi
 
 static_signal WORKING_MEMORY_UNIMPLEMENTED '✅ **Decided, not implemented.** Zero lines of the port are written.' docs/decisions/0081-shared-working-memory-tier-and-local-quota.md

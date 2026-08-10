@@ -61,7 +61,12 @@ type WorkingMemory struct {
 	// ValueThreshold can tune it; NewWorkingMemory seeds it with the
 	// conservative default.
 	maxMessageValueBytes int
-	summarizer           Summarizer
+	// maxOutboxAttempts bounds how many failed sink deliveries an outbox event
+	// tolerates before it is parked in the dead-letter prefix. Zero means the
+	// package default (see defaultMaxOutboxAttempts); SetMaxOutboxAttempts
+	// overrides it.
+	maxOutboxAttempts int
+	summarizer        Summarizer
 
 	// mu guards inFlight, pending, closed, and closeGrace below. It is never
 	// held across a BadgerDB transaction or a Summarizer.Condense call.
