@@ -320,6 +320,24 @@ func workingIsolation(t *testing.T, factory WorkingBackendFactory) {
 		t.Fatalf("tenant B should see exactly its own message, got %+v", got)
 	}
 
+	// The OTHER half of isolation, and it is not symmetric with the check above:
+	// "B cannot read A" and "B cannot overwrite A" are different failures, and a
+	// driver can pass the first while failing the second.
+	//
+	// This assertion was added after falsification found the gap. A driver that
+	// ignored ns in its message keys put both subjects in one namespace where
+	// they shared session "s1" and both started their sequence at 1 — so B's
+	// write silently REPLACED A's. Nothing here noticed: B saw exactly one
+	// message, its own, and the read-isolation check was satisfied by the very
+	// write that destroyed A's data. Cross-tenant data loss read as a pass.
+	backA, err := st.Recent(ctx, a, 10)
+	if err != nil {
+		t.Fatalf("Recent(A): %v", err)
+	}
+	if len(backA) != 1 || backA[0].Content != "tenant A secret" {
+		t.Fatalf("ISOLATION BREACH: tenant B's write destroyed tenant A's message; A now sees %+v", backA)
+	}
+
 	// The seal itself, when the backend lets us look: the two subjects landed in
 	// DIFFERENT namespaces, and no namespace contains a recoverable tenant id.
 	// The backend is handed a hash it cannot decode — that is what makes a buggy

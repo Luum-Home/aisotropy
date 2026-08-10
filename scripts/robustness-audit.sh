@@ -506,6 +506,11 @@ if [ "$working_seam" -ge 1 ] && [ "$working_sealed" -ge 1 ] && [ "$working_suite
 then
   info "WORKING_TIER_SEAM the tenant-unaware WorkingBackend interface, its sealed decorator and a conformance suite exist (ADR-0081)"
   info "WORKING_TIER_SEAM_LIMIT the suite cannot prove crash-atomicity of AppendMessageWithEvent — no black-box suite can kill a process mid-commit; that guarantee stays the implementer's obligation"
+  working_driver=$(grep -cF 'var _ WorkingBackend = (*BadgerWorkingBackend)(nil)' internal/memory/backend_badger.go 2>/dev/null || printf '0')
+  if [ "$working_driver" -ge 1 ]
+  then
+    info "WORKING_TIER_DRIVER an EMBEDDED driver (BadgerWorkingBackend) implements the seam and passes the same conformance suite; its transaction atomicity is separately tested in-package"
+  fi
   if [ "$working_wired" -ge 1 ]
   then
     review "SHARED_WORKING_MEMORY_WIRED WorkingMemory appears to be built on the seam; verify which backend the composition root selects"

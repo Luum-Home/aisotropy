@@ -356,6 +356,20 @@ func RunTask(ctx context.Context, client llm.Client, tracer oteltrace.TracerProv
 	wt := sandbox.Worktree{}
 	add, err := gatedWorktreeAdd(ctx, wt, req.repoGate, req.RepoDir)
 	if err != nil {
+		// Preserve the DEADLINE classification across the exec layer. When the
+		// per-task deadline is what killed the subprocess, exec reports
+		// "signal: killed" and nothing in the chain satisfies
+		// errors.Is(err, context.DeadlineExceeded) any more — so a caller
+		// distinguishing "ran out of time" (expected, bounded, not a failure of
+		// the batch) from "genuinely broke" gets the wrong answer, and gets it
+		// only under load, which is when it matters.
+		//
+		// Joining ctx.Err() keeps both: the classification a caller switches on,
+		// and the underlying cause a human needs. It does not widen anything —
+		// a worktree failure with a live context still reports only itself.
+		if cerr := ctx.Err(); cerr != nil {
+			return Result{}, fmt.Errorf("taskagent: worktree add: %w: %w", cerr, err)
+		}
 		return Result{}, fmt.Errorf("taskagent: worktree add: %w", err)
 	}
 	// The worktree is discarded on every non-merge exit path (error, or a run that
