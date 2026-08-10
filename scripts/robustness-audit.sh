@@ -392,9 +392,33 @@ else
   info "REINGEST_ATOMICITY delete-then-upsert is still two calls with no Store transaction — a failure between them loses that document's chunks"
 fi
 
-static_signal PERSIST_AND_CONTINUE 'slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)' internal/api/chat.go
 static_signal CHAT_RETURNS_OUTPUT 'return chatBuildOutput(finalReply, in.TenantID, active, usage), nil' internal/api/core.go
-blocker "PERSIST_AND_CONTINUE chat can return output after a logged user-turn persistence failure"
+# Does a failed user-turn write still let the turn reach the model?
+#
+# Both outcomes are recognised here, deliberately. static_signal fails closed on
+# absence, which is right for evidence that MUST exist and wrong for a signal
+# whose DISAPPEARANCE is the fix — used that way it exits 2 the moment the defect
+# is repaired, and "cannot evaluate" reads as "still broken".
+#
+# swallowed: the persist helper logs and returns nothing, so both callers walk
+# straight into the model call and the reply is later appended to a transcript
+# whose prompt is missing.
+persist_swallowed=$(grep -cF 'func chatPersistUserTurn(ctx context.Context, wm *memory.WorkingMemory, key memory.Key, prompt string) {' internal/api/chat.go)
+# fail-closed: the helper returns the error and each caller aborts on it.
+persist_returns=$(grep -cF 'func chatPersistUserTurn(ctx context.Context, wm *memory.WorkingMemory, key memory.Key, prompt string) error {' internal/api/chat.go)
+persist_aborts=$(grep -cF 'if err := chatPersistUserTurn(ctx, d.WM, key, forwarded); err != nil {' internal/api/core.go)
+stream_aborts=$(grep -cF 'return fmt.Errorf("could not record the user turn; the request was not sent to the model: %w", err)' internal/api/stream_core.go)
+if [ "$persist_swallowed" -ge 1 ]
+then
+  blocker "PERSIST_AND_CONTINUE chat can return output after a logged user-turn persistence failure"
+elif [ "$persist_returns" -ge 1 ] && [ "$persist_aborts" -ge 1 ] && [ "$stream_aborts" -ge 2 ]
+then
+  info "PERSIST_FAIL_CLOSED a failed user-turn write aborts both chat paths before the model call"
+  info "PERSIST_RECORD_TURN the ASSISTANT turn (chatRecordTurn) is still log-and-continue — a reply can be answered and not remembered"
+else
+  echo "robustness-audit: cannot determine the user-turn persistence failure policy" >&2
+  exit 2
+fi
 
 static_signal OUTBOX_RETRY_CONTINUE "if err := sink.Consolidate(ctx, p.event)${semicolon} err != nil {" internal/memory/outbox.go
 outbox_fields=$(awk '

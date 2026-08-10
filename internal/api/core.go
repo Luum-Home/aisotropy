@@ -119,7 +119,15 @@ func ChatCore(ctx context.Context, d ChatDeps, in *ChatInput) (*ChatOutput, erro
 		return nil, huma.Error500InternalServerError("failed to hydrate working memory", err)
 	}
 
-	chatPersistUserTurn(ctx, d.WM, key, forwarded)
+	// Fail closed BEFORE the model call: if the user's turn could not be
+	// recorded, answering it would persist an assistant reply with no prompt in
+	// front of it and corrupt every later turn in this session. 503 because the
+	// condition is transient from the client's side — retry is the right move,
+	// and the retry costs nothing since no tokens were spent. See
+	// chatPersistUserTurn for the full rationale.
+	if err := chatPersistUserTurn(ctx, d.WM, key, forwarded); err != nil {
+		return nil, huma.Error503ServiceUnavailable("could not record the user turn; the request was not sent to the model", err)
+	}
 
 	reply, usage, err := chatReflect(ctx, active, system, in, forwarded)
 	if err != nil {

@@ -58,20 +58,26 @@ func TestWithIdentity_InvalidIdentityReturnsErrorWithoutInjecting(t *testing.T) 
 	}
 }
 
-// ---- chatPersistUserTurn / chatRecordTurn non-fatal error-log branches ----
+// ---- chatPersistUserTurn / chatRecordTurn failure branches ----
 
-// TestChatPersistUserTurn_AppendFailureIsNonFatal covers the
-// "log and continue" branch: an AppendWithOutbox failure (forced here via an
-// already-cancelled ctx) does not panic or otherwise surface — the function
-// has no error return, by design (a persistence hiccup must never fail the
-// turn that already happened).
-func TestChatPersistUserTurn_AppendFailureIsNonFatal(t *testing.T) {
+// TestChatPersistUserTurn_AppendFailureIsReturned covers the failure branch.
+//
+// This test used to assert the opposite — that the failure was swallowed — and
+// justified it as "a persistence hiccup must never fail the turn that already
+// happened". The premise is right and the conclusion was not: the assistant
+// reply is persisted afterwards, so swallowing the user-turn failure leaves a
+// reply with no prompt in front of it, which every later turn then hydrates.
+// The caller now aborts before the model call; see chatPersistUserTurn and
+// persist_fail_closed_test.go, which pins the caller-visible contract.
+func TestChatPersistUserTurn_AppendFailureIsReturned(t *testing.T) {
 	wm := newTestWorkingMemory(t)
 	key := memory.Key{Tenant: "acme", User: "alice", Session: "s1"}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	chatPersistUserTurn(ctx, wm, key, "hello") // must not panic despite the forced failure
+	if err := chatPersistUserTurn(ctx, wm, key, "hello"); err == nil {
+		t.Fatal("a failed user-turn persist must be returned, not logged and swallowed")
+	}
 }
 
 // TestChatRecordTurn_AppendFailureIsNonFatal covers chatRecordTurn's

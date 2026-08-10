@@ -296,12 +296,36 @@ func chatBuildSystemPrompt(ctx context.Context, wm *memory.WorkingMemory, store 
 // streaming path — so the non-streaming endpoint also feeds the facts +
 // semantic tiers via the outbox worker, not only the streaming one. Called
 // before the LLM call because the user's message is real input that already
-// happened. A persistence failure is logged, not fatal to the request.
-func chatPersistUserTurn(ctx context.Context, wm *memory.WorkingMemory, key memory.Key, prompt string) {
+// happened.
+//
+// It RETURNS the failure instead of logging and continuing, and the callers
+// abort the turn. The previous shape logged and carried on, with the rationale
+// that "a persistence hiccup must never fail the turn that already happened."
+// That premise is true and the conclusion does not follow from it. What the
+// caller continues into is worse than the lost write:
+//
+//   - The assistant reply IS persisted afterwards (chatRecordTurn). A failed
+//     user-turn write therefore leaves working memory holding an assistant
+//     utterance with no prompt in front of it. Every later turn in that session
+//     hydrates from that, so the model is fed a conversation that never
+//     happened. This is corruption, not absence.
+//   - The lost half is also the outbox event, so the turn is never distilled
+//     into the facts or semantic tiers — silently, with a 200 on the wire.
+//
+// Failing here is cheap in the one currency that matters: this runs BEFORE the
+// model call, so aborting spends zero tokens and hands the client a retryable
+// error, which is exactly the posture the "reject/degrade before spending
+// tokens" gate asks for. AppendWithOutbox is one Badger transaction, so a
+// failure wrote neither half and the store is left clean for the retry.
+//
+// Found by scripts/robustness-audit.sh (BLOCKER PERSIST_AND_CONTINUE).
+func chatPersistUserTurn(ctx context.Context, wm *memory.WorkingMemory, key memory.Key, prompt string) error {
 	event := memory.NewOutboxEvent(key, outboxRef(key, prompt), prompt, time.Now().UTC())
 	if err := wm.AppendWithOutbox(ctx, key, memory.Message{Role: roleUser, Content: prompt}, event); err != nil {
-		slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
+		slog.ErrorContext(ctx, "aborting turn: could not persist user message + outbox event", "err", err)
+		return err
 	}
+	return nil
 }
 
 // chatReflect runs the reflection loop over prompt and returns the validated

@@ -226,16 +226,27 @@ func StreamCore(ctx context.Context, d StreamDeps, in *ChatInput, sink StreamSin
 		// happened); replacing the consolidation enqueue with the reservation is
 		// what keeps the scored text out of the tenant's long-term memory, so the
 		// later lift is not spurious (leakage).
+		// Fatal for the same reason as the non-held-out branch below: the
+		// assistant reply is persisted at the end of the stream, so continuing
+		// past a failed user-turn write leaves a reply with no prompt in front
+		// of it. Nothing has been streamed and no token has been spent yet, so
+		// the client gets an error event and an intact session.
 		if err := d.WM.Append(ctx, key, memory.Message{Role: roleUser, Content: forwarded}); err != nil {
-			slog.ErrorContext(ctx, "failed to append held-out user message", "err", err)
+			slog.ErrorContext(ctx, "aborting stream: could not persist held-out user message", "err", err)
+			return fmt.Errorf("could not record the user turn; the request was not sent to the model: %w", err)
 		}
+		// Reserve failing is NOT fatal, and the asymmetry is deliberate. The
+		// reservation feeds an offline surprisal measurement (Bet 6); losing one
+		// sample costs a data point in a research lane and leaves the
+		// conversation itself correct and complete.
 		if err := d.BPTSampler.Reserve(ctx, in.TenantID, in.UserID, in.Body.SessionID, ref, forwarded); err != nil {
 			slog.ErrorContext(ctx, "failed to reserve bitrate held-out sample", "err", err)
 		}
 	} else {
 		event := memory.NewOutboxEvent(key, ref, forwarded, time.Now().UTC())
 		if err := d.WM.AppendWithOutbox(ctx, key, memory.Message{Role: roleUser, Content: forwarded}, event); err != nil {
-			slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)
+			slog.ErrorContext(ctx, "aborting stream: could not persist user message + outbox event", "err", err)
+			return fmt.Errorf("could not record the user turn; the request was not sent to the model: %w", err)
 		}
 	}
 
