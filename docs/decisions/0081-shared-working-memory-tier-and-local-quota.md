@@ -18,9 +18,35 @@ timestamp: 2026-08-05T00:00:00Z
 
 ## Status
 
-✅ **Decided, not implemented.** Zero lines of the port are written. What changed is that this
-stopped being an open question of unknown size: the two measurements that gate the design exist, and
-they disagree with the assumption the work had been sized on.
+🟡 **Decided; the seam is built, the networked backend is not.** Updated 2026-08-10.
+
+This previously read "zero lines of the port are written", and that is no longer true. What exists
+now is precisely the thing this ADR deferred its remaining decisions behind — *"deferred until the
+interface exists"*:
+
+- **`memory.WorkingBackend`** ([`internal/memory/backend.go`](../../internal/memory/backend.go)) — the
+  tenant-UNAWARE driver interface, shape copied from `facts.DocBackend` rather than invented, with
+  `AppendMessageWithEvent` as a **single** method because a decorator cannot make two network
+  round-trips atomic and this ADR's first constraint says that atomicity must survive.
+- **The sealed decorator** ([`backend_store.go`](../../internal/memory/backend_store.go)) — `namespaceFor`
+  is unexported, so a consumer can neither compose a namespace nor hand the driver one it chose.
+  `EraseSubject` is a namespace **drop** rather than a scan, which is what stops an erase from
+  silently missing a key shape nobody remembered to enumerate.
+- **A conformance suite** ([`plugintest.RunWorkingBackendSuite`](../../internal/plugintest/working.go))
+  with a reference implementation, sitting alongside `RunDocBackendSuite` exactly as this ADR
+  specified. Its isolation subtest asserts the driver never receives a decodable identity.
+
+**What this does NOT mean.** No networked backend implements the interface, and `WorkingMemory` is
+not yet built on it, so the shared topology this ADR exists to unblock still does not exist — the
+robustness audit's blocker stands, with a narrower reason than before. Two honest limits are recorded
+rather than glossed: the suite **cannot** prove crash-atomicity (no black-box suite can kill a process
+mid-commit), so `AppendMessageWithEvent`'s guarantee remains the implementer's obligation; and the
+suite was itself falsified against four deliberately broken drivers before being trusted, because a
+suite that has only ever passed is not evidence that it can fail.
+
+What had already changed before this: the work stopped being an open question of unknown size,
+because the two measurements that gate the design exist and disagree with the assumption it had been
+sized on.
 
 ## Context
 
@@ -131,6 +157,14 @@ that weakens it breaks a property the port depends on.
   reasoned from first principles about a property the codebase had already solved twice, which is the
   failure [dependency-reuse-first](../architecture/dependency-reuse-first.md) names — applied here to
   our own prior art rather than to a third-party library.
+
+  **Settled 2026-08-10.** The operations the working tier needs are now enumerated in
+  `memory.WorkingBackend`, and building it surfaced one thing the analysis above had not: today's
+  keys embed the identity in plaintext (`tenant:{t}:user:{u}:session:{s}:chat:{seq}`), so forwarding
+  them to a driver would have leaked exactly what the seal exists to hide. The port therefore
+  re-derives keys — hashed namespace per (tenant, user), session as a separate parameter inside it —
+  rather than passing the existing ones through. That is a migration concern for the wiring step, not
+  a free rename.
 - **Whether quota and working memory share a backend.** They need not: the decision above already
   puts them on different tiers, and this ADR does not require rqlite to serve both.
 - **Multi-node commit cost.** The floor is measured; the production number is not.

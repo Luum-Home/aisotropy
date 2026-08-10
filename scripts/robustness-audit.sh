@@ -484,9 +484,37 @@ else
   exit 2
 fi
 
-static_signal WORKING_MEMORY_UNIMPLEMENTED '✅ **Decided, not implemented.** Zero lines of the port are written.' docs/decisions/0081-shared-working-memory-tier-and-local-quota.md
+# Is a shared hosted topology reachable yet?
+#
+# The old check keyed on ADR-0081's "Zero lines of the port are written". That
+# sentence is now false, and the check exited 2 the moment it stopped being true
+# — the same fail-closed-on-a-fixed-signal shape as the four checks above.
+#
+# The blocker itself does NOT go away: a seam is not a shared tier. What changes
+# is that the audit can now distinguish "nobody has started" from "the interface
+# exists and nothing implements it", which are different amounts of remaining
+# work and should not print the same sentence.
 static_signal WORKING_MEMORY_PROCESS_LOCAL 'const EraseScopeProcessLocal = "process-local"' aisotropy/erase.go
-blocker "SHARED_WORKING_MEMORY_UNIMPLEMENTED ADR-0081 and process-local working memory rule out a shared hosted topology"
+working_seam=$(grep -cF 'type WorkingBackend interface {' internal/memory/backend.go)
+working_sealed=$(grep -cF 'func namespaceFor(tenant, user string) string' internal/memory/backend.go)
+working_suite=$(grep -cF 'func RunWorkingBackendSuite' internal/plugintest/working.go)
+# Wiring is what would actually close this: WorkingMemory built on the seam, and
+# a networked driver implementing it. Neither exists yet, and the audit must not
+# infer them from the seam's presence.
+working_wired=$(grep -cF 'backend WorkingBackend' internal/memory/working_memory.go 2>/dev/null || printf '0')
+if [ "$working_seam" -ge 1 ] && [ "$working_sealed" -ge 1 ] && [ "$working_suite" -ge 1 ]
+then
+  info "WORKING_TIER_SEAM the tenant-unaware WorkingBackend interface, its sealed decorator and a conformance suite exist (ADR-0081)"
+  info "WORKING_TIER_SEAM_LIMIT the suite cannot prove crash-atomicity of AppendMessageWithEvent — no black-box suite can kill a process mid-commit; that guarantee stays the implementer's obligation"
+  if [ "$working_wired" -ge 1 ]
+  then
+    review "SHARED_WORKING_MEMORY_WIRED WorkingMemory appears to be built on the seam; verify which backend the composition root selects"
+  else
+    blocker "SHARED_WORKING_MEMORY_UNIMPLEMENTED the seam exists and is conformance-tested, but no networked backend implements it and WorkingMemory is not built on it"
+  fi
+else
+  blocker "SHARED_WORKING_MEMORY_UNIMPLEMENTED ADR-0081 and process-local working memory rule out a shared hosted topology"
+fi
 
 static_signal AUTH_BOOT_FAILS_CLOSED 'case errors.Is(err, aisotropy.ErrNoAuthenticator):' cmd/aisotropyd/main.go
 static_signal AUTH_NOAUTH_NONLOCAL_GUARD "if gErr := aisotropy.NoAuthNonLocalGuard(addr)${semicolon} gErr != nil {" cmd/aisotropyd/main.go
