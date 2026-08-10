@@ -132,13 +132,24 @@ func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts Chunk
 
 	now := time.Now().UTC()
 	var points []Point
-	for _, doc := range docs {
-		if _, err := store.DeleteBySource(ctx, sc, KindDocument, doc.ID); err != nil {
-			return 0, fmt.Errorf("semantic: delete stale chunks for document %q: %w", doc.ID, err)
-		}
 
+	// PHASE 1 — every fallible step, and NOTHING that mutates the store.
+	//
+	// The delete used to open this loop, which made a re-ingest destructive on
+	// any failure: chunking, embedding and the vector-count check all run after
+	// it, and the Upsert runs only after the whole loop, so an error stripped
+	// the store and rewrote nothing. Worse in a batch — a failure on document N
+	// also destroyed documents 1..N-1, whose points were sitting in `points`
+	// when the early return discarded them. The stale version of a document is
+	// strictly better than no version, and that is what the old order traded
+	// away. Found by scripts/robustness-audit.sh (BLOCKER DESTRUCTIVE_REINGEST),
+	// pinned by ingest_atomicity_test.go.
+	for _, doc := range docs {
 		chunks := chunkRunes(doc.Content, opts)
 		if len(chunks) == 0 {
+			// No chunks to write, but the document still gets its delete in
+			// phase 2: shrinking to zero is a legitimate shrink, and skipping
+			// it here would leave the previous version orphaned.
 			continue
 		}
 		// Passage role: stored KindDocument chunks carry the e5 "passage: "
@@ -164,6 +175,27 @@ func Ingest(ctx context.Context, store Store, emb Embedder, sc Scope, opts Chunk
 				Vector:     vecs[i],
 				CreatedAt:  now,
 			})
+		}
+	}
+	// PHASE 2 — mutate. Everything that could fail has already succeeded, so
+	// reaching here means the replacement content exists in memory.
+	//
+	// The delete is still required and still per-document: it is what makes a
+	// SHRINKING document correct, since PointID collisions only overwrite a
+	// same-or-larger chunk count and would otherwise leave orphans from the
+	// longer prior version (the gap ADR-0018 flagged). It runs for EVERY doc in
+	// the batch, including ones that produced no chunks.
+	//
+	// HONEST LIMIT: delete-then-upsert is two calls, and Store exposes no
+	// transaction. A failure BETWEEN them still loses that document's chunks.
+	// This ordering does not make ingestion atomic — it removes the far larger
+	// window in which a slow, network-dependent embedder could fail long after
+	// the data was already gone, and it stops one bad document taking its whole
+	// batch with it. Closing the remaining gap needs a transactional Store,
+	// which is the same constraint ADR-0081 records for the working tier.
+	for _, doc := range docs {
+		if _, err := store.DeleteBySource(ctx, sc, KindDocument, doc.ID); err != nil {
+			return 0, fmt.Errorf("semantic: delete stale chunks for document %q: %w", doc.ID, err)
 		}
 	}
 	if len(points) == 0 {

@@ -378,8 +378,18 @@ if [ "$delete_line" -lt "$embed_line" ]
 then
   blocker "DESTRUCTIVE_REINGEST delete precedes embedding in the current source order"
 else
-  echo "robustness-audit: required static source has an unknown semantic source order" >&2
-  exit 2
+  # embed precedes delete: the fallible work happens first and the store is only
+  # mutated once a replacement exists. Added 2026-08-08, when the reorder this
+  # check asked for actually landed and the script had no branch for it — it
+  # could say "bad" or "I cannot tell", never "good", because the good shape did
+  # not exist in the tree when it was written. A checker with no representation
+  # for the outcome it demands reports exit 2 forever after the fix, which reads
+  # as "still broken" to anyone who does not open it.
+  #
+  # This does NOT loosen the check: the blocker branch above is untouched, and
+  # restoring the destructive order still trips it.
+  info "REINGEST_ORDER embedding precedes deletion; a failed re-ingest leaves the prior version in place"
+  info "REINGEST_ATOMICITY delete-then-upsert is still two calls with no Store transaction — a failure between them loses that document's chunks"
 fi
 
 static_signal PERSIST_AND_CONTINUE 'slog.ErrorContext(ctx, "failed to append user message + outbox event", "err", err)' internal/api/chat.go
