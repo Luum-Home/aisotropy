@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
 
 // This file closes specific statement-coverage gaps left by the existing
@@ -389,7 +390,18 @@ done
 		t.Fatalf("write fake bin: %v", err)
 	}
 
-	sc, err := NewModelScanner(ModelScannerConfig{BinPath: bin, ModelDir: t.TempDir()})
+	// Timeout set explicitly, and generously. Leaving it unset inherits
+	// defaultScannerTimeout — 5s, a bound chosen for a real ML classification,
+	// not for a three-line sh script competing with a full parallel test sweep
+	// for a loaded machine. This test lost that race repeatedly under
+	// scripts/test-all.sh while passing every time in isolation, and the failure
+	// it printed named the wrong thing: an assertion about row parsing, when what
+	// had actually happened was "worker exit: signal: killed" at exactly 5.00s.
+	//
+	// Worth stating because it is the more dangerous half: the sibling scanner
+	// tests assert the fail-OPEN zero verdict, so a timeout satisfies them. They
+	// do not go red under load — they go green without having tested anything.
+	sc, err := NewModelScanner(ModelScannerConfig{BinPath: bin, ModelDir: t.TempDir(), Timeout: time.Minute})
 	if err != nil {
 		t.Fatalf("NewModelScanner: %v", err)
 	}
