@@ -29,7 +29,19 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null)" || {
 # The needle. Case-insensitive, tolerant of the separator being '-' or '_' and of
 # stray whitespace before the colon — a trailer that is malformed is still a
 # trailer someone will read as attribution.
-PATTERN='co[-_ ]?authored[-_ ]?by|noreply@anthropic\.com|🤖 *Generated with'
+# ANCHORED AT LINE START, and this is not a detail — it is the difference between
+# a guard and a nuisance.
+#
+# A real trailer OPENS its line: "Co-Authored-By: Someone <addr>". Prose that
+# discusses the rule mentions it mid-sentence. The first version of this guard did
+# not distinguish them and flagged the very commit that introduced it, whose
+# message says 'NEVER add a Co-Authored-By trailer' — a false positive on its
+# first real use, which would have taught everyone to pass SKIP_COAUTHOR_GUARD=1
+# and thereby disabled the check for the case it exists to catch.
+#
+# Note which half failed: the structural invariant below stayed silent and correct,
+# because discussing a trailer adds no identity. Only the pattern match was fooled.
+PATTERN='^[[:space:]]*co[-_ ]?authored[-_ ]?by[[:space:]]*:|^[[:space:]]*[A-Za-z-]+[[:space:]]*:.*noreply@anthropic\.com|^[[:space:]]*🤖 *Generated with'
 
 commits=$(git cat-file --batch-all-objects --batch-check='%(objecttype) %(objectname)' --unordered 2>/dev/null \
           | awk '$1=="commit"{print $2}')
