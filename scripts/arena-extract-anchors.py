@@ -145,10 +145,49 @@ def main() -> int:
     # APPEND, never overwrite: ANCHORS.jsonl accumulates one baseline per model
     # over time, and that history IS the equating's input. Truncating it would
     # discard the very thing that makes a future provider switch comparable.
+    #
+    # But append-only is not the same as append-blindly. An anchor is identified by
+    # (model, framework, mode, task_id), and re-running the SAME model — a debugging
+    # pass, a partial re-run, a board redone after a fix — produces those same keys
+    # again. Equate pairs on (framework, task_id), so a duplicated key does not add
+    # evidence; it silently weights one measurement twice and makes the shift
+    # estimate depend on how many times somebody happened to re-run.
+    #
+    # Observed 2026-08-19: a partial 6-mode re-run appended 296 rows over an
+    # existing 292, leaving 247 duplicated keys, some appearing four times. Nothing
+    # warned. Skipping keys already present keeps the accumulating history the
+    # comment above is protecting while refusing the double count.
+    existing = set()
+    if os.path.exists(args.out):
+        with open(args.out, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                existing.add((e.get("model"), e.get("framework"), e.get("mode"), e.get("task_id")))
+
+    # Deduplicate against the file AND within this batch. Both are needed: a single
+    # records stream can already contain the same anchor cell twice (the runner
+    # retries, and a retried cell is appended again), so filtering only against the
+    # file still lets a batch-internal pair through. Found by running the fix twice
+    # and still seeing one duplicate survive.
+    fresh, seen = [], set(existing)
+    for r in rows:
+        k = (r.get("model"), r.get("framework"), r.get("mode"), r.get("task_id"))
+        if k in seen:
+            continue
+        seen.add(k)
+        fresh.append(r)
+    skipped = len(rows) - len(fresh)
+
     with open(args.out, "a", encoding="utf-8") as fh:
-        for r in rows:
+        for r in fresh:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-    print(f"  appended {len(rows)} row(s) -> {args.out}")
+    print(f"  appended {len(fresh)} row(s) -> {args.out}")
+    if skipped:
+        print(f"  skipped {skipped} row(s) already present for this model "
+              f"(re-run of an existing anchor cell; a duplicate would double-weight it)")
     return 0
 
 

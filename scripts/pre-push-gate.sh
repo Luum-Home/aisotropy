@@ -63,7 +63,7 @@ rc=0
 
 # ---- stage 1: supply chain (govulncheck) ------------------------------------
 if [ "${SKIP_SUPPLY_CHAIN_GUARD:-0}" = "1" ]; then
-  echo "pre-push-gate: stage 1/2 supply-chain-guard SKIPPED (SKIP_SUPPLY_CHAIN_GUARD=1)"
+  echo "pre-push-gate: stage 1/9 supply-chain-guard SKIPPED (SKIP_SUPPLY_CHAIN_GUARD=1)"
 else
   if [ -x "$REPO_ROOT/scripts/supply-chain-guard.sh" ]; then
     sh "$REPO_ROOT/scripts/supply-chain-guard.sh" "$@" || rc=$?
@@ -75,7 +75,7 @@ fi
 
 # ---- stage 2: OWASP LLM + Agentic deterministic suite -----------------------
 if [ "${SKIP_OWASP_SCAN:-0}" = "1" ]; then
-  echo "pre-push-gate: stage 2/2 owasp-llm-scan SKIPPED (SKIP_OWASP_SCAN=1)"
+  echo "pre-push-gate: stage 2/9 owasp-llm-scan SKIPPED (SKIP_OWASP_SCAN=1)"
 else
   if [ -x "$REPO_ROOT/scripts/owasp-llm-scan.sh" ]; then
     sh "$REPO_ROOT/scripts/owasp-llm-scan.sh" || rc=$?
@@ -90,10 +90,10 @@ fi
 # a silent quality regression (a shifted threshold, a changed normalization)
 # that unit tests on individual primitives would not surface.
 if [ "${SKIP_GOLDEN_GATE:-0}" = "1" ]; then
-  echo "pre-push-gate: stage 3/3 golden-gate SKIPPED (SKIP_GOLDEN_GATE=1)"
+  echo "pre-push-gate: stage 3/9 golden-gate SKIPPED (SKIP_GOLDEN_GATE=1)"
 else
   if command -v go >/dev/null 2>&1; then
-    echo "pre-push-gate: stage 3/3 golden-set quality baseline ..."
+    echo "pre-push-gate: stage 3/9 golden-set quality baseline ..."
     go test ./internal/eval/ -run 'GoldenGate' -count=1 || rc=$?
     [ "$rc" -eq 0 ] || { echo "pre-push-gate: BLOCKED by the golden-set gate (exit $rc) — a frozen quality baseline drifted." >&2; exit "$rc"; }
   else
@@ -114,7 +114,7 @@ fi
 # never as a pass, and never as a block. Set ARENA_INTEGRATION_GATE=1 to require
 # it (the right setting before touching arenas/live/).
 if [ "${ARENA_INTEGRATION_GATE:-0}" = "1" ]; then
-  echo "pre-push-gate: stage 4/4 arena integration gate ..."
+  echo "pre-push-gate: stage 4/9 arena integration gate ..."
   bash "$REPO_ROOT/scripts/arena-integration-gate.sh"; rc=$?
   if [ "$rc" -eq 2 ]; then
     echo "pre-push-gate: arena integration gate could not run (stores unreachable) — NOT a pass." >&2
@@ -122,7 +122,7 @@ if [ "${ARENA_INTEGRATION_GATE:-0}" = "1" ]; then
   fi
   [ "$rc" -eq 0 ] || { echo "pre-push-gate: BLOCKED by the arena integration gate (exit $rc) — an infrastructure defect would have been reported as a framework result." >&2; exit "$rc"; }
 else
-  echo "pre-push-gate: stage 4/4 arena integration gate SKIPPED (set ARENA_INTEGRATION_GATE=1 with the local stack up)"
+  echo "pre-push-gate: stage 4/9 arena integration gate SKIPPED (set ARENA_INTEGRATION_GATE=1 with the local stack up)"
 fi
 
 # ---- stage 5: doc commit-citation rot ---------------------------------------
@@ -131,10 +131,10 @@ fi
 # reads like proof. Cheap (no build, no network), and it belongs on push rather
 # than commit because that is when a rewrite reaches everyone else.
 if [ "${SKIP_CITATION_GATE:-0}" = "1" ]; then
-  echo "pre-push-gate: stage 5/5 doc-citation gate SKIPPED (SKIP_CITATION_GATE=1)"
+  echo "pre-push-gate: stage 5/9 doc-citation gate SKIPPED (SKIP_CITATION_GATE=1)"
 else
   if [ -x "$REPO_ROOT/scripts/check-doc-commit-citations.sh" ]; then
-    echo "pre-push-gate: stage 5/5 doc commit-citation check ..."
+    echo "pre-push-gate: stage 5/9 doc commit-citation check ..."
     # Same `set -eu` fix as stages 6 and 7 (2026-08-04): with `; rc=$?` this
     # stage blocked the push correctly but printed NOTHING about why — the
     # diagnostic below was unreachable because the script had already exited.
@@ -164,10 +164,10 @@ fi
 # sentence, and nothing ran it anyway. Patterns widened, ledger re-derived, and
 # now it runs on every push. Stdlib python3, no network, sub-second.
 if [ "${SKIP_ABSENCE_GUARD:-0}" = "1" ]; then
-  echo "pre-push-gate: stage 6/7 absence-claim guard SKIPPED (SKIP_ABSENCE_GUARD=1)"
+  echo "pre-push-gate: stage 6/9 absence-claim guard SKIPPED (SKIP_ABSENCE_GUARD=1)"
 else
   if [ -f "$REPO_ROOT/scripts/absence-claim-guard.py" ]; then
-    echo "pre-push-gate: stage 6/7 competitor-absence claim guard ..."
+    echo "pre-push-gate: stage 6/9 competitor-absence claim guard ..."
     # `|| rc=$?`, not `; rc=$?`: this script runs under `set -eu`, so a bare
     # failing command terminates it BEFORE the assignment — the push is blocked
     # with the correct exit code but WITHOUT the diagnostic below ever printing.
@@ -201,10 +201,10 @@ fi
 # test-all.sh reports SKIPPED separately from PASS and names the skips in its
 # verdict, so a layer that could not run never reads as green.
 if [ "${SKIP_NESTED_MODULES:-0}" = "1" ]; then
-  echo "pre-push-gate: stage 7/7 nested-module lane SKIPPED (SKIP_NESTED_MODULES=1)"
+  echo "pre-push-gate: stage 7/9 nested-module lane SKIPPED (SKIP_NESTED_MODULES=1)"
 else
   if [ -x "$REPO_ROOT/scripts/test-all.sh" ]; then
-    echo "pre-push-gate: stage 7/7 nested modules (root + arenas/ + examples/ + bench/) — slow ..."
+    echo "pre-push-gate: stage 7/9 nested modules (root + arenas/ + examples/ + bench/) — slow ..."
     rc=0
     bash "$REPO_ROOT/scripts/test-all.sh" --quick >/dev/null 2>&1 || rc=$?
     [ "$rc" -eq 0 ] || {
@@ -234,10 +234,10 @@ fi
 # Cheap: no build, no network, no model. Exit 2 = could not evaluate, which is
 # not a pass.
 if [ "${SKIP_GAP_CLAIMS:-0}" = "1" ]; then
-  echo "pre-push-gate: stage 8/8 capability-claims guard SKIPPED (SKIP_GAP_CLAIMS=1)"
+  echo "pre-push-gate: stage 8/9 capability-claims guard SKIPPED (SKIP_GAP_CLAIMS=1)"
 else
   if [ -f "$REPO_ROOT/scripts/gap-claims-guard.sh" ]; then
-    echo "pre-push-gate: stage 8/8 capability-claims drift ..."
+    echo "pre-push-gate: stage 8/9 capability-claims drift ..."
     rc=0
     bash "$REPO_ROOT/scripts/gap-claims-guard.sh" >/dev/null 2>&1 || rc=$?
     if [ "$rc" -eq 2 ]; then
@@ -251,6 +251,35 @@ else
     }
   else
     echo "pre-push-gate: scripts/gap-claims-guard.sh missing — skipping stage 8" >&2
+  fi
+fi
+
+# ---- stage 9: co-authorship trailers ----------------------------------------
+# Both CLAUDE.md files say "NEVER add Co-Authored-By trailer to commit messages".
+# Until 2026-08-19 that rule was enforced by nothing but prose in a file an agent
+# may or may not have loaded, so a single slip would have sat in the history
+# unnoticed — and history is the one thing a later commit cannot fix.
+#
+# Cheap: it reads commit objects only, no build, no network, sub-second on ~600
+# commits. Cheap enough that there is no reason to run a push without it.
+if [ "${SKIP_COAUTHOR_GUARD:-0}" = "1" ]; then
+  echo "pre-push-gate: stage 9/9 co-authorship guard SKIPPED (SKIP_COAUTHOR_GUARD=1)"
+else
+  if [ -x "$REPO_ROOT/scripts/coauthor-trailer-guard.sh" ]; then
+    echo "pre-push-gate: stage 9/9 co-authorship trailers ..."
+    rc=0
+    bash "$REPO_ROOT/scripts/coauthor-trailer-guard.sh" >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 2 ]; then
+      echo "pre-push-gate: co-authorship guard could not evaluate — NOT a pass." >&2
+      exit 2
+    fi
+    [ "$rc" -eq 0 ] || {
+      echo "pre-push-gate: BLOCKED — a commit carries a co-authorship trailer." >&2
+      bash "$REPO_ROOT/scripts/coauthor-trailer-guard.sh" >&2
+      exit "$rc"
+    }
+  else
+    echo "pre-push-gate: scripts/coauthor-trailer-guard.sh missing — skipping stage 9" >&2
   fi
 fi
 
