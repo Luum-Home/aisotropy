@@ -29,19 +29,23 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null)" || {
 # The needle. Case-insensitive, tolerant of the separator being '-' or '_' and of
 # stray whitespace before the colon — a trailer that is malformed is still a
 # trailer someone will read as attribution.
-# ANCHORED AT LINE START, and this is not a detail — it is the difference between
-# a guard and a nuisance.
+# WHAT COUNTS AS A TRAILER IS GIT'S QUESTION, NOT OURS.
 #
-# A real trailer OPENS its line: "Co-Authored-By: Someone <addr>". Prose that
-# discusses the rule mentions it mid-sentence. The first version of this guard did
-# not distinguish them and flagged the very commit that introduced it, whose
-# message says 'NEVER add a Co-Authored-By trailer' — a false positive on its
-# first real use, which would have taught everyone to pass SKIP_COAUTHOR_GUARD=1
-# and thereby disabled the check for the case it exists to catch.
+# Two false positives taught this. The first version matched the pattern anywhere
+# and flagged the commit that INTRODUCED the guard, whose message discusses the
+# rule. Anchoring to line start fixed that and immediately flagged the NEXT
+# commit, whose message contains an indented worked example that is, read
+# literally, a syntactically valid trailer.
 #
-# Note which half failed: the structural invariant below stayed silent and correct,
-# because discussing a trailer adds no identity. Only the pattern match was fooled.
-PATTERN='^[[:space:]]*co[-_ ]?authored[-_ ]?by[[:space:]]*:|^[[:space:]]*[A-Za-z-]+[[:space:]]*:.*noreply@anthropic\.com|^[[:space:]]*🤖 *Generated with'
+# Both were me reinventing a rule git already implements: a trailer lives in the
+# final block of the message, and `%(trailers)` returns exactly those. Verified —
+# on the commit with the mid-message example it returns nothing; on the vendored
+# dependabot commit it returns both Signed-off-by and Co-authored-by. So ask git.
+#
+# A guard that fires on any commit merely DISCUSSING the rule teaches everyone to
+# pass SKIP_COAUTHOR_GUARD=1, and a check everyone skips is not running — the
+# cheap green reached by false positive rather than by deliberate loosening.
+KEY_PATTERN='^[[:space:]]*co[-_ ]?authored[-_ ]?by[[:space:]]*:|noreply@anthropic\.com'
 
 commits=$(git cat-file --batch-all-objects --batch-check='%(objecttype) %(objectname)' --unordered 2>/dev/null \
           | awk '$1=="commit"{print $2}')
@@ -64,12 +68,12 @@ fi
 hits=0
 while read -r sha; do
   [ -z "$sha" ] && continue
-  # Read the RAW object, not `git log` output: no reformatting, no pager, no
-  # trailer parsing that might normalise the thing away before we see it.
-  if git cat-file commit "$sha" 2>/dev/null | grep -qiE "$PATTERN"; then
+  # Ask git for the parsed trailer block, then look for co-authorship keys in it.
+  trailers=$(git log -1 --format='%(trailers:only,valueonly=false)' "$sha" 2>/dev/null)
+  if printf '%s\n' "$trailers" | grep -qiE "$KEY_PATTERN"; then
     hits=$((hits + 1))
     echo "FOUND $sha  $(git log -1 --format='%ad %an  %s' --date=short "$sha" 2>/dev/null)"
-    git cat-file commit "$sha" 2>/dev/null | grep -iE "$PATTERN" | sed 's/^/        /'
+    printf '%s\n' "$trailers" | grep -iE "$KEY_PATTERN" | sed 's/^/        /'
   fi
 done <<< "$commits"
 
