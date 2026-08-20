@@ -31,6 +31,9 @@
 #      aisotropy/ façade that a copied example would hit — the root `go test ./...`
 #      never descends into the separate example modules, so nothing else catches it.
 #   5. arena/bench modules build     — BLOCKING. Same rot check for arenas/*, bench/*.
+#      A module that ships a build.sh is first asked to regenerate its generated
+#      artifacts (`build.sh --prepare-only`), because some are .gitignored and a
+#      fresh clone therefore cannot compile the module at all — see the stage.
 #   6. license audit (--root-only)   — BLOCKING. Runs scripts/license-audit.sh over the
 #      root deps + compose-image allowlist: the local twin of the CI license step, so a
 #      non-permissive dep/unreviewed image can't reach origin even if CI is never watched.
@@ -64,6 +67,25 @@ echo "==================================================================="
 
 BLOCKED=0
 
+# print_cause <label> <captured-output>
+# WHY THIS EXISTS. Every stage below DECIDES — it can block a push. A decision
+# whose explanation was thrown away is the failure mode named in
+# .claude/rules/absence-has-many-causes.md: `>/dev/null 2>&1` keeps the exit code
+# and discards the sentence, so "the code is broken", "a generated file is
+# missing" and "the toolchain is unavailable" all render as the same red. They
+# are three different facts and need three different outputs. Blocking stages
+# therefore capture combined stdout+stderr and print it through here.
+print_cause() {
+  cause_label="$1"; cause_out="$2"
+  echo "   --- ${cause_label}: cause ---"
+  if [ -z "$cause_out" ]; then
+    echo "     (the command failed and printed nothing — no diagnostic available)"
+  else
+    printf '%s\n' "$cause_out" | sed 's/^/     /'
+  fi
+  echo "   --- end ${cause_label} ---"
+}
+
 # --- 1. govulncheck (BLOCKING) ---
 echo
 echo "1) govulncheck ./...  (known-exploitable CVEs reachable from real code)"
@@ -84,8 +106,19 @@ fi
 # --- 2. dependency staleness (ADVISORY) ---
 echo
 echo "2) dependency staleness  (go list -m -u all — advisory, non-blocking)"
-stale="$(go list -m -u all 2>/dev/null | grep -E '\[[^]]+\]' || true)"
-if [ -n "$stale" ]; then
+# stderr is captured, not discarded: if `go list -m -u all` cannot run (no
+# network, broken module graph) its output is empty, and reporting that as "all
+# modules are at their latest version" would be a false claim built out of a
+# silenced error. Could-not-check and nothing-to-report are different answers.
+stale_raw="$(go list -m -u all 2>&1)"
+list_rc=$?
+stale=""
+[ "$list_rc" -eq 0 ] && stale="$(printf '%s\n' "$stale_raw" | grep -E '\[[^]]+\]' || true)"
+if [ "$list_rc" -ne 0 ]; then
+  echo "   could NOT evaluate staleness ('go list -m -u all' exited $list_rc)."
+  echo "   This is not 'everything is up to date' — the check did not run:"
+  printf '%s\n' "$stale_raw" | sed 's/^/     /'
+elif [ -n "$stale" ]; then
   n_stale="$(printf '%s\n' "$stale" | grep -c . || true)"
   echo "   $n_stale module(s) have a newer version available:"
   printf '%s\n' "$stale" | sed 's/^/     /'
@@ -114,8 +147,9 @@ for gm in examples/*/go.mod; do
   [ -f "$gm" ] || continue
   ex_dir="$(dirname "$gm")"
   # -tags keybroker so the RunTask/RunTasks demos (task-agent, task-fanout) compile too.
-  if ! ( cd "$ex_dir" && go build -tags keybroker ./... && go vet -tags keybroker ./... ) >/dev/null 2>&1; then
+  if ! ex_out="$( ( cd "$ex_dir" && go build -tags keybroker ./... && go vet -tags keybroker ./... ) 2>&1 )"; then
     ex_fail="$ex_fail ${ex_dir}"
+    print_cause "${ex_dir} (go build + go vet)" "$ex_out"
   fi
 done
 if [ -n "$ex_fail" ]; then
@@ -148,15 +182,45 @@ for gm in arenas/*/go.mod arenas/live/*/go.mod bench/*/go.mod bench/*/*/go.mod; 
   ar_dir="$(dirname "$gm")"
   # Vendored upstreams (external/) are excluded: they are not ours to fix.
   case "$ar_dir" in external/*) continue ;; esac
-  if ! ( cd "$ar_dir" && go build ./... ) >/dev/null 2>&1; then
+
+  # GENERATED ARTIFACTS COME FIRST. arenas/live/aisotropy embeds calc.wasm via
+  # go:embed, and calc.wasm is .gitignored (it is a 3.4 MB compiled artifact —
+  # generated code does not belong in the tree). A fresh clone therefore has no
+  # calc.wasm and `go build ./...` fails on the embed pattern before it can
+  # check a single thing this stage cares about. The gate used to pass only on
+  # machines that happened to have the artifact lying around from an earlier
+  # run — it was green by accident of local state, not by evidence.
+  #
+  # The module's own build.sh already knows how to produce those artifacts AND
+  # when to skip the work (it compares testdata/wasmguest/*.go against
+  # calc.wasm's mtime), so the gate reuses it via --prepare-only rather than
+  # re-implementing the freshness rule in a second place that could drift.
+  # --prepare-only stops after the generated artifacts: no adapter binary is
+  # built, since the `go build ./...` below is the actual check.
+  if [ -f "$ar_dir/build.sh" ]; then
+    if ! prep_out="$( bash "$ar_dir/build.sh" --prepare-only 2>&1 )"; then
+      arena_fail="$arena_fail ${ar_dir}(generated-artifact prepare)"
+      print_cause "${ar_dir} (build.sh --prepare-only)" "$prep_out"
+      continue
+    fi
+  fi
+
+  if ! ar_out="$( ( cd "$ar_dir" && go build ./... ) 2>&1 )"; then
     arena_fail="$arena_fail ${ar_dir}"
+    print_cause "${ar_dir} (go build ./...)" "$ar_out"
   fi
 done
 if [ -n "$arena_fail" ]; then
   echo "   BUILD FAILED for arena/bench module(s):$arena_fail"
-  echo "   A nested module drifted from the root. This is exactly the failure that"
-  echo "   makes a board run burn hours and report nothing — fix it before pushing."
-  echo "   Usually: 'go mod tidy' in the module, or update it for a root API change."
+  echo "   A broken adapter is exactly the failure that makes a board run burn hours"
+  echo "   and report nothing — fix it before pushing. The cause block above says which"
+  echo "   kind this is; do not guess at the remedy from the module name alone:"
+  echo "     - '(go build ./...)'        the module's own code or go.mod drifted from the"
+  echo "                                 root — usually 'go mod tidy', or update it for a"
+  echo "                                 root API change."
+  echo "     - '(build.sh --prepare-only)'  the module's GENERATED artifacts could not be"
+  echo "                                 produced; the module's source may be fine. Fix the"
+  echo "                                 generator input the cause block names."
   BLOCKED=1
 else
   echo "   all arena/bench modules build."
@@ -173,18 +237,19 @@ fi
 # license cannot leave this machine even if CI is never looked at.
 echo
 echo "6) license audit  (root-module deps + compose-image allowlist — the CI step, run locally)"
-if bash "$(git rev-parse --show-toplevel)/scripts/license-audit.sh" --root-only >/dev/null 2>&1; then
+lic_out="$(bash "$(git rev-parse --show-toplevel)/scripts/license-audit.sh" --root-only 2>&1)"
+lic_rc=$?
+if [ "$lic_rc" -eq 0 ]; then
   echo "   license audit clean (permissive deps + allowlisted images)."
+elif [ "$lic_rc" -eq 2 ]; then
+  echo "   license audit could NOT run (env error, exit 2) — not blocking on tooling failure,"
+  echo "   but note this stage did not evaluate anything:"
+  print_cause "license-audit (env error)" "$lic_out"
 else
-  lic_rc=$?
-  if [ "$lic_rc" -eq 2 ]; then
-    echo "   license audit could not run (env error, exit 2) — not blocking on tooling failure."
-  else
-    echo "   LICENSE AUDIT FAILED (exit $lic_rc): a root dep resolves to a non-permissive/absent"
-    echo "   license, or a compose image is not on the reviewed allowlist. Re-run to see the finding:"
-    echo "     bash scripts/license-audit.sh --root-only"
-    BLOCKED=1
-  fi
+  echo "   LICENSE AUDIT FAILED (exit $lic_rc): a root dep resolves to a non-permissive/absent"
+  echo "   license, or a compose image is not on the reviewed allowlist. The finding itself:"
+  print_cause "license-audit" "$lic_out"
+  BLOCKED=1
 fi
 
 # --- VERDICT ---
