@@ -61,12 +61,12 @@ else
   fail "native: qa smoke call failed (status=${NATIVE_STATUS}, output=${NATIVE_OUT})"
 fi
 
-if echo "${NATIVE_OUT}" | grep -qF "${KEY}"; then
+if echo "${NATIVE_OUT}" | grep -qF -- "${KEY}"; then
   fail "native: stdout contains the literal API key"
 else
   pass "native: stdout does not contain the literal API key"
 fi
-if grep -qF "${KEY}" /tmp/genkit-go-test-env-native.stderr 2>/dev/null; then
+if grep -qF -- "${KEY}" /tmp/genkit-go-test-env-native.stderr 2>/dev/null; then
   fail "native: stderr contains the literal API key"
 else
   pass "native: stderr does not contain the literal API key"
@@ -88,13 +88,13 @@ fi
 # layer (an ARG, an ENV, a COPYed file) would be caught, not just the final
 # image config.
 HISTORY_HIT=0
-if docker history --no-trunc "${IMAGE}" 2>/dev/null | grep -qF "${KEY}"; then
+if docker history --no-trunc "${IMAGE}" 2>/dev/null | grep -qF -- "${KEY}"; then
   HISTORY_HIT=1
 fi
 EXPORT_HIT=0
 CONTAINER_ID="$(docker create "${IMAGE}" 2>/dev/null)"
 if [[ -n "${CONTAINER_ID}" ]]; then
-  if docker export "${CONTAINER_ID}" 2>/dev/null | grep -qaF "${KEY}"; then
+  if docker export "${CONTAINER_ID}" 2>/dev/null | grep -qaF -- "${KEY}"; then
     EXPORT_HIT=1
   fi
   docker rm -f "${CONTAINER_ID}" >/dev/null 2>&1
@@ -115,7 +115,7 @@ fi
 # spirit (fresh container, no injected runtime env) while working within a
 # base image that ships no shell to run `env` in.
 CONFIG_ENV="$(docker inspect --format '{{range .Config.Env}}{{.}}{{"\n"}}{{end}}' "${IMAGE}" 2>/dev/null || true)"
-if echo "${CONFIG_ENV}" | grep -qF "${KEY}"; then
+if echo "${CONFIG_ENV}" | grep -qF -- "${KEY}"; then
   fail "docker: image Config.Env contains the literal API key"
 else
   pass "docker: image Config.Env does not contain the literal API key (baseline distroless vars only: $(echo "${CONFIG_ENV}" | tr '\n' ' '))"
@@ -141,12 +141,12 @@ else
   fail "docker: qa smoke call failed (status=${DOCKER_STATUS}, output=${DOCKER_OUT})"
 fi
 
-if echo "${DOCKER_OUT}" | grep -qF "${KEY}"; then
+if echo "${DOCKER_OUT}" | grep -qF -- "${KEY}"; then
   fail "docker: container stdout contains the literal API key"
 else
   pass "docker: container stdout does not contain the literal API key"
 fi
-if grep -qF "${KEY}" /tmp/genkit-go-test-env-docker.stderr 2>/dev/null; then
+if grep -qF -- "${KEY}" /tmp/genkit-go-test-env-docker.stderr 2>/dev/null; then
   fail "docker: container stderr contains the literal API key"
 else
   pass "docker: container stderr does not contain the literal API key"

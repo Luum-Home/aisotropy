@@ -147,7 +147,7 @@ else
   fail "turn 2: stdout is non-empty (${TURN2_STDOUT} has content) — the process may have completed before being killed"
 fi
 
-if echo "$(cat "${TURN2_STDOUT}" 2>/dev/null)$(cat "${TURN2_STDERR}" 2>/dev/null)" | grep -qF "${KEY}"; then
+if echo "$(cat "${TURN2_STDOUT}" 2>/dev/null)$(cat "${TURN2_STDERR}" 2>/dev/null)" | grep -qF -- "${KEY}"; then
   fail "turn 2: stdout/stderr contains the literal API key"
 else
   pass "turn 2: stdout/stderr does not contain the literal API key"
@@ -204,12 +204,12 @@ else
   fail "turn 3: reply text does NOT contain the fact code (${FACT_CODE}) — reply was: ${REPLY}"
 fi
 
-if echo "${TURN3_OUT}" | grep -qF "${KEY}"; then
+if echo "${TURN3_OUT}" | grep -qF -- "${KEY}"; then
   fail "turn 3: stdout contains the literal API key"
 else
   pass "turn 3: stdout does not contain the literal API key"
 fi
-if grep -qF "${KEY}" "${TURN3_STDERR}" 2>/dev/null; then
+if grep -qF -- "${KEY}" "${TURN3_STDERR}" 2>/dev/null; then
   fail "turn 3: stderr contains the literal API key"
 else
   pass "turn 3: stderr does not contain the literal API key"

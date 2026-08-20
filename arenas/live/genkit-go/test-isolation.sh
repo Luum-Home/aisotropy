@@ -88,12 +88,12 @@ else
   fail "memory_scoped: recalled_text is empty"
 fi
 
-if echo "${SCOPED_OUT}" | grep -qF "${KEY}"; then
+if echo "${SCOPED_OUT}" | grep -qF -- "${KEY}"; then
   fail "memory_scoped: stdout contains the literal API key"
 else
   pass "memory_scoped: stdout does not contain the literal API key"
 fi
-if grep -qF "${KEY}" /tmp/genkit-go-test-isolation-scoped.stderr 2>/dev/null; then
+if grep -qF -- "${KEY}" /tmp/genkit-go-test-isolation-scoped.stderr 2>/dev/null; then
   fail "memory_scoped: stderr contains the literal API key"
 else
   pass "memory_scoped: stderr does not contain the literal API key"
@@ -131,12 +131,12 @@ else
   pass "isolation_leak: the model's reply does not contain the literal secret text"
 fi
 
-if echo "${LEAK_OUT}" | grep -qF "${KEY}"; then
+if echo "${LEAK_OUT}" | grep -qF -- "${KEY}"; then
   fail "isolation_leak: stdout contains the literal API key"
 else
   pass "isolation_leak: stdout does not contain the literal API key"
 fi
-if grep -qF "${KEY}" /tmp/genkit-go-test-isolation-leak.stderr 2>/dev/null; then
+if grep -qF -- "${KEY}" /tmp/genkit-go-test-isolation-leak.stderr 2>/dev/null; then
   fail "isolation_leak: stderr contains the literal API key"
 else
   pass "isolation_leak: stderr does not contain the literal API key"
