@@ -192,7 +192,7 @@ while IFS= read -r gomod; do
     key="${modpath}@${modver}"
 
     # first-party: replaced by a local filesystem path in THIS go.mod
-    if printf '%s\n' "$local_replaces" | grep -qxF "$modpath"; then
+    if printf '%s\n' "$local_replaces" | grep -qxF -- "$modpath"; then
       n_local=$((n_local + 1))
       continue
     fi

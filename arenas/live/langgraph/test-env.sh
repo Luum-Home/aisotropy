@@ -60,8 +60,8 @@ if [[ -z "${KEY}" ]]; then
 else
   STDOUT_HITS=0
   STDERR_HITS=0
-  echo "${NATIVE_OUT}" | grep -qF "${KEY}" && STDOUT_HITS=1
-  echo "${NATIVE_STDERR}" | grep -qF "${KEY}" && STDERR_HITS=1
+  echo "${NATIVE_OUT}" | grep -qF -- "${KEY}" && STDOUT_HITS=1
+  echo "${NATIVE_STDERR}" | grep -qF -- "${KEY}" && STDERR_HITS=1
   if [[ "${STDOUT_HITS}" -eq 0 && "${STDERR_HITS}" -eq 0 ]]; then
     echo "PASS (c): key literal hits in native stdout=0 stderr=0"
   else
@@ -94,7 +94,7 @@ if [[ -n "${KEY}" ]] && docker image inspect "${IMAGE}" >/dev/null 2>&1; then
   ENV_DUMP="$(docker run --rm --entrypoint env "${IMAGE}" 2>/dev/null || true)"
   ENV_HITS=0
   if [[ -n "${KEY}" ]]; then
-    echo "${ENV_DUMP}" | grep -qF "${KEY}" && ENV_HITS=1
+    echo "${ENV_DUMP}" | grep -qF -- "${KEY}" && ENV_HITS=1
   fi
   if [[ "${ENV_HITS}" -eq 0 ]]; then
     echo "PASS (b2): key literal hits in 'docker run ... env' = 0"

@@ -70,8 +70,23 @@ fi
 
 head_sha=$(git rev-parse HEAD) || exit 2
 
-cited=$(git grep --untracked -hIoE '`[0-9a-f]{7,12}`' -- "${PATHS[@]}" 2>/dev/null | tr -d '`' | sort -u)
-[ -n "$cited" ] || { echo "no commit-shaped citations found in ${PATHS[*]}"; exit 0; }
+# The scope must be real before the absence of hits can mean anything. `git
+# grep` answers rc=1 (no match) for a pathspec that does not exist — it does
+# NOT error — so a renamed doc directory silently shrinks the search and the
+# gate still exits 0. A check that examines zero files always passes, and that
+# is not a clean result: it is an unasked question.
+missing_paths=""
+for _p in "${PATHS[@]}"; do
+  [ -e "$_p" ] || missing_paths="${missing_paths}${_p} "
+done
+if [ -n "$missing_paths" ]; then
+  echo "BLOCKED: declared scope does not exist: ${missing_paths}— the citation check would" >&2
+  echo "         have silently examined less than it claims. Fix PATHS in $0." >&2
+  exit 2
+fi
+
+cited=$(git grep --untracked -hIoE -e '`[0-9a-f]{7,12}`' -- "${PATHS[@]}" 2>/dev/null | tr -d '`' | sort -u)
+[ -n "$cited" ] || { echo "no commit-shaped citations found in ${PATHS[*]} (scope verified present)"; exit 0; }
 
 total=0; live=0; findings=0; declared_hits=0
 finding_list=""

@@ -49,7 +49,7 @@ log "cluster engine: $ENGINE"
 # --- 2. Create the cluster (idempotent) -----------------------------------
 case "$ENGINE" in
   kind)
-    if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
+    if kind get clusters 2>/dev/null | grep -qx -- "$CLUSTER"; then
       log "kind cluster '$CLUSTER' already exists — reusing."
     else
       log "creating kind cluster '$CLUSTER'..."
@@ -58,7 +58,7 @@ case "$ENGINE" in
     kubectl config use-context "kind-$CLUSTER"
     ;;
   k3d)
-    if k3d cluster list 2>/dev/null | awk '{print $1}' | grep -qx "$CLUSTER"; then
+    if k3d cluster list 2>/dev/null | awk '{print $1}' | grep -qx -- "$CLUSTER"; then
       log "k3d cluster '$CLUSTER' already exists — reusing."
     else
       log "creating k3d cluster '$CLUSTER'..."

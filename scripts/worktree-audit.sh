@@ -29,6 +29,13 @@ set -u
 
 BASE="${1:-main}"
 findings=0
+# A probe that could not run is NOT a clean probe. Anything counted here keeps
+# the verdict away from the green line and exits 2 — this script's own header
+# already says exit 2 means "could not evaluate (never treated as clean)", but
+# three probes used to silence their errors and let an unreadable branch or an
+# uninspectable worktree fall through to a tick. This audit decides whether
+# work can be DELETED; a false clean here loses it.
+unevaluated=0
 
 cd "$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "worktree-audit: not inside a git repository" >&2
@@ -49,8 +56,15 @@ echo
 echo "── branches"
 base_files="$(mktemp)"; git ls-tree -r "$BASE" --name-only | sort > "$base_files"
 for br in $(git for-each-ref --format='%(refname:short)' refs/heads/ | grep -v "^${BASE}$"); do
-  br_files="$(mktemp)"
-  git ls-tree -r "$br" --name-only 2>/dev/null | sort > "$br_files"
+  br_files="$(mktemp)"; br_err="$(mktemp)"
+  if ! git ls-tree -r "$br" --name-only > "$br_files" 2>"$br_err"; then
+    echo "  ?  $br — could NOT list its tree: $(head -1 "$br_err"); NOT evaluated"
+    unevaluated=$((unevaluated + 1))
+    rm -f "$br_files" "$br_err"
+    continue
+  fi
+  rm -f "$br_err"
+  sort -o "$br_files" "$br_files"
   only="$(comm -23 "$br_files" "$base_files")"
   ahead="$(git rev-list --count "$BASE".."$br" 2>/dev/null || echo '?')"
   if [ -n "$only" ]; then
@@ -73,7 +87,12 @@ echo "── linked worktrees (uncommitted content)"
 main_root="$(git rev-parse --show-toplevel)"
 git worktree list --porcelain | awk '/^worktree /{print $2}' | while read -r wt; do
   [ "$wt" = "$main_root" ] && continue
-  dirty="$(git -C "$wt" status --porcelain 2>/dev/null | awk '{print $NF}')"
+  if ! dirty_raw="$(git -C "$wt" status --porcelain 2>&1)"; then
+    echo "  ?  ${wt#"$main_root"/} — could NOT read its status: $(printf '%s' "$dirty_raw" | head -1); NOT evaluated"
+    unevaluated=$((unevaluated + 1))
+    continue
+  fi
+  dirty="$(printf '%s\n' "$dirty_raw" | awk 'NF{print $NF}')"
   if [ -z "$dirty" ]; then
     echo "  ✓  ${wt#"$main_root"/} — clean"
     continue
@@ -84,7 +103,24 @@ git worktree list --porcelain | awk '/^worktree /{print $2}' | while read -r wt;
       echo "  ⚠  ${wt#"$main_root"/}: $f — path does not exist in $BASE"
       wt_missing=$((wt_missing + 1)); continue
     fi
-    n=$(diff <(git show "$BASE:$f" 2>/dev/null) "$wt/$f" 2>/dev/null | grep -c '^>' || true)
+    if [ ! -f "$wt/$f" ]; then
+      echo "  ?  ${wt#"$main_root"/}: $f — listed as dirty but absent from the worktree (deleted there?); NOT compared"
+      unevaluated=$((unevaluated + 1)); continue
+    fi
+    base_copy="$(mktemp)"
+    if ! git show "$BASE:$f" > "$base_copy" 2>/dev/null; then
+      echo "  ?  ${wt#"$main_root"/}: $f — could NOT read $BASE's version; NOT compared"
+      unevaluated=$((unevaluated + 1)); rm -f "$base_copy"; continue
+    fi
+    # diff exits 0 (identical) / 1 (differs) / >=2 (trouble). Only 0 and 1 are
+    # answers; >=2 used to arrive here as "0 unique lines", i.e. as a tick.
+    diff_out="$(diff "$base_copy" "$wt/$f" 2>&1)"; diff_rc=$?
+    rm -f "$base_copy"
+    if [ "$diff_rc" -ge 2 ]; then
+      echo "  ?  ${wt#"$main_root"/}: $f — diff could not compare it: $(printf '%s' "$diff_out" | head -1); NOT compared"
+      unevaluated=$((unevaluated + 1)); continue
+    fi
+    n=$(printf '%s\n' "$diff_out" | grep -c '^>' || true)
     if [ "${n:-0}" -gt 0 ]; then
       printf "  ⚠  %s: %s — %s line(s) not in %s\n" "${wt#"$main_root"/}" "$f" "$n" "$BASE"
       wt_unique=$((wt_unique + n))
@@ -117,6 +153,12 @@ fi
 echo
 
 # ── Verdict ────────────────────────────────────────────────────────────────
+if [ "$unevaluated" -gt 0 ]; then
+  echo "═══ ⚠  COULD NOT EVALUATE — $unevaluated probe(s) did not run (marked ? above),"
+  echo "    alongside $findings finding(s). This is NOT a clean result: an unread branch"
+  echo "    or an uninspectable worktree may hold the only copy of something."
+  exit 2
+fi
 if [ "$findings" -eq 0 ]; then
   echo "═══ 🟢 CLEAN — nothing outside $BASE holds unique content."
   echo "    Worktrees/branches above can be pruned without losing work."

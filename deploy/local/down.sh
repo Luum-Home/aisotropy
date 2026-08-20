@@ -10,8 +10,8 @@ have() { command -v "$1" >/dev/null 2>&1; }
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
 if [[ "$ENGINE" == "auto" ]]; then
-  if have kind && kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then ENGINE=kind
-  elif have k3d && k3d cluster list 2>/dev/null | awk '{print $1}' | grep -qx "$CLUSTER"; then ENGINE=k3d
+  if have kind && kind get clusters 2>/dev/null | grep -qx -- "$CLUSTER"; then ENGINE=kind
+  elif have k3d && k3d cluster list 2>/dev/null | awk '{print $1}' | grep -qx -- "$CLUSTER"; then ENGINE=k3d
   else log "no kind/k3d cluster named '$CLUSTER' found — nothing to do."; exit 0
   fi
 fi
