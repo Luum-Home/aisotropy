@@ -88,12 +88,25 @@ if [ "$n_importers" -gt 0 ]; then
 fi
 
 # --- 2. Test coverage (its own tests) ---
-cov="$(go test "./$PKG/" -cover 2>/dev/null | grep -oE 'coverage: [0-9.]+%' | grep -oE '[0-9.]+' | head -1)"
-[ -n "$cov" ] || cov="NA"
+# "NA" used to mean two different things: "ran fine, package has no tests" (0%,
+# legitimately non-blocking) and "go test could not even run" (build failure —
+# an ABSENCE OF SIGNAL, not a measurement of 0%). Capture go test's own exit
+# code so the two are never conflated (.claude/rules/absence-has-many-causes.md).
+go_test_out="$(go test "./$PKG/" -cover 2>&1)"
+go_test_rc=$?
+cov="$(printf '%s\n' "$go_test_out" | grep -oE 'coverage: [0-9.]+%' | grep -oE '[0-9.]+' | head -1)"
 echo
-echo "2) OWN TEST COVERAGE: ${cov}%"
-if [ "$cov" != "NA" ] && awk "BEGIN{exit !($cov>0)}"; then
-  BLOCKED=1; REASONS+=("has its own tests (${cov}% coverage)")
+if [ -n "$cov" ]; then
+  echo "2) OWN TEST COVERAGE: ${cov}%"
+  if awk "BEGIN{exit !($cov>0)}"; then
+    BLOCKED=1; REASONS+=("has its own tests (${cov}% coverage)")
+  fi
+elif [ "$go_test_rc" -ne 0 ]; then
+  echo "2) OWN TEST COVERAGE: COULD NOT EVALUATE — go test exited $go_test_rc"
+  echo "     (build/test failure, not a measured 0% — fail-closed, not absolved)"
+  BLOCKED=1; REASONS+=("could not evaluate own test coverage — go test failed (exit $go_test_rc)")
+else
+  echo "2) OWN TEST COVERAGE: 0% (go test ran, no test files in this package)"
 fi
 
 # --- 3. Wired in the composition root ---
@@ -115,18 +128,41 @@ if [ -n "$public" ]; then
 fi
 
 # --- 5. Reachability via the authoritative Go analyzer (golang.org/x/tools/cmd/deadcode) ---
+# D4: `unreach="$(deadcode ... 2>/dev/null | grep ... | wc -l)"` used to fold deadcode's
+# exit status into a pipeline and throw it away with `2>/dev/null`. If deadcode failed
+# to run at all (not installed is handled separately below, but also: panic, build
+# error, wrong module, wrong Go version, OOM under this machine's own resource
+# pressure...) stdout is simply EMPTY, so `grep | wc -l` silently yields 0 — and the
+# script printed "deadcode flags 0 funcs ... => reachable from main", asserting a
+# measurement that never happened. Absence of output is not the same as a measured
+# zero (.claude/rules/absence-has-many-causes.md, .claude/rules/prune-evidence-gate.md
+# "a green from a tool that could not run its checks is absence of evidence, not
+# evidence of absence"). Fix: capture deadcode's OWN exit code before piping its
+# stdout through grep/wc, and never claim "0 unreachable" unless deadcode actually
+# completed. A failed run still BLOCKS (fail-closed) — it just says so honestly
+# instead of inventing a reachability finding.
 echo
 if command -v deadcode >/dev/null 2>&1; then
   # deadcode reports UNREACHABLE funcs from main. If NONE of this package's funcs are
   # unreachable, it is reachable => live. We check: does the package appear in the
   # unreachable set for EVERY one of its funcs? If any func is absent from the
   # unreachable list, it is reachable.
-  unreach="$(deadcode ./cmd/aisotropyd/... 2>/dev/null | grep "/$PKG/" | wc -l | tr -d ' ')"
-  total_funcs="$(git grep -hE '^func ' -- "$PKG/"'*.go' 2>/dev/null | grep -v '_test.go' | wc -l | tr -d ' ')"
-  echo "5) REACHABILITY (deadcode from cmd/aisotropyd): unreachable funcs in pkg=$unreach"
-  if [ "${unreach:-0}" -eq 0 ] && [ "${total_funcs:-0}" -gt 0 ]; then
-    echo "     deadcode flags 0 funcs of this package as unreachable => reachable from main"
-    BLOCKED=1; REASONS+=("reachable from main (deadcode: 0 of $total_funcs funcs unreachable)")
+  deadcode_stdout="$(deadcode ./cmd/aisotropyd/... 2>/dev/null)"
+  deadcode_rc=$?
+  if [ "$deadcode_rc" -ne 0 ]; then
+    echo "5) REACHABILITY (deadcode from cmd/aisotropyd): COULD NOT EVALUATE"
+    echo "     deadcode exited with status $deadcode_rc — it did not complete an analysis,"
+    echo "     so no reachability signal was measured for $PKG (an empty/failed run is"
+    echo "     NOT the same as \"0 funcs unreachable\" — fail-closed, not absolved)."
+    BLOCKED=1; REASONS+=("could not evaluate reachability — deadcode exited with status $deadcode_rc")
+  else
+    unreach="$(printf '%s\n' "$deadcode_stdout" | grep "/$PKG/" | wc -l | tr -d ' ')"
+    total_funcs="$(git grep -hE '^func ' -- "$PKG/"'*.go' 2>/dev/null | grep -v '_test.go' | wc -l | tr -d ' ')"
+    echo "5) REACHABILITY (deadcode from cmd/aisotropyd): unreachable funcs in pkg=$unreach"
+    if [ "${unreach:-0}" -eq 0 ] && [ "${total_funcs:-0}" -gt 0 ]; then
+      echo "     deadcode flags 0 funcs of this package as unreachable => reachable from main"
+      BLOCKED=1; REASONS+=("reachable from main (deadcode: 0 of $total_funcs funcs unreachable)")
+    fi
   fi
 else
   echo "5) REACHABILITY: deadcode not installed — install with:"
