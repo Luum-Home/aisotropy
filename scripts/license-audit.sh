@@ -220,13 +220,28 @@ while IFS= read -r gomod; do
       continue
     fi
 
-    if grep -qiE "$PROHIBITED_RE" "$license_file" 2>/dev/null; then
-      matched="$(grep -iE "$PROHIBITED_RE" "$license_file" | head -1)"
-      record_finding "BLOCKER  $key  [$modroot]  prohibited license text in $license_file: \"$matched\""
-      continue
-    fi
-
-    n_safe=$((n_safe + 1))
+    # grep's own exit code tells "read fine, no prohibited text" (1 -> safe) apart from
+    # "could not even read the file" (2+ -> permissions, encoding, a directory that
+    # slipped past the -type f filter). The old `-q ... 2>/dev/null` boolean collapsed
+    # both into "not blocked", so an unreadable license counted as a permissive one —
+    # see .claude/rules/absence-has-many-causes.md ("absence has many causes; presence
+    # has one"). A single grep call now supplies both the verdict and the evidence.
+    grep_out="$(grep -iE "$PROHIBITED_RE" "$license_file" 2>&1)"
+    grep_rc=$?
+    case "$grep_rc" in
+      0)
+        matched="$(printf '%s\n' "$grep_out" | head -1)"
+        record_finding "BLOCKER  $key  [$modroot]  prohibited license text in $license_file: \"$matched\""
+        continue
+        ;;
+      1)
+        n_safe=$((n_safe + 1))
+        ;;
+      *)
+        record_finding "COULD_NOT_EVALUATE  $key  [$modroot]  grep could not read $license_file (exit $grep_rc: ${grep_out:-no diagnostic output}) — an unreadable license file is NOT a permissive one, fail-closed"
+        continue
+        ;;
+    esac
   done <<< "$(extract_direct_deps "$gomod")"
 done <<< "$GO_MOD_DIRS"
 
