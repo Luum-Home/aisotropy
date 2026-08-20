@@ -428,8 +428,12 @@ done
 echo
 echo "  files scanned: $scanned"
 echo "  findings:      $findings"
+echo "  coverage:      4 of 7 sub-forms (C1 C2 C3 C4); sub-forms 2, 6 and 7 are"
+echo "                 NOT checked — they are runtime properties, not syntax."
 if [ "$findings" -eq 0 ]; then
-  echo "VERDICT: clean — every probe examined can distinguish failure from absence."
+  echo "VERDICT: clean for the four sub-forms above. This is NOT 'no silent probes'"
+  echo "  — three of seven are outside this instrument's reach (see the header for"
+  echo "  why, measured rather than assumed). A zero here is a zero over 4/7."
   exit 0
 fi
 cat <<EOF
