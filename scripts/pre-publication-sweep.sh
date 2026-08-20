@@ -72,6 +72,14 @@ ACCEPTED=(
                         # quoted in docs/decisions/0069 and the voicebox spike as
                         # the BUG being described. Not a local home directory.
   '/home/user/\.rustup' # test fixture in bench/wasm-vs-docker/guests_test.go
+  '03251193000f4bd3b042892be858ee50e8b3719f2b08e5833ac4353724632430'
+                        # sha256 checksum of the "reborrow" crate (Cargo.lock in
+                        # crates/bitrate-scorer, crates/embed, crates/guardrail-model).
+                        # A hex digest, not a card number — it happens to contain a
+                        # 13-digit run starting with 4, the exact shape the
+                        # credit-card-ish check looks for. Surfaced once that check's
+                        # broken \b anchors were fixed to actually anchor (see the
+                        # commit that fixed this file's credit-card-ish pattern).
 )
 accepted_filter() {   # stdin: matching lines -> stdout: lines NOT accepted
   local f='cat' a
@@ -154,7 +162,17 @@ echo
 echo "=== C. Personal data ==="
 check "AR phone"         '\+54[ -]?9?[ -]?[0-9]{2,4}[ -]?[0-9]{4}'
 check "IBAN-ish"         '\b[A-Z]{2}[0-9]{2}[A-Z0-9]{12,}\b'
-check "credit-card-ish"  '\b(?:4[0-9]{12}|5[1-5][0-9]{14})\b'
+# Not \b: on this git build \b does not anchor as a word boundary in EITHER engine
+# check() drives it through — `git grep -E` silently reads it as a literal 'b' (proven:
+# '\bcat' matches "abcat" under -E), and `git log -G`'s default engine matches it to
+# nothing at all (proven: '\bthe\b' finds 0 commits against a 589-hit 'the' substring
+# baseline). Either way \b would make this check "run" (no crash) while never actually
+# firing — the same false-clean-bill-of-health class as this file's other traps, just
+# without an error to notice. (^|[^0-9]) / ([^0-9]|$) is the portable substitute:
+# verified to reproduce true word-boundary behavior in BOTH engines (the same swap
+# recovers 587/589 of the 'the' whole-word hits) and to correctly reject longer digit
+# runs (SHAs, checksums) that merely contain a 13/16-digit substring.
+check "credit-card-ish"  '(^|[^0-9])(4[0-9]{12}|5[1-5][0-9]{14})([^0-9]|$)'
 
 echo
 echo "=== D. Private names (clients, colleagues, internal hosts) ==="
