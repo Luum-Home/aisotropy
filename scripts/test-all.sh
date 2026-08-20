@@ -131,7 +131,8 @@ while IFS= read -r mod; do
       fail "${name}  — does not build"
     fi
   fi
-done < <(find . -name go.mod -maxdepth 4 -not -path './external/*' -not -path '*/node_modules/*' 2>/dev/null \
+done < <(find . -name go.mod -maxdepth 4 -not -path './external/*' -not -path '*/node_modules/*' \
+          -not -path '*/.claude/worktrees/*' 2>/dev/null \
           | xargs -n1 dirname | grep -v '^\.$' | sort)
 echo "   (${NESTED} nested module(s); ./external/* is vendored upstream and excluded)"
 
