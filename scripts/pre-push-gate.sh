@@ -53,6 +53,17 @@
 # the OWASP suite existed and passed but was NOT enforced on any push — a
 # suite nobody runs rots silently. This closes that gap.
 #
+# EVERY STAGE HERE DECIDES, SO EVERY STAGE MUST SAY WHY. A stage that blocks a
+# push while discarding the sentence its check printed is the failure class in
+# .claude/rules/absence-has-many-causes.md: `>/dev/null 2>&1` keeps the exit code
+# and throws away the explanation, so "a module does not compile", "the flag was
+# wrong" and "the toolchain is missing" all render as the same red. Stage 7 was
+# the worst of it — it told the reader to "re-run to see which module", a
+# minutes-long run whose answer the gate had already computed and dropped.
+# Blocking stages therefore capture combined stdout+stderr ONCE, from the run
+# that actually decided, and print it through print_cause below. Same fix, same
+# shape as scripts/supply-chain-guard.sh (0806c51).
+#
 # Bypass everything once: git push --no-verify
 set -eu
 
@@ -60,6 +71,22 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 cd "$REPO_ROOT" || { echo "pre-push-gate: not in a git repo" >&2; exit 2; }
 
 rc=0
+
+# print_cause <label> <captured-output>
+# Prints on stderr, where every other diagnostic in this hook goes and where git
+# shows hook output. The empty-output branch matters: "the check failed and said
+# nothing" is itself a finding, and printing an empty block would read as though
+# the cause had been shown.
+print_cause() {
+  cause_label="$1"; cause_out="$2"
+  echo "   --- ${cause_label}: cause ---" >&2
+  if [ -z "$cause_out" ]; then
+    echo "     (the command failed and printed nothing — no diagnostic available)" >&2
+  else
+    printf '%s\n' "$cause_out" | sed 's/^/     /' >&2
+  fi
+  echo "   --- end ${cause_label} ---" >&2
+}
 
 # ---- stage 1: supply chain (govulncheck) ------------------------------------
 if [ "${SKIP_SUPPLY_CHAIN_GUARD:-0}" = "1" ]; then
@@ -115,7 +142,15 @@ fi
 # it (the right setting before touching arenas/live/).
 if [ "${ARENA_INTEGRATION_GATE:-0}" = "1" ]; then
   echo "pre-push-gate: stage 4/9 arena integration gate ..."
-  bash "$REPO_ROOT/scripts/arena-integration-gate.sh"; rc=$?
+  # `|| rc=$?`, not `; rc=$?` — the same `set -e` trap already documented for
+  # stages 5 and 6: a bare failing command terminates this script BEFORE the
+  # assignment, so both branches below were unreachable. Measured with a stub
+  # exiting 2: the push stopped with the right code and "could not run (stores
+  # unreachable) — NOT a pass" never printed. This stage's output is deliberately
+  # NOT captured — it streams a long integration run the operator watches live,
+  # and it was never being discarded in the first place.
+  rc=0
+  bash "$REPO_ROOT/scripts/arena-integration-gate.sh" || rc=$?
   if [ "$rc" -eq 2 ]; then
     echo "pre-push-gate: arena integration gate could not run (stores unreachable) — NOT a pass." >&2
     exit 2
@@ -139,14 +174,18 @@ else
     # stage blocked the push correctly but printed NOTHING about why — the
     # diagnostic below was unreachable because the script had already exited.
     rc=0
-    bash "$REPO_ROOT/scripts/check-doc-commit-citations.sh" >/dev/null || rc=$?
+    # Captured once, from the run that decided. The previous shape re-ran the
+    # script to show the finding it had just computed: double work, and the text
+    # shown was a SECOND run's output, not the evidence the block was based on.
+    out="$(bash "$REPO_ROOT/scripts/check-doc-commit-citations.sh" 2>&1)" || rc=$?
     if [ "$rc" -eq 2 ]; then
       echo "pre-push-gate: doc-citation gate could not evaluate — NOT a pass." >&2
+      print_cause "doc-citation gate (could not evaluate)" "$out"
       exit 2
     fi
     [ "$rc" -eq 0 ] || {
       echo "pre-push-gate: BLOCKED by the doc-citation gate (exit $rc) — a doc cites a commit that no longer exists." >&2
-      bash "$REPO_ROOT/scripts/check-doc-commit-citations.sh" >&2
+      print_cause "doc-citation gate" "$out"
       exit "$rc"
     }
   else
@@ -173,14 +212,15 @@ else
     # with the correct exit code but WITHOUT the diagnostic below ever printing.
     # Measured, not theorised: the first version of this stage blocked silently.
     rc=0
-    python3 "$REPO_ROOT/scripts/absence-claim-guard.py" >/dev/null || rc=$?
+    out="$(python3 "$REPO_ROOT/scripts/absence-claim-guard.py" 2>&1)" || rc=$?
     if [ "$rc" -eq 2 ]; then
       echo "pre-push-gate: absence-claim guard could not evaluate — NOT a pass." >&2
+      print_cause "absence-claim guard (could not evaluate)" "$out"
       exit 2
     fi
     [ "$rc" -eq 0 ] || {
       echo "pre-push-gate: BLOCKED by the absence-claim guard (exit $rc)." >&2
-      python3 "$REPO_ROOT/scripts/absence-claim-guard.py" >&2
+      print_cause "absence-claim guard" "$out"
       exit "$rc"
     }
   else
@@ -206,10 +246,19 @@ else
   if [ -x "$REPO_ROOT/scripts/test-all.sh" ]; then
     echo "pre-push-gate: stage 7/9 nested modules (root + arenas/ + examples/ + bench/) — slow ..."
     rc=0
-    bash "$REPO_ROOT/scripts/test-all.sh" --quick >/dev/null 2>&1 || rc=$?
+    # THE STAGE THIS FILE'S CAUSE-PRINTING CONTRACT WAS WRITTEN FOR. test-all.sh
+    # names the failing module and its verdict; `>/dev/null 2>&1` deleted both,
+    # and the gate then asked the developer to spend MINUTES reproducing an
+    # answer it had already had. Captured (not streamed) so a passing run stays
+    # silent, and printed only when this lane blocks.
+    #
+    # exit 2 is test-all.sh's usage error, not a failing module — no special
+    # branch decides that here, because the cause block now says which it is
+    # instead of leaving the reader to infer it from a bare number.
+    out="$(bash "$REPO_ROOT/scripts/test-all.sh" --quick 2>&1)" || rc=$?
     [ "$rc" -eq 0 ] || {
       echo "pre-push-gate: BLOCKED by the nested-module lane (exit $rc)." >&2
-      echo "pre-push-gate: re-run to see which module: scripts/test-all.sh --quick" >&2
+      print_cause "test-all.sh --quick" "$out"
       exit "$rc"
     }
   else
@@ -239,14 +288,15 @@ else
   if [ -f "$REPO_ROOT/scripts/gap-claims-guard.sh" ]; then
     echo "pre-push-gate: stage 8/9 capability-claims drift ..."
     rc=0
-    bash "$REPO_ROOT/scripts/gap-claims-guard.sh" >/dev/null 2>&1 || rc=$?
+    out="$(bash "$REPO_ROOT/scripts/gap-claims-guard.sh" 2>&1)" || rc=$?
     if [ "$rc" -eq 2 ]; then
       echo "pre-push-gate: capability-claims guard could not evaluate — NOT a pass." >&2
+      print_cause "capability-claims guard (could not evaluate)" "$out"
       exit 2
     fi
     [ "$rc" -eq 0 ] || {
       echo "pre-push-gate: BLOCKED by the capability-claims guard (exit $rc) — a doc claim no longer matches the code." >&2
-      bash "$REPO_ROOT/scripts/gap-claims-guard.sh" >&2
+      print_cause "capability-claims guard" "$out"
       exit "$rc"
     }
   else
@@ -268,14 +318,15 @@ else
   if [ -x "$REPO_ROOT/scripts/coauthor-trailer-guard.sh" ]; then
     echo "pre-push-gate: stage 9/9 co-authorship trailers ..."
     rc=0
-    bash "$REPO_ROOT/scripts/coauthor-trailer-guard.sh" >/dev/null 2>&1 || rc=$?
+    out="$(bash "$REPO_ROOT/scripts/coauthor-trailer-guard.sh" 2>&1)" || rc=$?
     if [ "$rc" -eq 2 ]; then
       echo "pre-push-gate: co-authorship guard could not evaluate — NOT a pass." >&2
+      print_cause "co-authorship guard (could not evaluate)" "$out"
       exit 2
     fi
     [ "$rc" -eq 0 ] || {
       echo "pre-push-gate: BLOCKED — a commit carries a co-authorship trailer." >&2
-      bash "$REPO_ROOT/scripts/coauthor-trailer-guard.sh" >&2
+      print_cause "co-authorship guard" "$out"
       exit "$rc"
     }
   else
