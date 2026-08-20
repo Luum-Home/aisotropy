@@ -47,6 +47,40 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null)" || {
 # cheap green reached by false positive rather than by deliberate loosening.
 KEY_PATTERN='^[[:space:]]*co[-_ ]?authored[-_ ]?by[[:space:]]*:|noreply@anthropic\.com'
 
+# THE STRUCTURAL RULE — the second question, and the reason this guard is more
+# than a pattern match hoping to be exhaustive.
+#
+# A commit carries exactly two identities in its HEADERS: author and committer. A
+# co-authorship trailer adds a THIRD, down in the trailer block. So alongside
+# "does a trailer use a spelling I thought of?", ask "does any trailer carry an
+# identity at all?" — a question no re-spelling of the key can dodge, because the
+# extra identity is the entire point of the trailer. `Assisted-by: X <y@z>` walks
+# straight past KEY_PATTERN and not past this.
+#
+# NOTE THIS ASKS THE TRAILER BLOCK, NOT THE COMMIT HEADERS. The previous version
+# of this rule counted `^(author|committer) .*<...@...>` lines in `git cat-file
+# commit` output and called any count but 2 an anomaly — and that check could
+# never fire. Those two headers are the only lines in a commit object beginning
+# with `author `/`committer `, so the count is 2 for every commit that has ever
+# existed; `Co-authored-by:` lives in the MESSAGE and is not counted. Control,
+# on a real commit that does carry the trailer:
+#
+#     $ git -C external/voicebox cat-file commit c323fa72 \
+#         | grep -cE '^(author|committer) .*<[^>]+@[^>]+>'
+#     2
+#
+# Two, not three. Its alarm was wired to nothing, and the comment above it sold
+# it as the STRONGER of the two defenses — a suppressor suppressing nothing,
+# handing out a feeling of coverage where there was none.
+#
+# SCOPE, because this edge is real: the rule flags ANY identity-bearing trailer,
+# so a DCO `Signed-off-by:` would trip it. Measured 2026-08-20 across 617 commit
+# objects: zero identity-bearing trailers, the only keys in use being
+# Verified/Verify/Ref/Docs/Remaining, none of which carry an address. There is
+# deliberately no allowlist — adopting sign-off is a policy change that belongs
+# written down here, not absorbed by a hole opened in advance for it.
+IDENTITY_TRAILER='^[[:space:]]*[A-Za-z][A-Za-z0-9-]*[[:space:]]*:.*<[^>]+@[^>]+>'
+
 commits=$(git cat-file --batch-all-objects --batch-check='%(objecttype) %(objectname)' --unordered 2>/dev/null \
           | awk '$1=="commit"{print $2}')
 if [ -z "$commits" ]; then
@@ -54,50 +88,58 @@ if [ -z "$commits" ]; then
 fi
 total=$(printf '%s\n' "$commits" | wc -l | tr -d ' ')
 
-# SELF-TEST before trusting a zero. A search that cannot find anything is
-# indistinguishable from a repository that contains nothing, and the second is the
-# answer we are hoping for — which is exactly when a broken search goes unnoticed.
-# "Signed-off-by" is not expected here, so the canary is a string we KNOW exists:
-# every commit has an author line.
-canary=$(printf '%s\n' "$commits" | head -1 | xargs -I{} git cat-file commit {} 2>/dev/null | grep -ci '^author ')
-if [ "${canary:-0}" -lt 1 ]; then
-  echo "coauthor-guard: self-test failed — cannot read commit bodies, so a clean result would be meaningless" >&2
-  exit 2
-fi
-
+# ONE PASS, and both questions are put to the same mechanism: git's own parse of
+# the trailer block. That is deliberate — the canary below then covers the exact
+# expansion the verdict rests on. (The self-test this replaces grepped `^author `
+# out of `git cat-file`, which after this change decides nothing at all.)
 hits=0
+with_trailers=0
 while read -r sha; do
   [ -z "$sha" ] && continue
-  # Ask git for the parsed trailer block, then look for co-authorship keys in it.
   trailers=$(git log -1 --format='%(trailers:only,valueonly=false)' "$sha" 2>/dev/null)
-  if printf '%s\n' "$trailers" | grep -qiE "$KEY_PATTERN"; then
+
+  # SELF-TEST, part 1 — a git too old to know this placeholder hands it back
+  # verbatim instead of failing. Every commit would then look trailer-free and
+  # this script would certify a history it never read.
+  case "$trailers" in
+    *'%(trailers'*)
+      echo "coauthor-guard: self-test failed — this git did not expand %(trailers), so a clean result would be meaningless" >&2
+      exit 2 ;;
+  esac
+
+  case "$trailers" in
+    *[![:space:]]*) with_trailers=$((with_trailers + 1)) ;;
+  esac
+
+  key_hit=$(printf '%s\n' "$trailers" | grep -iE "$KEY_PATTERN")
+  id_hit=$(printf '%s\n' "$trailers" | grep -E "$IDENTITY_TRAILER")
+  if [ -n "$key_hit$id_hit" ]; then
     hits=$((hits + 1))
     echo "FOUND $sha  $(git log -1 --format='%ad %an  %s' --date=short "$sha" 2>/dev/null)"
-    printf '%s\n' "$trailers" | grep -iE "$KEY_PATTERN" | sed 's/^/        /'
+    { [ -n "$key_hit" ] && printf '%s\n' "$key_hit"
+      [ -n "$id_hit" ]  && printf '%s\n' "$id_hit"
+      true; } | sort -u | sed 's/^/        /'
+    if [ -z "$key_hit" ]; then
+      echo "        ^ no known co-authorship spelling — caught by the identity-trailer rule alone"
+    fi
   fi
 done <<< "$commits"
 
-# STRUCTURAL INVARIANT — stronger than the grep above, and the reason this guard
-# is not just a pattern match hoping to be exhaustive.
+# SELF-TEST, part 2 — the canary on the mechanism that decides the verdict.
 #
-# Every commit carries exactly two identity lines: author and committer. A
-# co-authorship trailer adds a THIRD identity to the body. So instead of asking
-# "does any commit contain a string I thought to look for?", ask "does any commit
-# carry more identities than a commit structurally has?" — a question no
-# obfuscation of the trailer's spelling can dodge, because the extra identity is
-# the point of the trailer.
-#
-# Measured 2026-08-19: the histogram over 611 commits was {2: 611}, no exceptions,
-# with a single identity across all 1222 author/committer lines.
-angles=$(printf '%s\n' "$commits" | while read -r sha; do
-  [ -z "$sha" ] && continue
-  git cat-file commit "$sha" 2>/dev/null | grep -cE '^(author|committer) .*<[^>]+@[^>]+>'
-done | sort -u | tr '\n' ' ')
-if [ -n "$angles" ] && [ "$(printf '%s' "$angles" | tr -d ' ')" != "2" ]; then
-  echo "coauthor-guard: STRUCTURAL ANOMALY — commits carry these identity-line counts: $angles (expected exactly 2)" >&2
-  hits=$((hits + 1))
+# Everything above rests on %(trailers). Had that expansion come back empty for
+# every commit, the loop would have found nothing and this script would print a
+# confident zero. "This history carries no trailers" and "the parse I depend on
+# returned nothing" arrive as the same silence, and only one of them means clean:
+# absence has many causes, presence has one. So refuse to certify a history in
+# which git reported no trailer of ANY kind — say "cannot evaluate" out loud
+# rather than let absence of evidence be read as evidence of absence.
+if [ "$with_trailers" -eq 0 ]; then
+  echo "coauthor-guard: self-test failed — %(trailers) returned nothing for all $total commit object(s)" >&2
+  echo "  Cannot tell a history with no trailers at all from a trailer parse that is not working." >&2
+  exit 2
 fi
 
-echo "coauthor-guard: scanned $total commit object(s) (reachable + unreachable), $hits with a co-authorship trailer"
+echo "coauthor-guard: scanned $total commit object(s) (reachable + unreachable), $with_trailers carrying a trailer block, $hits with a co-authorship trailer"
 [ "$hits" -eq 0 ] || exit 1
 exit 0
