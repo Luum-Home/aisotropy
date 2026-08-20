@@ -120,6 +120,18 @@ count_text_lines() {
   printf '%s\n' "$count"
 }
 
+# `grep -c` prints a count AND exits 1 on no-match, so the once-used idiom
+# `grep -c ... || printf '0'` appended a SECOND value: the caller received the
+# two-line string "0\n0" and its `[ ... -ge 1 ]` died with "integer expected",
+# which the shell then read as a definite "false". A test that cannot evaluate
+# must not be mistaken for a test that answered no. This helper prints exactly
+# one integer, and -1 when the file is unreadable — because a missing file is
+# "not evaluated", not "zero matches".
+count_hits() {
+  [ -f "$2" ] || { printf '%s' -1; return 0; }
+  grep -cF -- "$1" "$2" 2>/dev/null || true
+}
+
 print_first_lines() {
   printf '%s\n' "$1" | sed -n "1,${2}p"
   print_status=$?
@@ -501,17 +513,23 @@ working_suite=$(grep -cF 'func RunWorkingBackendSuite' internal/plugintest/worki
 # Wiring is what would actually close this: WorkingMemory built on the seam, and
 # a networked driver implementing it. Neither exists yet, and the audit must not
 # infer them from the seam's presence.
-working_wired=$(grep -cF 'backend WorkingBackend' internal/memory/working_memory.go 2>/dev/null || printf '0')
+working_wired=$(count_hits 'backend WorkingBackend' internal/memory/working_memory.go)
 if [ "$working_seam" -ge 1 ] && [ "$working_sealed" -ge 1 ] && [ "$working_suite" -ge 1 ]
 then
   info "WORKING_TIER_SEAM the tenant-unaware WorkingBackend interface, its sealed decorator and a conformance suite exist (ADR-0081)"
   info "WORKING_TIER_SEAM_LIMIT the suite cannot prove crash-atomicity of AppendMessageWithEvent — no black-box suite can kill a process mid-commit; that guarantee stays the implementer's obligation"
-  working_driver=$(grep -cF 'var _ WorkingBackend = (*BadgerWorkingBackend)(nil)' internal/memory/backend_badger.go 2>/dev/null || printf '0')
-  if [ "$working_driver" -ge 1 ]
+  working_driver=$(count_hits 'var _ WorkingBackend = (*BadgerWorkingBackend)(nil)' internal/memory/backend_badger.go)
+  if [ "$working_driver" -lt 0 ]
+  then
+    review "WORKING_TIER_DRIVER_UNKNOWN internal/memory/backend_badger.go is unreadable — the driver question was NOT evaluated, which is not evidence that no driver exists"
+  elif [ "$working_driver" -ge 1 ]
   then
     info "WORKING_TIER_DRIVER an EMBEDDED driver (BadgerWorkingBackend) implements the seam and passes the same conformance suite; its transaction atomicity is separately tested in-package"
   fi
-  if [ "$working_wired" -ge 1 ]
+  if [ "$working_wired" -lt 0 ]
+  then
+    review "SHARED_WORKING_MEMORY_UNKNOWN internal/memory/working_memory.go is unreadable — the wiring question was NOT evaluated; absence of an answer is not an answer of absence"
+  elif [ "$working_wired" -ge 1 ]
   then
     review "SHARED_WORKING_MEMORY_WIRED WorkingMemory appears to be built on the seam; verify which backend the composition root selects"
   else
