@@ -404,6 +404,58 @@ func (rt *appRuntime) close(ctx context.Context) {
 	rt.closeOnce.Do(func() { rt.closeFn(ctx) })
 }
 
+// launchWorkerOn returns the launcher startRuntime uses for EVERY background
+// worker: it tracks the goroutine on wg (so closeFn's join can wait for it) and
+// contains the one panic teardown is allowed to produce.
+//
+// That panic is the far side of the bounded join. waitWorkers deliberately gives
+// up after its deadline and closes the stores anyway — a stuck worker must not
+// hang the process — and a worker still inside a BadgerDB read when its store
+// closes does not receive an error, it PANICS: badger's Txn.NewIterator panics
+// with ErrDBClosed, and db.View's own IsClosed() check cannot prevent it because
+// Close can land between that check and the iterator. Unrecovered in a goroutine
+// a panic takes the whole process down, so a shutdown that chose "close anyway"
+// finished by crashing on its own choice — the operator sees `panic: DB Closed`
+// where the design says best-effort teardown.
+//
+// The GATE is the substance here, not the recover. A panic is absorbed only once
+// workerCtx is cancelled, i.e. only after stopWorker() — during teardown, the one
+// window where the store closing underneath a worker is expected. A worker that
+// panics while workerCtx is still live is a real bug in a running system: it is
+// re-panicked untouched, so this never degrades into a blanket swallow that hides
+// defects. Nothing about the shutdown sequence changes — same stop, same bounded
+// join, same best-effort close; only its failure mode stops being a crash.
+//
+// Extracted from startRuntime (the same reason clientSupportsToolCalling is) so
+// the gate is unit-testable without booting a runtime and racing a real Close.
+func launchWorkerOn(workerCtx context.Context, wg *sync.WaitGroup) func(func()) {
+	return func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				r := recover()
+				if r == nil {
+					return
+				}
+				if !workerPanicIsTeardownRace(workerCtx) {
+					panic(r)
+				}
+				slog.Error("background worker panicked during teardown: the bounded join expired and its store closed underneath it; shutdown continues", "panic", r)
+			}()
+			fn()
+		}()
+	}
+}
+
+// workerPanicIsTeardownRace reports whether a recovered worker panic happened
+// after the workers were told to stop. Only then is it attributable to the
+// bounded join expiring and the stores closing best-effort; before that, a panic
+// is a bug and must stay fatal.
+func workerPanicIsTeardownRace(workerCtx context.Context) bool {
+	return workerCtx.Err() != nil
+}
+
 // waitWorkers blocks until every worker tracked by wg has returned, or until ctx
 // is done — whichever comes first. It is how closeFn joins the background workers
 // after cancelling their context but before closing the stores they touch, so a
@@ -598,15 +650,10 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	// workerWG tracks every background worker started on workerCtx so closeFn can
 	// WAIT for them to observe stopWorker() and exit BEFORE closing the stores they
 	// read/write. Without this join a worker mid-operation races Close and panics
-	// ("DB Closed"): launchWorker wraps each goroutine to signal Done on return.
+	// ("DB Closed"): launchWorkerOn wraps each goroutine to signal Done on return,
+	// and contains that panic for the case the join is bounded out (see its doc).
 	var workerWG sync.WaitGroup
-	launchWorker := func(fn func()) {
-		workerWG.Add(1)
-		go func() {
-			defer workerWG.Done()
-			fn()
-		}()
-	}
+	launchWorker := launchWorkerOn(workerCtx, &workerWG)
 	if n, rerr := wm.RecoverOutbox(ctx, sink); rerr != nil {
 		slog.Error("cold-boot outbox reconciliation failed", "err", rerr)
 	} else if n > 0 {
@@ -883,9 +930,33 @@ func (a *App) startRuntime(ctx context.Context) (*appRuntime, error) {
 	costMeter, err := costmeter.NewPersistent(ctx, wm.NewKV(costTotalsKeyPrefix), 0)
 	if err != nil {
 		// The only failure mode is a durable store that cannot be READ, and
-		// booting past it would silently zero every tenant's spend. Stop the
-		// workers already launched above before giving up on the runtime.
+		// booting past it would silently zero every tenant's spend. Give up on
+		// the runtime — but tear the half-built one down the way closeFn does
+		// first: stop the workers, JOIN them, then close everything this
+		// constructor already opened.
+		//
+		// Stopping the workers without closing the stores is what made a failed
+		// boot poison the NEXT one: with AISOTROPY_DATA_DIR set, working memory
+		// is an on-disk BadgerDB, and BadgerDB holds a directory lock for as
+		// long as it is open. The boot failed, the operator started again, and
+		// the second start could not acquire the lock on its own database.
+		//
+		// The join is bounded on teardownTimeout rather than on ctx (which the
+		// caller may already have cancelled) so a stuck worker degrades this to
+		// best-effort instead of hanging a boot that has already failed — the
+		// same bound, and the same reasoning, as Run's teardown phase.
 		stopWorker()
+		teardownCtx, cancelTeardown := context.WithTimeout(context.Background(), teardownTimeout) //nolint:contextcheck // ctx may already be cancelled; the failed boot's teardown deliberately gets its own fresh, bounded deadline, exactly as Run's does
+		defer cancelTeardown()
+		waitWorkers(teardownCtx, &workerWG)
+		closeMCP()
+		_ = wm.Close()
+		_ = factsStore.Close()
+		_ = semanticStore.Close()
+		if bitrateStore != nil {
+			_ = bitrateStore.Close()
+		}
+		_ = shutdownTracing(teardownCtx)
 		return nil, fmt.Errorf("cost meter: %w", err)
 	}
 	if costMeter.Durable() {
