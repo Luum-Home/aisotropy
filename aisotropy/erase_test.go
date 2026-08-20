@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Luum-Home/aisotropy/internal/facts"
@@ -241,6 +242,24 @@ func TestEraseSubject_SemanticEraseScopeErrorSurfaces(t *testing.T) {
 // working-memory EraseSubject-error branch: closing the working-memory store
 // before the call makes wm.EraseSubject fail (DB closed), which EraseSubject
 // must surface wrapped rather than silently reporting a zero count.
+//
+// The close below is the one call site in the package that reaches rt.wm.Close
+// directly instead of going through rt.closeFn, so it skips the stop-workers +
+// join that teardown does and pulls the store out from under a LIVE
+// consolidation worker. That used to make this test fail for a reason unrelated
+// to anything it asserts: the worker's next drain landed inside badger's
+// close window, where NewIterator answers with panic("DB Closed") instead of an
+// error, and an unrecovered panic in a goroutine takes the whole test binary
+// down — every package in the run reported FAIL. Measured on this test before
+// the fix: 4 of 60 fresh processes.
+//
+// It stays written this way on purpose. The runtime exposes no way to stop the
+// consolidation worker without tearing down every store, and this branch needs
+// the facts and semantic tiers still open to be reached at all. What changed is
+// the other side: the drain now answers a store that closes underneath it with
+// an error and the worker stops (internal/memory/outbox.go,
+// viewTolerantOfClose). So this test is also the integration witness that the
+// close-during-drain window no longer kills the process.
 func TestEraseSubject_WorkingMemoryEraseErrorSurfaces(t *testing.T) {
 	app := New(WithLLM(fastStub()), WithRateLimit(1e9, 1e9))
 	defer closeApp(t, app)()
@@ -253,7 +272,15 @@ func TestEraseSubject_WorkingMemoryEraseErrorSurfaces(t *testing.T) {
 		t.Fatalf("wm.Close: %v", err)
 	}
 
-	if _, err := app.EraseSubject(context.Background(), "acme", "alice"); err == nil {
+	_, err = app.EraseSubject(context.Background(), "acme", "alice")
+	if err == nil {
 		t.Fatal("EraseSubject must surface a working-memory erase error")
+	}
+	// Pin WHICH branch failed. EraseSubject walks facts, then semantic, then
+	// working memory, and a bare err != nil is satisfied by any of the three —
+	// so without this the test would keep passing while covering a tier it is
+	// not named for.
+	if !strings.Contains(err.Error(), "erase working memory for subject") {
+		t.Fatalf("EraseSubject error = %v, want the working-memory branch", err)
 	}
 }

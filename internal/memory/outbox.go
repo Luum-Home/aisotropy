@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -214,6 +215,17 @@ func (w *WorkingMemory) RunOutboxWorker(ctx context.Context, sink ConsolidationS
 			return
 		}
 		processed, err := w.drainOutboxOnce(ctx, sink)
+		if errors.Is(err, badger.ErrDBClosed) {
+			// Terminal, not transient: a closed BadgerDB handle never reopens, so
+			// backing off and retrying it is unbounded work that can never
+			// converge. Logged at WARN rather than returned silently — the normal
+			// way here is teardown cancelling ctx BEFORE the store closes (see
+			// this method's contract), so arriving by this door means the store
+			// went away underneath a worker that was never told to stop, and that
+			// is worth seeing in the log.
+			slog.Warn("outbox worker stopping: working-memory store closed underneath it", "err", err)
+			return
+		}
 
 		var wait time.Duration
 		switch {
@@ -239,6 +251,44 @@ func (w *WorkingMemory) RunOutboxWorker(ctx context.Context, sink ConsolidationS
 	}
 }
 
+// viewTolerantOfClose runs fn inside a read-only BadgerDB transaction, turning
+// the one panic badger raises on a store that closes mid-read into an ordinary
+// error.
+//
+// The inconsistency it removes: db.View checks IsClosed() and RETURNS
+// ErrDBClosed when the store is already gone, so "the store is closed" is an
+// error the drain loop already knows how to handle. But Close can land after
+// that check and before txn.NewIterator, and NewIterator answers the very same
+// condition with panic(ErrDBClosed) (badger v4 iterator.go). One logical
+// situation, two outcomes decided by nanoseconds: a recoverable error, or an
+// unrecovered panic that takes the process down. Narrowing that window would
+// only make the crash rarer and machine-dependent; this closes it by giving the
+// two paths the same answer.
+//
+// It is not a hypothetical window. Teardown cancels the worker context and then
+// joins the workers on a BOUNDED wait, deliberately closing the stores anyway so
+// a stuck worker cannot hang shutdown (aisotropy/app.go). A drain still in
+// flight when that deadline expires meets exactly this race, by design.
+//
+// The recover is deliberately narrow. Only badger.ErrDBClosed is converted;
+// every other panic value — badger's ErrDiscardedTxn, a nil dereference, any bug
+// inside fn — is re-panicked untouched, so this never becomes a blanket swallow
+// that hides defects.
+func (w *WorkingMemory) viewTolerantOfClose(fn func(*badger.Txn) error) (err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		rerr, ok := r.(error)
+		if !ok || !errors.Is(rerr, badger.ErrDBClosed) {
+			panic(r)
+		}
+		err = fmt.Errorf("memory: working-memory store closed during outbox read: %w", badger.ErrDBClosed)
+	}()
+	return w.db.View(fn)
+}
+
 // drainOutboxOnce processes every currently-pending event once: consolidate via
 // sink, and delete the key only on success. An event whose sink call fails is
 // left in place for a later attempt (at-least-once). Returns how many were
@@ -249,7 +299,7 @@ func (w *WorkingMemory) drainOutboxOnce(ctx context.Context, sink ConsolidationS
 		event OutboxEvent
 	}
 	var pend []pending
-	err := w.db.View(func(txn *badger.Txn) error {
+	err := w.viewTolerantOfClose(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		prefix := []byte(outboxPrefix)
