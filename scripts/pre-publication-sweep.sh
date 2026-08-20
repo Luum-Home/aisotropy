@@ -60,6 +60,7 @@ done
 git rev-parse --git-dir >/dev/null 2>&1 || { echo "not a git repository" >&2; exit 2; }
 
 findings=0
+cannot_evaluate=0
 report() { printf '  %-14s %-36s %s\n' "$1" "$2" "$3"; }
 
 # ACCEPTED — specific matched CONTENT known to be harmless, each with its reason.
@@ -78,21 +79,50 @@ accepted_filter() {   # stdin: matching lines -> stdout: lines NOT accepted
   eval "$f"
 }
 
-# hist <pattern> — commits that ever ADDED OR REMOVED the pattern, anywhere in history
+# hist <pattern> — commits that ever ADDED OR REMOVED the pattern, anywhere in history.
+# `git log -G` is not grep-family: it exits 0 whether or not it finds a commit, so a
+# non-zero exit here means the command itself did not run (bad pattern, corrupt repo,
+# ...) — never "found nothing". Thanks to `set -o pipefail` above, that exit status
+# survives through the trailing `| wc -l | tr -d ' '` and becomes this function's own.
 hist() { git log --all --oneline -G"$1" -- . "${EXCLUDE[@]}" 2>/dev/null | wc -l | tr -d ' '; }
-# head_ <pattern> — files matching now, including files not yet committed
-head_() { git grep --untracked -lIE "$1" -- . "${EXCLUDE[@]}" 2>/dev/null | wc -l | tr -d ' '; }
+# head_ <pattern> — files matching now, including files not yet committed.
+# `git grep -l` IS grep-family: 0 = matched, 1 = ran fine and matched nothing (not a
+# failure), 2+ = a real error (bad pattern, unreadable path, ...). Only 2+ means the
+# probe did not run — see the rc handling in check() below.
+# `-e "$1"` (not a bare "$1") because a pattern that itself starts with "-" (the PEM
+# check below: '-----BEGIN ...') is otherwise misparsed by git-grep as another option
+# instead of the search pattern — which used to fail exactly the way an unreadable
+# license file used to in scripts/license-audit.sh: silently, as "0 matches".
+head_() { git grep --untracked -lIE -e "$1" -- . "${EXCLUDE[@]}" 2>/dev/null | wc -l | tr -d ' '; }
 
 check() { # label pattern [note]
-  local h t live
-  h=$(hist "$2"); t=$(head_ "$2")
+  local h t live h_rc t_rc live_raw live_rc
+  h=$(hist "$2"); h_rc=$?
+  t=$(head_ "$2"); t_rc=$?
+  # A probe that did not run must never be read as "found nothing" — collapsing the
+  # two is exactly the false-clean-bill-of-health class this script's own header (§1-4)
+  # exists to catch, applied to itself. See .claude/rules/absence-has-many-causes.md.
+  if [ "$h_rc" -ne 0 ] || [ "$t_rc" -gt 1 ]; then
+    report "COULD_NOT_EVAL" "$1" "git log rc=$h_rc git grep rc=$t_rc — probe did not run, NOT the same as 0 matches"
+    cannot_evaluate=$((cannot_evaluate + 1))
+    return
+  fi
   if [ "$h" = "0" ] && [ "$t" = "0" ]; then
     report "clean" "$1" ""; return
   fi
   # Something matched. Count only the occurrences that are NOT on the ACCEPTED
   # list, so a documented false positive stops crying wolf without blinding the
-  # check to a new, undocumented one.
-  live=$(git grep --untracked -hIE "$2" -- . "${EXCLUDE[@]}" 2>/dev/null | accepted_filter | grep -c . )
+  # check to a new, undocumented one. Same rc discipline as above: this is a second,
+  # independent git grep call, and a broken run of IT must not silently read as
+  # "everything matched was accepted" (live=0 by virtue of empty input, not review).
+  live_raw="$(git grep --untracked -hIE -e "$2" -- . "${EXCLUDE[@]}" 2>&1)"
+  live_rc=$?
+  if [ "$live_rc" -gt 1 ]; then
+    report "COULD_NOT_EVAL" "$1" "git grep (detail pass) rc=$live_rc — could not classify the $t match(es) against ACCEPTED"
+    cannot_evaluate=$((cannot_evaluate + 1))
+    return
+  fi
+  live=$(printf '%s\n' "$live_raw" | accepted_filter | grep -c . )
   if [ "${live:-0}" = "0" ] && [ "$t" != "0" ]; then
     report "accepted" "$1" "all $t occurrence(s) on the ACCEPTED list"; return
   fi
@@ -170,6 +200,14 @@ else
 fi
 
 echo
+if [ "$cannot_evaluate" -gt 0 ]; then
+  echo "VERDICT: COULD NOT EVALUATE — $cannot_evaluate probe(s) did not run (see the"
+  echo "  COULD_NOT_EVAL line(s) above). Per the header contract this is exit 2, and an"
+  echo "  exit-2 run is NEVER a pass: a broken probe reads identically to '0 matches' on"
+  echo "  its own output, so nothing above it can be trusted as clean — fix the probe"
+  echo "  (or the git state it depends on) and re-run before treating this as done."
+  exit 2
+fi
 if [ "$findings" -eq 0 ] && [ "$SKIP_NAMES" -eq 0 ]; then
   echo "VERDICT: clean against the patterns checked."
   echo "That is not the same as 'safe to publish'. A sweep certifies its own list"
