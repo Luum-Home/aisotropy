@@ -1,19 +1,16 @@
 # ─────────────────────────────────────────────────────────────────────────
-# the agent tooling — tooling dev-time (FSL-1.1-MIT), NO forma parte del producto.
-# Aisotropy es un producto soberano MIT/Apache-2.0: mantenemos el tooling FSL
-# fuera de la historia de git. COS sigue funcionando localmente (los hooks se
-# leen del disco); solo no se trackea. Cada dev lo instala con install.sh.
+# Config de agente: local del operador, nunca del producto.
+# .claude/ (reglas del proyecto, CLAUDE.md, hooks, settings.json) y su
+# proyección .codex/ son la configuración con la que cada dev corre sus
+# agentes: cambia por máquina, por arnés y por preferencia, y no describe el
+# runtime que se publica. Se queda afuera de la historia de git.
+# Los hooks propios SÍ viajan, por el patrón del ADR-0043: el artefacto
+# revisable es scripts/agent-hook-block-destructive-bash.sh más el instalador
+# scripts/install-hooks.sh, que lo symlinkea en .claude/hooks/ y .codex/hooks/.
+# Por eso .codex/ sigue ignorado aunque hoy no exista en el checkout: el
+# instalador lo vuelve a crear en cada clon.
 # ─────────────────────────────────────────────────────────────────────────
-.agent-tooling/
 .claude/
-agent-tooling.yaml
-# Proyecciones del mismo contenido para otros arneses (Codex, agentes genéricos).
-# Se generan por find/replace desde .claude/ — p. ej. .codex/hooks/*.sh es
-# byte-idéntico a su gemelo en .claude/hooks/, y .agents/skills/*/SKILL.md solo
-# cambia "claude-code"→"Codex". Si el canónico no se trackea, la proyección
-# tampoco: de lo contrario el repo público publicaría por la puerta de atrás la
-# config de agentes que el resto del repo deliberadamente no publica.
-.agents/
 .codex/
 
 # ── Go (producto) ──
@@ -102,15 +99,7 @@ examples/graphbot/graphbot
 /load
 /rag-quality
 /wasm-vs-docker
-.agent-tooling/*
 .claude/settings.local.json
-.agent-tooling/sessions/
-.agent-tooling/metrics/
-.agent-tooling/tasks/
-.agent-tooling/checkpoints/
-.agent-tooling/dynamic-tools/
-.agent-tooling/rate-limit-state.json
-.agent-tooling/install-meta.json
 
 # ── Arena runtime state (never commit) ──
 arenas/live/*/.aisotropy-data

@@ -17,7 +17,6 @@ bench/
 
 # Editor/OS cruft and local tooling config
 .claude/
-.agent-tooling/
 .vscode/
 .idea/
 .DS_Store
@@ -45,10 +44,9 @@ Dockerfile
 # Sibling Go modules and per-language playgrounds. None of them is imported by
 # the aisotropyd binary (each arena adapter and example is its OWN module), yet
 # together they dominate the context: arenas/ ~3.8 GB (node_modules, venvs,
-# per-adapter builds), examples/ ~2.6 GB (each example's own compiled binary),
-# .agent-tooling/ ~8.1 GB (agent checkpoints). Excluding them changes nothing
-# about what the image contains — the builder compiles ./cmd/aisotropyd from
-# the root module only.
+# per-adapter builds) and examples/ ~2.6 GB (each example's own compiled
+# binary). Excluding them changes nothing about what the image contains — the
+# builder compiles ./cmd/aisotropyd from the root module only.
 arenas/
 examples/
 test/

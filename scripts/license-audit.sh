@@ -166,7 +166,6 @@ else
   GO_MOD_DIRS="$(find . -name go.mod \
     -not -path '*/node_modules/*' \
     -not -path '*/.claude/worktrees/*' \
-    -not -path '*/.agent-tooling/checkpoints/*' \
     -not -path '*/.venv/*' \
     | sed 's#^\./##' | sort)"
 fi
@@ -299,7 +298,7 @@ is_allowlisted_image() {
 
 compose_files="$(find . -maxdepth 4 -iname 'docker-compose*.yml' \
   -not -path '*/node_modules/*' -not -path '*/.claude/worktrees/*' \
-  -not -path '*/.agent-tooling/checkpoints/*' -not -path '*/.venv/*' | sort)"
+  -not -path '*/.venv/*' | sort)"
 
 n_images=0
 n_images_ok=0
