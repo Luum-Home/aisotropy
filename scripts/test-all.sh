@@ -54,6 +54,33 @@ skip()  { SKIPPED+=("$1"); printf '   \033[33mSKIP\033[0m     %s\n' "$1"; }
 
 hdr() { printf '\n%s\n' "$1"; }
 
+# print_cause <label> <captured-output>
+# A stage that DECIDES pass/fail owes the reason, not just the verdict.
+# `>/dev/null 2>&1` — what layer 3's no-tests branch used to do — keeps the
+# exit code and throws away the sentence that would tell a reader whether the
+# module's own code is broken, a generated artifact is missing, or the
+# toolchain choked: the exact failure class in
+# .claude/rules/absence-has-many-causes.md ("does not build" collapses
+# refused/timed-out/unauthorized/wrong into one silent red). This also
+# replaces the has-tests branch's shared /tmp/test-all-nested.log: that file
+# was reused (first `>`, then `>>`) across every module in the loop, so a
+# later module's run silently overwrote an earlier module's failure log
+# before anyone could read it — a bug in this script, not only in the branch
+# that dropped the cause outright. Printing inline (the pattern
+# scripts/supply-chain-guard.sh already uses, see commit 0806c51) avoids both
+# the overwrite and any risk of two concurrent worktree runs colliding on the
+# same /tmp path.
+print_cause() {
+  local label="$1" out="$2"
+  echo "       --- ${label}: cause ---"
+  if [[ -z "${out}" ]]; then
+    echo "         (the command failed and printed nothing — no diagnostic available)"
+  else
+    printf '%s\n' "${out}" | sed 's/^/         /'
+  fi
+  echo "       --- end ${label} ---"
+}
+
 echo "==================================================================="
 echo " test-all: every lane this repository owns"
 echo "==================================================================="
@@ -114,21 +141,26 @@ while IFS= read -r mod; do
   NESTED=$((NESTED + 1))
   name="${mod#./}"
   if find "${mod}" -name '*_test.go' -not -path '*/node_modules/*' 2>/dev/null | grep -q .; then
-    if (cd "${mod}" && go test ./... -count=1) >"/tmp/test-all-nested.log" 2>&1; then
+    if out=$( (cd "${mod}" && go test ./... -count=1) 2>&1 ); then
       pass "${name}  (tests)"
-    elif (cd "${mod}" && go test -tags keybroker ./... -count=1) >>"/tmp/test-all-nested.log" 2>&1; then
+    elif out_kb=$( (cd "${mod}" && go test -tags keybroker ./... -count=1) 2>&1 ); then
       pass "${name}  (tests, -tags keybroker)"
     else
-      fail "${name}  — see /tmp/test-all-nested.log"
+      fail "${name}  — does not pass its own tests"
+      print_cause "${name} (go test ./...)" "${out}"
+      print_cause "${name} (go test -tags keybroker ./...)" "${out_kb}"
     fi
   else
     # No tests is not a failure, but it IS worth saying: a module that only
     # builds is covered against rot, not against defects.
-    if (cd "${mod}" && go build ./...) >/dev/null 2>&1 ||
-       (cd "${mod}" && go build -tags keybroker ./...) >/dev/null 2>&1; then
+    if out=$( (cd "${mod}" && go build ./...) 2>&1 ); then
+      pass "${name}  (builds; no tests of its own)"
+    elif out_kb=$( (cd "${mod}" && go build -tags keybroker ./...) 2>&1 ); then
       pass "${name}  (builds; no tests of its own)"
     else
       fail "${name}  — does not build"
+      print_cause "${name} (go build ./...)" "${out}"
+      print_cause "${name} (go build -tags keybroker ./...)" "${out_kb}"
     fi
   fi
 done < <(find . -name go.mod -maxdepth 4 -not -path './external/*' -not -path '*/node_modules/*' \
