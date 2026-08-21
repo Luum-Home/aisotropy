@@ -271,7 +271,7 @@ fi
 # docs/architecture/capabilities-and-gaps.md FROM THE CODE and fails when the
 # document disagrees. The registry (manifests/capability-claims.yaml) is tracked,
 # so this works in any clone — which matters, because the rule files under
-# .claude/rules/ and .agent-tooling/rules/ are NOT tracked and do not travel.
+# .claude/rules/ are NOT tracked and do not travel.
 #
 # Like stages 6 and 7 before today, this guard already existed and nothing ran
 # it. It was written after two build dispatches were burned on work that already

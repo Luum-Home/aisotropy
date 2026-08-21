@@ -3,15 +3,16 @@
 #
 # CANONICAL COPY. The runtime location an agent harness reads is
 # .claude/hooks/block-destructive-bash.sh (and its .codex/ projection), and
-# .claude/ is gitignored (.gitignore:8) so nothing under it travels with a
+# .claude/ is gitignored (.gitignore:13) so nothing under it travels with a
 # clone. Same shape as the git hooks: per ADR-0043 the committed, reviewable
 # artifact is this script plus scripts/install-hooks.sh, which symlinks it into
 # the untracked runtime location. Edit THIS file; never the symlink.
 #
 # Wiring the harness to call it is a separate, manual step -- the installer
-# prints the settings.json snippet rather than editing that file, because the
-# live .claude/settings.json also registers 37 the agent tooling hooks that this
-# repo deliberately does not track.
+# prints the settings.json snippet rather than editing that file. settings.json
+# is the operator's own local agent config: untracked, hand-maintained, and
+# specific to the machine and harness it runs on. An installer has no business
+# rewriting a file the repo neither tracks nor owns.
 #
 # Denies a destructive Bash command whose target resolves OUTSIDE the repo and
 # outside the session/system temp. Motivated by a sub-agent that ran

@@ -19,11 +19,12 @@
 #                            targeting a path outside the repo and outside /tmp)
 #
 # AGENT HOOKS vs GIT HOOKS: both runtime locations are untracked (.git/hooks/ is
-# never tracked; .claude/ and .codex/ are gitignored at .gitignore:8,17), so the
+# never tracked; .claude/ and .codex/ are gitignored at .gitignore:13,14), so the
 # same rule applies — the committed artifact is the script plus this installer.
 # The agent hook additionally needs a settings.json entry to be CALLED; this
-# installer prints that snippet instead of editing settings.json, because the
-# live file also registers the agent tooling hooks the repo deliberately does not track.
+# installer prints that snippet instead of editing settings.json, because that
+# file is the operator's own local agent config — untracked, hand-maintained,
+# machine- and harness-specific — and not this installer's to rewrite.
 #
 # The hook is a symlink to the repo script, so re-running this installer is
 # idempotent and the hook always reflects the committed script. An existing,
