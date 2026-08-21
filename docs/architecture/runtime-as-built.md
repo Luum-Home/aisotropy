@@ -501,7 +501,7 @@ threaded through the handlers:
   The embedder is BYO: `HashEmbedder` by default
   (wires but does not rank semantically), a real `APIEmbedder` when `AISOTROPY_EMBED_URL` is set.
 - **Both chat routes consolidate; only `chat/agent` does not.** `chat/stream` and `chat` both call
-  `AppendWithOutbox` (the non-streaming route since commit `37c2a4e`), so both feed the outbox →
+  `AppendWithOutbox` (the non-streaming route since commit `77670ac`), so both feed the outbox →
   facts/semantic pipeline. `chat/agent` is the only route that neither hydrates nor consolidates
   memory. (Historical note: non-streaming `chat` previously used plain `wm.Append` and never
   consolidated — that gap is now closed.)

@@ -28,7 +28,7 @@ snapshot — "every row verified against the code, not aspirational". On 2026-07
 exactly what it looks built for: **dispatching build work**. That is where it failed.
 
 The first item dispatched off it — "close the config gap: no single runtime config file, env-only" —
-had **already shipped ten days earlier**, on the doc's own timestamp date (`feef436`, ADR-0040). The
+had **already shipped ten days earlier**, on the doc's own timestamp date (`68d06bf`, ADR-0040). The
 agent would have rebuilt an existing feature and allocated a duplicate ADR. That prompted a
 read-only re-verification of all 12 dispatched claims against the code rather than against the
 document's own assertion. Result:
@@ -41,7 +41,7 @@ document's own assertion. Result:
 | partially stale | 3 (benchmark executed; bitrate crate; sleep-cycle crate) |
 | half stale | 1 (routing seam "not adopted" — a stale copy of the line the `internal/routing` prune incident already killed) |
 | still true | 7 |
-| **dispatches burned rebuilding existing work** | **2** (runtime config file `feef436`; Helm chart `852e91e`) |
+| **dispatches burned rebuilding existing work** | **2** (runtime config file `68d06bf`; Helm chart `54859f8`) |
 
 Two of the five described work that landed **before the document's own timestamp**. One SDD change
 (`arena-benchmark-execution`) rested on a premise that was simply false — the cross-framework

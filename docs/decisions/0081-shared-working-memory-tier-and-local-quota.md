@@ -52,7 +52,7 @@ sized on.
 
 Every piece of control state in aisotropyd lives in the process that serves the request. Working
 memory is an embedded BadgerDB; the quota token bucket lives in the same store; the cost meter was a
-map in RAM until [`09606b1`](../../). The consequences are documented in the
+map in RAM until [`1ce0195`](../../). The consequences are documented in the
 [threat model](../architecture/threat-model.md)'s gap ledger and the [runbook](../deployment/runbook.md):
 N replicas give a tenant roughly N times its rate, a session landing on the wrong replica finds no
 history, and — with persistence enabled — the second replica does not start at all, because BadgerDB
@@ -67,7 +67,7 @@ reads of 1.7 µs (`Summary`) and 20 µs (`Recent`) — three orders of magnitude
 alongside. The stale line lived in an agent-facing rule file that said hydration was still
 sequential, and because every agent in this repo loads those rules at startup, the wrong premise
 propagated into the estimate. That is the second-order lesson and it is recorded in
-[`b49f150`](../../).
+[`5c5716b`](../../).
 
 ## The measurements
 
@@ -102,7 +102,7 @@ request, including the ones it is about to reject. Spending 8 ms — p95 29 ms �
 inverts the purpose of a pre-spend gate, and the
 [constitutional gate](../architecture/constitutional-gates.md) it implements is specifically "reject
 or degrade *before* spending". The fleet honours its configured rate by division instead:
-`NewLimiterForReplicas` ([`09606b1`](../../)) divides rate and burst by the declared replica count.
+`NewLimiterForReplicas` ([`1ce0195`](../../)) divides rate and burst by the declared replica count.
 That is less precise on burst and correct on sustained rate.
 
 Two opus agents reviewing this independently reached opposite recommendations — one proposed rqlite
@@ -176,11 +176,11 @@ that weakens it breaks a property the port depends on.
 
 Multi-replica deployment stops being blocked on an unknown and becomes bounded work with two written
 constraints. The quota half already shipped. The session-continuity half is mitigated today by
-ingress affinity ([`508d19f`](../../)), with its own honest limit: nginx's `upstream-hash-by` cannot
+ingress affinity ([`e2d97c0`](../../)), with its own honest limit: nginx's `upstream-hash-by` cannot
 isolate the tenant/user path segment, so the real granularity is *(URI, user)* — a conversation
 mixing `/chat` and `/chat/stream` lands on two replicas, and the OpenAI-compat route carries no path
 identity at all.
 
 What does not change: with working memory shared, `EraseSubject` still erases only the replica that
-serves it. That receipt now says so ([`09606b1`](../../)) rather than overstating its reach, and a
+serves it. That receipt now says so ([`1ce0195`](../../)) rather than overstating its reach, and a
 shared tier is what would let it stop being true.

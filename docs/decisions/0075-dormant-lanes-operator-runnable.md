@@ -39,7 +39,7 @@ The framing this work was dispatched under — "the dormant lanes have no worker
 [`gap-claims-verification-2026-07-27.md`](../06-Daily/reports/gap-claims-verification-2026-07-27.md)
 (claims 3, 4, 5) established why before a line was written:
 
-- `crates/sleep-cycle` has been tracked since `859f47f` (2026-07-09) and `crates/bitrate-scorer`
+- `crates/sleep-cycle` has been tracked since `9dece77` (2026-07-09) and `crates/bitrate-scorer`
   since `d5307d1` (2026-07-10). Both have Rust-side unit tests.
 - Both Go↔worker subprocess contracts are **fully unit-tested** with executable stubs — argv, NDJSON,
   exit codes, retry/backoff, ctx-cancel — and both packages were green at verification time

@@ -8,7 +8,7 @@ timestamp: 2026-08-21T00:00:00Z
 
 # Why one agent hook travels with the repo and the rest of `.claude/` does not
 
-**Base commit:** `8de9ae1`. **Method:** read-only inspection of the main checkout, analysis
+**Base commit:** `1ec089c`. **Method:** read-only inspection of the main checkout, analysis
 and changes in an isolated worktree. No builds or test suites were run (machine was at
 `resource-guard.sh` rc=1 DEGRADED, ~114 MB free).
 
@@ -138,7 +138,7 @@ document containing them as literal text is itself blocked when written from a s
 URL**. It ships with every pattern commented out and returns before reading stdin; its own
 header calls the patterns placeholders to "fill in … then wire this into settings.json … if
 desired." Neither was ever done. It is protection that exists only as a filename — the same
-failure `8de9ae1` fixed elsewhere in this repo.
+failure `1ec089c` fixed elsewhere in this repo.
 
 ### 1.3 The known false positive, now pinned to a precise shape
 
@@ -288,7 +288,7 @@ ran. What I *can* state from evidence is that the repo contributed zero protecti
 and that the protection that exists on this machine works.
 
 The risk is therefore narrow but real, and it is the same shape as the `calc.wasm` fix in
-`0806c51`: **a protection that exists only on the machine where it already was.** The severity
+`350a837`: **a protection that exists only on the machine where it already was.** The severity
 is bounded by the harness's default prompting; it is unbounded in bypass mode.
 
 ---
@@ -305,7 +305,7 @@ Rationale, against the alternatives:
 |---|---|
 | `!.claude/hooks/` negation in `.gitignore` | **Rejected.** Re-opens a directory that is deliberately excluded as local agent config, and invites the next file dropped in `.claude/hooks/` to be published by default. |
 | Version `.claude/settings.json` too | **Rejected.** It is hand-maintained, machine- and harness-specific local config; committing it publishes one operator's setup as if it were the repo's, and its entries reference paths that need not exist in any other clone. |
-| Version `block-prod-urls.sh` | **Rejected.** It is inert (rc=0 on a production URL) and wired to nothing. Committing a no-op guard manufactures the illusion of coverage — the failure this repo just fixed in `8de9ae1`. Fill in its patterns and wire it, or delete it; do not version it as-is. |
+| Version `block-prod-urls.sh` | **Rejected.** It is inert (rc=0 on a production URL) and wired to nothing. Committing a no-op guard manufactures the illusion of coverage — the failure this repo just fixed in `1ec089c`. Fill in its patterns and wire it, or delete it; do not version it as-is. |
 | **Canonical script in `scripts/`, installer symlinks it in** | **Adopted.** Matches ADR-0043 exactly, leaves the `.claude/` exclusion intact, and makes the reviewable artifact travel. |
 
 ### 5.2 What was changed
@@ -384,4 +384,4 @@ grep -rl --no-ignore-files 'block-destructive-bash' .  # finds it
 - `scripts/install-hooks.sh`, `scripts/agent-hook-block-destructive-bash.sh`
 - `.gitignore:1-14` (why `.claude/` and `.codex/` are excluded as local agent config)
 - `docs/architecture/prune-evidence-gate.md` — "a green from a tool that could not run its checks is not evidence of absence", the rule §0.2 re-learned the hard way
-- `8de9ae1` — the guard that declared its blind spot where only its author would read it
+- `1ec089c` — the guard that declared its blind spot where only its author would read it

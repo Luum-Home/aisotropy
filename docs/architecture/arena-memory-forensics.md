@@ -201,9 +201,9 @@ func (s *RqliteStore) migrate(ctx context.Context) error {
 `execToleratingDupColumn` (`internal/facts/rqlite.go:75-88`) runs each statement as its own request
 and tolerates a duplicate-column error at both the request and per-statement level — this is exactly
 the "mirror the SQLite tier's per-statement tolerance" fix `rqlite_reset.go`'s comment says still
-"belongs in `internal/facts/rqlite.go`." Git history shows why the comment is stale: commit `12071b9`
+"belongs in `internal/facts/rqlite.go`." Git history shows why the comment is stale: commit `6065bbc`
 ("fix(facts): idempotent rqlite migration — re-boot no longer fails on ALTER ADD COLUMN", 2026-07-17
-20:18:14) landed the fix; `rqlite_reset.go` was created 57 minutes later in commit `c241e0f`
+20:18:14) landed the fix; `rqlite_reset.go` was created 57 minutes later in commit `ae6d8a1`
 (2026-07-17 21:15:47) with a comment describing a bug that, in this same repository, had already been
 fixed. This does not change the empty-facts-tier finding — `resetRqliteFacts()` still runs
 unconditionally regardless of whether the underlying bug exists — but it is a live instance of
@@ -346,7 +346,7 @@ difference" that is actually an adapter bug misdirects a benchmark reader (§8).
 |---|---|---|
 | Canned assistant turns silently dropped, producing the refusal cascade | `arena/live/aisotropy/main.go:365-372` `userMessages`; `mode_memory.go:29` | `ChatInput.Prompt` (`aisotropy/turn.go:28-54`) has no history slot — this is the correct adapter behavior for aisotropy's real contract (§3.2), not a bug the adapter could avoid while staying honest to the product's actual API |
 | Facts tier forcibly emptied every boot | `arenas/live/aisotropy/rqlite_reset.go:39-69`; called unconditionally at `main.go:327` | Exists only because the arena runs many process boots against one shared rqlite; a long-lived aisotropy service boots once |
-| `resetRqliteFacts`'s justifying comment is stale (the underlying `rqlite.go` bug it cites was already fixed before the workaround file was written) | `rqlite_reset.go:1-9` vs `internal/facts/rqlite.go:61-88`; commit `12071b9` predates `c241e0f` | A documentation defect in a harness file, not a functional one — the workaround still runs, harmlessly |
+| `resetRqliteFacts`'s justifying comment is stale (the underlying `rqlite.go` bug it cites was already fixed before the workaround file was written) | `rqlite_reset.go:1-9` vs `internal/facts/rqlite.go:61-88`; commit `6065bbc` predates `ae6d8a1` | A documentation defect in a harness file, not a functional one — the workaround still runs, harmlessly |
 | No history-length cap between arena re-runs sharing one `AISOTROPY_DATA_DIR` | `arenas/live/aisotropy/run.sh:42` | pydantic-ai's adapter (`arena/live/pydantic-ai/adapter.py:322-408`) has this exact problem and fixed it in the adapter; aisotropy's adapter has not — this is a harness gap that COULD be fixed adapter-side without touching `internal/` |
 | Extra billable calls from the reflection loop and the summarizer LLM call inflate the "cost" comparison against frameworks that make one bare call per turn | `internal/api/chat.go:48`, `internal/api/core.go:54,112`; `aisotropy/app.go:1679-1693`; `internal/memory/summarizer.go:124-159` | These are real product behaviors (fail-closed reflection, LLM condensation), but the arena's token-spend table compares them against competitors that do neither — an apples-to-oranges cost comparison the harness does not caveat |
 
@@ -505,7 +505,7 @@ equivalent to any of the three.
    under test (§3.2) and needs an explicit decision, not a silent adapter change, since it currently
    reflects a real and defensible reading of aisotropy's contract.
 6. **(harness, low risk, doc-only)** Correct `rqlite_reset.go:1-9`'s stale justification comment
-   (§3.3) — the workaround can stay, but the comment currently asserts a bug that commit `12071b9`
+   (§3.3) — the workaround can stay, but the comment currently asserts a bug that commit `6065bbc`
    already fixed.
 7. **(investigation, before any of the above is prioritized further)** Run an A/B with
    `AISOTROPY_GUARDRAILS_BLOCK_INJECTION` and the untrusted-context notice

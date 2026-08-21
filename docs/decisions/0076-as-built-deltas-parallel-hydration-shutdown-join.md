@@ -227,7 +227,7 @@ Before this work it reported `14 ok / 2 drifted`; after, `16 ok / 0 drifted`. **
 four deltas are ours** (`hydration-parallel` inverted, `reflection-loop-nonstreaming-only` unchanged
 and still green). The two DRIFTED rows — `crossframework-benchmark-executed` and
 `docker-footprint-benchmark-executed`, both arena-documentation drift, not runtime claims — were red
-before this work started and were fixed **by a concurrent session** (`6d4ceb5`, `46f7344`, `c5e0954`)
+before this work started and were fixed **by a concurrent session** (`9d0d03f`, `d2c70d7`, `ceea3b8`)
 while it was in progress. They are credited here so the green verdict is not silently attributed to
 this ADR. The
 hydration benchmark measures a machine under concurrent load, so the absolute ns/op figures are
