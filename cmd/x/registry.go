@@ -243,7 +243,7 @@ var registry = []Task{
 	{
 		Key:         "check",
 		Title:       "check",
-		Description: "build, fmt, vet, test, example in sequence — the quality gates from agent-tooling.yaml plus the adoption-surface example",
+		Description: "build, fmt, vet, test, example in sequence — the local quality gate: the root module compiles, is gofmt-clean, vets and tests green, and the adoption-surface examples still build",
 		Category:    categoryQualityGate,
 		Steps:       []string{keyBuild, keyFmt, keyVet, keyTest, keyExample},
 	},
