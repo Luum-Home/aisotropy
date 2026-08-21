@@ -178,6 +178,35 @@ Re-open (amend this ADR or write a new one) if **any** fire:
   (Option B) may need to happen sooner than trigger #1 strictly requires; this ADR errs toward
   waiting for a concrete requester.
 
+## Addendum — 2026-08-21: revisit trigger #4 fired; the redundancy argument no longer holds
+
+**Nothing in the decision above is rewritten.** This records a change of state in the repo that
+invalidates one of the reasons the decision rested on.
+
+Option B ("adopt OpenSpec in-repo as the dev-time SDD workflow") was rejected *for now* on the
+grounds that **the repo already had two overlapping spec-driven mechanisms**, so an `openspec/`
+tree would be a redundant third. That is no longer the state of the repo. The harness-side `sdd-*`
+skills cited here — in §"Why this is the load-bearing observation", in Option B, and in Decision
+point 2 — **are no longer present**. The remaining in-repo spec-driven mechanism is the
+`docs/decisions/` ADR log alone (this file is one of its entries).
+
+Revisit trigger #4 read: *"If the harness tooling migrates to OpenSpec as its SDD substrate, the
+in-repo redundancy argument (Option B) dissolves and adoption becomes free."* What happened is
+adjacent and stronger — the tooling was not migrated, it was removed — so the trigger's
+**condition** (the second mechanism stops existing) is met by a route the trigger did not name.
+
+What this does and does not settle:
+
+- **Dissolved:** the "third, parallel tree" objection. Adopting a dev-time SDD workflow today would
+  make a *second* mechanism next to the ADR log, not a third.
+- **Unchanged:** the product/import-surface half of the decision (Decision point 1). An OpenSpec
+  artifact still maps to no aisotropy primitive that ADR-0018's generic knowledge path does not
+  already cover. No `internal/openspec` package is warranted by this addendum.
+- **Unchanged:** revisit trigger #1 has not fired — no concrete external requester has appeared.
+- **Open, and deliberately not decided here:** with one mechanism left, whether the repo wants a
+  dev-time SDD substrate at all, and if so which one. That is an operator call and needs its own
+  record; this addendum only reports that the ground the old answer stood on moved.
+
 ## References
 
 - [openspec.dev](https://openspec.dev/) · [Fission-AI/OpenSpec (GitHub, MIT)](https://github.com/Fission-AI/OpenSpec) · [core concepts / spec format](https://openspec.dev/docs/core-concepts) — the researched primary sources.

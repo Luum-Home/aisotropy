@@ -44,13 +44,19 @@ Verified live on the origin day: the guard correctly reported `BLOCKED (saturate
 ## What already existed, and why this is a different layer
 
 Per the dependency-reuse-first discipline, the pre-existing surface was inventoried before this
-shipped. The the agent tooling `resource-governor` skill and the `resource-governance` /
-`workload-scheduling` rules are the **token-economy layer**: LLM budget percentages, model
-routing/downgrade chains, agent slot scheduling — they read cost metrics and optimize *spend*.
-None of them measures **host resources** (swap/RAM/load) before shell-level heavy work. This pair
-fills exactly that gap and only that gap: it is ADDITIVE to the governance layer, not a
-reimplementation of it. The two compose: the governor decides *what work is worth doing*; this
-guard decides *whether the machine can do it right now*.
+shipped. What existed then was harness-side governance tooling operating on the **token-economy
+layer**: LLM budget percentages, model routing/downgrade chains, agent slot scheduling — it read
+cost metrics and optimized *spend*. None of it measured **host resources** (swap/RAM/load) before
+shell-level heavy work. This pair fills exactly that gap and only that gap: it was ADDITIVE to the
+governance layer, not a reimplementation of it. The two composed: governance decided *what work is
+worth doing*; this guard decides *whether the machine can do it right now*.
+
+> **Note (2026-08-21).** The harness-side governance tooling this inventory compared against is no
+> longer present in the repo. The inventory is kept as written because it is the *evidence for why
+> this guard was built* — it records that the gap was checked before code was written, which is what
+> dependency-reuse-first requires. What changed is only the other half of the comparison: nothing in
+> the repo now optimizes agent spend, so this guard no longer composes with anything — it stands
+> alone as the host-resource check.
 
 ## Integrations
 
