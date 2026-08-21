@@ -103,6 +103,33 @@ hist() { git log --all --oneline -G"$1" -- . "${EXCLUDE[@]}" 2>/dev/null | wc -l
 # license file used to in scripts/license-audit.sh: silently, as "0 matches".
 head_() { git grep --untracked -lIE -e "$1" -- . "${EXCLUDE[@]}" 2>/dev/null | wc -l | tr -d ' '; }
 
+# ── The \b trap: why no pattern below uses \b ─────────────────────────────────
+# \b DOES NOT WORK in either engine check() drives, and it fails in the worst
+# way available: silently, as a permanent "clean".
+#
+# Measured on git 2.50.1 (Apple Git-155), against a repo holding "alpha cat omega"
+# in one commit and "alpha abcat omega" in another:
+#
+#   git grep -lIE '\bcat'                  -> matches ONLY "abcat"  (== pattern 'bcat')
+#   git log --all -G '\bcat'               -> matches ONLY "abcat"  (== pattern 'bcat')
+#   both engines, '(^|[^A-Za-z0-9_])cat'   -> matches ONLY " cat "  (correct)
+#
+# So \b does not merely fail to anchor. The backslash is dropped and \b decays to
+# a LITERAL 'b' — strictly WORSE than omitting it, because it then REQUIRES a
+# stray 'b' exactly where the token must begin or end, which no real credential
+# has. Every check spelled '\bPREFIX…\b' consequently matched nothing, ever, in
+# either engine, and reported "clean" for it: no error, no COULD_NOT_EVAL, just a
+# green line meaning "I looked" when nothing had been looked for. That is trap §1-4
+# of this header turned inward on the checks themselves. All seven \b checks were
+# confirmed to miss their own canonical positive fixture before this was fixed.
+#
+# WBL/WBR are the portable substitute, verified in BOTH engines. One deliberate
+# difference from a true \b: they CONSUME the boundary character rather than
+# asserting it zero-width. That can only merge two matches sharing one separator
+# on the same line — check() counts matching LINES and commits, so it cannot care.
+WBL='(^|[^A-Za-z0-9_])'
+WBR='([^A-Za-z0-9_]|$)'
+
 check() { # label pattern [note]
   local h t live h_rc t_rc live_raw live_rc
   h=$(hist "$2"); h_rc=$?
@@ -149,29 +176,27 @@ echo "=== B. Credentials ==="
 # carry obviously-fake fixtures. Those are the feature, not a leak. They are
 # reported so a human classifies them; they are not auto-suppressed, because an
 # allowlist that hides a real key is worse than a gate that cries wolf.
-check "AWS key id"       '\bAKIA[0-9A-Z]{16}\b'   "check: redactor regex vs literal"
-check "GitHub PAT"       '\bghp_[A-Za-z0-9]{36}\b' "check: redactor regex vs literal"
-check "Slack token"      '\bxox[baprs]-[A-Za-z0-9-]{10,}'
-check "Google API key"   '\bAIza[0-9A-Za-z_-]{35}\b'
+check "AWS key id"       "${WBL}AKIA[0-9A-Z]{16}${WBR}"   "check: redactor regex vs literal"
+check "GitHub PAT"       "${WBL}ghp_[A-Za-z0-9]{36}${WBR}" "check: redactor regex vs literal"
+check "Slack token"      "${WBL}xox[baprs]-[A-Za-z0-9-]{10,}"
+check "Google API key"   "${WBL}AIza[0-9A-Za-z_-]{35}${WBR}"
 check "Anthropic key"    'sk-ant-[A-Za-z0-9_-]{50,}'
-check "OpenAI key"       '\bsk-[A-Za-z0-9]{40,}\b'
+check "OpenAI key"       "${WBL}sk-[A-Za-z0-9]{40,}${WBR}"
 check "PEM private key"  '-----BEGIN [A-Z ]*PRIVATE KEY-----'
-check "JWT (3 segments)" '\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.'
+check "JWT (3 segments)" "${WBL}eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\."
 
 echo
 echo "=== C. Personal data ==="
 check "AR phone"         '\+54[ -]?9?[ -]?[0-9]{2,4}[ -]?[0-9]{4}'
-check "IBAN-ish"         '\b[A-Z]{2}[0-9]{2}[A-Z0-9]{12,}\b'
-# Not \b: on this git build \b does not anchor as a word boundary in EITHER engine
-# check() drives it through — `git grep -E` silently reads it as a literal 'b' (proven:
-# '\bcat' matches "abcat" under -E), and `git log -G`'s default engine matches it to
-# nothing at all (proven: '\bthe\b' finds 0 commits against a 589-hit 'the' substring
-# baseline). Either way \b would make this check "run" (no crash) while never actually
-# firing — the same false-clean-bill-of-health class as this file's other traps, just
-# without an error to notice. (^|[^0-9]) / ([^0-9]|$) is the portable substitute:
-# verified to reproduce true word-boundary behavior in BOTH engines (the same swap
-# recovers 587/589 of the 'the' whole-word hits) and to correctly reject longer digit
-# runs (SHAs, checksums) that merely contain a 13/16-digit substring.
+check "IBAN-ish"         "${WBL}[A-Z]{2}[0-9]{2}[A-Z0-9]{12,}${WBR}"
+# Digit boundaries, not WBL/WBR, and not \b. See "The \b trap" above for why \b is
+# absent everywhere in this file; the correction to that note is that `git log -G`
+# does not match \b to "nothing at all" — it decays it to a literal 'b' exactly as
+# `git grep -E` does, which is why '\bthe\b' scored 0 (it was searching for "btheb").
+# This check uses [^0-9] rather than WBL/WBR's [^A-Za-z0-9_] deliberately: a letter
+# MUST count as a boundary here, so that a card-shaped digit run is still found when
+# it abuts a letter, while a longer digit run (a SHA, a checksum, a timestamp) that
+# merely CONTAINS 13 or 16 digits is correctly rejected.
 check "credit-card-ish"  '(^|[^0-9])(4[0-9]{12}|5[1-5][0-9]{14})([^0-9]|$)'
 
 echo
