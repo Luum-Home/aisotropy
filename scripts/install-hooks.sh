@@ -13,6 +13,17 @@
 #   .git/hooks/pre-commit -> scripts/license-gate-precommit.sh (symlink; conditional
 #                            license gate — runs license-audit.sh --root-only ONLY when
 #                            the staged changes touch a dependency/image manifest)
+#   .claude/hooks/ + .codex/hooks/block-destructive-bash.sh
+#                         -> scripts/agent-hook-block-destructive-bash.sh (symlink;
+#                            PreToolUse guard that denies a destructive Bash command
+#                            targeting a path outside the repo and outside /tmp)
+#
+# AGENT HOOKS vs GIT HOOKS: both runtime locations are untracked (.git/hooks/ is
+# never tracked; .claude/ and .codex/ are gitignored at .gitignore:8,17), so the
+# same rule applies — the committed artifact is the script plus this installer.
+# The agent hook additionally needs a settings.json entry to be CALLED; this
+# installer prints that snippet instead of editing settings.json, because the
+# live file also registers the agent tooling hooks the repo deliberately does not track.
 #
 # The hook is a symlink to the repo script, so re-running this installer is
 # idempotent and the hook always reflects the committed script. An existing,
@@ -60,4 +71,54 @@ install_hook pre-push   "$REPO_ROOT/scripts/pre-push-gate.sh" \
   "SKIP_SUPPLY_CHAIN_GUARD=1 / SKIP_OWASP_SCAN=1 git push … or git push --no-verify"
 install_hook pre-commit "$REPO_ROOT/scripts/license-gate-precommit.sh" \
   "SKIP_LICENSE_AUDIT=1 git commit … or git commit --no-verify"
+
+# --- agent (harness) hooks -------------------------------------------------
+# install_agent_hook <harness-dir> <hook-basename> <target-script>
+# Same symlink discipline as install_hook, but the runtime dir is a gitignored
+# harness directory rather than .git/hooks. Missing dirs are created; an
+# existing regular file is backed up rather than clobbered.
+install_agent_hook() {
+  hdir="$1"; hook_name="$2"; gate="$3"
+  [ -f "$gate" ] || { echo "missing $gate" >&2; exit 2; }
+  chmod +x "$gate" 2>/dev/null || true
+  mkdir -p "$REPO_ROOT/$hdir"
+  link="$REPO_ROOT/$hdir/$hook_name"
+
+  if [ -L "$link" ] && [ "$(readlink "$link")" = "$gate" ]; then
+    echo "install-hooks: $hdir/$hook_name already points at ${gate#"$REPO_ROOT/"} — nothing to do."
+    return 0
+  fi
+  if [ -e "$link" ] && [ ! -L "$link" ]; then
+    backup="$link.bak.$(date +%Y%m%d%H%M%S)"
+    mv "$link" "$backup"
+    echo "install-hooks: existing $hdir/$hook_name backed up to $backup"
+  fi
+  ln -sf "$gate" "$link"
+  echo "install-hooks: installed $hdir/$hook_name -> ${gate#"$REPO_ROOT/"}"
+}
+
+AGENT_GATE="$REPO_ROOT/scripts/agent-hook-block-destructive-bash.sh"
+for hdir in .claude/hooks .codex/hooks; do
+  install_agent_hook "$hdir" block-destructive-bash.sh "$AGENT_GATE"
+done
+
+# The symlink alone does nothing until the harness is told to call it. Print the
+# wiring rather than editing settings.json (see header).
+if [ -f "$REPO_ROOT/.claude/settings.json" ] \
+   && grep -q 'block-destructive-bash' "$REPO_ROOT/.claude/settings.json" 2>/dev/null; then
+  echo "install-hooks: .claude/settings.json already wires block-destructive-bash.sh."
+else
+  cat <<'WIRING'
+install-hooks: NOT WIRED — the agent hook is installed but nothing calls it yet.
+               Add this entry under "hooks" > "PreToolUse" in .claude/settings.json:
+
+  { "matcher": "Bash",
+    "hooks": [ { "type": "command",
+                 "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/block-destructive-bash.sh\"" } ] }
+
+               Verify afterwards with:
+                 printf '{"tool_input":{"command":"rm -rf ~/.goenv"}}' \
+                   | bash scripts/agent-hook-block-destructive-bash.sh; echo "rc=$? (expect 2)"
+WIRING
+fi
 exit 0
