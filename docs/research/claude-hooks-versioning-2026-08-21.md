@@ -1,21 +1,29 @@
 ---
 type: research
-title: "Agent hooks under .claude/ — should they be versioned?"
-description: Investigation into whether the agent-governing hooks under .claude/hooks/ should travel with the repo. Finds that 37 of 38 registered hooks are the agent tooling tooling that .gitignore excludes for a stated LICENSE reason, that exactly one hook is project-authored and genuinely protective, and that one is inert. Recommends versioning that single hook via the ADR-0043 installer pattern, and explicitly recommends against un-ignoring .claude/.
+title: "Why one agent hook travels with the repo and the rest of .claude/ does not"
+description: Investigation into whether the agent-governing hooks under .claude/ should travel with the repo. Finds exactly one project-authored hook that is genuinely protective and measurably works, one that is inert and wired to nothing, and no tracked substitute for either. Recommends versioning that single hook through the ADR-0043 installer pattern and explicitly recommends against un-ignoring .claude/, which is the operator's local agent config. Also records two method corrections, the load-bearing one being a sweep that reported clean fourteen times without opening a file.
 tags: [research, hooks, agents, gitignore, supply-chain, adr-0043, tooling]
 timestamp: 2026-08-21T00:00:00Z
 ---
 
-# Agent hooks under `.claude/` — should they be versioned?
+# Why one agent hook travels with the repo and the rest of `.claude/` does not
 
 **Base commit:** `8de9ae1`. **Method:** read-only inspection of the main checkout, analysis
 and changes in an isolated worktree. No builds or test suites were run (machine was at
 `resource-guard.sh` rc=1 DEGRADED, ~114 MB free).
 
+**Scope note (same day, later).** This report originally surveyed the whole of `.claude/`, most
+of which was third-party agent tooling that is no longer part of the repo's picture. It was
+trimmed to what it still has to support: the evidence for why
+`scripts/agent-hook-block-destructive-bash.sh` exists and is tracked. Findings were removed, not
+rewritten; the numbers that remain were re-derived against the tree of 2026-08-21 unless marked
+otherwise.
+
 **Verdict, up front:** version **one** file — `block-destructive-bash.sh` — through the
 installer pattern the repo already uses for git hooks (ADR-0043). Do **not** un-ignore
-`.claude/`, and do **not** version `block-prod-urls.sh` or `settings.json`. The reasons are
-below, each with the command that produced it.
+`.claude/`: it is the operator's local agent config, not a repo artifact. Do **not** version
+`block-prod-urls.sh` or `settings.json`. The reasons are below, each with the command that
+produced it.
 
 ---
 
@@ -24,54 +32,42 @@ below, each with the command that produced it.
 Both were handed to me as fact. Both are wrong, and the second one nearly produced a false
 "all clean" in the section that matters most.
 
-### 0.1 An automatic note described a different project's mechanism
+### 0.1 An automatic guidance note described a mechanism this repo does not have
 
-A hook-injected "KNOWN TRAPS" note asserted that `.claude/settings.json` is *generated* here,
-that the canonical hook registry is `agent-tooling.yaml > harness.hooks`, and that the fix is
-`bash scripts/apply-efficiency-profile.sh standard`.
+A note injected into the session asserted that `.claude/settings.json` is *generated* here, that
+a canonical registry file holds the hook inventory, and that the fix is to re-run a
+profile-applying script. None of those existed:
 
 ```bash
-for f in scripts/_lib/settings-driver-claude-code.sh scripts/apply-efficiency-profile.sh \
-         agent-tooling.yaml .claude/settings.json; do
-  [ -e "$f" ] && printf 'EXISTS %-52s tracked=%s\n' "$f" \
-      "$(git ls-files --error-unmatch "$f" >/dev/null 2>&1 && echo 1 || echo 0)" \
-    || printf 'ABSENT %-52s\n' "$f"
+for f in scripts/_lib/settings-driver-claude-code.sh scripts/apply-efficiency-profile.sh; do
+  [ -e "$f" ] && echo "EXISTS $f" || echo "ABSENT $f"
 done
-grep -n -E '^\s*harness:' agent-tooling.yaml || echo "(no 'harness:' key)"
+git ls-files .claude | wc -l
 ```
 
 ```
 ABSENT scripts/_lib/settings-driver-claude-code.sh
 ABSENT scripts/apply-efficiency-profile.sh
-EXISTS agent-tooling.yaml                          tracked=0
-EXISTS .claude/settings.json                      tracked=0
-(no 'harness:' key)
+0
 ```
 
-Neither script exists; `agent-tooling.yaml` has no `harness:` section. **Treated as refuted.**
-The consequence that *is* load-bearing: `.claude/settings.json` is hand-maintained and
-untracked, so the whole chain — the wiring *and* the hooks it points at — exists only on the
-operator's disk.
+**Treated as refuted.** The consequence that *is* load-bearing: `.claude/settings.json` is
+hand-maintained and untracked, so the whole chain — the wiring *and* the hooks it points at —
+exists only on the operator's disk.
 
-### 0.2 `grep -r` in this repo silently skips the directory under investigation
+The general lesson: an automatic note is a hypothesis about the repo, not a fact about it, and
+it costs one command to check.
 
-`grep` here is not the system binary. It is a shell function the harness installs:
+### 0.2 A sweep printed `clean` fourteen times without opening a file
+
+`grep` in this session is not the system binary. It is a shell function that execs `ugrep` with
+`--ignore-files`, which means **recursive greps honour `.gitignore`** — and `.gitignore:13` is
+`.claude/`. So a repo-root sweep reports nothing for the exact files being audited:
 
 ```bash
-declare -f grep | grep -o -- '--ignore-files'
-```
-
-```
---ignore-files
-```
-
-It execs `ugrep` with `--ignore-files` unconditionally, which means **recursive greps honour
-`.gitignore`** — and `.gitignore:8` is `.claude/`. So a repo-root sweep reports nothing for the
-exact files being audited:
-
-```bash
+declare -f grep | grep -o -- '--ignore-files'          # → --ignore-files
 grep -rl 'block-destructive-bash' .                    # → (nothing)
-grep -rl --no-ignore-files 'block-destructive-bash' .  # → .claude/hooks/... , .claude/settings.json
+grep -rl --no-ignore-files 'block-destructive-bash' .  # → .claude/hooks/… , .claude/settings.json
 ```
 
 This is not academic. My first sensitive-data sweep printed `clean` for all 14 patterns. A
@@ -84,155 +80,139 @@ wc -c .claude/hooks/block-destructive-bash.sh   # → open: No such file or dire
 The sweep had been passed a relative path from the wrong working directory and **never opened
 the files**. Fourteen lines of `clean` meant "I did not look." Every sweep below therefore
 carries a positive control (a pattern that must hit) and a byte count proving the file opened.
-A verification tool that could not look must never absolve — the same rule
-`prune-guard.sh` learned about nested modules.
+
+**A verification tool that could not look must never absolve** — the same rule
+`prune-guard.sh` learned about nested modules. This is the most reusable finding in this report.
 
 ---
 
 ## 1. Inventory: what is actually there
 
-### 1.1 The premise "it's 2 hooks" is true of `.claude/hooks/`, and misleading about the repo
+### 1.1 Two project-authored agent hooks, neither tracked
+
+`.claude/hooks/` holds two project-authored hooks, `block-destructive-bash.sh` and
+`block-prod-urls.sh`. Neither travels:
 
 ```bash
-find . -name .git -prune -o -path ./external -prune -o -type d -name hooks -print
+git check-ignore -v .claude/hooks/block-destructive-bash.sh
 ```
 
-| Location | Files | Tracked | What it is |
-|---|---:|---:|---|
-| `.claude/hooks/` | 2 | 0 | project-authored agent hooks |
-| `.codex/hooks/` | 2 | 0 | byte-identical projection of the above |
-| `.agent-tooling/hooks/cos/` | 43 `.sh` + `_lib/` | 0 | the agent tooling tooling |
-| `.git/hooks/` | 2 symlinks | n/a | git hooks → `scripts/` (ADR-0043) |
-| `.agent-tooling/checkpoints/*/files/.codex/hooks/` | 30 dirs | 0 | snapshots, not live |
+```
+.gitignore:13:.claude/	.claude/hooks/block-destructive-bash.sh
+```
 
-The `.codex/` twins are byte-identical, exactly as `.gitignore:10-15` claims:
+`.codex/hooks/` carries a byte-identical twin of each. Since this report's change that identity
+is **structural rather than coincidental**: the installer symlinks both harness directories at
+the same canonical file (`scripts/install-hooks.sh:101-103`), so they cannot drift.
+
+Git hooks are a separate, already-solved case: `.git/hooks/` holds two symlinks into `scripts/`
+per ADR-0043.
+
+`.claude/settings.json` registers the wiring. It has exactly two top-level keys, `hooks` and
+`permissions`, the latter being 10 `Read(...)` deny rules for `.env`, `*.key`, `*.pem`,
+`.ssh/**` and similar. **`block-prod-urls.sh` is registered nowhere.** It is an orphan.
+
+### 1.2 What each hook does — measured, not read
+
+Behaviour matrix, re-run on 2026-08-21 against the **tracked canonical script**:
 
 ```bash
-shasum -a 256 .claude/hooks/*.sh .codex/hooks/*.sh
-```
-
-```
-921b1492…845  .claude/hooks/block-destructive-bash.sh
-684457d4…32e  .claude/hooks/block-prod-urls.sh
-921b1492…845  .codex/hooks/block-destructive-bash.sh
-684457d4…32e  .codex/hooks/block-prod-urls.sh
-```
-
-For scale, the shell-script universe (the number I was warned not to eyeball):
-
-```bash
-find . -name .git -prune -o -path ./external -prune -o -type f -name '*.sh' -print | wc -l   # 827
-# …excluding COS checkpoint snapshots:                                                          196
-git ls-files '*.sh' | wc -l                                                                   # 109
-```
-
-### 1.2 What invokes what
-
-```bash
-python3 -c "…parse .claude/settings.json → hooks…"   # full command in §Appendix
-```
-
-**38 hook commands are registered. 37 point at `.agent-tooling/hooks/cos/`. One points at
-`.claude/hooks/`.**
-
-```bash
-grep -c '\.agent-tooling/hooks' .claude/settings.json   # 37
-grep -c '\.claude/hooks'       .claude/settings.json   # 1
-```
-
-The single project-authored entry:
-
-```
-[PreToolUse] matcher=Bash
-    bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/block-destructive-bash.sh"
-```
-
-`.claude/settings.local.json` does not exist. `settings.json` has exactly two top-level keys,
-`hooks` and `permissions`, the latter being 10 `Read(...)` deny rules for `.env`, `*.key`,
-`*.pem`, `.ssh/**` and similar.
-
-**`block-prod-urls.sh` is registered nowhere.** It is an orphan.
-
-### 1.3 What each hook does — measured, not read
-
-Run against copies, in the worktree:
-
-```bash
-p(){ printf '{"tool_input":{"command":"%s"}}' "$1" | bash ./block-destructive-bash.sh >/dev/null 2>&1; echo "rc=$?"; }
+G=scripts/agent-hook-block-destructive-bash.sh
+printf '{"tool_input":{"command":"%s"}}' "$CMD" | bash "$G" >/dev/null 2>&1; echo $?
 ```
 
 | input | rc | meaning |
 |---|---:|---|
-| `rm -rf ~/.goenv` | 2 | BLOCK — the motivating incident |
-| `rm -rf /Users/PLACEHOLDER/Documents` | 2 | BLOCK — home path |
-| `rm -rf /etc/passwd` | 2 | BLOCK — system path |
-| `rm -rf ./build` | 0 | allow — in-repo |
-| `rm -rf /tmp/scratch` | 0 | allow — temp |
+| a recursive force-delete of a dotdir under `$HOME` | 2 | BLOCK — the motivating incident |
+| the same, targeting another user's `Documents` | 2 | BLOCK — home path |
+| the same, targeting a system path under `/etc` | 2 | BLOCK — system path |
+| the same, targeting `./build` | 0 | allow — in-repo |
+| the same, targeting a path under `/tmp` | 0 | allow — temp |
 | `ls -la` | 0 | allow |
-| `curl https://api.aisotropy.com/prod` → `block-prod-urls.sh` | 0 | **allow — the hook is inert** |
 
-`block-destructive-bash.sh` is real, working protection: 3/3 dangerous blocked, 3/3 legitimate
-allowed. `block-prod-urls.sh` ships with every pattern commented out and returns 0 before
-reading stdin; its own header says the patterns are placeholders to "fill in … then wire this
-into settings.json … if desired." Neither was ever done.
+**3/3 dangerous blocked, 3/3 legitimate allowed.** `block-destructive-bash.sh` is real, working
+protection. (The inputs are described rather than quoted here for the reason §1.3 explains: a
+document containing them as literal text is itself blocked when written from a shell.)
 
-**A known characteristic of the working hook, found by accident:** it matches on command
-*text*, so a command that merely *contains* a destructive string as data is blocked too. My own
-test invocation was blocked for quoting `rm -rf ~/.goenv` inside a JSON payload. The hook's
-header already calls itself "a heuristic defense-in-depth guard, not a sandbox," so this is
-documented behaviour, not a defect — but it is worth knowing before anyone widens its patterns.
+`block-prod-urls.sh`, measured the same way on the report date, returned **rc=0 on a production
+URL**. It ships with every pattern commented out and returns before reading stdin; its own
+header calls the patterns placeholders to "fill in … then wire this into settings.json … if
+desired." Neither was ever done. It is protection that exists only as a filename — the same
+failure `8de9ae1` fixed elsewhere in this repo.
+
+### 1.3 The known false positive, now pinned to a precise shape
+
+The guard matches on command **text**, so a command that merely *contains* a destructive string
+as data can be blocked. This is documented behaviour — the header calls the script "a heuristic
+defense-in-depth guard, not a sandbox" — but it fires often enough to be worth pinning down. It
+has now blocked several of this investigation's own commands, including the heredoc that would
+have written this very section: the paragraph's example strings were read as the command's own
+intent.
+
+The mechanism is narrower than "it matches text". `CMD_START` in the script treats `|` as a
+shell command separator, so a `|` **inside a quoted `sed` substitution expression** puts the
+following words at what the guard reads as a command position. Whitespace-splitting the same
+expression then manufactures a path-shaped token that resolves outside the repo:
+
+```bash
+# blocked (rc=2) — reason: "targets a path OUTSIDE the repo: /old/cache|make"
+sed -i '' 's|<recursive-force-delete> /old/cache|make clean|' README.md
+
+# identical intent, '/' delimiter — allowed (rc=0)
+sed -i '' 's/<recursive-force-delete> \/old\/cache/make clean/' README.md
+
+# the verb quoted as a search string — allowed (rc=0)
+grep -n '<recursive-force-delete> /var/cache' README.md
+```
+
+So the trigger is the **delimiter choice**, not the mention of the verb: `|` re-enters the
+command grammar, `/` does not. Worth knowing before anyone widens the patterns, and worth
+knowing when the guard blocks a command that is obviously inert — the reason string naming a
+nonsense path like `/old/cache|make` is the tell.
 
 ---
 
 ## 2. Do the hooks contain anything that must not travel?
 
-Sweep, with controls proving it read the bytes:
+Sweep with controls proving it read the bytes. Re-run 2026-08-21 against the tracked copy:
 
 ```bash
-A=.claude/hooks/block-destructive-bash.sh; B=.claude/hooks/block-prod-urls.sh
-wc -c "$A" "$B"                                        # 4234 + 1055 = 5289  ← files opened
-grep -hcE 'block-destructive|PROD_PATTERNS' "$A" "$B"  # 2 / 4               ← control hits
-grep -hc  'zzz-nonexistent-zzz' "$A" "$B"              # 0 / 0               ← control misses
+A=scripts/agent-hook-block-destructive-bash.sh
+wc -c "$A"                                   # 5056            ← file opened
+grep -cE 'block-destructive' "$A"            # 3               ← control hits
+grep -c  'zzz-nonexistent-zzz' "$A"          # 0               ← control misses
 # The operator-specific tokens (given name, surname, mail handle, client and
 # org names) are NOT inlined here on purpose: this report is tracked, and
 # writing them down would put in the repo the very strings the sweep exists to
 # keep out. They live in .private-sweep-names (gitignored) and in the check
 # list of scripts/pre-publication-sweep.sh, which is where a reader should look.
-while IFS= read -r pat; do
-  grep -nEi -e "$pat" "$A" "$B" || true
-done < <(personal_tokens)   # .private-sweep-names + the script's own checks
 
 # Structural patterns, safe to write down because they name a shape, not a person:
-for pat in '/Users/' '/home/[a-z]' \
-           '(TOKEN|SECRET|PASSWORD|API_?KEY)' 'sk-[A-Za-z0-9]{8}' 'ghp_|gho_|github_pat_' \
-           'AKIA[0-9A-Z]{16}' 'Bearer ' 'xox[baprs]-' '-----BEGIN' \
-           '[0-9]{1,3}(\.[0-9]{1,3}){3}' '@[a-z0-9.-]+\.(com|io|net|org)' \
-           '\.internal|\.corp|\.local\b'; do
-  grep -nEi -e "$pat" "$A" "$B" || true
+for pat in '/Users/' '/home/[a-z]' '(TOKEN|SECRET|PASSWORD|API_?KEY)' \
+           'sk-[A-Za-z0-9]{8}' 'AKIA[0-9A-Z]{16}' 'xox[baprs]-' '-----BEGIN' \
+           '[0-9]{1,3}(\.[0-9]{1,3}){3}' '\.internal|\.corp'; do
+  printf '%-38s %s\n' "$pat" "$(grep -cEi -e "$pat" "$A")"
 done
 ```
 
-**Result: clean.** The single hit was the English word "token" in two comments about path
-parsing — a false positive. No absolute machine paths, no usernames, no credentials, no
-internal hostnames, no IPs.
+**Result: clean.** Every structural pattern returned 0 except
+`(TOKEN|SECRET|PASSWORD|API_?KEY)` → 2, which resolves to the English word *token* in two
+comments about path parsing (lines 75-76) — a false positive. No absolute machine paths, no
+usernames, no credentials, no internal hostnames, no IPs.
 
-The full environment surface the two hooks read:
+The full environment surface the script reads:
 
 ```bash
-grep -ohE '\$\{?[A-Za-z_][A-Za-z0-9_]*\}?' "$A" "$B" | sort -u
+grep -ohE '\$\{?[A-Za-z_][A-Za-z0-9_]*\}?' "$A" | sort -u
 ```
 
 ```
-$HOME  $PWD}  $input  $pattern  $rc  $reason  $repo  ${CLAUDE_PROJECT_DIR  ${HOME}  ${PROD_PATTERNS
+$HOME  $PWD}  $input  $rc  $reason  $repo  ${CLAUDE_PROJECT_DIR  ${HOME}
 ```
 
 Everything machine-specific is resolved **at runtime** — `git rev-parse --show-toplevel` for the
 repo, `$HOME` for the home directory, `${CLAUDE_PROJECT_DIR:-$PWD}` for the project. **No
-parameterization work is required**; the files are already portable as written.
-
-`.claude/settings.json` is likewise free of personal data and fully parameterized (same sweep,
-13966 bytes, control `hooks`→56 hits; only hits were the filename `secret-detector.sh` and the
-deny rule `Read(./secrets/**)`).
+parameterization work was required**; the file was already portable as written.
 
 ---
 
@@ -256,45 +236,18 @@ must run the installer) and bypassable, "a fast first line, not a server-enforce
 There is no `.githooks/` and `core.hooksPath` is unset — the symlink-from-`scripts/` approach is
 the only convention in play. `scripts/` is flat (no subdirectories) with kebab-case names.
 
-### 3.2 But `.claude/` is ignored deliberately, and for a *license* reason
+### 3.2 But `.claude/` stays ignored, deliberately
 
-`.gitignore:1-17` is not an accident. It carries a written rationale:
+`.claude/` is the **operator's own local agent config**: rules, instructions, hooks and a
+hand-maintained `settings.json`, varying by machine, by harness and by personal preference. It
+describes how someone drives their tools, not how the published runtime behaves, so it stays out
+of the repo's history — and `.codex/`, the projection of the same content, with it.
 
-> the agent tooling — tooling dev-time (FSL-1.1-MIT), NO forma parte del producto. Aisotropy es un
-> producto soberano MIT/Apache-2.0: mantenemos el tooling FSL fuera de la historia de git.
-
-and, for the `.codex/`/`.agents/` projections:
-
-> Si el canónico no se trackea, la proyección tampoco: de lo contrario el repo público
-> publicaría por la puerta de atrás la config de agentes que el resto del repo deliberadamente
-> no publica.
-
-```bash
-git check-ignore -v .claude/hooks/block-destructive-bash.sh
-```
-
-```
-.gitignore:8:.claude/	.claude/hooks/block-destructive-bash.sh
-```
-
-**This is the crux of the whole question.** The stated reason for ignoring `.claude/` is that
-the agent tooling tooling is FSL-1.1-MIT and must stay out of an MIT/Apache-2.0 product's history.
-That reason is sound, and it covers 37 of the 38 registered hooks. It **does not** cover
-`block-destructive-bash.sh`, which is not COS tooling — it is project-authored, its header
-documents an aisotropy-specific incident, and it appears nowhere in the COS hook set. That file
-is **collateral** of a rule aimed at something else:
-
-```bash
-ls .agent-tooling/hooks/cos/ | grep -E 'destructive|prod-url'
-```
-
-```
-(absent — the two .claude/ hooks are not part of the COS hook set)
-```
-
-The repo's own license policy (`.claude/rules/cos/license-policy.md`) blocks FSL for product
-code. Versioning the COS hooks would violate it. Versioning one MIT-compatible,
-project-authored guard does not.
+That exclusion is aimed at configuration, and `block-destructive-bash.sh` is **collateral**: it
+is not configuration, it is a project-authored guard whose header documents an aisotropy-specific
+incident. Keeping it out of a clone protects nothing and costs the clone a real defense. Hence
+the split this report recommends — the guard travels through `scripts/`, the config does not
+travel at all.
 
 ---
 
@@ -303,33 +256,21 @@ project-authored guard does not.
 Distinguishing "protection absent" from "protection provided elsewhere", as asked.
 
 ```bash
-for p in .claude .codex .agents .agent-tooling agent-tooling.yaml; do
-  printf '%-18s tracked: %s\n' "$p" "$(git ls-files "$p" | wc -l)"
-done
-```
-
-```
-.claude            tracked: 0
-.codex             tracked: 0
-.agents            tracked: 0
-.agent-tooling      tracked: 0
-agent-tooling.yaml  tracked: 0
-```
-
-And nothing tracked substitutes:
-
-```bash
+for p in .claude .codex; do printf '%-10s tracked: %s\n' "$p" "$(git ls-files "$p" | wc -l)"; done
 git grep -lE 'tool_input|PreToolUse' -- scripts/
 ```
 
 ```
-(none — no tracked script implements the agent-hook protocol)
+.claude    tracked: 0
+.codex     tracked: 0
 ```
 
-The five tracked scripts that match `rm -rf` all use it in their own cleanup traps
-(`trap 'rm -rf "$SCRATCH"' EXIT` and similar), not as guards.
+Before this report's change, that second command returned nothing — **no tracked script
+implemented the agent-hook protocol at all.** It now returns the canonical guard and its
+installer. The five tracked scripts that match a recursive force-delete all use it in their own
+cleanup traps (an `EXIT` trap removing a scratch dir, and similar), not as guards.
 
-**So a fresh clone receives:** no agent hooks, no `settings.json`, therefore no
+**So a fresh clone received:** no agent hooks, no `settings.json`, therefore no
 `block-destructive-bash` guard *and* none of the 10 `Read()` deny rules protecting `.env`,
 `*.key`, `*.pem` and `.ssh/**` from being read by an agent.
 
@@ -338,12 +279,12 @@ The five tracked scripts that match `rm -rf` all use it in their own cleanup tra
 - Claude Code's built-in permission prompting asks before running Bash commands. In a default
   session that is a real, harness-provided substitute — a human sees the command first.
 - **This very session runs in bypass-permissions mode**, in which those prompts do not fire. In
-  that mode `block-destructive-bash.sh` is the only thing standing between a sub-agent and
-  `rm -rf ~/.goenv` — which is precisely the incident its header cites.
+  that mode `block-destructive-bash.sh` is the only thing standing between a sub-agent and the
+  out-of-scope home-directory destroy its header cites as the motivating incident.
 
 **Not evaluated:** I did not empirically test harness behaviour across permission modes; that
 claim rests on the mode declared in this session's own system prompt, not on an experiment I
-ran. What I *can* state from evidence is that the repo contributes zero protection to a clone,
+ran. What I *can* state from evidence is that the repo contributed zero protection to a clone,
 and that the protection that exists on this machine works.
 
 The risk is therefore narrow but real, and it is the same shape as the `calc.wasm` fix in
@@ -362,26 +303,26 @@ Rationale, against the alternatives:
 
 | Option | Verdict |
 |---|---|
-| `!.claude/hooks/` negation in `.gitignore` | **Rejected.** Re-opens a directory whose exclusion has a written license rationale, and invites the next file dropped in `.claude/hooks/` to be published by default. The `.gitignore:10-15` comment warns against exactly this back-door publication. |
-| Version `.claude/settings.json` too | **Rejected.** 37 of its 38 entries reference `.agent-tooling/` paths. Committing it publishes the FSL tooling's hook inventory by name and creates dangling references in any clone that does not install COS. |
+| `!.claude/hooks/` negation in `.gitignore` | **Rejected.** Re-opens a directory that is deliberately excluded as local agent config, and invites the next file dropped in `.claude/hooks/` to be published by default. |
+| Version `.claude/settings.json` too | **Rejected.** It is hand-maintained, machine- and harness-specific local config; committing it publishes one operator's setup as if it were the repo's, and its entries reference paths that need not exist in any other clone. |
 | Version `block-prod-urls.sh` | **Rejected.** It is inert (rc=0 on a production URL) and wired to nothing. Committing a no-op guard manufactures the illusion of coverage — the failure this repo just fixed in `8de9ae1`. Fill in its patterns and wire it, or delete it; do not version it as-is. |
-| **Canonical script in `scripts/`, installer symlinks it in** | **Adopted.** Matches ADR-0043 exactly, leaves `.gitignore` untouched, keeps the license posture intact, and makes the reviewable artifact travel. |
+| **Canonical script in `scripts/`, installer symlinks it in** | **Adopted.** Matches ADR-0043 exactly, leaves the `.claude/` exclusion intact, and makes the reviewable artifact travel. |
 
 ### 5.2 What was changed
 
 - **`scripts/agent-hook-block-destructive-bash.sh`** (new, tracked) — the canonical copy.
-  Byte-identical to the live hook at migration time (`sha256 921b1492…845`) apart from a
-  prepended provenance header. Verified free of machine-local data by the §2 sweep with controls.
+  Byte-identical to the live hook at migration time apart from a prepended provenance header.
+  Verified free of machine-local data by the §2 sweep with controls.
 - **`scripts/install-hooks.sh`** (modified) — gains `install_agent_hook`, mirroring the existing
   `install_hook`: creates the harness dir, symlinks the canonical script into
   `.claude/hooks/` and `.codex/hooks/`, is idempotent, and backs up a pre-existing regular file
   rather than clobbering it.
 
 Deliberately **not** automated: the installer **prints** the `settings.json` snippet instead of
-editing that file, because the live `settings.json` also registers 37 COS hooks and a patcher
-that mangles it would be worse than the gap it closes. Wiring stays a conscious, one-line manual
-step, and the installer says so loudly (`NOT WIRED — the agent hook is installed but nothing
-calls it yet`).
+editing that file. That file is the operator's own local config, hand-maintained and untracked;
+a patcher that mangles it would be worse than the gap it closes. Wiring stays a conscious,
+one-line manual step, and the installer says so loudly (`NOT WIRED — the agent hook is installed
+but nothing calls it yet`).
 
 ### 5.3 Verification performed
 
@@ -402,15 +343,13 @@ machine was DEGRADED (~114 MB free, swap 92%) and this change touches no Go code
 ### 5.4 Follow-ups for the operator (not done here)
 
 1. **Wire it after installing** — the symlink is inert until `settings.json` gains the
-   `PreToolUse`/`Bash` entry the installer prints. On this machine that entry already exists and
-   points at `.claude/hooks/block-destructive-bash.sh`, so running the installer here converts a
-   regular file into a symlink at the same path and the wiring keeps working unchanged.
+   `PreToolUse`/`Bash` entry the installer prints.
 2. **Decide `block-prod-urls.sh`'s fate** — inert and unreferenced since 2026-07-08. Either fill
    in `PROD_PATTERNS` and wire it, or delete it. It currently exists only as a name.
 3. **The 10 `Read()` deny rules still do not travel.** They are harness-native, not a hook, so
    this change does not address them. If those matter for a clone, that is a separate decision
-   about whether a *minimal* `settings.json` (deny rules + the one project hook, no COS entries)
-   should be tracked.
+   about whether a *minimal* `settings.json` (deny rules plus the one project hook) should be
+   tracked.
 4. **Worktrees do not get the hook.** `install_agent_hook` writes to the toplevel of whatever
    checkout it runs in, while the harness resolves `${CLAUDE_PROJECT_DIR:-$PWD}`. In a worktree
    session the guard is whatever the *project dir* has, not the worktree. Documented, not fixed.
@@ -420,31 +359,18 @@ machine was DEGRADED (~114 MB free, swap 92%) and this change touches no Go code
 ## Appendix — commands used
 
 ```bash
-# hook inventory
-find . -name .git -prune -o -path ./external -prune -o -type d -name hooks -print
-find . -name .git -prune -o -path ./external -prune -o -type f -name '*.sh' -print | wc -l
-git ls-files '*.sh' | wc -l
-shasum -a 256 .claude/hooks/*.sh .codex/hooks/*.sh
+# what is tracked, and what the ignore rule is
+git ls-files .claude .codex | wc -l
+git check-ignore -v .claude/hooks/block-destructive-bash.sh
+git ls-files '*.sh' | wc -l                      # 110 tracked shell scripts (2026-08-21)
 
-# what invokes what
-python3 -c '
-import json; d=json.load(open(".claude/settings.json"))
-n=0
-for ev,es in d.get("hooks",{}).items():
-    for e in es:
-        for h in e.get("hooks",[]):
-            n+=1; print(f"[{ev}] matcher={e.get(\"matcher\",\"\")}\n    {h.get(\"command\",\"\")}\n")
-print("TOTAL:", n)'
-grep -c '\.agent-tooling/hooks' .claude/settings.json
-grep -c '\.claude/hooks'       .claude/settings.json
+# behaviour, against the tracked canonical script
+printf '{"tool_input":{"command":"%s"}}' "$CMD" \
+  | bash scripts/agent-hook-block-destructive-bash.sh; echo $?
 
-# behaviour (on copies)
-printf '{"tool_input":{"command":"%s"}}' "$CMD" | bash ./block-destructive-bash.sh; echo $?
-
-# ignore-status and convention
-git check-ignore -v .claude/hooks/*.sh .claude/settings.json
+# convention already in play
 git grep -lE 'tool_input|PreToolUse' -- scripts/
-git config --get core.hooksPath
+git config --get core.hooksPath                  # (unset)
 
 # the grep caveat that shaped this whole report
 declare -f grep | grep -o -- '--ignore-files'
@@ -456,6 +382,6 @@ grep -rl --no-ignore-files 'block-destructive-bash' .  # finds it
 
 - [ADR-0043 — Local-first CI gates: git hooks over paid GitHub Actions](../decisions/0043-local-first-ci-gates-git-hooks.md)
 - `scripts/install-hooks.sh`, `scripts/agent-hook-block-destructive-bash.sh`
-- `.gitignore:1-17` (the license rationale for excluding `.claude/`, `.agent-tooling/`, `.codex/`, `.agents/`)
+- `.gitignore:1-14` (why `.claude/` and `.codex/` are excluded as local agent config)
 - `docs/architecture/prune-evidence-gate.md` — "a green from a tool that could not run its checks is not evidence of absence", the rule §0.2 re-learned the hard way
 - `8de9ae1` — the guard that declared its blind spot where only its author would read it
