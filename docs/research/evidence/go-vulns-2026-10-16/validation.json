@@ -1,0 +1,32 @@
+[
+  {
+    "comando": "GOTOOLCHAIN=local GOMAXPROCS=2 GOFLAGS=\"${GOFLAGS:+$GOFLAGS }-trimpath -p=2\" scripts/with-heavy-lane.sh go build ./...",
+    "exit": 0,
+    "log": "build.log"
+  },
+  {
+    "comando": "GOTOOLCHAIN=local GOMAXPROCS=2 GOFLAGS=\"${GOFLAGS:+$GOFLAGS }-trimpath -p=2\" scripts/with-heavy-lane.sh go vet ./...",
+    "exit": 0,
+    "log": "vet.log"
+  },
+  {
+    "comando": "GOTOOLCHAIN=local GOMAXPROCS=2 GOFLAGS=\"${GOFLAGS:+$GOFLAGS }-trimpath -p=2\" scripts/with-heavy-lane.sh go test ./...",
+    "exit": 1,
+    "log": "test.log"
+  },
+  {
+    "comando": "GOTOOLCHAIN=local GOMAXPROCS=2 GOFLAGS=\"${GOFLAGS:+$GOFLAGS }-p=2\" scripts/with-heavy-lane.sh go test ./...",
+    "exit": 0,
+    "log": "test-normal.log"
+  },
+  {
+    "comando": "GOTOOLCHAIN=local GOMAXPROCS=2 GOFLAGS=\"${GOFLAGS:+$GOFLAGS }-trimpath -p=2\" scripts/with-heavy-lane.sh govulncheck ./...",
+    "exit": 0,
+    "log": "govulncheck-after.log"
+  },
+  {
+    "comando": "GOTOOLCHAIN=local GOMAXPROCS=2 GOFLAGS=\"${GOFLAGS:+$GOFLAGS }-trimpath -p=2\" scripts/with-heavy-lane.sh bash scripts/supply-chain-guard.sh",
+    "exit": 0,
+    "log": "supply-chain.log"
+  }
+]

@@ -1,0 +1,90 @@
+[
+  {
+    "comando": "(cd arenas/adk-go && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/eino && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/genkit-go && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/live/aisotropy && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/live/eino && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/live/genkit-go && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/live/runner && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd bench/async && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd bench/footprint/adk-go && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd bench/streaming && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/auth-scopes && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/domain-assistant && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/graphbot && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/guardrail-policy && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/helpdesk && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/knowledge-rag && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/memory-sessions && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/multi-tenant && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/serve-http && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/task-agent && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/task-fanout && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/weatherbot && go mod edit -toolchain=go1.26.9)",
+    "exit": 0
+  }
+]

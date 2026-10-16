@@ -1,0 +1,150 @@
+[
+  {
+    "comando": "(cd . && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/adk-go && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/adk-go && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/live/aisotropy && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/live/aisotropy && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/live/eino && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/live/eino && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/live/genkit-go && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd arenas/live/genkit-go && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd bench/footprint/adk-go && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd bench/footprint/adk-go && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd bench/streaming && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd bench/streaming && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/auth-scopes && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/auth-scopes && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/domain-assistant && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/domain-assistant && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/graphbot && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/graphbot && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/guardrail-policy && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/guardrail-policy && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/helpdesk && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/helpdesk && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/knowledge-rag && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/knowledge-rag && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/memory-sessions && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/memory-sessions && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/multi-tenant && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/multi-tenant && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/serve-http && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/serve-http && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/task-agent && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/task-agent && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/task-fanout && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/task-fanout && go mod tidy)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/weatherbot && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)",
+    "exit": 0
+  },
+  {
+    "comando": "(cd examples/weatherbot && go mod tidy)",
+    "exit": 0
+  }
+]

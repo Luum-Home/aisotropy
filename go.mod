@@ -1,13 +1,10 @@
 module github.com/Luum-Home/aisotropy
 
-go 1.25.1
+go 1.26.0
 
-// Build with a patched toolchain: go1.26.6 fixes the reachable stdlib CVEs in
-// crypto/tls, net/http, net/url, html/template and encoding/asn1 that govulncheck
-// found present in go1.26.5 (fixed in go1.26.6), surfaced by the govulncheck
-// pre-push gate (scripts/supply-chain-guard.sh). The `go` language floor stays
-// 1.25.1; GOTOOLCHAIN=auto fetches go1.26.6 to build.
-toolchain go1.26.6
+// Build with a patched toolchain for the reachable standard-library CVEs.
+// x/net v0.60.0 requires Go 1.26.0; local goenv pins select the patched compiler.
+toolchain go1.26.9
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -34,7 +31,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.45.0
 	go.opentelemetry.io/otel/sdk/metric v1.45.0
 	go.opentelemetry.io/otel/trace v1.45.0
-	golang.org/x/tools v0.48.0
+	golang.org/x/tools v0.49.0
 	modernc.org/sqlite v1.56.0
 )
 
@@ -86,14 +83,14 @@ require (
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
-	golang.org/x/mod v0.38.0 // indirect
-	golang.org/x/net v0.57.0
-	golang.org/x/sync v0.22.0
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/net v0.60.0
+	golang.org/x/sync v0.23.0
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
-	google.golang.org/grpc v1.83.0
+	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.11 // indirect
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

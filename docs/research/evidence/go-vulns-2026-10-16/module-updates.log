@@ -1,0 +1,226 @@
+
+$ (cd . && go mod tidy)
+go: downloading github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3
+go: downloading modernc.org/fileutil v1.4.0
+go: downloading github.com/dlclark/regexp2 v1.11.0
+go: downloading github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da
+go: downloading modernc.org/cc/v4 v4.29.1
+go: downloading modernc.org/ccgo/v4 v4.34.6
+go: downloading github.com/dnaeon/go-vcr v1.2.0
+go: downloading modernc.org/opt v0.2.0
+go: downloading modernc.org/gc/v3 v3.1.4
+go: downloading gopkg.in/yaml.v2 v2.2.8
+
+$ (cd arenas/adk-go && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.0 => 1.26.0
+go: upgraded go.opentelemetry.io/otel v1.43.0 => v1.44.0
+go: upgraded go.opentelemetry.io/otel/metric v1.43.0 => v1.44.0
+go: upgraded go.opentelemetry.io/otel/sdk v1.43.0 => v1.44.0
+go: upgraded go.opentelemetry.io/otel/trace v1.43.0 => v1.44.0
+go: upgraded golang.org/x/crypto v0.51.0 => v0.57.0
+go: upgraded golang.org/x/net v0.55.0 => v0.60.0
+go: upgraded golang.org/x/sys v0.45.0 => v0.48.0
+go: upgraded golang.org/x/text v0.37.0 => v0.42.0
+go: upgraded google.golang.org/genproto/googleapis/rpc v0.0.0-20260511170946-3700d4141b60 => v0.0.0-20260526163538-3dc84a4a5aaa
+go: upgraded google.golang.org/grpc v1.81.0 => v1.83.1
+
+$ (cd arenas/adk-go && go mod tidy)
+go: downloading go.opentelemetry.io/otel/sdk/log v0.19.0
+go: downloading google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7
+
+$ (cd arenas/live/aisotropy && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.1 => 1.26.0
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd arenas/live/aisotropy && go mod tidy)
+
+$ (cd arenas/live/eino && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.0 => 1.26.0
+go: upgraded golang.org/x/net v0.53.0 => v0.60.0
+go: upgraded golang.org/x/sys v0.46.0 => v0.48.0
+go: upgraded golang.org/x/text v0.37.0 => v0.42.0
+go: upgraded google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 => v0.0.0-20260526163538-3dc84a4a5aaa
+go: upgraded google.golang.org/grpc v1.81.1 => v1.83.1
+
+$ (cd arenas/live/eino && go mod tidy)
+go: downloading github.com/braintrustdata/braintrust-sdk-go/trace/contrib/cloudwego/eino v0.10.0
+go: downloading github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20260716140429-9137edd89e72
+go: downloading github.com/cloudwego/eino-ext/components/model/openai v0.1.13
+go: downloading github.com/braintrustdata/braintrust-sdk-go v0.10.0
+go: downloading modernc.org/sqlite v1.54.0
+go: downloading github.com/cloudwego/eino-ext/libs/acl/openai v0.1.17
+go: downloading github.com/bytedance/mockey v1.3.0
+go: downloading github.com/meguminnnnnnnnn/go-openai v0.1.2
+go: downloading go.uber.org/mock v0.4.0
+go: downloading github.com/buger/jsonparser v1.1.2
+go: downloading modernc.org/libc v1.74.1
+go: downloading github.com/go-check/check v0.0.0-20180628173108-788fd7840127
+go: downloading github.com/x-cray/logrus-prefixed-formatter v0.5.2
+go: downloading gopkg.in/dnaeon/go-vcr.v3 v3.2.0
+go: downloading golang.org/x/arch v0.15.0
+go: downloading github.com/evanphx/json-patch v0.5.2
+go: downloading modernc.org/cc/v4 v4.29.0
+go: downloading golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
+go: downloading github.com/mgutz/ansi v0.0.0-20170206155736-9520e82c474b
+go: downloading github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee
+go: downloading github.com/klauspost/cpuid/v2 v2.2.10
+go: downloading github.com/bytedance/sonic/loader v0.5.0
+
+$ (cd arenas/live/genkit-go && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.0 => 1.26.0
+go: upgraded go.opentelemetry.io/otel v1.43.0 => v1.44.0
+go: upgraded go.opentelemetry.io/otel/metric v1.43.0 => v1.44.0
+go: upgraded go.opentelemetry.io/otel/sdk v1.43.0 => v1.44.0
+go: upgraded go.opentelemetry.io/otel/trace v1.43.0 => v1.44.0
+go: upgraded golang.org/x/net v0.53.0 => v0.60.0
+go: upgraded golang.org/x/sys v0.45.0 => v0.48.0
+go: upgraded golang.org/x/text v0.37.0 => v0.42.0
+go: upgraded google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 => v0.0.0-20260526163538-3dc84a4a5aaa
+go: upgraded google.golang.org/grpc v1.81.1 => v1.83.1
+
+$ (cd arenas/live/genkit-go && go mod tidy)
+
+$ (cd bench/footprint/adk-go && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.0 => 1.26.0
+go: upgraded go.opentelemetry.io/otel v1.43.0 => v1.44.0
+go: upgraded go.opentelemetry.io/otel/metric v1.43.0 => v1.44.0
+go: upgraded go.opentelemetry.io/otel/trace v1.43.0 => v1.44.0
+go: upgraded golang.org/x/crypto v0.51.0 => v0.57.0
+go: upgraded golang.org/x/net v0.55.0 => v0.60.0
+go: upgraded golang.org/x/sys v0.45.0 => v0.48.0
+go: upgraded golang.org/x/text v0.37.0 => v0.42.0
+go: upgraded google.golang.org/genproto/googleapis/rpc v0.0.0-20260511170946-3700d4141b60 => v0.0.0-20260526163538-3dc84a4a5aaa
+go: upgraded google.golang.org/grpc v1.81.0 => v1.83.1
+
+$ (cd bench/footprint/adk-go && go mod tidy)
+
+$ (cd bench/streaming && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.1 => 1.26.0
+go: upgraded golang.org/x/crypto v0.51.0 => v0.57.0
+go: upgraded golang.org/x/net v0.55.0 => v0.60.0
+go: upgraded golang.org/x/sys v0.45.0 => v0.48.0
+go: upgraded golang.org/x/text v0.37.0 => v0.42.0
+go: upgraded google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 => v0.0.0-20260526163538-3dc84a4a5aaa
+go: upgraded google.golang.org/grpc v1.82.1 => v1.83.1
+
+$ (cd bench/streaming && go mod tidy)
+go: downloading github.com/quic-go/go-ossfuzz-seeds v0.1.0
+go: downloading go.uber.org/mock v0.5.2
+
+$ (cd examples/auth-scopes && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/auth-scopes && go mod tidy)
+
+$ (cd examples/domain-assistant && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.1 => 1.26.0
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/domain-assistant && go mod tidy)
+
+$ (cd examples/graphbot && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.1 => 1.26.0
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/graphbot && go mod tidy)
+
+$ (cd examples/guardrail-policy && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/guardrail-policy && go mod tidy)
+
+$ (cd examples/helpdesk && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.1 => 1.26.0
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/helpdesk && go mod tidy)
+
+$ (cd examples/knowledge-rag && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/knowledge-rag && go mod tidy)
+
+$ (cd examples/memory-sessions && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/memory-sessions && go mod tidy)
+
+$ (cd examples/multi-tenant && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/multi-tenant && go mod tidy)
+
+$ (cd examples/serve-http && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/serve-http && go mod tidy)
+
+$ (cd examples/task-agent && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.1 => 1.26.0
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/task-agent && go mod tidy)
+
+$ (cd examples/task-fanout && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.1 => 1.26.0
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/task-fanout && go mod tidy)
+
+$ (cd examples/weatherbot && go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.1)
+go: upgraded go 1.25.1 => 1.26.0
+go: upgraded golang.org/x/net v0.57.0 => v0.60.0
+go: upgraded golang.org/x/sync v0.22.0 => v0.23.0
+go: upgraded golang.org/x/sys v0.47.0 => v0.48.0
+go: upgraded golang.org/x/text v0.40.0 => v0.42.0
+go: upgraded google.golang.org/grpc v1.83.0 => v1.83.1
+
+$ (cd examples/weatherbot && go mod tidy)

@@ -2,6 +2,8 @@ module eino-arena
 
 go 1.23
 
+toolchain go1.26.9
+
 require github.com/cloudwego/eino v0.9.12
 
 require (

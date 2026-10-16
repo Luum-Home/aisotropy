@@ -1,0 +1,11 @@
+resource-guard: DEGRADED (tight) — pressure L2, sys-free 40% (blocked<=8, degraded<=20); swap 91%, vm_stat-free 121MB (informative); free RAM 121MB (degraded<=2048, blocked<=512); load/core 2.16 (degraded>=1.5, cores 12)
+with-heavy-lane: DEGRADED — running with OMP_NUM_THREADS=2 GOMAXPROCS=2 nice 19
+=== Symbol Results ===
+
+No vulnerabilities found.
+
+Your code is affected by 0 vulnerabilities.
+This scan also found 1 vulnerability in packages you import and 0
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.
+Use '-show verbose' for more details.

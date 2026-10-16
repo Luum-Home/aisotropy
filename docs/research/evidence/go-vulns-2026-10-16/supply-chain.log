@@ -1,0 +1,193 @@
+resource-guard: DEGRADED (tight) — pressure L2, sys-free 41% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 1603MB (informative); free RAM 1603MB (degraded<=2048, blocked<=512); load/core 1.78 (degraded>=1.5, cores 12)
+with-heavy-lane: DEGRADED — running with OMP_NUM_THREADS=2 GOMAXPROCS=2 nice 19
+===================================================================
+ supply-chain-guard: local pre-push gate (root module)
+===================================================================
+
+1) govulncheck ./...  (known-exploitable CVEs reachable from real code)
+=== Symbol Results ===
+
+No vulnerabilities found.
+
+Your code is affected by 0 vulnerabilities.
+This scan also found 1 vulnerability in packages you import and 0
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.
+Use '-show verbose' for more details.
+   govulncheck: no reachable known-exploitable vulnerabilities.
+
+2) dependency staleness  (go list -m -u all — advisory, non-blocking)
+   149 module(s) have a newer version available:
+     cel.dev/expr v0.25.2 [v0.25.3]
+     cloud.google.com/go/auth v0.18.2 [v0.24.1]
+     cloud.google.com/go/auth/oauth2adapt v0.2.3 [v0.3.0]
+     cloud.google.com/go/compute/metadata v0.9.0 [v0.10.0]
+     github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c [v0.0.0-20261013165250-51075c6ea6bc]
+     github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 [v1.38.0] (deprecated)
+     github.com/Microsoft/go-winio v0.6.2 [v0.6.4]
+     github.com/andybalholm/brotli v1.2.2 [v1.2.6]
+     github.com/anthropics/anthropic-sdk-go v1.61.0 [v1.82.0]
+     github.com/aws/aws-sdk-go-v2 v1.30.3 [v1.47.3]
+     github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.3 [v1.7.22]
+     github.com/aws/aws-sdk-go-v2/config v1.27.27 [v1.33.9]
+     github.com/aws/aws-sdk-go-v2/credentials v1.17.27 [v1.20.9]
+     github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.11 [v1.20.3]
+     github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.15 [v1.5.6]
+     github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.15 [v2.8.6]
+     github.com/aws/aws-sdk-go-v2/internal/ini v1.8.0 [v1.8.6]
+     github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.11.3 [v1.13.21]
+     github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.11.17 [v1.14.6]
+     github.com/aws/aws-sdk-go-v2/service/sso v1.22.4 [v1.38.4]
+     github.com/aws/aws-sdk-go-v2/service/ssooidc v1.26.4 [v1.43.4]
+     github.com/aws/aws-sdk-go-v2/service/sts v1.30.3 [v1.51.4]
+     github.com/aws/smithy-go v1.20.3 [v1.28.5]
+     github.com/aymanbagabas/go-udiff v0.3.1 [v0.4.1]
+     github.com/bits-and-blooms/bitset v1.24.4 [v1.26.0]
+     github.com/bytedance/sonic v1.15.2 [v1.15.4]
+     github.com/bytedance/sonic/loader v0.5.1 [v0.5.2]
+     github.com/charmbracelet/x/ansi v0.11.7 [v0.11.9]
+     github.com/charmbracelet/x/exp/golden v0.0.0-20241011142426-46044092ad91 [v0.1.0]
+     github.com/charmbracelet/x/exp/teatest v0.0.0-20260705004817-2cc9a8fe1146 [v0.0.0-20261012121918-43427fdbad12]
+     github.com/containerd/log v0.1.0 [v0.2.0]
+     github.com/dgraph-io/badger/v4 v4.9.5 [v4.9.6]
+     github.com/dlclark/regexp2 v1.11.0 [v1.12.0]
+     github.com/docker/go-connections v0.7.0 [v0.8.2]
+     github.com/dustin/go-humanize v1.0.1 [v1.1.0]
+     github.com/ebitengine/purego v0.10.0 [v0.11.1]
+     github.com/envoyproxy/go-control-plane/envoy v1.37.0 [v1.40.0]
+     github.com/felixge/httpsnoop v1.0.4 [v1.1.0]
+     github.com/fugue-labs/monty-go v0.2.0 [v0.3.0]
+     github.com/fxamacker/cbor/v2 v2.9.2 [v2.9.6]
+     github.com/gabriel-vasile/mimetype v1.4.13 [v1.4.15]
+     github.com/gin-contrib/sse v1.1.1 [v1.1.2]
+     github.com/go-chi/chi/v5 v5.3.1 [v5.5.0]
+     github.com/go-jose/go-jose/v4 v4.1.4 [v4.1.6]
+     github.com/go-playground/locales v0.14.1 [v0.14.2]
+     github.com/go-playground/universal-translator v0.18.1 [v0.18.2]
+     github.com/go-playground/validator/v10 v10.30.3 [v10.30.5]
+     github.com/goccy/go-json v0.10.6 [v0.11.2]
+     github.com/gofiber/fiber/v2 v2.52.14 [v2.52.15]
+     github.com/gofiber/fiber/v3 v3.4.0 [v3.6.1]
+     github.com/gofiber/schema v1.8.2 [v1.8.8]
+     github.com/gofiber/utils/v2 v2.2.0 [v2.6.2]
+     github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da [v0.0.0-20241129210726-2c02b8208cf8]
+     github.com/google/jsonschema-go v0.4.2 [v0.4.3]
+     github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 [v0.0.0-20261016150608-1facf8f91b50]
+     github.com/google/s2a-go v0.1.9 [v0.1.11]
+     github.com/googleapis/enterprise-certificate-proxy v0.3.11 [v0.3.23]
+     github.com/googleapis/gax-go/v2 v2.17.0 [v2.26.2]
+     github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2 [v2.3.4]
+     github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 [v2.32.0]
+     github.com/klauspost/compress v1.19.1 [v1.20.3]
+     github.com/klauspost/cpuid/v2 v2.4.0 [v2.4.1]
+     github.com/labstack/echo/v4 v4.15.4 [v4.16.0]
+     github.com/labstack/echo/v5 v5.3.0 [v5.4.0]
+     github.com/langchain-ai/langsmith-go v0.1.0 [v0.28.2]
+     github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728 [v0.0.0-20260907135840-6c8c28e0e8a0]
+     github.com/leodido/go-urn v1.4.0 [v1.5.0]
+     github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e [v0.0.0-20260802145828-341c2f0c90b5]
+     github.com/magiconair/properties v1.8.10 [v1.18.12]
+     github.com/mattn/go-colorable v0.1.15 [v0.1.16]
+     github.com/mattn/go-runewidth v0.0.27 [v0.0.31]
+     github.com/moby/go-archive v0.2.0 [v0.3.3]
+     github.com/moby/moby/api v1.54.2 [v1.56.1]
+     github.com/moby/moby/client v0.4.1 [v0.6.2]
+     github.com/moby/sys/sequential v0.6.0 [v0.7.0]
+     github.com/moby/sys/user v0.4.0 [v0.4.1]
+     github.com/moby/sys/userns v0.1.0 [v0.2.1]
+     github.com/modelcontextprotocol/go-sdk v1.3.1 [v1.8.0]
+     github.com/ncruces/go-strftime v1.0.0 [v1.1.0]
+     github.com/nexus-rpc/sdk-go v0.5.1 [v0.7.0]
+     github.com/pb33f/ordered-map/v2 v2.3.1 [v2.3.2]
+     github.com/philhofer/fwd v1.2.0 [v1.2.1]
+     github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 [v0.0.0-20260916203055-22a1a467d9f0]
+     github.com/qdrant/go-client v1.18.3 [v1.19.4]
+     github.com/quic-go/quic-go v0.60.0 [v0.64.0]
+     github.com/rogpeppe/go-internal v1.14.1 [v1.16.0]
+     github.com/sahilm/fuzzy v0.1.1 [v0.1.3]
+     github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 [v6.0.3]
+     github.com/segmentio/asm v1.1.3 [v1.2.1]
+     github.com/shirou/gopsutil/v4 v4.26.5 [v4.26.9]
+     github.com/shopspring/decimal v1.4.0 [v1.5.0]
+     github.com/sirupsen/logrus v1.9.4 [v1.10.2]
+     github.com/spiffe/go-spiffe/v2 v2.7.0 [v2.9.0]
+     github.com/stretchr/objx v0.5.2 [v0.8.0]
+     github.com/stretchr/testify v1.11.1 [v1.12.1]
+     github.com/testcontainers/testcontainers-go v0.43.0 [v0.44.0]
+     github.com/tidwall/gjson v1.19.0 [v1.20.0]
+     github.com/tidwall/pretty v1.2.1 [v1.2.2]
+     github.com/tinylib/msgp v1.6.4 [v1.6.5]
+     github.com/tklauser/go-sysconf v0.3.16 [v0.4.0]
+     github.com/tklauser/numcpus v0.11.0 [v0.12.0]
+     github.com/ugorji/go/codec v1.3.1 [v1.3.2]
+     github.com/valyala/fasthttp v1.72.0 [v1.75.0]
+     github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e [v1.2.0]
+     github.com/yuin/goldmark v1.4.13 [v1.8.6]
+     go.mongodb.org/mongo-driver/v2 v2.8.0 [v2.9.2]
+     go.opentelemetry.io/contrib/detectors/gcp v1.44.0 [v1.47.0]
+     go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.49.0 [v0.72.0]
+     go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0 [v0.72.0]
+     go.opentelemetry.io/contrib/zpages v0.66.0 [v0.72.0]
+     go.opentelemetry.io/otel v1.45.0 [v1.47.0]
+     go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.45.0 [v1.47.0]
+     go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0 [v1.47.0]
+     go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.45.0 [v1.47.0]
+     go.opentelemetry.io/otel/metric v1.45.0 [v1.47.0]
+     go.opentelemetry.io/otel/metric/x v0.67.0 [v0.69.0]
+     go.opentelemetry.io/otel/sdk v1.45.0 [v1.47.0]
+     go.opentelemetry.io/otel/sdk/metric v1.45.0 [v1.47.0]
+     go.opentelemetry.io/otel/trace v1.45.0 [v1.47.0]
+     go.opentelemetry.io/proto/otlp v1.11.0 [v1.11.1]
+     go.temporal.io/api v1.62.1 [v1.63.7]
+     go.temporal.io/sdk v1.40.0 [v1.50.0]
+     go.uber.org/mock v0.5.0 [v0.6.0]
+     go.yaml.in/yaml/v3 v3.0.4 [v3.0.5]
+     golang.org/x/arch v0.29.0 [v0.32.0]
+     golang.org/x/crypto v0.57.0 [v0.58.0]
+     golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 [v0.0.0-20261014143641-f0251eb4aa3e]
+     golang.org/x/mod v0.41.0 [v0.42.0]
+     golang.org/x/net v0.60.0 [v0.61.0]
+     golang.org/x/oauth2 v0.36.0 [v0.37.0]
+     golang.org/x/sync v0.23.0 [v0.24.0]
+     golang.org/x/sys v0.48.0 [v0.49.0]
+     golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 [v0.0.0-20261016163328-824aa3d1d8dd]
+     golang.org/x/term v0.46.0 [v0.47.0]
+     golang.org/x/text v0.42.0 [v0.43.0]
+     golang.org/x/time v0.14.0 [v0.16.0]
+     golang.org/x/tools v0.49.0 [v0.52.0]
+     google.golang.org/api v0.189.0 [v0.304.0]
+     google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d [v0.0.0-20261012220534-4341edf3f941]
+     google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d [v0.0.0-20261012220534-4341edf3f941]
+     google.golang.org/grpc v1.83.1 [v1.84.0]
+     google.golang.org/protobuf v1.36.11 [v1.36.12]
+     gopkg.in/yaml.v2 v2.2.8 [v2.4.0]
+     modernc.org/cc/v4 v4.29.1 [v4.30.3]
+     modernc.org/ccgo/v4 v4.34.6 [v4.37.0]
+     modernc.org/gc/v3 v3.1.4 [v3.2.0]
+     modernc.org/libc v1.74.4 [v1.79.0]
+     modernc.org/memory v1.11.0 [v1.12.1]
+     modernc.org/sqlite v1.56.0 [v1.60.1]
+   (advisory only — review and bump deliberately; this does not block the push.)
+
+3) build-context secret scan  (patterns .dockerignore excludes — advisory)
+   WARNING: tracked file(s) match a secret pattern — confirm these are NOT real secrets:
+     .env.example
+     deploy/helm/aisotropy/templates/secret.yaml
+     deploy/helm/aisotropy/templates/tier-secret.yaml
+     deploy/k8s/base/secret.yaml
+     deploy/k8s/overlays/networked-tiers/tier-secrets.yaml
+     docs/decisions/0072-runtime-config-refuses-secrets.md
+   (.dockerignore keeps these out of the build context; still verify they belong in git.)
+
+4) example modules build  (examples/* — catch public-surface rot in the demos)
+   all example modules build + vet clean.
+
+5) arena modules build  (arenas/*, bench/* — catch the SAME rot in the benchmark adapters)
+   all arena/bench modules build.
+
+6) license audit  (root-module deps + compose-image allowlist — the CI step, run locally)
+   license audit clean (permissive deps + allowlisted images).
+
+===================================================================
+ VERDICT: clean — no reachable CVEs, all modules build, licenses permissive. Push may proceed.
+===================================================================

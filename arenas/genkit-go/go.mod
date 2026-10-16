@@ -2,6 +2,8 @@ module genkit-go-arena
 
 go 1.25.0
 
+toolchain go1.26.9
+
 require (
 	github.com/firebase/genkit/go v1.10.0
 	go.opentelemetry.io/otel v1.36.0

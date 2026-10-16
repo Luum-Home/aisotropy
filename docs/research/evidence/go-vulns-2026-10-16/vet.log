@@ -1,0 +1,2 @@
+resource-guard: DEGRADED (tight) — pressure L2, sys-free 44% (blocked<=8, degraded<=20); swap 88%, vm_stat-free 1653MB (informative); free RAM 1653MB (degraded<=2048, blocked<=512); load/core 1.38 (degraded>=1.5, cores 12)
+with-heavy-lane: DEGRADED — running with OMP_NUM_THREADS=2 GOMAXPROCS=2 nice 19

@@ -1,0 +1,1003 @@
+resource-guard: DEGRADED (tight) — pressure L2, sys-free 37% (blocked<=8, degraded<=20); swap 90%, vm_stat-free 50MB (informative); free RAM 50MB (degraded<=2048, blocked<=512); load/core 1.39 (degraded>=1.5, cores 12)
+with-heavy-lane: DEGRADED — running with OMP_NUM_THREADS=2 GOMAXPROCS=2 nice 19
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6617
+    HTTP/2 server crash due to HPACK encoder race in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6617
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.57.0
+    Fixed in: golang.org/x/net@v0.60.0
+    Example traces found:
+      #1: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.ConnectionError.Error
+      #2: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.ErrCode.String
+      #3: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.FrameHeader.String
+      #4: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.FrameType.String
+      #5: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrame
+      #6: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrameForHeader
+      #7: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrameHeader
+      #8: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteContinuation
+      #9: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteGoAway
+      #10: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteHeaders
+      #11: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WritePing
+      #12: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteRSTStream
+      #13: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteSettings
+      #14: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteSettingsAck
+      #15: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteWindowUpdate
+      #16: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.GoAwayError.Error
+      #17: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.Setting.String
+      #18: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.SettingID.String
+      #19: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.SettingsFrame.ForeachSetting
+      #20: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.StreamError.Error
+      #21: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.bufferedWriterTimeoutWriter.Write
+      #22: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.chunkWriter.Write
+      #23: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.connError.Error
+      #24: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.duplicatePseudoHeaderError.Error
+      #25: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.gzipReader.Close
+      #26: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http2.gzipReader.Read
+      #27: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.headerFieldNameError.Error
+      #28: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.headerFieldValueError.Error
+      #29: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.pseudoHeaderError.Error
+      #30: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.stickyErrWriter.Write
+      #31: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close
+      #32: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http2.transportResponseBody.Read
+      #33: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.writeData.String
+
+  Standard library
+    Found in: net/http@go1.26.6
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/api/audit_middleware.go:8:2: api.init calls middleware.init, which calls http.CanonicalHeaderKey
+      #2: internal/api/audit_middleware.go:8:2: api.init calls middleware.init, which calls http.CanonicalHeaderKey
+      #3: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #4: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #5: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #6: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #7: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #8: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #9: internal/api/mcp_serve.go:158:13: api.mcpServeHandler.ServeHTTP calls http.Error
+      #10: internal/api/mcp_serve.go:158:13: api.mcpServeHandler.ServeHTTP calls http.Error
+      #11: internal/taskagent/session.go:60:2: taskagent.init calls badger.init, which eventually calls http.HandleFunc
+      #12: internal/taskagent/session.go:60:2: taskagent.init calls badger.init, which eventually calls http.HandleFunc
+      #13: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Add
+      #14: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Add
+      #15: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Del
+      #16: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Del
+      #17: internal/api/mcp_serve.go:144:79: api.mcpHTTPAuthRequest.Header calls http.Header.Get
+      #18: internal/api/mcp_serve.go:144:79: api.mcpHTTPAuthRequest.Header calls http.Header.Get
+      #19: internal/semantic/api_embedder.go:129:16: semantic.APIEmbedder.Embed calls http.Header.Set
+      #20: internal/semantic/api_embedder.go:129:16: semantic.APIEmbedder.Embed calls http.Header.Set
+      #21: bench/load/main.go:529:27: load.doChat calls http.NewRequest
+      #22: bench/load/main.go:529:27: load.doChat calls http.NewRequest
+      #23: internal/semantic/api_embedder.go:125:40: semantic.APIEmbedder.Embed calls http.NewRequestWithContext
+      #24: internal/semantic/api_embedder.go:125:40: semantic.APIEmbedder.Embed calls http.NewRequestWithContext
+      #25: internal/llm/otel.go:185:27: llm.redactingExporter.ExportSpans calls otlptrace.Exporter.ExportSpans, which eventually calls http.ParseTime
+      #26: internal/llm/otel.go:185:27: llm.redactingExporter.ExportSpans calls otlptrace.Exporter.ExportSpans, which eventually calls http.ParseTime
+      #27: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.ReadResponse
+      #28: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.ReadResponse
+      #29: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Request.Write
+      #30: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Request.Write
+      #31: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Response.Write
+      #32: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Response.Write
+      #33: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe
+      #34: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe
+      #35: aisotropy/app.go:1484:28: aisotropy.App.Run calls http.Server.Shutdown
+      #36: aisotropy/app.go:1484:28: aisotropy.App.Run calls http.Server.Shutdown
+      #37: internal/llm/otel.go:551:36: llm.NewTracerProvider calls otlptracehttp.New, which eventually calls http.Transport.Clone
+      #38: internal/llm/otel.go:551:36: llm.NewTracerProvider calls otlptracehttp.New, which eventually calls http.Transport.Clone
+      #39: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+      #40: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+      #41: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.body.Close
+      #42: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.body.Close
+      #43: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.body.Read
+      #44: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.body.Read
+      #45: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.bodyEOFSignal.Close
+      #46: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.bodyEOFSignal.Close
+      #47: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.bodyEOFSignal.Read
+      #48: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.bodyEOFSignal.Read
+      #49: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bodyLocked.Read
+      #50: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bodyLocked.Read
+      #51: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bufioFlushWriter.Write
+      #52: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bufioFlushWriter.Write
+      #53: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.cancelTimerBody.Close
+      #54: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.cancelTimerBody.Close
+      #55: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.cancelTimerBody.Read
+      #56: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.cancelTimerBody.Read
+      #57: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.checkConnErrorWriter.Write
+      #58: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.checkConnErrorWriter.Write
+      #59: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.chunkWriter.Write
+      #60: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.chunkWriter.Write
+      #61: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.connReader.Read
+      #62: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.connReader.Read
+      #63: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #64: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #65: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.expectContinueReader.Read
+      #66: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.expectContinueReader.Read
+      #67: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.gzipReader.Close
+      #68: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.gzipReader.Close
+      #69: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.gzipReader.Read
+      #70: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.gzipReader.Read
+      #71: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2ConnectionError.Error
+      #72: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2ConnectionError.Error
+      #73: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2ErrCode.String
+      #74: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2ErrCode.String
+      #75: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameHeader.String
+      #76: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameHeader.String
+      #77: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameType.String
+      #78: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameType.String
+      #79: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameWriteRequest.String
+      #80: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameWriteRequest.String
+      #81: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2GoAwayError.Error
+      #82: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2GoAwayError.Error
+      #83: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2Setting.String
+      #84: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2Setting.String
+      #85: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2SettingID.String
+      #86: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2SettingID.String
+      #87: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2StreamError.Error
+      #88: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2StreamError.Error
+      #89: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2bufferedWriterTimeoutWriter.Write
+      #90: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2bufferedWriterTimeoutWriter.Write
+      #91: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2chunkWriter.Write
+      #92: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2chunkWriter.Write
+      #93: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2connError.Error
+      #94: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2connError.Error
+      #95: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2duplicatePseudoHeaderError.Error
+      #96: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2duplicatePseudoHeaderError.Error
+      #97: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2gzipReader.Close
+      #98: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2gzipReader.Close
+      #99: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2gzipReader.Read
+      #100: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2gzipReader.Read
+      #101: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldNameError.Error
+      #102: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldNameError.Error
+      #103: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldValueError.Error
+      #104: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldValueError.Error
+      #105: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2pseudoHeaderError.Error
+      #106: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2pseudoHeaderError.Error
+      #107: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.http2requestBody.Close
+      #108: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.http2requestBody.Close
+      #109: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2requestBody.Read
+      #110: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2requestBody.Read
+      #111: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.http2responseWriter.Flush
+      #112: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.http2responseWriter.Flush
+      #113: internal/api/chat_stream.go:281:18: api.RegisterStream calls sse.Sender.Data, which eventually calls http.http2responseWriter.SetWriteDeadline
+      #114: internal/api/chat_stream.go:281:18: api.RegisterStream calls sse.Sender.Data, which eventually calls http.http2responseWriter.SetWriteDeadline
+      #115: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2responseWriter.Write
+      #116: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2responseWriter.Write
+      #117: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.http2responseWriter.WriteHeader
+      #118: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.http2responseWriter.WriteHeader
+      #119: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.http2responseWriter.WriteString
+      #120: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.http2responseWriter.WriteString
+      #121: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2stickyErrWriter.Write
+      #122: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2stickyErrWriter.Write
+      #123: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2transportResponseBody.Close
+      #124: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2transportResponseBody.Close
+      #125: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2transportResponseBody.Read
+      #126: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2transportResponseBody.Read
+      #127: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2writeData.String
+      #128: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2writeData.String
+      #129: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.loggingConn.Read
+      #130: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.loggingConn.Read
+      #131: internal/tenancy/builder.go:362:13: tenancy.DeleteStatement.Render calls fmt.Fprintf, which calls http.loggingConn.Write
+      #132: internal/tenancy/builder.go:362:13: tenancy.DeleteStatement.Render calls fmt.Fprintf, which calls http.loggingConn.Write
+      #133: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.maxBytesReader.Close
+      #134: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.maxBytesReader.Close
+      #135: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.maxBytesReader.Read
+      #136: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.maxBytesReader.Read
+      #137: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #138: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #139: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConn.Read
+      #140: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConn.Read
+      #141: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #142: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #143: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.persistConnWriter.Write
+      #144: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.persistConnWriter.Write
+      #145: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #146: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #147: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readTrackingBody.Read
+      #148: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readTrackingBody.Read
+      #149: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readWriteCloserBody.Read
+      #150: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readWriteCloserBody.Read
+      #151: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.response.Flush
+      #152: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.response.Flush
+      #153: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.ReadFrom
+      #154: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.ReadFrom
+      #155: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.response.Write
+      #156: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.response.Write
+      #157: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.response.WriteHeader
+      #158: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.response.WriteHeader
+      #159: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.WriteString
+      #160: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.WriteString
+      #161: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.transportReadFromServerError.Error
+      #162: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.transportReadFromServerError.Error
+
+Vulnerability #2: GO-2026-6613
+    HTTP/1 server connection desynchronization after 2xx CONNECT response in
+    net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6613
+  Standard library
+    Found in: net/http@go1.26.6
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/api/audit_middleware.go:8:2: api.init calls middleware.init, which calls http.CanonicalHeaderKey
+      #2: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #3: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #4: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #5: internal/api/mcp_serve.go:158:13: api.mcpServeHandler.ServeHTTP calls http.Error
+      #6: internal/taskagent/session.go:60:2: taskagent.init calls badger.init, which eventually calls http.HandleFunc
+      #7: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Add
+      #8: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Del
+      #9: internal/api/mcp_serve.go:144:79: api.mcpHTTPAuthRequest.Header calls http.Header.Get
+      #10: internal/semantic/api_embedder.go:129:16: semantic.APIEmbedder.Embed calls http.Header.Set
+      #11: bench/load/main.go:529:27: load.doChat calls http.NewRequest
+      #12: internal/semantic/api_embedder.go:125:40: semantic.APIEmbedder.Embed calls http.NewRequestWithContext
+      #13: internal/llm/otel.go:185:27: llm.redactingExporter.ExportSpans calls otlptrace.Exporter.ExportSpans, which eventually calls http.ParseTime
+      #14: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.ReadResponse
+      #15: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Request.Write
+      #16: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Response.Write
+      #17: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe
+      #18: aisotropy/app.go:1484:28: aisotropy.App.Run calls http.Server.Shutdown
+      #19: internal/llm/otel.go:551:36: llm.NewTracerProvider calls otlptracehttp.New, which eventually calls http.Transport.Clone
+      #20: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+      #21: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.body.Close
+      #22: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.body.Read
+      #23: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.bodyEOFSignal.Close
+      #24: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.bodyEOFSignal.Read
+      #25: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bodyLocked.Read
+      #26: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bufioFlushWriter.Write
+      #27: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.cancelTimerBody.Close
+      #28: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.cancelTimerBody.Read
+      #29: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.checkConnErrorWriter.Write
+      #30: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.chunkWriter.Write
+      #31: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.connReader.Read
+      #32: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #33: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.expectContinueReader.Read
+      #34: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.gzipReader.Close
+      #35: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.gzipReader.Read
+      #36: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.loggingConn.Read
+      #37: internal/tenancy/builder.go:362:13: tenancy.DeleteStatement.Render calls fmt.Fprintf, which calls http.loggingConn.Write
+      #38: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2transportResponseBody.Close, which eventually calls http.maxBytesReader.Close
+      #39: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.maxBytesReader.Read
+      #40: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #41: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConn.Read
+      #42: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #43: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.persistConnWriter.Write
+      #44: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #45: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readTrackingBody.Read
+      #46: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readWriteCloserBody.Read
+      #47: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.response.Flush
+      #48: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.ReadFrom
+      #49: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.response.Write
+      #50: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.response.WriteHeader
+      #51: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which eventually calls http.response.WriteString
+      #52: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.transportReadFromServerError.Error
+
+Vulnerability #3: GO-2026-6612
+    Double flow control refund on HTTP/2 server streams in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6612
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.57.0
+    Fixed in: golang.org/x/net@v0.60.0
+    Example traces found:
+      #1: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.ConnectionError.Error
+      #2: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.ErrCode.String
+      #3: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.FrameHeader.String
+      #4: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.FrameType.String
+      #5: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrame
+      #6: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrameForHeader
+      #7: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrameHeader
+      #8: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteContinuation
+      #9: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteGoAway
+      #10: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteHeaders
+      #11: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WritePing
+      #12: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteRSTStream
+      #13: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteSettings
+      #14: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteSettingsAck
+      #15: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteWindowUpdate
+      #16: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.GoAwayError.Error
+      #17: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.Setting.String
+      #18: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.SettingID.String
+      #19: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.SettingsFrame.ForeachSetting
+      #20: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.StreamError.Error
+      #21: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.bufferedWriterTimeoutWriter.Write
+      #22: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.chunkWriter.Write
+      #23: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.connError.Error
+      #24: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.duplicatePseudoHeaderError.Error
+      #25: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.gzipReader.Close
+      #26: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http2.gzipReader.Read
+      #27: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.headerFieldNameError.Error
+      #28: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.headerFieldValueError.Error
+      #29: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.pseudoHeaderError.Error
+      #30: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.stickyErrWriter.Write
+      #31: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close
+      #32: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http2.transportResponseBody.Read
+      #33: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.writeData.String
+
+  Standard library
+    Found in: net/http@go1.26.6
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/api/audit_middleware.go:8:2: api.init calls middleware.init, which calls http.CanonicalHeaderKey
+      #2: internal/api/audit_middleware.go:8:2: api.init calls middleware.init, which calls http.CanonicalHeaderKey
+      #3: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #4: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #5: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #6: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #7: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #8: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #9: internal/api/mcp_serve.go:158:13: api.mcpServeHandler.ServeHTTP calls http.Error
+      #10: internal/api/mcp_serve.go:158:13: api.mcpServeHandler.ServeHTTP calls http.Error
+      #11: internal/taskagent/session.go:60:2: taskagent.init calls badger.init, which eventually calls http.HandleFunc
+      #12: internal/taskagent/session.go:60:2: taskagent.init calls badger.init, which eventually calls http.HandleFunc
+      #13: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Add
+      #14: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Add
+      #15: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Del
+      #16: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Del
+      #17: internal/api/mcp_serve.go:144:79: api.mcpHTTPAuthRequest.Header calls http.Header.Get
+      #18: internal/api/mcp_serve.go:144:79: api.mcpHTTPAuthRequest.Header calls http.Header.Get
+      #19: internal/semantic/api_embedder.go:129:16: semantic.APIEmbedder.Embed calls http.Header.Set
+      #20: internal/semantic/api_embedder.go:129:16: semantic.APIEmbedder.Embed calls http.Header.Set
+      #21: bench/load/main.go:529:27: load.doChat calls http.NewRequest
+      #22: bench/load/main.go:529:27: load.doChat calls http.NewRequest
+      #23: internal/semantic/api_embedder.go:125:40: semantic.APIEmbedder.Embed calls http.NewRequestWithContext
+      #24: internal/semantic/api_embedder.go:125:40: semantic.APIEmbedder.Embed calls http.NewRequestWithContext
+      #25: internal/llm/otel.go:185:27: llm.redactingExporter.ExportSpans calls otlptrace.Exporter.ExportSpans, which eventually calls http.ParseTime
+      #26: internal/llm/otel.go:185:27: llm.redactingExporter.ExportSpans calls otlptrace.Exporter.ExportSpans, which eventually calls http.ParseTime
+      #27: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.ReadResponse
+      #28: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.ReadResponse
+      #29: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Request.Write
+      #30: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Request.Write
+      #31: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Response.Write
+      #32: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Response.Write
+      #33: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe
+      #34: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe
+      #35: aisotropy/app.go:1484:28: aisotropy.App.Run calls http.Server.Shutdown
+      #36: aisotropy/app.go:1484:28: aisotropy.App.Run calls http.Server.Shutdown
+      #37: internal/llm/otel.go:551:36: llm.NewTracerProvider calls otlptracehttp.New, which eventually calls http.Transport.Clone
+      #38: internal/llm/otel.go:551:36: llm.NewTracerProvider calls otlptracehttp.New, which eventually calls http.Transport.Clone
+      #39: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+      #40: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+      #41: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.body.Close
+      #42: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.body.Close
+      #43: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.body.Read
+      #44: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.body.Read
+      #45: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.bodyEOFSignal.Close
+      #46: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.bodyEOFSignal.Close
+      #47: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.bodyEOFSignal.Read
+      #48: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.bodyEOFSignal.Read
+      #49: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bodyLocked.Read
+      #50: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bodyLocked.Read
+      #51: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bufioFlushWriter.Write
+      #52: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bufioFlushWriter.Write
+      #53: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.cancelTimerBody.Close
+      #54: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.cancelTimerBody.Close
+      #55: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.cancelTimerBody.Read
+      #56: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.cancelTimerBody.Read
+      #57: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.checkConnErrorWriter.Write
+      #58: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.checkConnErrorWriter.Write
+      #59: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.chunkWriter.Write
+      #60: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.chunkWriter.Write
+      #61: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.connReader.Read
+      #62: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.connReader.Read
+      #63: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #64: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #65: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.expectContinueReader.Read
+      #66: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.expectContinueReader.Read
+      #67: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.gzipReader.Close
+      #68: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.gzipReader.Close
+      #69: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.gzipReader.Read
+      #70: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.gzipReader.Read
+      #71: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2ConnectionError.Error
+      #72: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2ConnectionError.Error
+      #73: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2ErrCode.String
+      #74: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2ErrCode.String
+      #75: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameHeader.String
+      #76: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameHeader.String
+      #77: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameType.String
+      #78: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameType.String
+      #79: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameWriteRequest.String
+      #80: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameWriteRequest.String
+      #81: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2GoAwayError.Error
+      #82: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2GoAwayError.Error
+      #83: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2Setting.String
+      #84: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2Setting.String
+      #85: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2SettingID.String
+      #86: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2SettingID.String
+      #87: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2StreamError.Error
+      #88: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2StreamError.Error
+      #89: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2bufferedWriterTimeoutWriter.Write
+      #90: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2bufferedWriterTimeoutWriter.Write
+      #91: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2chunkWriter.Write
+      #92: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2chunkWriter.Write
+      #93: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2connError.Error
+      #94: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2connError.Error
+      #95: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2duplicatePseudoHeaderError.Error
+      #96: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2duplicatePseudoHeaderError.Error
+      #97: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2gzipReader.Close
+      #98: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2gzipReader.Close
+      #99: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2gzipReader.Read
+      #100: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2gzipReader.Read
+      #101: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldNameError.Error
+      #102: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldNameError.Error
+      #103: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldValueError.Error
+      #104: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldValueError.Error
+      #105: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2pseudoHeaderError.Error
+      #106: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2pseudoHeaderError.Error
+      #107: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.http2requestBody.Close
+      #108: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.http2requestBody.Close
+      #109: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2requestBody.Read
+      #110: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2requestBody.Read
+      #111: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.http2responseWriter.Flush
+      #112: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.http2responseWriter.Flush
+      #113: internal/api/chat_stream.go:281:18: api.RegisterStream calls sse.Sender.Data, which eventually calls http.http2responseWriter.SetWriteDeadline
+      #114: internal/api/chat_stream.go:281:18: api.RegisterStream calls sse.Sender.Data, which eventually calls http.http2responseWriter.SetWriteDeadline
+      #115: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2responseWriter.Write
+      #116: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2responseWriter.Write
+      #117: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.http2responseWriter.WriteHeader
+      #118: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.http2responseWriter.WriteHeader
+      #119: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.http2responseWriter.WriteString
+      #120: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.http2responseWriter.WriteString
+      #121: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2stickyErrWriter.Write
+      #122: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2stickyErrWriter.Write
+      #123: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2transportResponseBody.Close
+      #124: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2transportResponseBody.Close
+      #125: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2transportResponseBody.Read
+      #126: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2transportResponseBody.Read
+      #127: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2writeData.String
+      #128: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2writeData.String
+      #129: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.loggingConn.Read
+      #130: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.loggingConn.Read
+      #131: internal/tenancy/builder.go:362:13: tenancy.DeleteStatement.Render calls fmt.Fprintf, which calls http.loggingConn.Write
+      #132: internal/tenancy/builder.go:362:13: tenancy.DeleteStatement.Render calls fmt.Fprintf, which calls http.loggingConn.Write
+      #133: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.maxBytesReader.Close
+      #134: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.maxBytesReader.Close
+      #135: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.maxBytesReader.Read
+      #136: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.maxBytesReader.Read
+      #137: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #138: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #139: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConn.Read
+      #140: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConn.Read
+      #141: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #142: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #143: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.persistConnWriter.Write
+      #144: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.persistConnWriter.Write
+      #145: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #146: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #147: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readTrackingBody.Read
+      #148: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readTrackingBody.Read
+      #149: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readWriteCloserBody.Read
+      #150: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readWriteCloserBody.Read
+      #151: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.response.Flush
+      #152: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.response.Flush
+      #153: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.ReadFrom
+      #154: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.ReadFrom
+      #155: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.response.Write
+      #156: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.response.Write
+      #157: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.response.WriteHeader
+      #158: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.response.WriteHeader
+      #159: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.WriteString
+      #160: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.WriteString
+      #161: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.transportReadFromServerError.Error
+      #162: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.transportReadFromServerError.Error
+
+Vulnerability #4: GO-2026-6611
+    Excessive CPU consumption from repeated initial window changes in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6611
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.57.0
+    Fixed in: golang.org/x/net@v0.60.0
+    Example traces found:
+      #1: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.ConnectionError.Error
+      #2: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.ErrCode.String
+      #3: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.FrameHeader.String
+      #4: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.FrameType.String
+      #5: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrame
+      #6: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrameForHeader
+      #7: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrameHeader
+      #8: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteContinuation
+      #9: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteGoAway
+      #10: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteHeaders
+      #11: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WritePing
+      #12: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteRSTStream
+      #13: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteSettings
+      #14: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteSettingsAck
+      #15: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteWindowUpdate
+      #16: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.GoAwayError.Error
+      #17: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.Setting.String
+      #18: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.SettingID.String
+      #19: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.SettingsFrame.ForeachSetting
+      #20: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.StreamError.Error
+      #21: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.bufferedWriterTimeoutWriter.Write
+      #22: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.chunkWriter.Write
+      #23: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.connError.Error
+      #24: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.duplicatePseudoHeaderError.Error
+      #25: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.gzipReader.Close
+      #26: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http2.gzipReader.Read
+      #27: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.headerFieldNameError.Error
+      #28: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.headerFieldValueError.Error
+      #29: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.pseudoHeaderError.Error
+      #30: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.stickyErrWriter.Write
+      #31: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close
+      #32: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http2.transportResponseBody.Read
+      #33: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.writeData.String
+
+  Standard library
+    Found in: net/http@go1.26.6
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/api/audit_middleware.go:8:2: api.init calls middleware.init, which calls http.CanonicalHeaderKey
+      #2: internal/api/audit_middleware.go:8:2: api.init calls middleware.init, which calls http.CanonicalHeaderKey
+      #3: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #4: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #5: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #6: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #7: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #8: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #9: internal/api/mcp_serve.go:158:13: api.mcpServeHandler.ServeHTTP calls http.Error
+      #10: internal/api/mcp_serve.go:158:13: api.mcpServeHandler.ServeHTTP calls http.Error
+      #11: internal/taskagent/session.go:60:2: taskagent.init calls badger.init, which eventually calls http.HandleFunc
+      #12: internal/taskagent/session.go:60:2: taskagent.init calls badger.init, which eventually calls http.HandleFunc
+      #13: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Add
+      #14: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Add
+      #15: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Del
+      #16: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Del
+      #17: internal/api/mcp_serve.go:144:79: api.mcpHTTPAuthRequest.Header calls http.Header.Get
+      #18: internal/api/mcp_serve.go:144:79: api.mcpHTTPAuthRequest.Header calls http.Header.Get
+      #19: internal/semantic/api_embedder.go:129:16: semantic.APIEmbedder.Embed calls http.Header.Set
+      #20: internal/semantic/api_embedder.go:129:16: semantic.APIEmbedder.Embed calls http.Header.Set
+      #21: bench/load/main.go:529:27: load.doChat calls http.NewRequest
+      #22: bench/load/main.go:529:27: load.doChat calls http.NewRequest
+      #23: internal/semantic/api_embedder.go:125:40: semantic.APIEmbedder.Embed calls http.NewRequestWithContext
+      #24: internal/semantic/api_embedder.go:125:40: semantic.APIEmbedder.Embed calls http.NewRequestWithContext
+      #25: internal/llm/otel.go:185:27: llm.redactingExporter.ExportSpans calls otlptrace.Exporter.ExportSpans, which eventually calls http.ParseTime
+      #26: internal/llm/otel.go:185:27: llm.redactingExporter.ExportSpans calls otlptrace.Exporter.ExportSpans, which eventually calls http.ParseTime
+      #27: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.ReadResponse
+      #28: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.ReadResponse
+      #29: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Request.Write
+      #30: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Request.Write
+      #31: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Response.Write
+      #32: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Response.Write
+      #33: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe
+      #34: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe
+      #35: aisotropy/app.go:1484:28: aisotropy.App.Run calls http.Server.Shutdown
+      #36: aisotropy/app.go:1484:28: aisotropy.App.Run calls http.Server.Shutdown
+      #37: internal/llm/otel.go:551:36: llm.NewTracerProvider calls otlptracehttp.New, which eventually calls http.Transport.Clone
+      #38: internal/llm/otel.go:551:36: llm.NewTracerProvider calls otlptracehttp.New, which eventually calls http.Transport.Clone
+      #39: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+      #40: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+      #41: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.body.Close
+      #42: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.body.Close
+      #43: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.body.Read
+      #44: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.body.Read
+      #45: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.bodyEOFSignal.Close
+      #46: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.bodyEOFSignal.Close
+      #47: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.bodyEOFSignal.Read
+      #48: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.bodyEOFSignal.Read
+      #49: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bodyLocked.Read
+      #50: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bodyLocked.Read
+      #51: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bufioFlushWriter.Write
+      #52: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bufioFlushWriter.Write
+      #53: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.cancelTimerBody.Close
+      #54: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.cancelTimerBody.Close
+      #55: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.cancelTimerBody.Read
+      #56: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.cancelTimerBody.Read
+      #57: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.checkConnErrorWriter.Write
+      #58: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.checkConnErrorWriter.Write
+      #59: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.chunkWriter.Write
+      #60: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.chunkWriter.Write
+      #61: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.connReader.Read
+      #62: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.connReader.Read
+      #63: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #64: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #65: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.expectContinueReader.Read
+      #66: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.expectContinueReader.Read
+      #67: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.gzipReader.Close
+      #68: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.gzipReader.Close
+      #69: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.gzipReader.Read
+      #70: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.gzipReader.Read
+      #71: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2ConnectionError.Error
+      #72: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2ConnectionError.Error
+      #73: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2ErrCode.String
+      #74: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2ErrCode.String
+      #75: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameHeader.String
+      #76: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameHeader.String
+      #77: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameType.String
+      #78: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameType.String
+      #79: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameWriteRequest.String
+      #80: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameWriteRequest.String
+      #81: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2GoAwayError.Error
+      #82: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2GoAwayError.Error
+      #83: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2Setting.String
+      #84: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2Setting.String
+      #85: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2SettingID.String
+      #86: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2SettingID.String
+      #87: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2StreamError.Error
+      #88: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2StreamError.Error
+      #89: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2bufferedWriterTimeoutWriter.Write
+      #90: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2bufferedWriterTimeoutWriter.Write
+      #91: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2chunkWriter.Write
+      #92: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2chunkWriter.Write
+      #93: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2connError.Error
+      #94: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2connError.Error
+      #95: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2duplicatePseudoHeaderError.Error
+      #96: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2duplicatePseudoHeaderError.Error
+      #97: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2gzipReader.Close
+      #98: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2gzipReader.Close
+      #99: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2gzipReader.Read
+      #100: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2gzipReader.Read
+      #101: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldNameError.Error
+      #102: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldNameError.Error
+      #103: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldValueError.Error
+      #104: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldValueError.Error
+      #105: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2pseudoHeaderError.Error
+      #106: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2pseudoHeaderError.Error
+      #107: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.http2requestBody.Close
+      #108: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.http2requestBody.Close
+      #109: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2requestBody.Read
+      #110: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2requestBody.Read
+      #111: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.http2responseWriter.Flush
+      #112: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.http2responseWriter.Flush
+      #113: internal/api/chat_stream.go:281:18: api.RegisterStream calls sse.Sender.Data, which eventually calls http.http2responseWriter.SetWriteDeadline
+      #114: internal/api/chat_stream.go:281:18: api.RegisterStream calls sse.Sender.Data, which eventually calls http.http2responseWriter.SetWriteDeadline
+      #115: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2responseWriter.Write
+      #116: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2responseWriter.Write
+      #117: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.http2responseWriter.WriteHeader
+      #118: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.http2responseWriter.WriteHeader
+      #119: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.http2responseWriter.WriteString
+      #120: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.http2responseWriter.WriteString
+      #121: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2stickyErrWriter.Write
+      #122: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2stickyErrWriter.Write
+      #123: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2transportResponseBody.Close
+      #124: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2transportResponseBody.Close
+      #125: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2transportResponseBody.Read
+      #126: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2transportResponseBody.Read
+      #127: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2writeData.String
+      #128: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2writeData.String
+      #129: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.loggingConn.Read
+      #130: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.loggingConn.Read
+      #131: internal/tenancy/builder.go:362:13: tenancy.DeleteStatement.Render calls fmt.Fprintf, which calls http.loggingConn.Write
+      #132: internal/tenancy/builder.go:362:13: tenancy.DeleteStatement.Render calls fmt.Fprintf, which calls http.loggingConn.Write
+      #133: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.maxBytesReader.Close
+      #134: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.maxBytesReader.Close
+      #135: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.maxBytesReader.Read
+      #136: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.maxBytesReader.Read
+      #137: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #138: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #139: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConn.Read
+      #140: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConn.Read
+      #141: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #142: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #143: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.persistConnWriter.Write
+      #144: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.persistConnWriter.Write
+      #145: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #146: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #147: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readTrackingBody.Read
+      #148: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readTrackingBody.Read
+      #149: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readWriteCloserBody.Read
+      #150: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readWriteCloserBody.Read
+      #151: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.response.Flush
+      #152: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.response.Flush
+      #153: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.ReadFrom
+      #154: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.ReadFrom
+      #155: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.response.Write
+      #156: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.response.Write
+      #157: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.response.WriteHeader
+      #158: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.response.WriteHeader
+      #159: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.WriteString
+      #160: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.WriteString
+      #161: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.transportReadFromServerError.Error
+      #162: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.transportReadFromServerError.Error
+
+Vulnerability #5: GO-2026-6610
+    HTTP/2 transport accepts malformed framing-related headers in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6610
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.57.0
+    Fixed in: golang.org/x/net@v0.60.0
+
+  Standard library
+    Found in: net/http@go1.26.6
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #2: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #3: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #4: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #5: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #6: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #7: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+      #8: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+
+Vulnerability #6: GO-2026-6608
+    Memory limit bypass when parsing MIME headers in net/textproto,
+    mime/multipart
+  More info: https://pkg.go.dev/vuln/GO-2026-6608
+  Standard library
+    Found in: net/textproto@go1.26.6
+    Fixed in: net/textproto@go1.26.9
+    Example traces found:
+      #1: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe, which eventually calls multipart.Reader.ReadForm
+      #2: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which eventually calls textproto.Reader.ReadMIMEHeader
+
+Vulnerability #7: GO-2026-6607
+    Reject malformed ECH outer extension references in crypto/tls
+  More info: https://pkg.go.dev/vuln/GO-2026-6607
+  Standard library
+    Found in: crypto/tls@go1.26.6
+    Fixed in: crypto/tls@go1.26.9
+    Example traces found:
+      #1: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls tls.Conn.Handshake
+      #2: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe, which eventually calls tls.Conn.HandshakeContext
+      #3: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls tls.Conn.Read
+      #4: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls tls.Conn.Write
+      #5: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip, which eventually calls tls.Dialer.DialContext
+
+Vulnerability #8: GO-2026-6605
+    HTTP/1 client connection desynchronization after CONNECT rejection in
+    net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6605
+  Standard library
+    Found in: net/http@go1.26.6
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #2: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #3: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #4: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+
+Vulnerability #9: GO-2026-6603
+    HTTP/2 server memory exhaustion due to Trailer headers in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6603
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.57.0
+    Fixed in: golang.org/x/net@v0.60.0
+    Example traces found:
+      #1: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.ConnectionError.Error
+      #2: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.ErrCode.String
+      #3: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.FrameHeader.String
+      #4: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.FrameType.String
+      #5: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrame
+      #6: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrameForHeader
+      #7: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.ReadFrameHeader
+      #8: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteContinuation
+      #9: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteGoAway
+      #10: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteHeaders
+      #11: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WritePing
+      #12: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteRSTStream
+      #13: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteSettings
+      #14: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteSettingsAck
+      #15: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.Framer.WriteWindowUpdate
+      #16: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.GoAwayError.Error
+      #17: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.Setting.String
+      #18: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.SettingID.String
+      #19: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http2.SettingsFrame.ForeachSetting
+      #20: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.StreamError.Error
+      #21: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.bufferedWriterTimeoutWriter.Write
+      #22: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.chunkWriter.Write
+      #23: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http2.connError.Error
+      #24: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.duplicatePseudoHeaderError.Error
+      #25: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.gzipReader.Close
+      #26: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http2.gzipReader.Read
+      #27: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.headerFieldNameError.Error
+      #28: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.headerFieldValueError.Error
+      #29: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls errors.joinError.Error, which calls http2.pseudoHeaderError.Error
+      #30: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http2.stickyErrWriter.Write
+      #31: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close
+      #32: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http2.transportResponseBody.Read
+      #33: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http2.writeData.String
+
+  Standard library
+    Found in: net/http@go1.26.6
+    Fixed in: net/http@go1.26.9
+    Example traces found:
+      #1: internal/api/audit_middleware.go:8:2: api.init calls middleware.init, which calls http.CanonicalHeaderKey
+      #2: internal/api/audit_middleware.go:8:2: api.init calls middleware.init, which calls http.CanonicalHeaderKey
+      #3: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #4: bench/load/main.go:267:30: load.bootApp calls http.Client.CloseIdleConnections
+      #5: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #6: internal/llm/openai_compat.go:146:24: llm.OpenAICompatClient.StreamChat calls http.Client.Do
+      #7: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #8: cmd/bitrate-harness/main.go:629:26: bitrate.serveAndProbe calls http.Client.Get
+      #9: internal/api/mcp_serve.go:158:13: api.mcpServeHandler.ServeHTTP calls http.Error
+      #10: internal/api/mcp_serve.go:158:13: api.mcpServeHandler.ServeHTTP calls http.Error
+      #11: internal/taskagent/session.go:60:2: taskagent.init calls badger.init, which eventually calls http.HandleFunc
+      #12: internal/taskagent/session.go:60:2: taskagent.init calls badger.init, which eventually calls http.HandleFunc
+      #13: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Add
+      #14: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Add
+      #15: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Del
+      #16: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls middleware.compressResponseWriter.WriteHeader, which calls http.Header.Del
+      #17: internal/api/mcp_serve.go:144:79: api.mcpHTTPAuthRequest.Header calls http.Header.Get
+      #18: internal/api/mcp_serve.go:144:79: api.mcpHTTPAuthRequest.Header calls http.Header.Get
+      #19: internal/semantic/api_embedder.go:129:16: semantic.APIEmbedder.Embed calls http.Header.Set
+      #20: internal/semantic/api_embedder.go:129:16: semantic.APIEmbedder.Embed calls http.Header.Set
+      #21: bench/load/main.go:529:27: load.doChat calls http.NewRequest
+      #22: bench/load/main.go:529:27: load.doChat calls http.NewRequest
+      #23: internal/semantic/api_embedder.go:125:40: semantic.APIEmbedder.Embed calls http.NewRequestWithContext
+      #24: internal/semantic/api_embedder.go:125:40: semantic.APIEmbedder.Embed calls http.NewRequestWithContext
+      #25: internal/llm/otel.go:185:27: llm.redactingExporter.ExportSpans calls otlptrace.Exporter.ExportSpans, which eventually calls http.ParseTime
+      #26: internal/llm/otel.go:185:27: llm.redactingExporter.ExportSpans calls otlptrace.Exporter.ExportSpans, which eventually calls http.ParseTime
+      #27: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.ReadResponse
+      #28: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.ReadResponse
+      #29: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Request.Write
+      #30: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Request.Write
+      #31: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Response.Write
+      #32: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.Response.Write
+      #33: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe
+      #34: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe
+      #35: aisotropy/app.go:1484:28: aisotropy.App.Run calls http.Server.Shutdown
+      #36: aisotropy/app.go:1484:28: aisotropy.App.Run calls http.Server.Shutdown
+      #37: internal/llm/otel.go:551:36: llm.NewTracerProvider calls otlptracehttp.New, which eventually calls http.Transport.Clone
+      #38: internal/llm/otel.go:551:36: llm.NewTracerProvider calls otlptracehttp.New, which eventually calls http.Transport.Clone
+      #39: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+      #40: internal/o11y/roundtripper.go:56:27: o11y.TracingTransport.RoundTrip calls http.Transport.RoundTrip
+      #41: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.body.Close
+      #42: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.body.Close
+      #43: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.body.Read
+      #44: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.body.Read
+      #45: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.bodyEOFSignal.Close
+      #46: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.bodyEOFSignal.Close
+      #47: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.bodyEOFSignal.Read
+      #48: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.bodyEOFSignal.Read
+      #49: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bodyLocked.Read
+      #50: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bodyLocked.Read
+      #51: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bufioFlushWriter.Write
+      #52: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.bufioFlushWriter.Write
+      #53: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.cancelTimerBody.Close
+      #54: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.cancelTimerBody.Close
+      #55: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.cancelTimerBody.Read
+      #56: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.cancelTimerBody.Read
+      #57: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.checkConnErrorWriter.Write
+      #58: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.checkConnErrorWriter.Write
+      #59: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.chunkWriter.Write
+      #60: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.chunkWriter.Write
+      #61: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.connReader.Read
+      #62: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.connReader.Read
+      #63: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #64: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #65: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.expectContinueReader.Read
+      #66: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.expectContinueReader.Read
+      #67: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.gzipReader.Close
+      #68: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.gzipReader.Close
+      #69: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.gzipReader.Read
+      #70: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.gzipReader.Read
+      #71: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2ConnectionError.Error
+      #72: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2ConnectionError.Error
+      #73: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2ErrCode.String
+      #74: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2ErrCode.String
+      #75: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameHeader.String
+      #76: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameHeader.String
+      #77: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameType.String
+      #78: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameType.String
+      #79: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameWriteRequest.String
+      #80: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2FrameWriteRequest.String
+      #81: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2GoAwayError.Error
+      #82: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2GoAwayError.Error
+      #83: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2Setting.String
+      #84: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2Setting.String
+      #85: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2SettingID.String
+      #86: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2SettingID.String
+      #87: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2StreamError.Error
+      #88: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2StreamError.Error
+      #89: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2bufferedWriterTimeoutWriter.Write
+      #90: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2bufferedWriterTimeoutWriter.Write
+      #91: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2chunkWriter.Write
+      #92: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2chunkWriter.Write
+      #93: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2connError.Error
+      #94: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2connError.Error
+      #95: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2duplicatePseudoHeaderError.Error
+      #96: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2duplicatePseudoHeaderError.Error
+      #97: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2gzipReader.Close
+      #98: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2gzipReader.Close
+      #99: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2gzipReader.Read
+      #100: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2gzipReader.Read
+      #101: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldNameError.Error
+      #102: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldNameError.Error
+      #103: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldValueError.Error
+      #104: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2headerFieldValueError.Error
+      #105: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2pseudoHeaderError.Error
+      #106: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.http2pseudoHeaderError.Error
+      #107: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.http2requestBody.Close
+      #108: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.http2requestBody.Close
+      #109: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2requestBody.Read
+      #110: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2requestBody.Read
+      #111: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.http2responseWriter.Flush
+      #112: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.http2responseWriter.Flush
+      #113: internal/api/chat_stream.go:281:18: api.RegisterStream calls sse.Sender.Data, which eventually calls http.http2responseWriter.SetWriteDeadline
+      #114: internal/api/chat_stream.go:281:18: api.RegisterStream calls sse.Sender.Data, which eventually calls http.http2responseWriter.SetWriteDeadline
+      #115: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2responseWriter.Write
+      #116: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2responseWriter.Write
+      #117: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.http2responseWriter.WriteHeader
+      #118: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.http2responseWriter.WriteHeader
+      #119: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.http2responseWriter.WriteString
+      #120: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.http2responseWriter.WriteString
+      #121: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2stickyErrWriter.Write
+      #122: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.http2stickyErrWriter.Write
+      #123: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2transportResponseBody.Close
+      #124: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http.http2transportResponseBody.Close
+      #125: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2transportResponseBody.Read
+      #126: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.http2transportResponseBody.Read
+      #127: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2writeData.String
+      #128: bench/wasm-vs-docker/main.go:123:15: wasm.main calls fmt.Fprintln, which eventually calls http.http2writeData.String
+      #129: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.loggingConn.Read
+      #130: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.loggingConn.Read
+      #131: internal/tenancy/builder.go:362:13: tenancy.DeleteStatement.Render calls fmt.Fprintf, which calls http.loggingConn.Write
+      #132: internal/tenancy/builder.go:362:13: tenancy.DeleteStatement.Render calls fmt.Fprintf, which calls http.loggingConn.Write
+      #133: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.maxBytesReader.Close
+      #134: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.maxBytesReader.Close
+      #135: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.maxBytesReader.Read
+      #136: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.maxBytesReader.Read
+      #137: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #138: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #139: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConn.Read
+      #140: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConn.Read
+      #141: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #142: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.persistConnWriter.ReadFrom
+      #143: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.persistConnWriter.Write
+      #144: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.persistConnWriter.Write
+      #145: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #146: internal/llm/openai_compat.go:152:22: llm.OpenAICompatClient.StreamChat calls http2.transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #147: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readTrackingBody.Read
+      #148: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readTrackingBody.Read
+      #149: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readWriteCloserBody.Read
+      #150: internal/llm/openai_compat.go:151:27: llm.OpenAICompatClient.StreamChat calls io.ReadAll, which calls http.readWriteCloserBody.Read
+      #151: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.response.Flush
+      #152: internal/api/aisdk.go:277:18: api.aisdkStream.flush calls http.response.Flush
+      #153: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.ReadFrom
+      #154: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.ReadFrom
+      #155: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.response.Write
+      #156: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which calls http.response.Write
+      #157: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.response.WriteHeader
+      #158: internal/api/mcp_serve.go:153:16: api.mcpServeHandler.ServeHTTP calls http.response.WriteHeader
+      #159: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.WriteString
+      #160: internal/ingest/pdf.go:41:22: ingest.ExtractPDF calls io.Copy, which eventually calls http.response.WriteString
+      #161: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.transportReadFromServerError.Error
+      #162: internal/guardrails/scanner.go:269:55: guardrails.scannerError.Error calls http.transportReadFromServerError.Error
+
+Vulnerability #10: GO-2026-6600
+    Recognize yield as regexp preceder keyword in html/template
+  More info: https://pkg.go.dev/vuln/GO-2026-6600
+  Standard library
+    Found in: html/template@go1.26.6
+    Fixed in: html/template@go1.26.9
+    Example traces found:
+      #1: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe, which eventually calls template.Template.Execute
+      #2: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe, which eventually calls template.Template.ExecuteTemplate
+
+Vulnerability #11: GO-2026-6599
+    Reset context tracking on consecutive template expressions in html/template
+  More info: https://pkg.go.dev/vuln/GO-2026-6599
+  Standard library
+    Found in: html/template@go1.26.6
+    Fixed in: html/template@go1.26.9
+    Example traces found:
+      #1: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe, which eventually calls template.Template.Execute
+      #2: aisotropy/app.go:1460:35: aisotropy.Run calls http.Server.ListenAndServe, which eventually calls template.Template.ExecuteTemplate
+
+Vulnerability #12: GO-2026-6348
+    Heap Memory Exhaustion (OOM) via HTTP/2 DATA Frame Fragmentation in
+    google.golang.org/grpc
+  More info: https://pkg.go.dev/vuln/GO-2026-6348
+  Module: google.golang.org/grpc
+    Found in: google.golang.org/grpc@v1.83.0
+    Fixed in: google.golang.org/grpc@v1.83.1
+    Example traces found:
+      #1: internal/semantic/qdrant.go:194:28: semantic.QdrantStore.Search calls qdrant.Client.Query, which eventually calls mem.BufferSlice.MaterializeToBuffer
+      #2: internal/semantic/qdrant.go:194:28: semantic.QdrantStore.Search calls qdrant.Client.Query, which eventually calls mem.IsBelowBufferPoolingThreshold
+      #3: internal/semantic/qdrant.go:194:28: semantic.QdrantStore.Search calls qdrant.Client.Query, which eventually calls mem.NewBuffer
+      #4: internal/semantic/qdrant.go:194:28: semantic.QdrantStore.Search calls qdrant.Client.Query, which eventually calls mem.ReadAll
+      #5: internal/sleepcycle/record.go:52:19: sleepcycle.WriteNDJSON calls bufio.Writer.Flush, which eventually calls mem.writer.Write
+      #6: internal/semantic/qdrant.go:194:28: semantic.QdrantStore.Search calls qdrant.Client.Query, which eventually calls transport.ClientStream.Close
+      #7: internal/semantic/qdrant.go:194:28: semantic.QdrantStore.Search calls qdrant.Client.Query, which eventually calls transport.ClientStream.Header
+      #8: internal/semantic/qdrant.go:194:28: semantic.QdrantStore.Search calls qdrant.Client.Query, which eventually calls transport.ClientStream.Read
+      #9: internal/semantic/qdrant.go:194:28: semantic.QdrantStore.Search calls qdrant.Client.Query, which eventually calls transport.ClientStream.RecvCompress
+      #10: internal/semantic/qdrant.go:194:28: semantic.QdrantStore.Search calls qdrant.Client.Query, which eventually calls transport.ClientStream.TrailersOnly
+      #11: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls transport.NewHTTP2Client
+      #12: internal/semantic/qdrant.go:194:28: semantic.QdrantStore.Search calls qdrant.Client.Query, which eventually calls transport.Stream.ReadMessageHeader
+      #13: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls transport.http2Client.Close
+      #14: internal/sandbox/podman.go:316:16: sandbox.podmanSandbox.Close calls sync.Once.Do, which eventually calls transport.http2Client.GracefulClose
+      #15: internal/semantic/qdrant.go:194:28: semantic.QdrantStore.Search calls qdrant.Client.Query, which eventually calls transport.http2Client.NewStream
+
+Your code is affected by 12 vulnerabilities from 1 module and the Go standard library.
+This scan also found 3 vulnerabilities in packages you import and 4
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.
+Use '-show verbose' for more details.

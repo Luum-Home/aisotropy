@@ -1,0 +1,99 @@
+resource-guard: DEGRADED (tight) — pressure L2, sys-free 49% (blocked<=8, degraded<=20); swap 88%, vm_stat-free 218MB (informative); free RAM 218MB (degraded<=2048, blocked<=512); load/core 1.34 (degraded>=1.5, cores 12)
+with-heavy-lane: DEGRADED — running with OMP_NUM_THREADS=2 GOMAXPROCS=2 nice 19
+ok  	github.com/Luum-Home/aisotropy/aisotropy	11.072s
+?   	github.com/Luum-Home/aisotropy/arenas/key-brokering	[no test files]
+--- FAIL: TestDefaultPathsAndSourceDir (0.00s)
+    main_test.go:62: defaultDataPath() "github.com/Luum-Home/aisotropy/bench/answer-quality/testdata/generic.json" does not exist: stat github.com/Luum-Home/aisotropy/bench/answer-quality/testdata/generic.json: no such file or directory
+--- FAIL: TestRun_StubEndToEndWritesReport (0.00s)
+    main_test.go:97: run: answer-quality: open question set: open github.com/Luum-Home/aisotropy/bench/answer-quality/testdata/generic.json: no such file or directory
+--- FAIL: TestRun_EmptyOutPathSkipsWrite (0.00s)
+    main_test.go:118: run: answer-quality: open question set: open github.com/Luum-Home/aisotropy/bench/answer-quality/testdata/generic.json: no such file or directory
+--- FAIL: TestRun_NLargerThanQuestionSetUsesWholeSet (0.00s)
+    main_test.go:140: run: answer-quality: open question set: open github.com/Luum-Home/aisotropy/bench/answer-quality/testdata/generic.json: no such file or directory
+2026/10/16 19:27:25 INFO semantic embedder selected type=semantic.HashEmbedder dimension=128
+2026/10/16 19:27:25 WARN injected LLM client does not implement native tool-calling (llm.ToolCaller); /chat/agent will use the agentloop JSON fallback instead of native function-calling — wrap with care (a StreamChat-only decorator drops this capability), or use aisotropy.NewOpenAICompatLLM client=stub
+2026/10/16 19:27:25 INFO sleep-cycle worker disabled reason="AISOTROPY_SLEEPCYCLE_BIN unset"
+2026/10/16 19:27:25 INFO turn-vector pruning scheduled ttl=168h0m0s max=500 interval=1h0m0s
+2026/10/16 19:27:25 WARN per-tenant cost totals are IN-MEMORY: they reset on every restart, and so does the cost-budget routing threshold that reads them — set AISOTROPY_DATA_DIR to persist them
+2026/10/16 19:27:25 INFO bitrate scorer disabled reason="AISOTROPY_BITRATE_BIN unset"
+2026/10/16 19:27:25 INFO guardrails wired (redact+detect always on) block_injection=true block_output=false
+2026/10/16 19:27:25 WARN gateway: unknown/empty target, using default client attempted_target="" default_target=primary reason="rules: no rule matched, using default" tenant=eval
+2026/10/16 19:27:25 INFO chat request tenant_id=eval user_id=answer-quality session_id=grounded product_id="" prompt_len=30 lang=en lang_detected=en llm=stub
+2026/10/16 19:27:25 INFO chat request completed tenant_id=eval user_id=answer-quality backend=gollem attempts=1
+2026/10/16 19:27:25 WARN gateway: unknown/empty target, using default client attempted_target="" default_target=primary reason="rules: no rule matched, using default" tenant=eval
+2026/10/16 19:27:25 INFO chat request tenant_id=eval user_id=answer-quality session_id=open product_id="" prompt_len=32 lang=en lang_detected=en llm=stub
+2026/10/16 19:27:25 INFO chat request completed tenant_id=eval user_id=answer-quality backend=gollem attempts=1
+2026/10/16 19:27:25 INFO semantic embedder selected type=semantic.HashEmbedder dimension=128
+2026/10/16 19:27:25 INFO semantic embedder selected type=main.embedErrEmbedder dimension=64
+2026/10/16 19:27:25 INFO semantic embedder selected type=semantic.HashEmbedder dimension=128
+2026/10/16 19:27:25 WARN injected LLM client does not implement native tool-calling (llm.ToolCaller); /chat/agent will use the agentloop JSON fallback instead of native function-calling — wrap with care (a StreamChat-only decorator drops this capability), or use aisotropy.NewOpenAICompatLLM client=stub
+2026/10/16 19:27:25 INFO sleep-cycle worker disabled reason="AISOTROPY_SLEEPCYCLE_BIN unset"
+2026/10/16 19:27:25 INFO turn-vector pruning scheduled ttl=168h0m0s max=500 interval=1h0m0s
+2026/10/16 19:27:25 WARN per-tenant cost totals are IN-MEMORY: they reset on every restart, and so does the cost-budget routing threshold that reads them — set AISOTROPY_DATA_DIR to persist them
+2026/10/16 19:27:25 INFO bitrate scorer disabled reason="AISOTROPY_BITRATE_BIN unset"
+2026/10/16 19:27:25 INFO guardrails wired (redact+detect always on) block_injection=true block_output=false
+2026/10/16 19:27:25 INFO semantic embedder selected type=semantic.HashEmbedder dimension=128
+2026/10/16 19:27:25 WARN injected LLM client does not implement native tool-calling (llm.ToolCaller); /chat/agent will use the agentloop JSON fallback instead of native function-calling — wrap with care (a StreamChat-only decorator drops this capability), or use aisotropy.NewOpenAICompatLLM client=stub
+2026/10/16 19:27:25 INFO sleep-cycle worker disabled reason="AISOTROPY_SLEEPCYCLE_BIN unset"
+2026/10/16 19:27:25 INFO turn-vector pruning scheduled ttl=168h0m0s max=500 interval=1h0m0s
+2026/10/16 19:27:25 WARN per-tenant cost totals are IN-MEMORY: they reset on every restart, and so does the cost-budget routing threshold that reads them — set AISOTROPY_DATA_DIR to persist them
+2026/10/16 19:27:25 INFO bitrate scorer disabled reason="AISOTROPY_BITRATE_BIN unset"
+2026/10/16 19:27:25 INFO guardrails wired (redact+detect always on) block_injection=true block_output=false
+2026/10/16 19:27:25 WARN gateway: unknown/empty target, using default client attempted_target="" default_target=primary reason="rules: no rule matched, using default" tenant=eval
+2026/10/16 19:27:25 INFO chat request tenant_id=eval user_id=answer-quality session_id=one product_id="" prompt_len=37 lang=en lang_detected=en llm=stub
+2026/10/16 19:27:25 INFO chat request completed tenant_id=eval user_id=answer-quality backend=gollem attempts=1
+FAIL
+FAIL	github.com/Luum-Home/aisotropy/bench/answer-quality	2.673s
+ok  	github.com/Luum-Home/aisotropy/bench/load	15.389s
+ok  	github.com/Luum-Home/aisotropy/bench/rag-quality	0.555s
+ok  	github.com/Luum-Home/aisotropy/bench/token-economy	0.512s
+ok  	github.com/Luum-Home/aisotropy/bench/wasm-vs-docker	0.912s
+ok  	github.com/Luum-Home/aisotropy/cmd/aisotropy	0.461s
+ok  	github.com/Luum-Home/aisotropy/cmd/aisotropy-backup	0.853s
+ok  	github.com/Luum-Home/aisotropy/cmd/aisotropyd	1.682s
+ok  	github.com/Luum-Home/aisotropy/cmd/bitrate-harness	2.214s
+ok  	github.com/Luum-Home/aisotropy/cmd/embed-bench	1.922s
+ok  	github.com/Luum-Home/aisotropy/cmd/skill-import	16.951s
+ok  	github.com/Luum-Home/aisotropy/cmd/x	2.540s
+ok  	github.com/Luum-Home/aisotropy/internal/agentloop	0.433s
+ok  	github.com/Luum-Home/aisotropy/internal/api	35.630s
+ok  	github.com/Luum-Home/aisotropy/internal/audit	0.388s
+ok  	github.com/Luum-Home/aisotropy/internal/audit/cmd/audit-verify	0.232s
+ok  	github.com/Luum-Home/aisotropy/internal/auth	0.300s
+ok  	github.com/Luum-Home/aisotropy/internal/bitrate	1.117s
+ok  	github.com/Luum-Home/aisotropy/internal/consolidation	0.360s
+ok  	github.com/Luum-Home/aisotropy/internal/costmeter	0.230s
+ok  	github.com/Luum-Home/aisotropy/internal/engram	0.344s
+ok  	github.com/Luum-Home/aisotropy/internal/eval	0.365s
+ok  	github.com/Luum-Home/aisotropy/internal/facts	0.435s
+ok  	github.com/Luum-Home/aisotropy/internal/gateway	0.303s
+ok  	github.com/Luum-Home/aisotropy/internal/graph	0.312s
+ok  	github.com/Luum-Home/aisotropy/internal/guardrails	2.498s
+ok  	github.com/Luum-Home/aisotropy/internal/health	0.249s
+ok  	github.com/Luum-Home/aisotropy/internal/ingest	0.225s
+ok  	github.com/Luum-Home/aisotropy/internal/ingest/ingesttest	0.214s
+ok  	github.com/Luum-Home/aisotropy/internal/lang	1.161s
+ok  	github.com/Luum-Home/aisotropy/internal/llm	2.192s
+ok  	github.com/Luum-Home/aisotropy/internal/memory	1.159s
+ok  	github.com/Luum-Home/aisotropy/internal/o11y	0.272s
+ok  	github.com/Luum-Home/aisotropy/internal/o11y/keys	0.242s
+ok  	github.com/Luum-Home/aisotropy/internal/plugin	2.550s
+ok  	github.com/Luum-Home/aisotropy/internal/plugintest	0.441s
+ok  	github.com/Luum-Home/aisotropy/internal/primitives	0.238s
+ok  	github.com/Luum-Home/aisotropy/internal/responsecache	0.336s
+ok  	github.com/Luum-Home/aisotropy/internal/routing	0.209s
+ok  	github.com/Luum-Home/aisotropy/internal/sandbox	21.845s
+ok  	github.com/Luum-Home/aisotropy/internal/semantic	26.822s
+ok  	github.com/Luum-Home/aisotropy/internal/sleepcycle	1.306s
+ok  	github.com/Luum-Home/aisotropy/internal/taskagent	23.272s
+ok  	github.com/Luum-Home/aisotropy/internal/tenancy	0.325s
+ok  	github.com/Luum-Home/aisotropy/internal/tools	0.216s
+ok  	github.com/Luum-Home/aisotropy/internal/wasmtool	9.576s
+ok  	github.com/Luum-Home/aisotropy/tools/analyzers/scopecheck	1.216s
+--- FAIL: TestMain_ExitCodes (0.00s)
+    main_test.go:64: computed repo root "$REPO_ROOT/tools/analyzers/scopecheck/cmd/scopecheck/github.com/Luum-Home/aisotropy" does not contain go.mod: stat $REPO_ROOT/tools/analyzers/scopecheck/cmd/scopecheck/github.com/Luum-Home/aisotropy/go.mod: no such file or directory
+FAIL
+FAIL	github.com/Luum-Home/aisotropy/tools/analyzers/scopecheck/cmd/scopecheck	0.256s
+FAIL
+Error: exit status 1
+exit status 1
