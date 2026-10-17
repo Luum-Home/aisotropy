@@ -1,0 +1,36 @@
+{
+  "phase": "build",
+  "head": "99e9ab15efa3b3d192312e65237b7a206a662efb",
+  "branch": "chore/go-vulns-x-net-grpc-go1269",
+  "head_after": "99e9ab15efa3b3d192312e65237b7a206a662efb",
+  "branch_after": "chore/go-vulns-x-net-grpc-go1269",
+  "cwd": "arenas/live/eino",
+  "allow_new_commit": false,
+  "allow_module_update": false,
+  "command": [
+    "bash",
+    "$REPO_ROOT/scripts/with-heavy-lane.sh",
+    "go",
+    "build",
+    "./..."
+  ],
+  "environment": {
+    "GOFLAGS": "-trimpath -p=2 -mod=readonly",
+    "GOENV_VERSION": "1.26.9",
+    "GOTOOLCHAIN": "local",
+    "GOMAXPROCS": "2"
+  },
+  "config_sha256_before": "aeaaeff73cb2d6720521e3c3a5743dceebafc4329ff6d09e6d51a6edcc48e11e",
+  "config_sha256_after": "aeaaeff73cb2d6720521e3c3a5743dceebafc4329ff6d09e6d51a6edcc48e11e",
+  "source_sha256_before": "fdcdddfccd138cb61992c153adda12ee07be44b3ca178cbe4ec1b1e67c0ec83a",
+  "source_sha256_after": "fdcdddfccd138cb61992c153adda12ee07be44b3ca178cbe4ec1b1e67c0ec83a",
+  "module_manifests": {
+    "go.mod": "587a28217dbe840134e44759e8e634a4d7f6e409354f1b7dbb2ea1676eccb7e8",
+    "go.sum": "35509abb300d1e830de6fa7d696af356350246a322f1d4143619beffd84d30d3"
+  },
+  "module_input_sha256_before": "8e94cb9c0dce56a33b7a284202bb941f2044bfa8911e557ea425f1d93a93cfeb",
+  "module_input_sha256_after": "8e94cb9c0dce56a33b7a284202bb941f2044bfa8911e557ea425f1d93a93cfeb",
+  "exit": 0,
+  "error": null,
+  "log": "arenas-live-eino-build.log"
+}

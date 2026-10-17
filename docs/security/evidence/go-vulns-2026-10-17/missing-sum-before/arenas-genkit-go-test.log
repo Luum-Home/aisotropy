@@ -1,0 +1,32 @@
+resource-guard: OK (ok) — pressure L1, sys-free 60% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 1577MB (informative); free RAM 1577MB (degraded<=2048, blocked<=512); load/core 0.34 (degraded>=1.5, cores 12)
+# genkit-go-arena/cmd/costobs
+../../../../../.goenv/shared/go-mod/go.opentelemetry.io/otel@v1.45.0/attribute/internal/xxhash/xxhash.go:11:2: missing go.sum entry for module providing package github.com/cespare/xxhash/v2 (imported by go.opentelemetry.io/otel/attribute/internal/xxhash); to add:
+	go get go.opentelemetry.io/otel/attribute/internal/xxhash@v1.45.0
+FAIL	genkit-go-arena/cmd/costobs [setup failed]
+# genkit-go-arena/cmd/parity
+../../../../../.goenv/shared/go-mod/go.opentelemetry.io/otel@v1.45.0/attribute/internal/xxhash/xxhash.go:11:2: missing go.sum entry for module providing package github.com/cespare/xxhash/v2 (imported by go.opentelemetry.io/otel/attribute/internal/xxhash); to add:
+	go get go.opentelemetry.io/otel/attribute/internal/xxhash@v1.45.0
+FAIL	genkit-go-arena/cmd/parity [setup failed]
+# genkit-go-arena/cmd/productiso
+../../../../../.goenv/shared/go-mod/go.opentelemetry.io/otel@v1.45.0/attribute/internal/xxhash/xxhash.go:11:2: missing go.sum entry for module providing package github.com/cespare/xxhash/v2 (imported by go.opentelemetry.io/otel/attribute/internal/xxhash); to add:
+	go get go.opentelemetry.io/otel/attribute/internal/xxhash@v1.45.0
+FAIL	genkit-go-arena/cmd/productiso [setup failed]
+# genkit-go-arena/cmd/server
+../../../../../.goenv/shared/go-mod/go.opentelemetry.io/otel@v1.45.0/attribute/internal/xxhash/xxhash.go:11:2: missing go.sum entry for module providing package github.com/cespare/xxhash/v2 (imported by go.opentelemetry.io/otel/attribute/internal/xxhash); to add:
+	go get go.opentelemetry.io/otel/attribute/internal/xxhash@v1.45.0
+FAIL	genkit-go-arena/cmd/server [setup failed]
+# genkit-go-arena/cmd/strengths
+../../../../../.goenv/shared/go-mod/go.opentelemetry.io/otel@v1.45.0/attribute/internal/xxhash/xxhash.go:11:2: missing go.sum entry for module providing package github.com/cespare/xxhash/v2 (imported by go.opentelemetry.io/otel/attribute/internal/xxhash); to add:
+	go get go.opentelemetry.io/otel/attribute/internal/xxhash@v1.45.0
+FAIL	genkit-go-arena/cmd/strengths [setup failed]
+# genkit-go-arena/orbit
+../../../../../.goenv/shared/go-mod/go.opentelemetry.io/otel@v1.45.0/attribute/internal/xxhash/xxhash.go:11:2: missing go.sum entry for module providing package github.com/cespare/xxhash/v2 (imported by go.opentelemetry.io/otel/attribute/internal/xxhash); to add:
+	go get go.opentelemetry.io/otel/attribute/internal/xxhash@v1.45.0
+FAIL	genkit-go-arena/orbit [setup failed]
+# genkit-go-arena/scripts
+../../../../../.goenv/shared/go-mod/go.opentelemetry.io/otel@v1.45.0/attribute/internal/xxhash/xxhash.go:11:2: missing go.sum entry for module providing package github.com/cespare/xxhash/v2 (imported by go.opentelemetry.io/otel/attribute/internal/xxhash); to add:
+	go get go.opentelemetry.io/otel/attribute/internal/xxhash@v1.45.0
+FAIL	genkit-go-arena/scripts [setup failed]
+FAIL
+Error: exit status 1
+exit status 1

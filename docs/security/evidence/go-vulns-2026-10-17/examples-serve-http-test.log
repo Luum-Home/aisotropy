@@ -1,0 +1,2 @@
+resource-guard: OK (ok) — pressure L1, sys-free 55% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 2583MB (informative); free RAM 2583MB (degraded<=2048, blocked<=512); load/core 0.46 (degraded>=1.5, cores 12)
+?   	github.com/Luum-Home/aisotropy/examples/serve-http	[no test files]

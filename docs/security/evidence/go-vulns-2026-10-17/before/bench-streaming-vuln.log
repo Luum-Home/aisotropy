@@ -1,0 +1,55 @@
+resource-guard: OK (ok) — pressure L1, sys-free 59% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 1360MB (informative); free RAM 1360MB (degraded<=2048, blocked<=512); load/core 0.47 (degraded>=1.5, cores 12)
+Fetching vulnerabilities from the database...
+
+Checking the code against the vulnerabilities...
+
+The package pattern matched the following 5 root packages:
+  aisotropy.local/bench/streaming/internal/tokens
+  aisotropy.local/bench/streaming/proto/streampb
+  aisotropy.local/bench/streaming/cmd/bench-server
+  aisotropy.local/bench/streaming/cmd/loadgen
+  aisotropy.local/bench/streaming/cmd/wt-probe
+Govulncheck scanned the following 13 modules and the go1.26.9 standard library:
+  aisotropy.local/bench/streaming
+  github.com/coder/websocket@v1.8.15
+  github.com/dunglas/httpsfv@v1.1.0
+  github.com/quic-go/qpack@v0.6.0
+  github.com/quic-go/quic-go@v0.60.0
+  github.com/quic-go/webtransport-go@v0.11.1
+  golang.org/x/crypto@v0.57.0
+  golang.org/x/net@v0.60.0
+  golang.org/x/sys@v0.48.0
+  golang.org/x/text@v0.42.0
+  google.golang.org/genproto/googleapis/rpc@v0.0.0-20260526163538-3dc84a4a5aaa
+  google.golang.org/grpc@v1.83.1
+  google.golang.org/protobuf@v1.36.11
+
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6443
+    Server panic via missing authority or Host headers in google.golang.org/grpc
+  More info: https://pkg.go.dev/vuln/GO-2026-6443
+  Module: google.golang.org/grpc
+    Found in: google.golang.org/grpc@v1.83.1
+    Fixed in: google.golang.org/grpc@v1.83.2
+    Example traces found:
+      #1: cmd/bench-server/main.go:107:26: bench.main calls grpc.Server.Serve, which eventually calls transport.http2Server.HandleStreams
+
+=== Package Results ===
+
+No other vulnerabilities found.
+
+=== Module Results ===
+
+Vulnerability #1: GO-2026-5932
+    The golang.org/x/crypto/openpgp package is unmaintained, unsafe by design,
+    and has known security issues
+  More info: https://pkg.go.dev/vuln/GO-2026-5932
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.57.0
+    Fixed in: N/A
+
+Your code is affected by 1 vulnerability from 1 module.
+This scan also found 0 vulnerabilities in packages you import and 1
+vulnerability in modules you require, but your code doesn't appear to call these
+vulnerabilities.

@@ -1,0 +1,2 @@
+resource-guard: OK (ok) — pressure L1, sys-free 54% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 2842MB (informative); free RAM 2842MB (degraded<=2048, blocked<=512); load/core 0.48 (degraded>=1.5, cores 12)
+?   	github.com/Luum-Home/aisotropy/examples/graphbot	[no test files]

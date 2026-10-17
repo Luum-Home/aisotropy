@@ -1,0 +1,172 @@
+resource-guard: OK (ok) — pressure L1, sys-free 57% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 1375MB (informative); free RAM 1375MB (degraded<=2048, blocked<=512); load/core 0.45 (degraded>=1.5, cores 12)
+Fetching vulnerabilities from the database...
+
+Checking the code against the vulnerabilities...
+
+The package pattern matched the following 2 root packages:
+  github.com/aisotropy/bench-async
+  github.com/aisotropy/bench-async/cmd/bench
+Govulncheck scanned the following 12 modules and the go1.26.9 standard library:
+  github.com/aisotropy/bench-async
+  github.com/klauspost/compress@v1.18.6
+  github.com/nats-io/nats.go@v1.52.0
+  github.com/nats-io/nkeys@v0.4.15
+  github.com/nats-io/nuid@v1.0.1
+  github.com/pierrec/lz4/v4@v4.1.26
+  github.com/twmb/franz-go@v1.21.5
+  github.com/twmb/franz-go/pkg/kadm@v1.18.0
+  github.com/twmb/franz-go/pkg/kmsg@v1.13.1
+  github.com/valkey-io/valkey-go@v1.0.76
+  golang.org/x/crypto@v0.51.0
+  golang.org/x/sys@v0.44.0
+
+=== Symbol Results ===
+
+No vulnerabilities found.
+
+=== Package Results ===
+
+Vulnerability #1: GO-2026-5841
+    OOB read in github.com/klauspost/compress/s2
+  More info: https://pkg.go.dev/vuln/GO-2026-5841
+  Module: github.com/klauspost/compress
+    Found in: github.com/klauspost/compress@v1.18.6
+    Fixed in: github.com/klauspost/compress@v1.18.7
+
+=== Module Results ===
+
+Vulnerability #1: GO-2026-6355
+    Prevent DoS on deadlocked established channel in golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-6355
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.56.0
+
+Vulnerability #2: GO-2026-6354
+    Prevent DoS on deadlocked undecided channel in golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-6354
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.56.0
+
+Vulnerability #3: GO-2026-6303
+    Source-address critical option not enforced for non-public-key auth
+    callbacks in golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-6303
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.55.0
+
+Vulnerability #4: GO-2026-5932
+    The golang.org/x/crypto/openpgp package is unmaintained, unsafe by design,
+    and has known security issues
+  More info: https://pkg.go.dev/vuln/GO-2026-5932
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: N/A
+
+Vulnerability #5: GO-2026-5033
+    Invoking pathological inputs can lead to client panic in
+    golang.org/x/crypto/ssh/agent
+  More info: https://pkg.go.dev/vuln/GO-2026-5033
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #6: GO-2026-5023
+    Invoking VerifiedPublicKeyCallback permissions skip enforcement in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5023
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #7: GO-2026-5021
+    Invoking auth bypass via unenforced @revoked status in
+    golang.org/x/crypto/ssh/knownhosts
+  More info: https://pkg.go.dev/vuln/GO-2026-5021
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #8: GO-2026-5020
+    Invoking infinite loop on large channel writes in golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5020
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #9: GO-2026-5019
+    Invoking bypass of FIDO/U2F security keys physical interaction in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5019
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #10: GO-2026-5018
+    Invoking pathological RSA/DSA parameters may cause DoS in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5018
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #11: GO-2026-5017
+    Invoking client can cause server deadlock on unexpected responses in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5017
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #12: GO-2026-5016
+    Invoking memory leak when rejecting channels can lead to DoS in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5016
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #13: GO-2026-5015
+    Invoking server panic during CheckHostKey/Authenticate in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5015
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #14: GO-2026-5014
+    Invoking bypass of certificate restrictions in golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5014
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #15: GO-2026-5013
+    Invoking byte arithmetic causes underflow and panic in
+    golang.org/x/crypto/ssh
+  More info: https://pkg.go.dev/vuln/GO-2026-5013
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #16: GO-2026-5006
+    Invoking agent constraints dropped when forwarding keys in
+    golang.org/x/crypto/ssh/agent
+  More info: https://pkg.go.dev/vuln/GO-2026-5006
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Vulnerability #17: GO-2026-5005
+    Invoking key constraints not enforced in golang.org/x/crypto/ssh/agent
+  More info: https://pkg.go.dev/vuln/GO-2026-5005
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.51.0
+    Fixed in: golang.org/x/crypto@v0.52.0
+
+Your code is affected by 0 vulnerabilities.
+This scan also found 1 vulnerability in packages you import and 17
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.

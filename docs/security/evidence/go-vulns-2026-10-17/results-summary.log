@@ -1,0 +1,123 @@
+{
+  "root": {
+    "build-final": 0,
+    "vet": 0,
+    "test": 0,
+    "vuln-verbose": 0
+  },
+  "nested": {
+    "arenas/adk-go": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "arenas/eino": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "arenas/genkit-go": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "arenas/live/aisotropy": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "arenas/live/eino": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "arenas/live/genkit-go": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "arenas/live/runner": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "bench/async": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "bench/footprint/adk-go": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "bench/streaming": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/auth-scopes": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/domain-assistant": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/graphbot": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/guardrail-policy": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/helpdesk": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/knowledge-rag": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/memory-sessions": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/multi-tenant": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/serve-http": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/task-agent": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/task-fanout": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    },
+    "examples/weatherbot": {
+      "build": 0,
+      "test": 0,
+      "vuln": 0
+    }
+  },
+  "nested_module_count": 22,
+  "nested_verification_count": 66,
+  "go_source_sha256": "5bca88502a97ed5692bdb0be198352cb11050a3f415f38a495f73ee8acd743d3"
+}

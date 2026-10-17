@@ -1,0 +1,141 @@
+resource-guard: OK (ok) — pressure L1, sys-free 57% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 2339MB (informative); free RAM 2339MB (degraded<=2048, blocked<=512); load/core 0.45 (degraded>=1.5, cores 12)
+Fetching vulnerabilities from the database...
+
+Checking the code against the vulnerabilities...
+
+The package pattern matched the following root package:
+  genkit-go-live-arena
+Govulncheck scanned the following 37 modules and the go1.26.9 standard library:
+  genkit-go-live-arena
+  github.com/bahlo/generic-list-go@v0.2.0
+  github.com/buger/jsonparser@v1.1.1
+  github.com/cespare/xxhash/v2@v2.3.0
+  github.com/coder/websocket@v1.8.14
+  github.com/firebase/genkit/go@v1.10.0
+  github.com/go-logr/logr@v1.4.3
+  github.com/go-logr/stdr@v1.2.2
+  github.com/goccy/go-yaml@v1.17.1
+  github.com/google/dotprompt/go@v0.0.0-20251014011017-8d056e027254
+  github.com/google/uuid@v1.6.0
+  github.com/invopop/jsonschema@v0.13.0
+  github.com/mailru/easyjson@v0.9.0
+  github.com/mbleigh/raymond@v0.0.0-20250414171441-6b3a58ab9e0a
+  github.com/openai/openai-go@v1.8.2
+  github.com/qdrant/go-client@v1.18.3
+  github.com/tidwall/gjson@v1.18.0
+  github.com/tidwall/match@v1.1.1
+  github.com/tidwall/pretty@v1.2.1
+  github.com/tidwall/sjson@v1.2.5
+  github.com/wk8/go-ordered-map/v2@v2.1.8
+  github.com/xeipuuv/gojsonpointer@v0.0.0-20190905194746-02993c407bfb
+  github.com/xeipuuv/gojsonreference@v0.0.0-20180127040603-bd5ef7bd5415
+  github.com/xeipuuv/gojsonschema@v1.2.0
+  github.com/yosida95/uritemplate/v3@v3.0.2
+  go.opentelemetry.io/auto/sdk@v1.2.1
+  go.opentelemetry.io/otel@v1.44.0
+  go.opentelemetry.io/otel/metric@v1.44.0
+  go.opentelemetry.io/otel/sdk@v1.44.0
+  go.opentelemetry.io/otel/trace@v1.44.0
+  golang.org/x/net@v0.60.0
+  golang.org/x/sys@v0.48.0
+  golang.org/x/text@v0.42.0
+  google.golang.org/genproto/googleapis/rpc@v0.0.0-20260526163538-3dc84a4a5aaa
+  google.golang.org/grpc@v1.83.1
+  google.golang.org/protobuf@v1.36.11
+  gopkg.in/yaml.v3@v3.0.1
+
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6505
+    OpenTelemetry-Go: Exporter config logging may leak endpoint URLs in info
+    logs in go.opentelemetry.io/otel/exporters/otlp/otlptrace
+  More info: https://pkg.go.dev/vuln/GO-2026-6505
+  Module: go.opentelemetry.io/otel/sdk
+    Found in: go.opentelemetry.io/otel/sdk@v1.44.0
+    Fixed in: go.opentelemetry.io/otel/sdk@v1.45.0
+    Example traces found:
+      #1: observability.go:157:34: genkit.setupObservabilityTracing calls trace.NewTracerProvider, which eventually calls env.SpanAttributeCount
+      #2: observability.go:157:34: genkit.setupObservabilityTracing calls trace.NewTracerProvider, which eventually calls env.SpanAttributeValueLength
+      #3: observability.go:157:34: genkit.setupObservabilityTracing calls trace.NewTracerProvider, which eventually calls env.SpanEventAttributeCount
+      #4: observability.go:157:34: genkit.setupObservabilityTracing calls trace.NewTracerProvider, which eventually calls env.SpanEventCount
+      #5: observability.go:157:34: genkit.setupObservabilityTracing calls trace.NewTracerProvider, which eventually calls env.SpanLinkAttributeCount
+      #6: observability.go:157:34: genkit.setupObservabilityTracing calls trace.NewTracerProvider, which eventually calls env.SpanLinkCount
+      #7: observability.go:16:2: genkit.init calls trace.init, which calls env.init
+      #8: observability.go:16:2: genkit.init calls trace.init, which calls instrumentation.init
+      #9: observability.go:157:54: genkit.setupObservabilityTracing calls trace.WithSyncer, which eventually calls observ.NewSSP
+      #10: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls observ.NewTracer
+      #11: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls observ.SSP.SpanProcessed
+      #12: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls observ.Tracer.Enabled
+      #13: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls observ.Tracer.SpanEnded
+      #14: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls observ.Tracer.SpanLive
+      #15: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls observ.Tracer.SpanStarted
+      #16: main.go:236:48: genkit.main calls json.Encoder.Encode, which eventually calls observ.init
+      #17: observability.go:16:2: genkit.init calls trace.init, which calls observ.init
+      #18: observability.go:157:34: genkit.setupObservabilityTracing calls trace.NewTracerProvider, which eventually calls resource.Default
+      #19: embed_client.go:8:2: genkit.init calls http.init, which eventually calls resource.DefaultWithContext
+      #20: observability.go:16:2: genkit.init calls trace.init, which eventually calls resource.NewSchemaless
+      #21: observability.go:16:2: genkit.init calls trace.init, which calls resource.init
+      #22: qdrant_client.go:11:2: genkit.init calls qdrant.init, which eventually calls resource.read
+      #23: observability.go:16:2: genkit.init calls trace.init, which eventually calls sdk.Version
+      #24: observability.go:16:2: genkit.init calls trace.init, which eventually calls sdk.init
+      #25: main.go:311:18: genkit.run calls genkit.Init, which eventually calls trace.NewSimpleSpanProcessor
+      #26: observability.go:157:34: genkit.setupObservabilityTracing calls trace.NewTracerProvider
+      #27: embed_client.go:8:2: genkit.init calls http.init, which eventually calls trace.Shutdown
+      #28: observability.go:238:27: genkit.runObservability calls trace.TracerProvider.ForceFlush
+      #29: main.go:311:18: genkit.run calls genkit.Init, which eventually calls trace.TracerProvider.RegisterSpanProcessor
+      #30: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.TracerProvider.Tracer
+      #31: observability.go:157:54: genkit.setupObservabilityTracing calls trace.WithSyncer
+      #32: main.go:218:14: genkit.main calls fmt.Fprintf, which eventually calls trace.errUnsupportedSampler.Error
+      #33: embed_client.go:8:2: genkit.init calls http.init, which eventually calls trace.init
+      #34: observability.go:16:2: genkit.init calls trace.init
+      #35: embed_client.go:8:2: genkit.init calls http.init, which eventually calls trace.logDropped
+      #36: embed_client.go:8:2: genkit.init calls http.init, which eventually calls trace.logDropped
+      #37: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.nonRecordingSpan.End
+      #38: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.nonRecordingSpan.IsRecording
+      #39: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.nonRecordingSpan.RecordError
+      #40: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.nonRecordingSpan.SetAttributes
+      #41: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.nonRecordingSpan.SetStatus
+      #42: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.nonRecordingSpan.SpanContext
+      #43: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.recordingSpan.End
+      #44: observability.go:260:29: genkit.runObservability calls trace.recordingSpan.EndTime
+      #45: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.recordingSpan.IsRecording
+      #46: observability.go:258:17: genkit.runObservability calls trace.recordingSpan.Name
+      #47: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.recordingSpan.RecordError
+      #48: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.recordingSpan.SetAttributes
+      #49: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.recordingSpan.SetStatus
+      #50: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.recordingSpan.SpanContext
+      #51: observability.go:260:47: genkit.runObservability calls trace.recordingSpan.StartTime
+      #52: main.go:218:14: genkit.main calls fmt.Fprintf, which eventually calls trace.samplerArgParseError.Error
+      #53: main.go:218:14: genkit.main calls fmt.Fprintf, which eventually calls trace.samplerArgParseError.Unwrap
+      #54: observability.go:260:29: genkit.runObservability calls trace.snapshot.EndTime
+      #55: observability.go:258:17: genkit.runObservability calls trace.snapshot.Name
+      #56: observability.go:260:47: genkit.runObservability calls trace.snapshot.StartTime
+      #57: rag.go:114:25: genkit.runRAG calls core.Flow[genkit-go-live-arena.ragFlowInput, genkit-go-live-arena.ragFlowOutput, struct{}].Run, which eventually calls trace.tracer.Start
+      #58: observability.go:158:24: genkit.setupObservabilityTracing calls otel.SetTracerProvider, which eventually calls trace.tracerProviderConfig.MarshalLog
+      #59: observability.go:157:54: genkit.setupObservabilityTracing calls trace.WithSyncer, which eventually calls x.Feature[string].Enabled
+      #60: observability.go:16:2: genkit.init calls trace.init, which eventually calls x.init
+
+=== Package Results ===
+
+Vulnerability #1: GO-2026-6443
+    Server panic via missing authority or Host headers in google.golang.org/grpc
+  More info: https://pkg.go.dev/vuln/GO-2026-6443
+  Module: google.golang.org/grpc
+    Found in: google.golang.org/grpc@v1.83.1
+    Fixed in: google.golang.org/grpc@v1.83.2
+
+Vulnerability #2: GO-2026-4514
+    Denial of service in github.com/buger/jsonparser
+  More info: https://pkg.go.dev/vuln/GO-2026-4514
+  Module: github.com/buger/jsonparser
+    Found in: github.com/buger/jsonparser@v1.1.1
+    Fixed in: github.com/buger/jsonparser@v1.1.2
+
+=== Module Results ===
+
+No other vulnerabilities found.
+
+Your code is affected by 1 vulnerability from 1 module.
+This scan also found 2 vulnerabilities in packages you import and 0
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.

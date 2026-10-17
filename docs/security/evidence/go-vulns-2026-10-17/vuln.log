@@ -1,0 +1,10 @@
+resource-guard: OK (ok) — pressure L1, sys-free 62% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 372MB (informative); free RAM 372MB (degraded<=2048, blocked<=512); load/core 0.42 (degraded>=1.5, cores 12)
+=== Symbol Results ===
+
+No vulnerabilities found.
+
+Your code is affected by 0 vulnerabilities.
+This scan also found 1 vulnerability in packages you import and 0
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.
+Use '-show verbose' for more details.

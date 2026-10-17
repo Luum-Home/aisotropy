@@ -1,0 +1,1 @@
+resource-guard: OK (ok) — pressure L1, sys-free 57% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 2302MB (informative); free RAM 2302MB (degraded<=2048, blocked<=512); load/core 0.45 (degraded>=1.5, cores 12)

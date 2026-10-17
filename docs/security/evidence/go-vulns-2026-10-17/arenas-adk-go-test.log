@@ -1,0 +1,8 @@
+resource-guard: OK (ok) — pressure L1, sys-free 60% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 1201MB (informative); free RAM 1201MB (degraded<=2048, blocked<=512); load/core 0.33 (degraded>=1.5, cores 12)
+?   	adk-go-arena/cmd/costobs	[no test files]
+?   	adk-go-arena/cmd/parity	[no test files]
+?   	adk-go-arena/cmd/productiso	[no test files]
+?   	adk-go-arena/cmd/server	[no test files]
+?   	adk-go-arena/cmd/strengths	[no test files]
+ok  	adk-go-arena/orbit	0.506s
+?   	adk-go-arena/scripts	[no test files]

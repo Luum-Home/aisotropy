@@ -1,0 +1,8 @@
+resource-guard: OK (ok) — pressure L1, sys-free 61% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 698MB (informative); free RAM 698MB (degraded<=2048, blocked<=512); load/core 0.43 (degraded>=1.5, cores 12)
+?   	eino-arena	[no test files]
+?   	eino-arena/cmd/costobs	[no test files]
+?   	eino-arena/cmd/productiso	[no test files]
+?   	eino-arena/cmd/server	[no test files]
+?   	eino-arena/cmd/strengths	[no test files]
+ok  	eino-arena/orbit	0.470s
+?   	eino-arena/scripts	[no test files]

@@ -1,0 +1,36 @@
+{
+  "phase": "build",
+  "head": "99e9ab15efa3b3d192312e65237b7a206a662efb",
+  "branch": "chore/go-vulns-x-net-grpc-go1269",
+  "head_after": "99e9ab15efa3b3d192312e65237b7a206a662efb",
+  "branch_after": "chore/go-vulns-x-net-grpc-go1269",
+  "cwd": "arenas/genkit-go",
+  "allow_new_commit": false,
+  "allow_module_update": false,
+  "command": [
+    "bash",
+    "$REPO_ROOT/scripts/with-heavy-lane.sh",
+    "go",
+    "build",
+    "./..."
+  ],
+  "environment": {
+    "GOFLAGS": "-trimpath -p=2 -mod=readonly",
+    "GOENV_VERSION": "1.26.9",
+    "GOTOOLCHAIN": "local",
+    "GOMAXPROCS": "2"
+  },
+  "config_sha256_before": "aeaaeff73cb2d6720521e3c3a5743dceebafc4329ff6d09e6d51a6edcc48e11e",
+  "config_sha256_after": "aeaaeff73cb2d6720521e3c3a5743dceebafc4329ff6d09e6d51a6edcc48e11e",
+  "source_sha256_before": "fdcdddfccd138cb61992c153adda12ee07be44b3ca178cbe4ec1b1e67c0ec83a",
+  "source_sha256_after": "fdcdddfccd138cb61992c153adda12ee07be44b3ca178cbe4ec1b1e67c0ec83a",
+  "module_manifests": {
+    "go.mod": "ee52e488775700fc081326c5202c08553013976aa858c1a0ec3d74b13ed196b8",
+    "go.sum": "30d96c8885b4c60fa8c3500eeb3633bd7685960d3d7d96a36a25601c5ffde76d"
+  },
+  "module_input_sha256_before": "2f0ddab6d9fb91dfc1a870c5b6df9e82001b4415444e10d9398ce0a9892351f5",
+  "module_input_sha256_after": "2f0ddab6d9fb91dfc1a870c5b6df9e82001b4415444e10d9398ce0a9892351f5",
+  "exit": 1,
+  "error": null,
+  "log": "arenas-genkit-go-build.log"
+}

@@ -1,0 +1,67 @@
+resource-guard: OK (ok) — pressure L1, sys-free 62% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 551MB (informative); free RAM 551MB (degraded<=2048, blocked<=512); load/core 0.43 (degraded>=1.5, cores 12)
+Fetching vulnerabilities from the database...
+
+Checking the code against the vulnerabilities...
+
+The package pattern matched the following 7 root packages:
+  eino-arena/orbit
+  eino-arena
+  eino-arena/cmd/costobs
+  eino-arena/cmd/productiso
+  eino-arena/cmd/server
+  eino-arena/cmd/strengths
+  eino-arena/scripts
+Govulncheck scanned the following 25 modules and the go1.26.9 standard library:
+  eino-arena
+  github.com/bahlo/generic-list-go@v0.2.0
+  github.com/buger/jsonparser@v1.1.1
+  github.com/bytedance/gopkg@v0.1.3
+  github.com/bytedance/sonic@v1.15.0
+  github.com/cloudwego/eino@v0.9.12
+  github.com/dustin/go-humanize@v1.0.1
+  github.com/eino-contrib/jsonschema@v1.0.3
+  github.com/google/uuid@v1.6.0
+  github.com/goph/emperror@v0.17.2
+  github.com/json-iterator/go@v1.1.12
+  github.com/mailru/easyjson@v0.7.7
+  github.com/modern-go/concurrent@v0.0.0-20180306012644-bacd9c7ef1dd
+  github.com/modern-go/reflect2@v1.0.2
+  github.com/nikolalohinski/gonja@v1.5.3
+  github.com/pelletier/go-toml/v2@v2.0.9
+  github.com/pkg/errors@v0.9.1
+  github.com/sirupsen/logrus@v1.9.3
+  github.com/slongfield/pyfmt@v0.0.0-20220222012616-ea85ff4c361f
+  github.com/wk8/go-ordered-map/v2@v2.1.8
+  github.com/yargevad/filepathx@v1.0.0
+  golang.org/x/arch@v0.11.0
+  golang.org/x/exp@v0.0.0-20230713183714-613f0c0eb8a1
+  golang.org/x/sys@v0.29.0
+  gopkg.in/yaml.v3@v3.0.1
+
+=== Symbol Results ===
+
+No vulnerabilities found.
+
+=== Package Results ===
+
+Vulnerability #1: GO-2026-4514
+    Denial of service in github.com/buger/jsonparser
+  More info: https://pkg.go.dev/vuln/GO-2026-4514
+  Module: github.com/buger/jsonparser
+    Found in: github.com/buger/jsonparser@v1.1.1
+    Fixed in: github.com/buger/jsonparser@v1.1.2
+
+=== Module Results ===
+
+Vulnerability #1: GO-2026-5024
+    Invoking integer overflow in NewNTUnicodeString in golang.org/x/sys/windows
+  More info: https://pkg.go.dev/vuln/GO-2026-5024
+  Module: golang.org/x/sys
+    Found in: golang.org/x/sys@v0.29.0
+    Fixed in: golang.org/x/sys@v0.44.0
+    Platforms: windows
+
+Your code is affected by 0 vulnerabilities.
+This scan also found 1 vulnerability in packages you import and 1 vulnerability
+in modules you require, but your code doesn't appear to call these
+vulnerabilities.

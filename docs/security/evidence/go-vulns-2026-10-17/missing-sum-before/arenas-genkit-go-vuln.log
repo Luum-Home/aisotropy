@@ -1,0 +1,12 @@
+resource-guard: OK (ok) — pressure L1, sys-free 60% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 1588MB (informative); free RAM 1588MB (degraded<=2048, blocked<=512); load/core 0.34 (degraded>=1.5, cores 12)
+govulncheck: loading packages: 
+There are errors with the provided package patterns:
+
+../../../../../.goenv/shared/go-mod/go.opentelemetry.io/otel@v1.45.0/attribute/internal/xxhash/xxhash.go:11:2: missing go.sum entry for module providing package github.com/cespare/xxhash/v2 (imported by go.opentelemetry.io/otel/attribute/internal/xxhash); to add:
+	go get go.opentelemetry.io/otel/attribute/internal/xxhash@v1.45.0
+$HOME/.goenv/shared/go-mod/go.opentelemetry.io/otel@v1.45.0/attribute/internal/xxhash/xxhash.go:11:2: could not import github.com/cespare/xxhash/v2 (invalid package name: "")
+$HOME/.goenv/shared/go-mod/go.opentelemetry.io/otel@v1.45.0/attribute/internal/xxhash/xxhash.go:16:5: undefined: xxhash
+$HOME/.goenv/shared/go-mod/go.opentelemetry.io/otel@v1.45.0/attribute/internal/xxhash/xxhash.go:21:17: undefined: xxhash
+
+For details on package patterns, see https://pkg.go.dev/cmd/go#hdr-Package_lists_and_patterns.
+

@@ -1,0 +1,34 @@
+{
+  "phase": "command",
+  "head": "99e9ab15efa3b3d192312e65237b7a206a662efb",
+  "branch": "chore/go-vulns-x-net-grpc-go1269",
+  "head_after": "99e9ab15efa3b3d192312e65237b7a206a662efb",
+  "branch_after": "chore/go-vulns-x-net-grpc-go1269",
+  "cwd": "bench/streaming",
+  "allow_new_commit": false,
+  "allow_module_update": true,
+  "command": [
+    "go",
+    "get",
+    "google.golang.org/grpc@v1.83.2"
+  ],
+  "environment": {
+    "GOFLAGS": "-p=2",
+    "GOENV_VERSION": "1.26.9",
+    "GOTOOLCHAIN": "local",
+    "GOMAXPROCS": "2"
+  },
+  "config_sha256_before": "aeaaeff73cb2d6720521e3c3a5743dceebafc4329ff6d09e6d51a6edcc48e11e",
+  "config_sha256_after": "aeaaeff73cb2d6720521e3c3a5743dceebafc4329ff6d09e6d51a6edcc48e11e",
+  "source_sha256_before": "fdcdddfccd138cb61992c153adda12ee07be44b3ca178cbe4ec1b1e67c0ec83a",
+  "source_sha256_after": "fdcdddfccd138cb61992c153adda12ee07be44b3ca178cbe4ec1b1e67c0ec83a",
+  "module_manifests": {
+    "go.mod": "8ce9310e889c9970ecf4aa7e4f990d48ce3b46838844f5885b5ee5999ac88702",
+    "go.sum": "201e48b084068b1c427e1da62b4978b9325c056125abddd9d2956aea34631b8a"
+  },
+  "module_input_sha256_before": "b53c65c1236d60138dff033ab548f0874e45ebe2913fe52e2b1f13457cb56f3e",
+  "module_input_sha256_after": "2a209ccdfaeb7238d65a8d225ae18c7d074a679968d87428e4aefac2fd8525d9",
+  "exit": 0,
+  "error": null,
+  "log": "bench-streaming-update.log"
+}

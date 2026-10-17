@@ -1,0 +1,2 @@
+resource-guard: OK (ok) — pressure L1, sys-free 53% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 1368MB (informative); free RAM 1368MB (degraded<=2048, blocked<=512); load/core 0.46 (degraded>=1.5, cores 12)
+?   	github.com/Luum-Home/aisotropy/examples/task-agent	[no test files]

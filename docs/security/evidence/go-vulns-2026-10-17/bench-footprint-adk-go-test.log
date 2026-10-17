@@ -1,0 +1,2 @@
+resource-guard: OK (ok) — pressure L1, sys-free 58% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 1394MB (informative); free RAM 1394MB (degraded<=2048, blocked<=512); load/core 0.46 (degraded>=1.5, cores 12)
+?   	adk-go-footprint	[no test files]

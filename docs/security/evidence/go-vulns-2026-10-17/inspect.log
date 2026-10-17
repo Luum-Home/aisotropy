@@ -1,0 +1,43 @@
+$ go version
+go version go1.26.9 darwin/arm64
+$ go env GOFLAGS GOMODCACHE GOCACHE
+-trimpath -p=2 -mod=readonly
+$HOME/.goenv/shared/go-mod
+$HOME/Library/Caches/go-build
+$ govulncheck -version
+Go: go1.26.9
+Scanner: govulncheck@v1.8.0
+DB: https://vuln.go.dev
+DB updated: 2026-10-08 22:31:09 +0000 UTC
+
+$ sysctl -n vm.loadavg
+{ 4.48 4.95 5.74 }
+$ sysctl vm.swapusage
+vm.swapusage: total = 9216.00M  used = 8690.94M  free = 525.06M  (encrypted)
+$ vm_stat
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                    11207.
+Pages active:                                 504483.
+Pages inactive:                               501877.
+Pages speculative:                              1702.
+Pages throttled:                                   0.
+Pages wired down:                             191479.
+Pages purgeable:                                6524.
+"Translation faults":                    16257337927.
+Pages copy-on-write:                      1845147979.
+Pages zero filled:                        4908794887.
+Pages reactivated:                        2227606047.
+Pages purged:                              171368007.
+File-backed pages:                            240769.
+Anonymous pages:                              767293.
+Pages stored in compressor:                   667434.
+Pages occupied by compressor:                 320927.
+Decompressions:                           2744918118.
+Compressions:                             2993723361.
+Pageins:                                   271243973.
+Pageouts:                                     629955.
+Swapins:                                     7717985.
+Swapouts:                                    8923622.
+$ df -h .
+Filesystem      Size    Used   Avail Capacity iused ifree %iused  Mounted on
+/dev/disk3s5   460Gi   405Gi    22Gi    95%    8.7M  232M    4%   /System/Volumes/Data

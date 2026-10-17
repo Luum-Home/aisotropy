@@ -1,0 +1,6 @@
+resource-guard: OK (ok) — pressure L1, sys-free 59% (blocked<=8, degraded<=20); swap 94%, vm_stat-free 1920MB (informative); free RAM 1920MB (degraded<=2048, blocked<=512); load/core 0.34 (degraded>=1.5, cores 12)
+?   	aisotropy.local/bench/streaming/cmd/bench-server	[no test files]
+?   	aisotropy.local/bench/streaming/cmd/loadgen	[no test files]
+?   	aisotropy.local/bench/streaming/cmd/wt-probe	[no test files]
+?   	aisotropy.local/bench/streaming/internal/tokens	[no test files]
+?   	aisotropy.local/bench/streaming/proto/streampb	[no test files]
