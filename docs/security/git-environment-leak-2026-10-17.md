@@ -33,14 +33,31 @@ El reflog y los objetos preservados en
 `--incident-evidence` del script vuelve a leer los objetos y comprueba las
 correlaciones contra el log original, sin depender de este texto.
 
+Los identificadores siguientes son datos del incidente. La tabla enlaza el
+[snapshot de metadata versionado](evidence/git-environment-leak-2026-10-17/archived-fixture-commits.json),
+que conserva los SHA completos y el comando que los produjo. Los objetos están
+respaldados en el archivo Git local y el bundle privado de recuperación. No
+son commits de la historia publicada por este PR ni se publica la ref de archivo.
+
 | Commit | Fecha local del autor | Mensaje | Autor |
 | --- | --- | --- | --- |
-| `1c9d4db` | 2026-10-16 19:39:48 -0300 | seed | t |
-| `709f846` | 2026-10-16 19:39:56 -0300 | initial | t |
-| `ffd2635` | 2026-10-16 19:39:58 -0300 | msg | aisotropy |
-| `2c0267a` | 2026-10-16 19:39:58 -0300 | initial | t |
-| `2696683` | 2026-10-16 19:39:58 -0300 | add note | aisotropy |
-| `0a9d95f` | 2026-10-16 19:39:58 -0300 | initial | t |
+| [1c9d4db](evidence/git-environment-leak-2026-10-17/archived-fixture-commits.json) | 2026-10-16 19:39:48 -0300 | seed | t |
+| [709f846](evidence/git-environment-leak-2026-10-17/archived-fixture-commits.json) | 2026-10-16 19:39:56 -0300 | initial | t |
+| [ffd2635](evidence/git-environment-leak-2026-10-17/archived-fixture-commits.json) | 2026-10-16 19:39:58 -0300 | msg | aisotropy |
+| [2c0267a](evidence/git-environment-leak-2026-10-17/archived-fixture-commits.json) | 2026-10-16 19:39:58 -0300 | initial | t |
+| [2696683](evidence/git-environment-leak-2026-10-17/archived-fixture-commits.json) | 2026-10-16 19:39:58 -0300 | add note | aisotropy |
+| [0a9d95f](evidence/git-environment-leak-2026-10-17/archived-fixture-commits.json) | 2026-10-16 19:39:58 -0300 | initial | t |
+
+Para contrastar el snapshot con los objetos en el clon recuperado, desde la
+raíz en macOS/zsh:
+
+```sh
+git log --reverse --format='%H %aI %an <%ae> %s' 99e9ab1..refs/archive/fixture-leak-2026-10-16
+```
+
+El [informe de recuperación](../research/git-fixture-leak-recovery-2026-10-17.md)
+explica cómo verificar y restaurar el bundle en un directorio temporal. Un clon
+del PR trae el snapshot como evidencia, sin los objetos del archivo local.
 
 Se reprodujo un mecanismo que escribe `core.bare=true` con la misma operación de
 los fixtures: `git -C <temporal> init -q`, cuando `GIT_DIR` apunta al directorio

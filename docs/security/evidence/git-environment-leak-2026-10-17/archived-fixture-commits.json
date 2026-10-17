@@ -1,0 +1,59 @@
+{
+  "artifact_type": "local-archived-fixture-metadata",
+  "archive_ref": "refs/archive/fixture-leak-2026-10-16",
+  "archive_tip": "0a9d95f9eced3d41bad95c3ee9d3f4054153d22f",
+  "recovered_target": "99e9ab15efa3b3d192312e65237b7a206a662efb",
+  "bundle": "$GIT_COMMON_DIR/recovery/fixture-leak-2026-10-16/branch-before.bundle",
+  "availability": "Fixture objects are preserved in the local archive and private recovery bundle, outside PR HEAD ancestry; no archive ref is published by this change.",
+  "verification_command": [
+    "git",
+    "log",
+    "--reverse",
+    "--format=%H%x00%aI%x00%an%x00%ae%x00%s",
+    "99e9ab15efa3b3d192312e65237b7a206a662efb..refs/archive/fixture-leak-2026-10-16"
+  ],
+  "commits": [
+    {
+      "id": "1c9d4db5306b0ce4c87785793369888431c5aae4",
+      "author_date": "2026-10-16T19:39:48-03:00",
+      "author_name": "t",
+      "author_email": "t@t",
+      "subject": "seed"
+    },
+    {
+      "id": "709f846a2fdfc626cd1ea6908d61422821f7e0c9",
+      "author_date": "2026-10-16T19:39:56-03:00",
+      "author_name": "t",
+      "author_email": "t@t",
+      "subject": "initial"
+    },
+    {
+      "id": "ffd2635b58f9b901ca09be341a580afdff6af41d",
+      "author_date": "2026-10-16T19:39:58-03:00",
+      "author_name": "aisotropy",
+      "author_email": "aisotropy@local",
+      "subject": "msg"
+    },
+    {
+      "id": "2c0267a264df62364d9a97bf7d727459afeb5e76",
+      "author_date": "2026-10-16T19:39:58-03:00",
+      "author_name": "t",
+      "author_email": "t@t",
+      "subject": "initial"
+    },
+    {
+      "id": "26966833f9df8b5b97e05f077961c0f600cd32c6",
+      "author_date": "2026-10-16T19:39:58-03:00",
+      "author_name": "aisotropy",
+      "author_email": "aisotropy@local",
+      "subject": "add note"
+    },
+    {
+      "id": "0a9d95f9eced3d41bad95c3ee9d3f4054153d22f",
+      "author_date": "2026-10-16T19:39:58-03:00",
+      "author_name": "t",
+      "author_email": "t@t",
+      "subject": "initial"
+    }
+  ]
+}
