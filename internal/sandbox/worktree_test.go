@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Luum-Home/aisotropy/internal/gitenv"
 )
 
 // initRepo builds a throwaway git repo with one commit and returns its dir. It
@@ -20,8 +22,8 @@ func initRepo(t *testing.T) string {
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
+		cmd := gitenv.Command(context.Background(), "git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(cmd.Env,
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
 		)
@@ -49,8 +51,8 @@ func commitInWorktree(t *testing.T, wtDir, file, content, msg string) {
 	}
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", wtDir}, args...)...)
-		cmd.Env = append(os.Environ(),
+		cmd := gitenv.Command(context.Background(), "git", append([]string{"-C", wtDir}, args...)...)
+		cmd.Env = append(cmd.Env,
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
 		)
@@ -143,7 +145,7 @@ func TestWorktree_CleanupRemovesWorktree(t *testing.T) {
 // branchExists reports whether refs/heads/<branch> resolves in repoDir.
 func branchExists(t *testing.T, repoDir, branch string) bool {
 	t.Helper()
-	cmd := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "refs/heads/"+branch)
+	cmd := gitenv.Command(context.Background(), "git", "-C", repoDir, "rev-parse", "--verify", "refs/heads/"+branch)
 	return cmd.Run() == nil
 }
 

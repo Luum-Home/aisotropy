@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/Luum-Home/aisotropy/internal/gitenv"
 )
 
 // TestBranchStrategyString_Default covers the fmt fallback arm for an
@@ -104,8 +106,8 @@ func TestWorktree_MergeConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	baseRun := func(args ...string) {
-		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-		cmd.Env = append(os.Environ(),
+		cmd := gitenv.Command(context.Background(), "git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = append(cmd.Env,
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
 		)

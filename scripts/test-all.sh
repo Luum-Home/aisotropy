@@ -36,6 +36,7 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}" || exit 2
+. "${ROOT}/scripts/clear-git-env.sh"
 
 QUICK=0
 GUARDS=0

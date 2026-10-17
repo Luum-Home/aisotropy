@@ -8,7 +8,7 @@
 # spending extra paid GitHub Actions minutes on those steps.
 #
 # INSTALLS:
-#   .git/hooks/pre-push   -> scripts/pre-push-gate.sh        (symlink; composite:
+#   .git/hooks/pre-push   <- scripts/pre-push-hook.sh        (dispatcher copy:
 #                            govulncheck + the deterministic OWASP LLM/Agentic suite)
 #   .git/hooks/pre-commit -> scripts/license-gate-precommit.sh (symlink; conditional
 #                            license gate — runs license-audit.sh --root-only ONLY when
@@ -26,9 +26,8 @@
 # file is the operator's own local agent config — untracked, hand-maintained,
 # machine- and harness-specific — and not this installer's to rewrite.
 #
-# The hook is a symlink to the repo script, so re-running this installer is
-# idempotent and the hook always reflects the committed script. An existing,
-# unrelated pre-push hook is backed up rather than clobbered.
+# The pre-push dispatcher selects the active worktree's gate. Other hooks remain
+# symlinks. Re-running this installer is idempotent; replaced hooks are backed up.
 #
 # USAGE:   scripts/install-hooks.sh
 # EXIT:    0 = installed (or already installed)
@@ -43,8 +42,8 @@ case "$HOOK_DIR" in /*) : ;; *) HOOK_DIR="$REPO_ROOT/$HOOK_DIR" ;; esac
 mkdir -p "$HOOK_DIR"
 
 # install_hook <hook-name> <target-script> <bypass-hint>
-# Absolute symlink: robust across worktrees and hook-dir relocation. Hooks are
-# not committed, so a machine-absolute target is fine (re-created per clone).
+# Other hooks retain their absolute symlink targets (re-created per clone).
+# Pre-push uses the worktree-aware dispatcher installed separately below.
 # An existing, unrelated hook of the same name is backed up rather than clobbered.
 install_hook() {
   hook_name="$1"; gate="$2"; bypass="$3"
@@ -68,8 +67,22 @@ install_hook() {
   echo "               (bypass once with: $bypass)"
 }
 
-install_hook pre-push   "$REPO_ROOT/scripts/pre-push-gate.sh" \
-  "SKIP_SUPPLY_CHAIN_GUARD=1 / SKIP_OWASP_SCAN=1 git push … or git push --no-verify"
+# A shared absolute symlink would keep running the installing checkout's gate
+# even when a different worktree contains the fix being pushed.
+dispatcher="$REPO_ROOT/scripts/pre-push-hook.sh"
+[ -f "$dispatcher" ] || { echo "missing $dispatcher" >&2; exit 2; }
+if [ ! -L "$HOOK_DIR/pre-push" ] && cmp -s "$dispatcher" "$HOOK_DIR/pre-push"; then
+  echo "install-hooks: pre-push dispatcher already installed."
+else
+  if [ -e "$HOOK_DIR/pre-push" ] || [ -L "$HOOK_DIR/pre-push" ]; then
+    backup="$HOOK_DIR/pre-push.bak.$(date +%Y%m%d%H%M%S)"
+    mv "$HOOK_DIR/pre-push" "$backup"
+    echo "install-hooks: existing pre-push hook backed up to $backup"
+  fi
+  cp "$dispatcher" "$HOOK_DIR/pre-push"
+  chmod +x "$HOOK_DIR/pre-push"
+  echo "install-hooks: installed pre-push dispatcher for the active worktree."
+fi
 install_hook pre-commit "$REPO_ROOT/scripts/license-gate-precommit.sh" \
   "SKIP_LICENSE_AUDIT=1 git commit … or git commit --no-verify"
 

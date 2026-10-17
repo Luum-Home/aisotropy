@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	osexec "os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +14,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/Luum-Home/aisotropy/internal/agentloop"
+	"github.com/Luum-Home/aisotropy/internal/gitenv"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 	"github.com/Luum-Home/aisotropy/internal/sandbox"
 	"github.com/Luum-Home/aisotropy/internal/tools"
@@ -487,7 +487,7 @@ func gatedMergeToHead(ctx context.Context, wt sandbox.Worktree, gate sync.Locker
 	if err != nil {
 		// Restore HEAD; ignore the abort's own error (there may be nothing to
 		// abort if the merge failed before starting).
-		_ = osexec.CommandContext(context.WithoutCancel(ctx), "git", "-C", repoDir, "merge", "--abort").Run()
+		_ = gitenv.Command(context.WithoutCancel(ctx), "git", "-C", repoDir, "merge", "--abort").Run()
 	}
 	return err
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
 # Composite pre-push gate: the single hook target that chains every local
-# pre-push check. `.git/hooks/pre-push` symlinks HERE (see install-hooks.sh);
+# pre-push check. The installed dispatcher selects this file in the active
+# worktree (see install-hooks.sh and pre-push-hook.sh);
 # adding a new gate means adding a stage below, not re-pointing the hook.
 #
 # Why a composite: git allows exactly ONE script per hook name. The repo's
@@ -35,8 +36,8 @@
 #                               unlike the rule files it works in a clone.
 #
 # Reference every stage's script as "$REPO_ROOT/scripts/…", never
-# "$(dirname "$0")/…": git invokes this through the .git/hooks/pre-push symlink,
-# so $0 is the HOOK path and dirname resolves to .git/hooks. Stage 5 shipped with
+# "$(dirname "$0")/…": older installs invoked this through a hook symlink,
+# so $0 was the HOOK path and dirname resolved to .git/hooks. Stage 5 shipped with
 # that bug and its first push printed "missing or not executable — skipping",
 # then "all stages clean" — a gate that skips itself while reporting success is
 # worse than no gate. Stage 4 carried the same latent bug, unnoticed because it
@@ -69,6 +70,7 @@ set -eu
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 cd "$REPO_ROOT" || { echo "pre-push-gate: not in a git repo" >&2; exit 2; }
+. "$REPO_ROOT/scripts/clear-git-env.sh"
 
 rc=0
 

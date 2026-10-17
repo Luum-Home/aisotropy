@@ -3,11 +3,11 @@ package taskagent
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Luum-Home/aisotropy/internal/gitenv"
 	"github.com/Luum-Home/aisotropy/internal/sandbox"
 )
 
@@ -229,7 +229,7 @@ func equalArgv(a, b []string) bool {
 	return true
 }
 
-func gitReady() bool { return exec.Command("git", "--version").Run() == nil }
+func gitReady() bool { return gitenv.Command(context.Background(), "git", "--version").Run() == nil }
 
 func gitInit(t *testing.T, dir string) {
 	t.Helper()
@@ -243,14 +243,14 @@ func gitInit(t *testing.T, dir string) {
 
 func gitRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+	if out, err := gitenv.Command(context.Background(), "git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
 
 func gitOut(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	out, err := gitenv.Command(context.Background(), "git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
