@@ -191,10 +191,16 @@ func TestPodman_RoundTrip(t *testing.T) {
 		t.Skipf("cannot pull %s (offline?): %v", testImage(), err)
 	}
 
+	// Mount the work tree at Workdir as the task runner does (Spec.Workdir is
+	// "where the work-tree mount lands"). Podman, unlike Docker, does not create
+	// a -w directory missing from the image: without the mount, `podman run`
+	// fails with `workdir "/workspace" does not exist on container`.
 	spec := Spec{
-		Image:   testImage(),
-		Workdir: DefaultWorkdir,
-		Env:     map[string]string{"AISOTROPY_TEST": "1"},
+		Image:      testImage(),
+		Workdir:    DefaultWorkdir,
+		BindMounts: []Mount{{Source: t.TempDir(), Target: DefaultWorkdir}},
+		Env:        map[string]string{"AISOTROPY_TEST": "1"},
+		User:       hostUser(),
 	}
 	sb, err := p.Create(ctx, spec)
 	if err != nil {

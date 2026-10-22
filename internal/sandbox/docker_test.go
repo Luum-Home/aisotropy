@@ -32,6 +32,16 @@ func testImage() string {
 	return "alpine:3.20"
 }
 
+// hostUser is the Spec.User the task runner sets (internal/taskagent/runtask.go):
+// the invoking host user, so the sandbox can write into a bind-mounted work tree
+// that user owns. Tests that write through a bind mount must set it too. With
+// the image default (root) and --cap-drop=ALL there is no CAP_DAC_OVERRIDE, so
+// on a native Linux daemon root cannot write into a t.TempDir() owned by another
+// uid with mode 0755 (umask 022) — "Permission denied", as on ubuntu-latest.
+// Docker Desktop/OrbStack file sharing does not enforce host ownership, which
+// is why the omission only surfaced in CI.
+func hostUser() string { return CurrentUserSpec(os.Getuid(), os.Getgid()) }
+
 // requireDocker skips the test unless a working docker CLI + daemon is present,
 // mirroring the rqlite/qdrant/sleepcycle "skip, never fake" gate.
 func requireDocker(t *testing.T) {
@@ -73,6 +83,7 @@ func TestDocker_RoundTrip(t *testing.T) {
 		Workdir:    DefaultWorkdir,
 		BindMounts: []Mount{{Source: host, Target: DefaultWorkdir}},
 		Env:        map[string]string{"AISOTROPY_TEST": "1"},
+		User:       hostUser(),
 	}
 	sb := createSandbox(t, p, spec)
 	t.Cleanup(func() {
@@ -204,6 +215,7 @@ func TestDocker_HardeningEnforcedAtRuntime(t *testing.T) {
 		Image:      testImage(),
 		Workdir:    DefaultWorkdir,
 		BindMounts: []Mount{{Source: host, Target: DefaultWorkdir}},
+		User:       hostUser(),
 	}
 	sb := createSandbox(t, p, spec)
 	t.Cleanup(func() {
