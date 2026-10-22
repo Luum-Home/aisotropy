@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/Luum-Home/aisotropy/internal/procgroup"
 )
 
 // streamStdout / streamStderr name the two output streams a task's process
@@ -161,7 +163,19 @@ func runStep(ctx context.Context, t Task, events chan<- Event) StepResult {
 // onLine, which for every caller in this package is a channel send — safe for
 // concurrent use without extra locking. The two goroutines' output may
 // interleave, which is expected for a live combined stream.
+//
+// The command runs as the leader of its own process group, and cancelling ctx
+// kills the whole group (see internal/procgroup). Killing only the direct child
+// left a forked grandchild holding the stdout/stderr pipes: the scanners below
+// then blocked until it exited by itself, and cancelling `x run` (`go run`,
+// whose child is the server) left the server running.
 func streamCmd(ctx context.Context, cmd *exec.Cmd, onLine func(stream, text string)) (exitCode int, stdout string, err error) {
+	procgroup.Isolate(cmd)
+	// Only exec.CommandContext sets Cancel; setting one on a plain exec.Command
+	// would make Start fail, so a ctx-less command keeps its default.
+	if cmd.Cancel != nil {
+		cmd.Cancel = func() error { return procgroup.Kill(cmd) }
+	}
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return -1, "", err

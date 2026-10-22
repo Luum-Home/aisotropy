@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+
+	"github.com/Luum-Home/aisotropy/internal/procgroup"
 )
 
 // DaemonEmbedder is the warm-process form of the sovereign local embedder
@@ -153,7 +155,7 @@ func (e *DaemonEmbedder) EmbedForRole(ctx context.Context, texts []string, role 
 	go func() {
 		select {
 		case <-ctx.Done():
-			_ = p.cmd.Process.Kill()
+			_ = procgroup.Kill(p.cmd)
 		case <-done:
 		}
 	}()
@@ -226,6 +228,10 @@ func (e *DaemonEmbedder) ensureProcLocked() (*daemonProc, error) {
 	cmd.Env = append(os.Environ(), "AISOTROPY_EMBED_MODEL_DIR="+e.modelDir)
 	stderr := &ringBuffer{max: 8 * 1024}
 	cmd.Stderr = stderr // exec drains this in its own goroutine.
+	// Own process group, so a ctx cancel and teardown kill anything the worker
+	// forked too; otherwise that process keeps stdout/stderr open and the
+	// cancelled read blocks until it exits by itself.
+	procgroup.Isolate(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -256,10 +262,8 @@ func (e *DaemonEmbedder) killLocked() {
 	if e.proc == nil {
 		return
 	}
-	_ = e.proc.stdin.Close() // EOF -> serve loop exits; a kill covers the hang case.
-	if e.proc.cmd.Process != nil {
-		_ = e.proc.cmd.Process.Kill()
-	}
+	_ = e.proc.stdin.Close()       // EOF -> serve loop exits; a kill covers the hang case.
+	_ = procgroup.Kill(e.proc.cmd) // the whole group: a forked child must not keep the pipes open
 	_ = e.proc.cmd.Wait()
 	e.proc = nil
 }
