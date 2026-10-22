@@ -2,7 +2,7 @@ module eino-live-arena
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/braintrustdata/braintrust-sdk-go/trace/contrib/cloudwego/eino v0.10.0

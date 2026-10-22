@@ -2,7 +2,7 @@ module adk-go-arena
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	go.opentelemetry.io/otel v1.45.0

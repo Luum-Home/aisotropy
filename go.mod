@@ -4,7 +4,7 @@ go 1.26.0
 
 // Build with a patched toolchain for the reachable standard-library CVEs.
 // x/net v0.60.0 requires Go 1.26.0; local goenv pins select the patched compiler.
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/BurntSushi/toml v1.6.0

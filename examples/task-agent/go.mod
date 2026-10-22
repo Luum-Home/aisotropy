@@ -6,7 +6,7 @@ module github.com/Luum-Home/aisotropy/examples/task-agent
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require github.com/Luum-Home/aisotropy v0.0.0
 

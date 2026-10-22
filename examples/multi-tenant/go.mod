@@ -2,7 +2,7 @@ module github.com/Luum-Home/aisotropy/examples/multi-tenant
 
 go 1.26.3
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 replace github.com/Luum-Home/aisotropy => ../..
 
