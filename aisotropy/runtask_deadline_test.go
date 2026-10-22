@@ -5,10 +5,10 @@ package aisotropy
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"testing"
 	"time"
 
+	"github.com/Luum-Home/aisotropy/internal/gitenv"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 )
 
@@ -29,7 +29,7 @@ func (blockingSandboxProvider) Create(ctx context.Context, _ SandboxSpec) (Sandb
 // deadline fires, rather than idling the host process. Docker-free (git-gated):
 // the hang is in the provider's Create, reached after the git worktree is added.
 func TestApp_RunTask_MaxDurationTearsDownRunaway(t *testing.T) {
-	if exec.Command("git", "--version").Run() != nil {
+	if gitenv.Command(context.Background(), "git", "--version").Run() != nil {
 		t.Skip("git unavailable; skipping façade deadline test")
 	}
 
@@ -39,11 +39,11 @@ func TestApp_RunTask_MaxDurationTearsDownRunaway(t *testing.T) {
 		{"config", "user.email", "t@t"},
 		{"config", "user.name", "t"},
 	} {
-		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+		if out, err := gitenv.Command(context.Background(), "git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	if err := exec.Command("git", "-C", repo, "commit", "-q", "--allow-empty", "-m", "seed").Run(); err != nil {
+	if err := gitenv.Command(context.Background(), "git", "-C", repo, "commit", "-q", "--allow-empty", "-m", "seed").Run(); err != nil {
 		t.Fatalf("seed commit: %v", err)
 	}
 

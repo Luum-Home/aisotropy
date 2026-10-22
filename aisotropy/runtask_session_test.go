@@ -4,10 +4,10 @@ package aisotropy
 
 import (
 	"context"
-	"os/exec"
 	"testing"
 	"time"
 
+	"github.com/Luum-Home/aisotropy/internal/gitenv"
 	"github.com/Luum-Home/aisotropy/internal/llm"
 )
 
@@ -29,11 +29,11 @@ func TestApp_RunTask_SessionResumeFacade(t *testing.T) {
 		{"config", "user.email", "t@t"},
 		{"config", "user.name", "t"},
 	} {
-		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+		if out, err := gitenv.Command(context.Background(), "git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	if err := exec.Command("git", "-C", repo, "commit", "-q", "--allow-empty", "-m", "seed").Run(); err != nil {
+	if err := gitenv.Command(context.Background(), "git", "-C", repo, "commit", "-q", "--allow-empty", "-m", "seed").Run(); err != nil {
 		t.Fatalf("seed commit: %v", err)
 	}
 

@@ -28,9 +28,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
+	"github.com/Luum-Home/aisotropy/internal/gitenv"
 	"github.com/Luum-Home/aisotropy/internal/sandbox"
 	"github.com/Luum-Home/aisotropy/internal/tools"
 )
@@ -250,7 +250,7 @@ func (e *sandboxExecutor) git(ctx context.Context, args ...string) (string, erro
 		bin = "git"
 	}
 	full := append([]string{"-C", e.worktreeDir}, args...)
-	cmd := exec.CommandContext(ctx, bin, full...)
+	cmd := gitenv.Command(ctx, bin, full...)
 	var buf strings.Builder
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

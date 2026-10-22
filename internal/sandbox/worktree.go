@@ -5,10 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Luum-Home/aisotropy/internal/gitenv"
 )
 
 // Worktree is the git plumbing that gives each sandboxed task its OWN checkout
@@ -254,7 +255,7 @@ func (w Worktree) revParse(ctx context.Context, dir, ref string) (string, error)
 // the error on failure.
 func (w Worktree) run(ctx context.Context, dir string, args ...string) (string, error) {
 	full := append([]string{"-C", dir}, args...)
-	cmd := exec.CommandContext(ctx, w.git(), full...)
+	cmd := gitenv.Command(ctx, w.git(), full...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
