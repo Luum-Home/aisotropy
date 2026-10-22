@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Luum-Home/aisotropy/internal/procgroup"
 )
 
 // DaemonScanner is the WARM form of the multilingual model scanner (T1). Where
@@ -167,9 +169,7 @@ func (s *DaemonScanner) classify(text string) (scannerRow, error) {
 	go func() {
 		select {
 		case <-ctx.Done():
-			if p.cmd.Process != nil {
-				_ = p.cmd.Process.Kill()
-			}
+			_ = procgroup.Kill(p.cmd)
 		case <-done:
 		}
 	}()
@@ -228,6 +228,10 @@ func (s *DaemonScanner) ensureProcLocked() (*scannerDaemonProc, error) {
 	cmd.Env = append(os.Environ(), "AISOTROPY_GUARDRAIL_MODEL_DIR="+s.modelDir)
 	stderr := &boundedBuffer{max: 8 * 1024}
 	cmd.Stderr = stderr // exec drains this in its own goroutine.
+	// Own process group, so the watchdog and teardown kill anything the worker
+	// forked too; otherwise that process keeps stdout/stderr open and the
+	// "fail open after Timeout" read blocks until it exits by itself.
+	procgroup.Isolate(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -258,10 +262,8 @@ func (s *DaemonScanner) killLocked() {
 	if s.proc == nil {
 		return
 	}
-	_ = s.proc.stdin.Close() // EOF -> serve loop exits; a kill covers the hang case.
-	if s.proc.cmd.Process != nil {
-		_ = s.proc.cmd.Process.Kill()
-	}
+	_ = s.proc.stdin.Close()       // EOF -> serve loop exits; a kill covers the hang case.
+	_ = procgroup.Kill(s.proc.cmd) // the whole group: a forked child must not keep the pipes open
 	_ = s.proc.cmd.Wait()
 	s.proc = nil
 }
